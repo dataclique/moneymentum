@@ -1,3 +1,4 @@
+tqdm
 pandas
 python-lsp-black
 dydx-v4-client

@@ -1,5 +1,7 @@
-tqdm
-pandas
-python-lsp-black
 dydx-v4-client
 matplotlib
+numpy
+pandas
+pytest
+python-lsp-black
+tqdm

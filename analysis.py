@@ -103,8 +103,6 @@ plt.show()
 # df_rev = RSIReversionStrategy(df.copy())
 
 # # Plot results
-# colors = plt.rcParams["axes.prop_cycle"].by_key()["color"]
-# fig, ax = plt.subplots(2, figsize=(12, 8))
 # ax[0].plot(df_rev["strat_cum_returns"] * 100, label="Mean Reversion")
 # ax[0].plot(df_rev["cum_returns"] * 100, label="Buy and Hold")
 # ax[0].set_ylabel("Returns (%)")

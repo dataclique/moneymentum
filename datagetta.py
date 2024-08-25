@@ -1,3 +1,4 @@
+import os
 import asyncio
 import pandas as pd
 from tqdm.asyncio import tqdm_asyncio
@@ -54,7 +55,7 @@ async def get_candle_batch(ticker: str, end) -> tuple:
         to_iso=end.isoformat(),
     )
 
-    columns = [
+    unneeded_columns = [
         "ticker",
         "resolution",
         "startedAt",
@@ -71,9 +72,8 @@ async def get_candle_batch(ticker: str, end) -> tuple:
     candles["close"] = candles["close"].astype(float)
     candles["usdVolume"] = candles["usdVolume"].astype(float)
     candles["timestamp"] = candles["startedAt"].astype(str)
-    candles.drop(columns=columns, inplace=True)
+    candles.drop(columns=unneeded_columns, inplace=True)
 
-    print(candles.info())
     return candles, start
 
 
@@ -81,12 +81,6 @@ async def get_candles(market: str, end=datetime.now()) -> pd.DataFrame:
     try:
         batch, start = await get_candle_batch(market, end)
         rest = await get_candles(market, start)
-        # rest = (
-        #     await get_candles(market, start)
-        #     if start.year == 2024 and start.month >= 5
-        #     else pd.DataFrame()
-        # )
-
         candles = pd.concat([batch, rest])
         candles.sort_values("timestamp", inplace=True)
         return candles
@@ -94,15 +88,17 @@ async def get_candles(market: str, end=datetime.now()) -> pd.DataFrame:
         return pd.DataFrame()
 
 
+os.makedirs("./data/candles", exist_ok=True)
+
 markets = asyncio.run(get_all_markets())
-markets.to_csv("./data/markets.csv")
+markets.to_csv("./data/markets.csv", index=False)
 
 
 async def backfill_market(market):
     ticker = market["ticker"]
     candles = await get_candles(ticker)
-    candles.to_csv(f"./data/{str.lower(ticker)}.csv")
-    print(f"Backfilled {candles.shape[0]} hourly candles for {ticker}", "\n")
+    token = str.lower(ticker.split("-")[0])
+    candles.to_csv(f"./data/candles/{token}.csv", index=False)
 
 
 tasks = [backfill_market(market) for index, market in markets.iterrows()]

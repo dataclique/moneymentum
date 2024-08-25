@@ -41,13 +41,34 @@ async def get_all_markets() -> list:
     return df["ticker"].tolist()
 
 
-async def get_candles(ticker: str) -> pd.DataFrame:
-    res = await get_perpetual_market_candles(
-        market=ticker, resolution="1HOUR", limit=24 * 30
-    )
+async def get_candles_chunk(ticker: str, end, chunks) -> pd.DataFrame:
+    delta = timedelta(minutes=1000)
+    start = end - chunks * delta
+    end = start + delta
 
-    columns = ["ticker", "startedAt", "open", "high", "low", "close", "usdVolume"]
-    df = pd.DataFrame(res["candles"])[columns]
+    try:
+        res = await client.markets.get_perpetual_market_candles(
+            market=ticker,
+            resolution="1MIN",
+            from_iso=start.isoformat(),
+            to_iso=end.isoformat(),
+        )
+        return pd.DataFrame(res["candles"])
+    except Exception as e:
+        res = await get_candles_chunk(ticker, end, chunks)
+        return res
+
+
+end = datetime.now()
+
+
+async def get_candles(ticker: str) -> pd.DataFrame:
+    res1 = await get_candles_chunk(ticker, end, 1)
+    res2 = await get_candles_chunk(ticker, end, 2)
+    res3 = await get_candles_chunk(ticker, end, 3)
+
+    res = [res1, res2, res3]
+    df = pd.concat(res, ignore_index=True)
 
     df["startedAt"] = pd.to_datetime(df["startedAt"])
     df["open"] = df["open"].astype(float)
@@ -59,41 +80,78 @@ async def get_candles(ticker: str) -> pd.DataFrame:
 
 
 tickers = run(get_all_markets())
+
+
+def get_picks():
+    tasks = [get_candles_chunk(ticker, end, 4) for ticker in tickers]
+    res = run(tqdm_asyncio.gather(*tasks))
+
+    df = pd.DataFrame()
+    df = pd.concat(res, ignore_index=True)
+
+    df["startedAt"] = pd.to_datetime(df["startedAt"])
+    df["open"] = df["open"].astype(float)
+    df["high"] = df["high"].astype(float)
+    df["low"] = df["low"].astype(float)
+    df["close"] = df["close"].astype(float)
+    df["usdVolume"] = df["usdVolume"].astype(float)
+
+    df.set_index("startedAt", inplace=True)
+    df.sort_index(inplace=True)
+
+    ticker_returns = {}
+    for i, ticker in enumerate(tickers):
+        candles = df[df["ticker"] == ticker]
+        if candles["usdVolume"].mean() < 100:
+            continue
+
+        start_price = candles["close"].iloc[0]
+        df.loc[df["ticker"] == ticker, "return"] = candles["close"] / start_price
+        ticker_returns[ticker] = candles["close"].iloc[-1] / start_price
+
+    returns = pd.DataFrame(
+        ticker_returns.items(), columns=["ticker", "return"], index=None
+    )
+    returns.set_index("ticker", inplace=True)
+    returns.sort_values("return", ascending=False, inplace=True)
+    print(returns)
+
+    df["inv_return"] = 1 / df["return"]
+    print(df)
+
+    n = 4
+    top = returns.head(n).index.tolist()
+    bottom = returns.tail(n).index.tolist()
+
+    return [top, bottom]
+
+
+tickers = run(get_all_markets())
+[top, bottom] = get_picks()
 tasks = [get_candles(ticker) for ticker in tickers]
 res = run(tqdm_asyncio.gather(*tasks))
 
+df = pd.DataFrame()
 df = pd.concat(res, ignore_index=True)
 df.set_index("startedAt", inplace=True)
 df.sort_index(inplace=True)
 
-
-for ticker in tickers:
+for i, ticker in enumerate(tickers):
     candles = df[df["ticker"] == ticker]
+    if candles["usdVolume"].mean() < 100:
+        continue
+
     start_price = candles["close"].iloc[0]
     df.loc[df["ticker"] == ticker, "return"] = candles["close"] / start_price
 
 df["inv_return"] = 1 / df["return"]
+print(df)
 
-ticker_returns = {}
-for i, ticker in enumerate(tickers):
-    candles = df[df["ticker"] == ticker]
-    if candles["usdVolume"].mean() < 1000:
-        continue
-
-    candles["prior_return"] = candles["close"].shift(-8) / candles["close"]
-    ticker_returns[ticker] = candles["prior_return"].mean()
-
-returns = pd.DataFrame(
-    ticker_returns.items(), columns=["ticker", "prior_return"], index=None
-)
-returns.set_index("ticker", inplace=True)
-returns.sort_values("prior_return", ascending=False, inplace=True)
-print(returns)
-
-# only include top/bottom 5 percentile
-n = 4
-top = returns.head(n).index.tolist()
-bottom = returns.tail(n).index.tolist()
+market = df.groupby("startedAt")["return"].mean()
+inv_market = df.groupby("startedAt")["inv_return"].mean()
+long_returns = df[df["ticker"].isin(top)].groupby("startedAt")["return"].mean()
+short_returns = df[df["ticker"].isin(bottom)].groupby("startedAt")["inv_return"].mean()
+portfolio = (long_returns + short_returns) / 2
 
 colors = plt.rcParams["axes.prop_cycle"].by_key()["color"]
 fig, ax = plt.subplots(3, figsize=(12, 8))
@@ -111,33 +169,26 @@ for i, ticker in enumerate(bottom):
 ax[0].axhline(1, color="black", linestyle="--")
 ax[0].set_ylabel("roi")
 ax[0].set_title("perp returns")
-ax[0].legend(bbox_to_anchor=[1, 0.6])
+ax[0].legend(bbox_to_anchor=[1, 1])
 
-
-market = df.groupby("startedAt")["return"].mean()
-inv_market = df.groupby("startedAt")["inv_return"].mean()
-long_returns = df[df["ticker"].isin(top)].groupby("startedAt")["return"].mean()
-short_returns = df[df["ticker"].isin(bottom)].groupby("startedAt")["inv_return"].mean()
-portfolio = (3 * long_returns + 2 * short_returns) / 5
-
+ax[1].plot(portfolio, label="portfolio", color=colors[1])
 ax[1].plot(market, label="market", color=colors[0])
 ax[1].plot(long_returns, label="longs", color=colors[2])
 ax[1].plot(short_returns, label="shorts", color=colors[3])
-ax[1].plot(portfolio, label="portfolio", color=colors[1])
 
 ax[1].axhline(1, color="black", linestyle="--")
 ax[1].set_ylabel("roi")
 ax[1].set_title("portfolio returns")
-ax[1].legend(bbox_to_anchor=[1, 0.6])
+ax[1].legend(bbox_to_anchor=[1, 1])
 
+ax[2].plot(portfolio / market, label="portfolio", color=colors[1])
 ax[2].plot(long_returns / market, label="long", color=colors[4])
 ax[2].plot(short_returns / inv_market, label="short", color=colors[5])
-ax[2].plot(portfolio / market, label="portfolio", color=colors[1])
 
 ax[2].axhline(1, color="black", linestyle="--")
 ax[2].set_ylabel("roi ratio")
 ax[2].set_title("portfolio/market")
-ax[2].legend(bbox_to_anchor=[1, 0.6])
+ax[2].legend(bbox_to_anchor=[1, 1])
 
 plt.tight_layout()
 plt.show()

@@ -1,8 +1,10 @@
+dash
 dydx-v4-client
 matplotlib
 numpy
 pandas
+plotly
 pytest
+pytest-asyncio
 python-lsp-black
 tqdm
-pytest-asyncio

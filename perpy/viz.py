@@ -5,6 +5,8 @@ import matplotlib.pyplot as plt
 import os
 import pandas as pd
 
+colors = plt.rcParams["axes.prop_cycle"].by_key()["color"]
+
 
 def plot_tickers(ax, df, tickers, inv_colors_ix=False, title="perp returns"):
     for i, ticker in enumerate(tickers):

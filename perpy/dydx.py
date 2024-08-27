@@ -40,6 +40,14 @@ async def get_all_markets() -> list:
     return df["ticker"].tolist()
 
 
+async def get_candles_for_tickers(tickers: list, **kwargs) -> pd.DataFrame:
+    tasks = [
+        get_perpetual_market_candles(**kwargs, market=ticker) for ticker in tickers
+    ]
+    responses = await tqdm_asyncio.gather(*tasks, position=0)
+    return prep_candles(pd.concat([pd.DataFrame(res["candles"]) for res in responses]))
+
+
 def prep_candles(candles: pd.DataFrame) -> pd.DataFrame:
     candles["startedAt"] = pd.to_datetime(candles["startedAt"])
     candles["open"] = candles["open"].astype(float)

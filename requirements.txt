@@ -5,3 +5,4 @@ pandas
 pytest
 python-lsp-black
 tqdm
+pytest-asyncio

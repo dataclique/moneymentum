@@ -126,6 +126,8 @@ async def get_order_history(
 ) -> pd.DataFrame:
     orders = await client.account.get_subaccount_orders(address, 0)
     df = pd.DataFrame(orders)
-    print(df)
-    print(df.describe())
+    df["size"] = df["size"].astype(float)
+    df["price"] = df["price"].astype(float)
+    df.set_index("updatedAt", inplace=True)
+    df.sort_index(inplace=True)
     return df

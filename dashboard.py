@@ -1,5 +1,3 @@
-print("\n\nStarting dashboard.py\n\n")
-
 from asyncio import run
 import pandas as pd
 import numpy as np
@@ -8,6 +6,7 @@ from tqdm.asyncio import tqdm_asyncio
 from perpy.dydx import get_all_markets, get_candles_for_tickers, prep_candles
 from perpy.viz import plot_tickers
 from perpy.picks import get_bestworst
+from perpy.dydx import get_order_history
 
 
 # tickers = run(get_all_markets())
@@ -36,17 +35,27 @@ best_worst_fig = px.area(
     color="ticker",
 )
 
+order_df = run(get_order_history())
+
+order_df["bet"] = order_df["size"] * order_df["price"]
+order_df["bets"] = order_df.groupby("ticker")["bet"].cumsum()
+order_df["cum_bets"] = order_df["bets"] + order_df["bets"].shift(1)
+
+order_fig = px.area(order_df, y="cum_bets")
+order_fig.update_layout(
+    title="Portfolio",
+    xaxis_title="Time",
+    yaxis_title="Bets",
+    xaxis_rangeslider_visible=True,
+)
+
 app.layout = [
     html.H1(children="dYdX", style={"textAlign": "center"}),
+    dcc.Graph(id="orders", figure=order_fig),
     dcc.Dropdown(df["ticker"].unique(), "BTC-USD", id="dropdown-selection"),
     dcc.Graph(id="ticker"),
     dcc.Graph(id="best-worst-performers", figure=best_worst_fig),
 ]
-
-
-from perpy.dydx import get_order_history
-
-run(get_order_history())
 
 
 @callback(Output("ticker", "figure"), Input("dropdown-selection", "value"))

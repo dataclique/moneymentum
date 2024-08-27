@@ -119,3 +119,13 @@ async def get_candles(tickers, days=1):
 
     df["inv_return"] = 1 / df["return"]
     return df
+
+
+async def get_order_history(
+    address="dydx1ef7ez77nd9ruxd6yysetcg06atlztdgvnv3h45",
+) -> pd.DataFrame:
+    orders = await client.account.get_subaccount_orders(address, 0)
+    df = pd.DataFrame(orders)
+    print(df)
+    print(df.describe())
+    return df

@@ -1,10 +1,9 @@
-from asyncio import run
+from asyncio import run, sleep
 from datetime import datetime, timedelta
 from dydx_v4_client.indexer.rest.indexer_client import IndexerClient
 from dydx_v4_client.network import make_mainnet
 from tqdm.asyncio import tqdm_asyncio
 import pandas as pd
-import time
 
 NODE_URL = "https://dydx-rpc.publicnode.com:443"
 INDEXER_REST_URL = "https://indexer.dydx.trade"
@@ -68,9 +67,9 @@ def prep_candles(candles: pd.DataFrame) -> pd.DataFrame:
 
 
 async def get_candles_chunk(
-    ticker: str, start: datetime, end: datetime, attempt: int = 0
+    ticker: str, start: datetime, end: datetime, attempt: int = 1
 ) -> list:
-    print(f"Getting candles for {ticker} from {start} to {end}")
+    # print(f"Getting candles for {ticker} from {start} to {end}")
 
     try:
         res = await get_perpetual_market_candles(
@@ -81,11 +80,15 @@ async def get_candles_chunk(
         )
         return res["candles"]
 
-    except Exception:
-        if attempt >= 3:
+    except Exception as e:
+        print(
+            f"Get {ticker} candles from {start} to {end} attempt #{attempt} failed:\n{e}\n"
+        )
+
+        if attempt > 256:
             return []
 
-        time.sleep(1)
+        await sleep(attempt / 10)
         res = await get_candles_chunk(ticker, start, end, attempt + 1)
         return res
 

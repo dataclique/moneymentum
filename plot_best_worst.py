@@ -1,9 +1,7 @@
 from asyncio import run
 import pandas as pd
-import numpy as np
-from tqdm.asyncio import tqdm_asyncio
 
-from perpy.dydx import get_all_markets, get_candles_for_tickers, prep_candles
+from perpy.dydx import get_all_markets, get_candles_for_tickers
 from perpy.viz import plot_tickers
 from perpy.picks import get_bestworst
 

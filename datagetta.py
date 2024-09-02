@@ -4,7 +4,6 @@ from dydx_v4_client.indexer.rest.indexer_client import IndexerClient
 from dydx_v4_client.network import make_mainnet
 from tqdm.asyncio import tqdm_asyncio
 import matplotlib.pyplot as plt
-import os
 import pandas as pd
 
 NODE_URL = "https://dydx-rpc.publicnode.com:443"
@@ -54,7 +53,7 @@ async def get_candles_chunk(ticker: str, end, chunks) -> pd.DataFrame:
             to_iso=end.isoformat(),
         )
         return pd.DataFrame(res["candles"])
-    except Exception as e:
+    except Exception:
         res = await get_candles_chunk(ticker, end, chunks)
         return res
 

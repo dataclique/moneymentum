@@ -3,8 +3,8 @@ from datetime import datetime, timedelta
 from dydx_v4_client.indexer.rest.indexer_client import IndexerClient
 from dydx_v4_client.network import make_mainnet
 from tqdm.asyncio import tqdm_asyncio
-import os
 import pandas as pd
+import time
 
 NODE_URL = "https://dydx-rpc.publicnode.com:443"
 INDEXER_REST_URL = "https://indexer.dydx.trade"
@@ -68,8 +68,10 @@ def prep_candles(candles: pd.DataFrame) -> pd.DataFrame:
 
 
 async def get_candles_chunk(
-    ticker: str, start: datetime, end: datetime
-) -> pd.DataFrame:
+    ticker: str, start: datetime, end: datetime, attempt: int = 0
+) -> list:
+    print(f"Getting candles for {ticker} from {start} to {end}")
+
     try:
         res = await get_perpetual_market_candles(
             market=ticker,
@@ -77,10 +79,14 @@ async def get_candles_chunk(
             from_iso=start.isoformat(),
             to_iso=end.isoformat(),
         )
-        return pd.DataFrame(res["candles"])
-    except Exception as e:
-        print(f"Getting {ticker} candles for {start}-{end} failed: {e}")
-        res = await get_candles_chunk(ticker, start, end)
+        return res["candles"]
+
+    except Exception:
+        if attempt >= 3:
+            return []
+
+        time.sleep(1)
+        res = await get_candles_chunk(ticker, start, end, attempt + 1)
         return res
 
 
@@ -97,8 +103,7 @@ async def get_candles(tickers, start: datetime):
     ]
     res = await tqdm_asyncio.gather(*tasks, position=0)
 
-    df = prep_candles(pd.concat(res))
-    df.to_csv("./data/candles.csv")
+    df = prep_candles(pd.DataFrame([candle for chunk in res for candle in chunk]))
     return df
 
 

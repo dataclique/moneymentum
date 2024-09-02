@@ -25,13 +25,13 @@
         pkgs = import nixpkgs { inherit system; };
 
         hooks = {
-          # nil.enable = true;
-          # nixfmt = {
-          #   enable = true;
-          #   package = pkgs.nixfmt-classic;
-          # };
-          # actionlint.enable = true;
+          nil.enable = true;
+          nixfmt.enable = true;
+          nixfmt.package = pkgs.nixfmt-classic;
+          actionlint.enable = true;
           black.enable = true;
+          ruff.enable = true;
+          # pyright.enable = true;
         };
 
       in rec {
@@ -44,7 +44,7 @@
             inherit inputs pkgs;
             modules = [{
               # https://devenv.sh/reference/options/
-              # packages = with pkgs; [ nil nixfmt-classic ];
+              packages = with pkgs; [ git-lfs ];
 
               languages = {
                 # nix.enable = true;

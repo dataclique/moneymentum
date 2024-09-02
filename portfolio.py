@@ -1,10 +1,9 @@
 from asyncio import run
 import pandas as pd
-import numpy as np
-from tqdm.asyncio import tqdm_asyncio
+from dash import Dash, html, dcc, callback, Output, Input
+import plotly.express as px
+import plotly.graph_objects as go
 
-from perpy.dydx import get_all_markets, get_candles_for_tickers, prep_candles
-from perpy.viz import plot_tickers
 from perpy.picks import get_bestworst
 from perpy.dydx import get_order_history
 
@@ -20,11 +19,6 @@ df.sort_index(inplace=True)
 tickers = df["ticker"].unique()
 best, worst = get_bestworst(df, tickers, 5)
 
-
-from dash import Dash, html, dcc, callback, Output, Input
-import plotly.express as px
-import pandas as pd
-import plotly.graph_objects as go
 
 app = Dash()
 

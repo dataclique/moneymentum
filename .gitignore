@@ -1,5 +1,4 @@
 .devenv
 .direnv
 .pre-commit-config.yaml
-*.csv
 __pycache__

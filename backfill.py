@@ -9,11 +9,7 @@ from perpy.dydx import (
 
 tickers = run(get_all_markets())
 start = datetime(2024, 8, 25)
-
 df = run(get_candles(tickers, start=start))
-df.to_csv("./data/candles.csv")
-
-print(df.describe())
 
 # tickers = df["ticker"].unique()
 # best, worst = get_bestworst(df, tickers, 5)

@@ -1,13 +1,12 @@
-import pandas as pd
+from asyncio import run
 from dash import Dash, html, dcc, dash_table
 import plotly.express as px
 import dash_bootstrap_components as dbc
 
-from perpy.dydx import prep_candles
+from perpy.dydx import get_candles, get_all_markets
 
-df = prep_candles(pd.read_csv("./data/candles.csv"))
-df = df[df["ticker"].isin(["BTC-USD", "ETH-USD"])]
-tickers = df["ticker"].unique()
+tickers = run(get_all_markets())
+df = run(get_candles(tickers))
 
 vol_df = df.pivot(columns="ticker", values="volume_usd").dropna()
 vol_df["market"] = vol_df.sum(axis=1)
@@ -31,18 +30,19 @@ app.layout = dbc.Container(
             [
                 dbc.Col(
                     [
-                        dcc.Graph(figure=px.area(cum_returns_df, y="market")),
+                        dcc.Graph(
+                            figure=px.area(cum_returns_df, y="market"),
+                        ),
                     ],
                     width=width,
                 ),
                 dbc.Col(
                     [
-                        dcc.Graph(figure=px.area(cum_returns_df, y="ETH-USD")),
-                        # dash_table.DataTable(
-                        #     data=cum_returns_df.to_dict("records"),
-                        #     page_size=10,
-                        #     style_table={"overflowX": "auto"},
-                        # ),
+                        dash_table.DataTable(
+                            data=cum_returns_df.to_dict("records"),
+                            page_size=10,
+                            style_table={"overflowX": "auto"},
+                        ),
                     ],
                     width=width,
                 ),

@@ -82,7 +82,7 @@ async def get_candles_chunk(
 
     except Exception as e:
         print(
-            f"Get {ticker} candles from {start} to {end} attempt #{attempt} failed:\n{e}\n"
+            f"Get {ticker} candles from {start} to {end} attempt #{attempt} failed:\n{e}"
         )
 
         if attempt > 256:
@@ -93,21 +93,34 @@ async def get_candles_chunk(
         return res
 
 
-async def get_candles(tickers, start: datetime):
+async def get_candles(tickers, start: datetime = datetime(2024, 8, 25)):
     end = datetime.now()
     since = (end - start).total_seconds() / 60
     chunks = int(since / 1000) + 1
     delta = timedelta(minutes=1000)
 
+    df = prep_candles(pd.read_csv("./data/candles.csv"))
     tasks = [
         get_candles_chunk(ticker, start + chunk * delta, start + (chunk + 1) * delta)
-        for chunk in range(chunks)
+        for chunk in range(chunks + 1)
         for ticker in tickers
+        if df[
+            (df.index == pd.to_datetime(start + chunk * delta).tz_localize("UTC"))
+            & (df["ticker"] == ticker)
+        ].empty
     ]
-    res = await tqdm_asyncio.gather(*tasks, position=0)
 
-    df = prep_candles(pd.DataFrame([candle for chunk in res for candle in chunk]))
-    return df
+    res = await tqdm_asyncio.gather(*tasks, position=0)
+    merged = [candle for chunk in res for candle in chunk]
+    if len(merged) == 0:
+        return df
+
+    new_df = prep_candles(pd.DataFrame(merged))
+    candles = pd.concat([df, new_df])
+    candles.sort_index(inplace=True)
+    candles.to_csv("./data/candles.csv")
+
+    return candles
 
 
 async def get_order_history(

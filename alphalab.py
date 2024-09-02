@@ -1,89 +1,76 @@
 import pandas as pd
-from dash import Dash, html, dcc, callback, Output, Input
+from dash import Dash, html, dcc, dash_table
 import plotly.express as px
-import plotly.graph_objects as go
+import dash_bootstrap_components as dbc
 
-from perpy.picks import get_bestworst
 from perpy.dydx import prep_candles
 
 df = prep_candles(pd.read_csv("./data/candles.csv"))
-
+df = df[df["ticker"].isin(["BTC-USD", "ETH-USD"])]
 tickers = df["ticker"].unique()
-best, worst = get_bestworst(df, tickers, 5)
 
+vol_df = df.pivot(columns="ticker", values="volume_usd").dropna()
+vol_df["market"] = vol_df.sum(axis=1)
 
-app = Dash()
+vol_ratio_df = vol_df.div(vol_df["market"], axis=0)
 
-app.layout = [
-    html.H1(children="dYdX", style={"textAlign": "center"}),
-    html.Div(
-        [
-            dcc.Dropdown(
-                ["Best&Worst", "Best", "Worst", "All"], "All", id="token-group"
-            ),
-            dcc.Graph(id="best-worst-performers"),
-            #     ],
-            #     style={"display": "inline-block", "width": "49%"},
-            # ),
-            # html.Div(
-            #     [
-            dcc.Dropdown(df["ticker"].unique(), "BTC-USD", id="dropdown-selection"),
-            dcc.Graph(id="ticker"),
-        ],
-        style={"width": "100%", "display": "inline-block"},
-        # style={"width": "49%", "display": "inline-block", "padding": "0 20"},
-    ),
-]
+returns_df = df.pivot(columns="ticker", values="return").dropna()
+returns_df["market"] = returns_df.mul(vol_ratio_df).sum(axis=1)
 
+cum_returns_df = returns_df.cumsum()
 
-@callback(Output("best-worst-performers", "figure"), Input("token-group", "value"))
-def update_graph_fig(basket):
-    pairs = []
+external_stylesheets = [dbc.themes.CERULEAN]
+app = Dash(__name__, external_stylesheets=external_stylesheets)
 
-    if basket == "All":
-        pairs = df["ticker"].unique()
-    elif basket == "Best":
-        pairs = best
-    elif basket == "Worst":
-        pairs = worst
-    elif basket == "Best&Worst":
-        pairs = best + worst
-
-    fig = px.line(
-        df[df["ticker"].isin(pairs)],
-        y="return",
-        line_group="ticker",
-        color="ticker",
-    )
-
-    fig.update_layout(
-        xaxis_title="Time",
-        yaxis_title="Returns",
-        xaxis_rangeslider_visible=True,
-        yaxis_tickformat="%",
-        # yaxis_range=[0, 2],
-    )
-    return fig
-
-
-@callback(Output("ticker", "figure"), Input("dropdown-selection", "value"))
-def update_graph(ticker):
-    dff = df[df["ticker"] == ticker]
-    fig = go.Figure(
-        go.Candlestick(
-            x=dff.index,
-            open=dff["open"],
-            high=dff["high"],
-            low=dff["low"],
-            close=dff["close"],
-        )
-    )
-    fig.update_layout(
-        xaxis_title="Time",
-        yaxis_title="Price",
-        xaxis_rangeslider_visible=True,
-    )
-    return fig
+width = 6
+app.layout = dbc.Container(
+    [
+        dbc.Row([html.H1(children="dYdX", style={"textAlign": "center"})]),
+        html.Hr(),
+        dbc.Row(
+            [
+                dbc.Col(
+                    [
+                        dcc.Graph(figure=px.area(cum_returns_df, y="market")),
+                    ],
+                    width=width,
+                ),
+                dbc.Col(
+                    [
+                        dcc.Graph(figure=px.area(cum_returns_df, y="ETH-USD")),
+                        # dash_table.DataTable(
+                        #     data=cum_returns_df.to_dict("records"),
+                        #     page_size=10,
+                        #     style_table={"overflowX": "auto"},
+                        # ),
+                    ],
+                    width=width,
+                ),
+            ]
+        ),
+        dbc.Row(
+            [
+                dbc.Col(
+                    [
+                        dcc.Graph(figure=px.area(vol_df, y="market")),
+                    ],
+                    width=width,
+                ),
+                dbc.Col(
+                    [
+                        dash_table.DataTable(
+                            data=vol_df.to_dict("records"),
+                            page_size=10,
+                            style_table={"overflowX": "auto"},
+                        ),
+                    ],
+                    width=width,
+                ),
+            ]
+        ),
+    ],
+    fluid=True,
+)
 
 
 if __name__ == "__main__":

@@ -48,22 +48,22 @@ async def get_candles_for_tickers(tickers: list, **kwargs) -> pd.DataFrame:
 
 
 def prep_candles(candles: pd.DataFrame) -> pd.DataFrame:
-    candles.rename(columns={"startedAt": "timestamp"}, inplace=True)
+    candles.rename(
+        columns={"startedAt": "timestamp", "usdVolume": "volume_usd"}, inplace=True
+    )
+
     candles["timestamp"] = pd.to_datetime(candles["timestamp"])
     candles["open"] = candles["open"].astype(float)
     candles["high"] = candles["high"].astype(float)
     candles["low"] = candles["low"].astype(float)
     candles["close"] = candles["close"].astype(float)
-    candles["usdVolume"] = candles["usdVolume"].astype(float)
-
-    by_ticker = candles.groupby("ticker")
-    candles["return"] = candles["close"] / by_ticker["close"].transform("first")
-    candles["inv_return"] = 1 / candles["return"]
+    candles["volume_usd"] = candles["volume_usd"].astype(float)
+    candles["return"] = candles.groupby("ticker")["close"].pct_change()
 
     candles.set_index("timestamp", inplace=True)
     candles.sort_index(inplace=True)
 
-    return candles
+    return candles  # .dropna()
 
 
 async def get_candles_chunk(

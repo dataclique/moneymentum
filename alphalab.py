@@ -27,14 +27,71 @@ returns_df["market"] = returns_df.mul(volume_ratio_df).sum(axis=1)
 cum_returns_df = returns_df.cumsum()
 
 market_df["return"] = returns_df.mul(volume_ratio_df).sum(axis=1)
+market_df["volatility"] = returns_df.std(axis=1)
+market_df = market_df.dropna()
+market_df["risk_adj_return"] = market_df["return"] / market_df["volatility"]
 market_df["cum_return"] = market_df["return"].cumsum()
+market_df["cum_risk_adj_return"] = market_df["risk_adj_return"].cumsum()
 
-rel_returns_df = returns_df.sub(market_df["return"], axis=0)
+print(market_df)
+
+cov_matrix = returns_df.cov()
+cov_with_market = cov_matrix.loc[:, "market"].drop("market")
+market_variance = market_df["return"].var()
+
+beta_df = cov_with_market / market_variance
+beta_adjusted_returns_df = returns_df.div(beta_df, axis=1)
+rel_returns_df = beta_adjusted_returns_df.cumsum()
+
+final_cum_returns = rel_returns_df.iloc[
+    -1
+]  # Get the final cumulative return for each asset
+sorted_assets = final_cum_returns.sort_values()
+
+n_assets = len(sorted_assets)
+top_10_percent = sorted_assets.iloc[-(n_assets // 10) :]  # Top 10%
+bottom_10_percent = sorted_assets.iloc[: n_assets // 10]  # Bottom 10%
+
+selected_assets = top_10_percent.index.union(bottom_10_percent.index)
+
 
 width = 6
 app.layout = dbc.Container(
     [
         dbc.Row([html.H1(children="dYdX", style={"textAlign": "center"})]),
+        html.Hr(),
+        dbc.Row(
+            [
+                dbc.Col(
+                    [
+                        dcc.Graph(
+                            figure=px.area(market_df, y="cum_return"),
+                        ),
+                    ],
+                    width=width,
+                ),
+                dbc.Col(
+                    [
+                        dcc.Graph(figure=px.area(market_df.dropna(), y="volatility")),
+                    ],
+                    width=width,
+                ),
+                dbc.Col(
+                    [
+                        dcc.Graph(
+                            figure=px.area(market_df, y="cum_risk_adj_return"),
+                        ),
+                    ],
+                    width=width,
+                ),
+                dbc.Col(
+                    [
+                        dcc.Graph(figure=px.area(market_df, y="volume")),
+                    ],
+                    width=width,
+                ),
+            ]
+        ),
         html.Hr(),
         dcc.Graph(
             figure={
@@ -45,7 +102,7 @@ app.layout = dbc.Container(
                         mode="lines",
                         name=col,
                     )
-                    for col in rel_returns_df.columns
+                    for col in selected_assets  # rel_returns_df.columns
                 ],
                 "layout": go.Layout(
                     title="Cumulative Returns Over Time",
@@ -75,48 +132,6 @@ app.layout = dbc.Container(
                 ),
             }
         ),
-        dbc.Row(
-            [
-                dbc.Col(
-                    [
-                        dcc.Graph(
-                            figure=px.area(market_df, y="cum_return"),
-                        ),
-                    ],
-                    width=width,
-                ),
-                dbc.Col(
-                    [
-                        dcc.Graph(figure=px.area(market_df, y="volume")),
-                    ],
-                    width=width,
-                ),
-            ]
-        ),
-        # dbc.Row(
-        #     [
-        #         dbc.Col(
-        #             [
-        # dash_table.DataTable(
-        #     data=cum_returns_df.to_dict("records"),
-        #     page_size=10,
-        #     style_table={"overflowX": "auto"},
-        # ),
-        #             ],
-        #             width=width,
-        #         ),
-        #         dbc.Col(
-        #             [
-        #                 dash_table.DataTable(
-        #                     data=volume_df.to_dict("records"),
-        #                     page_size=10,
-        #                     style_table={"overflowX": "auto"},
-        #                 ),
-        #             ],
-        #             width=width,
-        #         ),
-        #     ]
-        # ),
     ],
     fluid=True,
 )

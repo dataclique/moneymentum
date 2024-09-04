@@ -1,6 +1,8 @@
+bt
 dash
 dash-bootstrap-components
 dydx-v4-client
+ffn
 matplotlib
 numpy
 pandas

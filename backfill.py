@@ -8,7 +8,7 @@ from perpy.dydx import (
 
 
 tickers = run(get_all_markets())
-start = datetime(2024, 8, 25)
+start = datetime(2024, 8, 19)
 df = run(get_candles(tickers, start=start))
 
 # tickers = df["ticker"].unique()

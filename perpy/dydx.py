@@ -4,6 +4,7 @@ from dydx_v4_client.indexer.rest.indexer_client import IndexerClient
 from dydx_v4_client.network import make_mainnet
 from tqdm.asyncio import tqdm_asyncio
 import pandas as pd
+import numpy as np
 
 NODE_URL = "https://dydx-rpc.publicnode.com:443"
 INDEXER_REST_URL = "https://indexer.dydx.trade"
@@ -33,24 +34,14 @@ async def get_all_markets() -> list:
     df = df[df["status"] == "ACTIVE"]
     df = df[df["marketType"] == "CROSS"]
     df["volume24H"] = df["volume24H"].astype(float)
-    df = df[df["volume24H"] > 10000]
-    df = df[df["trades24H"] > 10]
+    # df = df[df["volume24H"] > 10000]
+    # df = df[df["trades24H"] > 10]
 
     return df["ticker"].tolist()
 
 
-async def get_candles_for_tickers(tickers: list, **kwargs) -> pd.DataFrame:
-    tasks = [
-        get_perpetual_market_candles(**kwargs, market=ticker) for ticker in tickers
-    ]
-    responses = await tqdm_asyncio.gather(*tasks, position=0)
-    return prep_candles(pd.concat([pd.DataFrame(res["candles"]) for res in responses]))
-
-
-def prep_candles(candles: pd.DataFrame) -> pd.DataFrame:
-    candles.rename(
-        columns={"startedAt": "timestamp", "usdVolume": "volume_usd"}, inplace=True
-    )
+def prep_candles(df: pd.DataFrame) -> pd.DataFrame:
+    candles = df.rename(columns={"startedAt": "timestamp", "usdVolume": "volume_usd"})
 
     candles["timestamp"] = pd.to_datetime(candles["timestamp"])
     candles["open"] = candles["open"].astype(float)
@@ -58,18 +49,17 @@ def prep_candles(candles: pd.DataFrame) -> pd.DataFrame:
     candles["low"] = candles["low"].astype(float)
     candles["close"] = candles["close"].astype(float)
     candles["volume_usd"] = candles["volume_usd"].astype(float)
-    candles["return"] = candles.groupby("ticker")["close"].pct_change()
 
+    candles.drop_duplicates(subset=["timestamp", "ticker"], keep="first", inplace=True)
     candles.set_index("timestamp", inplace=True)
     candles.sort_index(inplace=True)
 
     return candles  # .dropna()
 
 
-async def get_candles_chunk(
-    ticker: str, start: datetime, end: datetime, attempt: int = 1
-) -> list:
+async def get_candles_chunk(ticker: str, start: datetime, attempt: int = 1) -> list:
     # print(f"Getting candles for {ticker} from {start} to {end}")
+    end = start + timedelta(minutes=1000)
 
     try:
         res = await get_perpetual_market_candles(
@@ -81,45 +71,54 @@ async def get_candles_chunk(
         return res["candles"]
 
     except Exception as e:
-        print(
-            f"Get {ticker} candles from {start} to {end} attempt #{attempt} failed:\n{e}"
-        )
+        if "too many requests" not in str.lower(str(e)) and len(str(e)) != 0:
+            print(
+                f"Get {ticker} candles from {start} to {end} attempt #{attempt} failed:\n{e}"
+            )
 
-        if attempt > 256:
-            return []
+            if attempt > 16:
+                return []
 
-        await sleep(attempt / 10)
-        res = await get_candles_chunk(ticker, start, end, attempt + 1)
-        return res
+            await sleep(10 * np.random.rand())
+            res = await get_candles_chunk(ticker, start, attempt + 1)
+            return res
+
+        else:
+            await sleep(10 * np.random.rand())
+            res = await get_candles_chunk(ticker, start)
+            return res
 
 
-async def get_candles(tickers, start: datetime = datetime(2024, 8, 25)):
+async def get_candles(tickers, start: datetime = datetime(2024, 8, 1)):
     end = datetime.now()
     since = (end - start).total_seconds() / 60
     chunks = int(since / 1000) + 1
     delta = timedelta(minutes=1000)
 
-    df = prep_candles(pd.read_csv("./data/candles.csv"))
+    print("Reading existing candles...")
+    df = pd.read_csv("./data/candles.csv")
+
+    print("Preparing candle fetching tasks...")
+    timestamps = [start + chunk * delta for chunk in range(chunks + 1)]
+    existing_pairs = set(zip(pd.to_datetime(df["timestamp"]), df["ticker"]))
+
     tasks = [
-        get_candles_chunk(ticker, start + chunk * delta, start + (chunk + 1) * delta)
-        for chunk in range(chunks + 1)
+        get_candles_chunk(ticker, start)
         for ticker in tickers
-        if df[
-            (df.index == pd.to_datetime(start + chunk * delta).tz_localize("UTC"))
-            & (df["ticker"] == ticker)
-        ].empty
+        for start in timestamps
+        if (pd.to_datetime(start).tz_localize("UTC"), ticker) not in existing_pairs
     ]
 
+    print("Starting candle fetching...")
     res = await tqdm_asyncio.gather(*tasks, position=0)
     merged = [candle for chunk in res for candle in chunk]
-    if len(merged) == 0:
-        return df
 
-    new_df = prep_candles(pd.DataFrame(merged))
-    candles = pd.concat([df, new_df])
-    candles.sort_index(inplace=True)
+    candles = prep_candles(
+        pd.concat([df, prep_candles(pd.DataFrame(merged)).reset_index()])
+        if len(merged) > 0
+        else df
+    )
     candles.to_csv("./data/candles.csv")
-
     return candles
 
 

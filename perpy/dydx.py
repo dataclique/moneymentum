@@ -43,12 +43,12 @@ async def get_all_markets() -> list:
 def prep_candles(df: pd.DataFrame) -> pd.DataFrame:
     candles = df.rename(columns={"startedAt": "timestamp", "usdVolume": "volume_usd"})
 
-    candles["timestamp"] = pd.to_datetime(candles["timestamp"])
+    candles["timestamp"] = pd.to_datetime(candles["timestamp"], utc=True)
     candles["open"] = candles["open"].astype(float)
     candles["high"] = candles["high"].astype(float)
     candles["low"] = candles["low"].astype(float)
     candles["close"] = candles["close"].astype(float)
-    candles["volume_usd"] = candles["volume_usd"].astype(float)
+    candles["volumeUSD"] = candles["volume_usd"].astype(float)
 
     candles.drop_duplicates(subset=["timestamp", "ticker"], keep="first", inplace=True)
     candles.set_index("timestamp", inplace=True)
@@ -91,34 +91,37 @@ async def get_candles_chunk(ticker: str, start: datetime, attempt: int = 1) -> l
 
 async def get_candles(tickers, start: datetime = datetime(2024, 8, 1)):
     end = datetime.now()
-    since = (end - start).total_seconds() / 60
+    since = (end - start).total_seconds() / 60 / 60
     chunks = int(since / 1000) + 1
-    delta = timedelta(minutes=1000)
+    delta = timedelta(hours=1000)
 
-    print("Reading existing candles...")
-    df = pd.read_csv("./data/candles.csv")
+    # print("Reading existing candles...")
+    # df = pd.read_csv("./data/hourly.csv")
 
     print("Preparing candle fetching tasks...")
     timestamps = [start + chunk * delta for chunk in range(chunks + 1)]
-    existing_pairs = set(zip(pd.to_datetime(df["timestamp"]), df["ticker"]))
+    # existing_pairs = set(zip(pd.to_datetime(df["timestamp"]), df["ticker"]))
 
     tasks = [
         get_candles_chunk(ticker, start)
         for ticker in tickers
         for start in timestamps
-        if (pd.to_datetime(start).tz_localize("UTC"), ticker) not in existing_pairs
+        # if (pd.to_datetime(start).tz_localize("UTC"), ticker) not in existing_pairs
     ]
 
     print("Starting candle fetching...")
     res = await tqdm_asyncio.gather(*tasks, position=0)
     merged = [candle for chunk in res for candle in chunk]
 
-    candles = prep_candles(
-        pd.concat([df, prep_candles(pd.DataFrame(merged)).reset_index()])
-        if len(merged) > 0
-        else df
-    )
-    candles.to_csv("./data/candles.csv")
+    candles = prep_candles(pd.DataFrame(merged))
+    # candles = prep_candles(
+    #     pd.concat([df, prep_candles(pd.DataFrame(merged)).reset_index()])
+    #     if len(merged) > 0
+    #     else df
+    # )
+
+    # Specify ISO 8601 format for timestamp
+    candles.to_csv("./data/hourly.csv", date_format="%Y-%m-%dT%H:%M:%S.%fZ")
     return candles
 
 

@@ -1,0 +1,98 @@
+name:                moneymentum
+version:             0.1.0.0
+github:              "0xgleb/moneymentum"
+license:             BSD-3-Clause
+author:              "Author name here"
+maintainer:          "example@example.com"
+copyright:           "2024 Author name here"
+
+extra-source-files:
+- README.md
+
+# Metadata used when publishing your package
+# synopsis:            Short description of your package
+# category:            Web
+
+# To avoid duplicated efforts in documentation and dealing with the
+# complications of embedding Haddock markup inside cabal files, it is
+# common to point users to the README.md file.
+description:         Please see the README on GitHub at <https://github.com/0xgleb/moneymentum#readme>
+
+dependencies:
+- base >= 4.7 && < 5
+- cassava
+- cassava-conduit
+- conduit
+- protolude
+- scientific
+- time
+
+ghc-options:
+- -Wall
+- -Wcompat
+- -Widentities
+- -Wincomplete-record-updates
+- -Wincomplete-uni-patterns
+- -Wmissing-export-lists
+- -Wmissing-home-modules
+- -Wpartial-fields
+- -Wredundant-constraints
+
+# library:
+#   source-dirs: src
+
+executables:
+  moneymentum-exe:
+    main:                Quant.hs
+    source-dirs:         .
+    ghc-options:
+    - -threaded
+    - -rtsopts
+    - -with-rtsopts=-N
+#     dependencies:
+#     - moneymentum
+
+# tests:
+#   moneymentum-test:
+#     main:                Spec.hs
+#     source-dirs:         test
+#     ghc-options:
+#     - -threaded
+#     - -rtsopts
+#     - -with-rtsopts=-N
+#     dependencies:
+#     - moneymentum
+
+default-extensions:
+  - ApplicativeDo
+  - BlockArguments
+  - ConstraintKinds
+  - DeriveGeneric
+  - DeriveLift
+  - DeriveTraversable # Implies: DeriveFoldable, DeriveFunctor
+  - DerivingVia # Implies: DerivingStrategies
+  - FlexibleContexts
+  - GADTs
+  - GeneralizedNewtypeDeriving
+  - ImportQualifiedPost
+  - InstanceSigs
+  - LambdaCase
+  - MultiParamTypeClasses
+  - NamedFieldPuns
+  - NoImplicitPrelude
+  - NoStarIsType
+  - NumericUnderscores
+  - OverloadedStrings
+  - QuasiQuotes
+  - RankNTypes # Implies: ExplicitForAll
+  - RecordWildCards # Implies: DisambiguateRecordFields
+  - ScopedTypeVariables # Implies: ExplicitForAll
+  - StandaloneDeriving
+  - TupleSections
+  - TypeApplications
+  - TypeFamilyDependencies # Implies: TypeFamilies
+  - DataKinds
+  - KindSignatures
+  - PolyKinds
+  - TypeOperators
+  - ViewPatterns

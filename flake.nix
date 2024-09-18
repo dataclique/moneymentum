@@ -25,13 +25,17 @@
         pkgs = import nixpkgs { inherit system; };
 
         hooks = {
+          # Nix
           nil.enable = true;
-          nixfmt.enable = true;
-          nixfmt.package = pkgs.nixfmt-classic;
-          actionlint.enable = true;
+          nixfmt-classic.enable = true;
+
+          # Python
           black.enable = true;
           ruff.enable = true;
-          # pyright.enable = true;
+
+          # Haskell
+          hlint.enable = true;
+          fourmolu.enable = true;
         };
 
       in rec {
@@ -48,6 +52,11 @@
 
               languages = {
                 # nix.enable = true;
+                haskell = {
+                  enable = true;
+                  stack = pkgs.stack;
+                  languageServer = pkgs.haskell-language-server;
+                };
                 python = {
                   enable = true;
                   venv = {

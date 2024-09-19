@@ -48,7 +48,7 @@
             inherit inputs pkgs;
             modules = [{
               # https://devenv.sh/reference/options/
-              packages = with pkgs; [ git-lfs pyright ];
+              packages = with pkgs; [ git-lfs zlib ];
 
               languages = {
                 # nix.enable = true;

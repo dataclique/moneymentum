@@ -4,12 +4,16 @@
 module Main (main) where
 
 import Conduit
-import Data.Conduit.Zlib (ungzip)
 import Data.Csv
 import Data.Csv.Conduit
 import Data.Scientific (Scientific)
--- import Data.Time.Clock (UTCTime)
+import Data.Text qualified as Text
 -- import Data.Time.Format.ISO8601 (iso8601ParseM)
+
+import Data.Time (UTCTime (UTCTime), defaultTimeLocale, formatTime)
+import Data.Time.Calendar.Month
+import Data.Time.Calendar.OrdinalDate
+import Network.HTTP.Client.Conduit (parseRequest)
 import Network.HTTP.Simple (getResponseBody, httpSource)
 import Protolude
 
@@ -27,16 +31,31 @@ pipeline
      , MonadError CsvParseError m
      )
   => ConduitT i o m ()
-pipeline =
-  httpSource url getResponseBody
+pipeline = do
+  req <- parseRequest $ traceShowId url
+  httpSource req getResponseBody
     -- .| ungzip
     .| fromNamedCsv @PerpTrade defaultDecodeOptions
     .| mapC show
     .| sinkHandle stdout
   where
-    url =
-      "https://drift-historical-data-v2.s3.eu-west-1.amazonaws.com/program/dRiftyHA39MWEi3m9aunc5MzRF1JYuBsbn6VPcn33UH/user/FrEFAwxdrzHxgc7S4cuFfsfLmcg8pfbxnkCQW83euyCS/tradeRecords/2023/20230201"
+    year = 2024
+    date = YearDay year 1
+    marketSymbol = "SOL-PERP"
 
+    baseUrl =
+      "https://drift-historical-data-v2.s3.eu-west-1.amazonaws.com"
+    program = "program/dRiftyHA39MWEi3m9aunc5MzRF1JYuBsbn6VPcn33UH"
+    market = "market/" <> marketSymbol
+    file = formatTime defaultTimeLocale "%Y%m%d" date
+    -- show year <> month <> day
+
+    url =
+      intercalate "/" [baseUrl, program, market, "tradeRecords", show year, file]
+
+
+-- url =
+--   "https://drift-historical-data-v2.s3.eu-west-1.amazonaws.com/program/dRiftyHA39MWEi3m9aunc5MzRF1JYuBsbn6VPcn33UH/user/FrEFAwxdrzHxgc7S4cuFfsfLmcg8pfbxnkCQW83euyCS/tradeRecords/2023/20230201"
 
 data PerpTrade = PerpTrade
   { -- Identifies the type of data being streamed. trades_perp_0 indicates data for trades in perp market 0. (SOL-PERP)

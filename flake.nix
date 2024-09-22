@@ -50,6 +50,10 @@
               # https://devenv.sh/reference/options/
               packages = with pkgs; [ git-lfs zlib ];
 
+              services.redis.enable = true;
+              services.redis.extraConfig =
+                "user 0xgleb on +@all ~* >password123";
+
               languages = {
                 # nix.enable = true;
                 haskell = {

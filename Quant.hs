@@ -7,11 +7,12 @@ import Conduit
 import Data.Csv
 import Data.Csv.Conduit
 import Data.Scientific (Scientific)
-import Data.Text qualified as Text
--- import Data.Time.Format.ISO8601 (iso8601ParseM)
-
-import Data.Time (UTCTime (UTCTime), defaultTimeLocale, formatTime)
-import Data.Time.Calendar.Month
+import Data.Time (
+  UTCTime (UTCTime),
+  defaultTimeLocale,
+  formatTime,
+  getCurrentTime,
+ )
 import Data.Time.Calendar.OrdinalDate
 import Network.HTTP.Client.Conduit (parseRequest)
 import Network.HTTP.Simple (getResponseBody, httpSource)
@@ -19,28 +20,35 @@ import Protolude
 
 
 main :: IO ()
-main = run pipeline
+main = run $ pipeline $ YearDay 2024 1
   where
     run = runResourceT . (either print pure <=< runExceptT . runConduit)
 
 
 pipeline
-  :: ( PrimMonad m
-     , MonadThrow m
+  :: ( MonadThrow m
      , MonadResource m
      , MonadError CsvParseError m
      )
-  => ConduitT i o m ()
-pipeline = do
-  req <- parseRequest $ traceShowId url
+  => Day
+  -> ConduitT i o m ()
+pipeline startDay = do
+  UTCTime endDay _ <- liftIO getCurrentTime
+  forM_ [startDay .. endDay] tradesOnDay
+
+
+tradesOnDay
+  :: (MonadThrow m, MonadResource m, MonadError CsvParseError m)
+  => Day
+  -> ConduitT i o m ()
+tradesOnDay date = do
+  req <- parseRequest url
   httpSource req getResponseBody
-    -- .| ungzip
     .| fromNamedCsv @PerpTrade defaultDecodeOptions
     .| mapC show
     .| sinkHandle stdout
   where
-    year = 2024
-    date = YearDay year 1
+    YearDay year _ = date
     marketSymbol = "SOL-PERP"
 
     baseUrl =

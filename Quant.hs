@@ -4,6 +4,8 @@
 module Main (main) where
 
 import Conduit
+import Data.Aeson
+import Data.ByteString.Lazy qualified as BSL
 import Data.Csv
 import Data.Csv.Conduit
 import Data.Scientific (Scientific)
@@ -16,13 +18,18 @@ import Data.Time (
 import Data.Time.Calendar.OrdinalDate
 import Network.HTTP.Client.Conduit (parseRequest)
 import Network.HTTP.Simple (getResponseBody, httpSource)
-import Protolude
+import Protolude hiding (yield)
+import System.Directory (createDirectoryIfMissing)
 
 
 main :: IO ()
-main = run $ pipeline $ YearDay 2024 1
+main = run pipeline
   where
     run = runResourceT . (either print pure <=< runExceptT . runConduit)
+
+
+startDay :: Day
+startDay = YearDay 2024 9
 
 
 pipeline
@@ -30,40 +37,75 @@ pipeline
      , MonadResource m
      , MonadError CsvParseError m
      )
-  => Day
-  -> ConduitT i o m ()
-pipeline startDay = do
-  UTCTime endDay _ <- liftIO getCurrentTime
-  forM_ [startDay .. endDay] tradesOnDay
+  => ConduitT i o m ()
+pipeline = do
+  let path = "./data/drift-perp-markets.json"
+  markets <- liftIO $ Data.Aeson.decode @[PerpMarket] <$> BSL.readFile path
+
+  case markets of
+    Nothing ->
+      liftIO $ putStrLn @Text "Failed to parse markets:\n"
+    Just markets -> do
+      UTCTime endDay _ <- liftIO getCurrentTime
+      let range = [startDay .. endDay]
+      forM_ markets $ \market -> do
+        yieldMany range .| await >>= \case
+          Nothing -> pure ()
+          Just day -> do
+            liftIO $
+              putStrLn $
+                "Processing "
+                  <> symbol market
+                  <> " day "
+                  <> show (length [startDay .. day])
+                  <> " of "
+                  <> show (length range)
+            tradesOnDay market day
+
+
+data PerpMarket = PerpMarket
+  { fullName :: Text
+  , -- , category :: [Text]
+    symbol :: Text
+  , baseAssetSymbol :: Text
+  , marketIndex :: Integer
+  -- , launchTs :: Integer
+  -- , oracle :: Text
+  -- , oracleSource :: Text
+  -- , pythFeedId :: Maybe Text
+  }
+  deriving stock (Show, Generic)
+  deriving anyclass (FromJSON)
 
 
 tradesOnDay
-  :: (MonadThrow m, MonadResource m, MonadError CsvParseError m)
-  => Day
+  :: ( MonadThrow m
+     , MonadResource m
+     , MonadError CsvParseError m
+     )
+  => PerpMarket
+  -> Day
   -> ConduitT i o m ()
-tradesOnDay date = do
+tradesOnDay (PerpMarket {..}) date = do
+  liftIO $ createDirectoryIfMissing True outDir
+
   req <- parseRequest url
   httpSource req getResponseBody
     .| fromNamedCsv @PerpTrade defaultDecodeOptions
-    .| mapC show
-    .| sinkHandle stdout
+    .| toCsv defaultEncodeOptions
+    .| sinkFile path
   where
     YearDay year _ = date
-    marketSymbol = "SOL-PERP"
+    path = outDir <> "/" <> outFile
+    outDir = "./data/perp-trades/" <> toS baseAssetSymbol
+    outFile = formatTime defaultTimeLocale "%Y-%m-%d" date <> ".csv"
 
-    baseUrl =
-      "https://drift-historical-data-v2.s3.eu-west-1.amazonaws.com"
+    baseUrl = "https://drift-historical-data-v2.s3.eu-west-1.amazonaws.com"
     program = "program/dRiftyHA39MWEi3m9aunc5MzRF1JYuBsbn6VPcn33UH"
-    market = "market/" <> marketSymbol
+    market = "market/" <> toS symbol
     file = formatTime defaultTimeLocale "%Y%m%d" date
-    -- show year <> month <> day
+    url = intercalate "/" [baseUrl, program, market, "tradeRecords", show year, file]
 
-    url =
-      intercalate "/" [baseUrl, program, market, "tradeRecords", show year, file]
-
-
--- url =
---   "https://drift-historical-data-v2.s3.eu-west-1.amazonaws.com/program/dRiftyHA39MWEi3m9aunc5MzRF1JYuBsbn6VPcn33UH/user/FrEFAwxdrzHxgc7S4cuFfsfLmcg8pfbxnkCQW83euyCS/tradeRecords/2023/20230201"
 
 data PerpTrade = PerpTrade
   { -- Identifies the type of data being streamed. trades_perp_0 indicates data for trades in perp market 0. (SOL-PERP)
@@ -118,4 +160,4 @@ data PerpTrade = PerpTrade
     referrerReward :: Scientific
   }
   deriving stock (Show, Generic)
-  deriving anyclass (FromNamedRecord, ToNamedRecord)
+  deriving anyclass (FromNamedRecord, ToRecord)

@@ -52,9 +52,8 @@ tradesOnDay perp@PerpMarket {..} date = do
 
 loadPerpTradesOnDay :: MonadIO m => PerpMarket -> Day -> m (Maybe ByteString)
 loadPerpTradesOnDay (PerpMarket {..}) date@(YearDay year _) = liftIO $ do
-  putStrLn $ "Getting " <> symbol <> " trades on " <> show date
   req <- parseRequest url
-  withRetries 5 req
+  withRetries 10 req
   where
     baseUrl = "https://drift-historical-data-v2.s3.eu-west-1.amazonaws.com"
     program = "program/dRiftyHA39MWEi3m9aunc5MzRF1JYuBsbn6VPcn33UH"
@@ -70,14 +69,19 @@ loadPerpTradesOnDay (PerpMarket {..}) date@(YearDay year _) = liftIO $ do
             "Failed to download\nRequest: " <> show req <> "Response: " <> show res
           pure Nothing
       | otherwise = do
+          putStrLn $ "Fetching " <> symbol <> " trades on " <> show date
           res <- httpBS req
           let status = getResponseStatusCode res
           if status == 404
-            then pure Nothing
+            then do
+              putStrLn @Text $ "No trades found for " <> symbol <> " on " <> show date
+              print res
+              pure Nothing
             else
               if status `div` 100 /= 2
                 then do
                   microseconds <- liftIO $ randomRIO (500000, 3000000)
+                  putStrLn @Text $ "Retrying in " <> show microseconds <> "ms"
                   liftIO $ threadDelay microseconds
                   withRetries (tries - 1) req
                 else pure $ Just $ getResponseBody res

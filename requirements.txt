@@ -3,6 +3,7 @@ dash
 dash-bootstrap-components
 dydx-v4-client
 ffn
+hyperliquid-python-sdk==0.8.0
 matplotlib
 numpy
 pandas
@@ -10,4 +11,5 @@ plotly
 pytest
 pytest-asyncio
 python-lsp-black
+QuantLib
 tqdm

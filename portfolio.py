@@ -1,23 +1,23 @@
 from asyncio import run
+
 import pandas as pd
-from dash import Dash, html, dcc, callback, Output, Input
 import plotly.express as px
 import plotly.graph_objects as go
+from dash import Dash, Input, Output, callback, dcc, html
 
-from perpy.picks import get_bestworst
 from perpy.dydx import get_order_history
-
+from perpy.picks import get_bestworst
 
 # tickers = run(get_all_markets())
 # df = run(get_candles_for_tickers(tickers, resolution="1HOUR"))
 # df.to_csv("./data/candles.csv")
 
-df = pd.read_csv("./data/candles.csv")
-df.set_index("startedAt", inplace=True)
-df.sort_index(inplace=True)
+candles_df = pd.read_csv("./data/candles.csv")
+candles_df = candles_df.set_index("startedAt")
+candles_df = candles_df.sort_index()
 
-tickers = df["ticker"].unique()
-best, worst = get_bestworst(df, tickers, 5)
+tickers = candles_df["ticker"].unique()
+best, worst = get_bestworst(candles_df, tickers, 5)
 
 
 app = Dash()
@@ -39,16 +39,14 @@ app.layout = [
     html.H1(children="dYdX", style={"textAlign": "center"}),
     html.Div(
         [
-            dcc.Dropdown(
-                ["Best&Worst", "Best", "Worst", "All"], "Best&Worst", id="token-group"
-            ),
+            dcc.Dropdown(["Best&Worst", "Best", "Worst", "All"], "Best&Worst", id="token-group"),
             dcc.Graph(id="best-worst-performers"),
             #     ],
             #     style={"display": "inline-block", "width": "49%"},
             # ),
             # html.Div(
             #     [
-            dcc.Dropdown(df["ticker"].unique(), "BTC-USD", id="dropdown-selection"),
+            dcc.Dropdown(candles_df["ticker"].unique(), "BTC-USD", id="dropdown-selection"),
             dcc.Graph(id="ticker"),
         ],
         style={"width": "100%", "display": "inline-block"},
@@ -59,11 +57,11 @@ app.layout = [
 
 
 @callback(Output("best-worst-performers", "figure"), Input("token-group", "value"))
-def update_graph_fig(basket):
+def update_graph_fig(basket: str) -> go.Figure:
     pairs = []
 
     if basket == "All":
-        pairs = df["ticker"].unique()
+        pairs = candles_df["ticker"].unique()
     elif basket == "Best":
         pairs = best
     elif basket == "Worst":
@@ -72,7 +70,7 @@ def update_graph_fig(basket):
         pairs = best + worst
 
     fig = px.line(
-        df[df["ticker"].isin(pairs)],
+        candles_df[candles_df["ticker"].isin(pairs)],
         y="return",
         line_group="ticker",
         color="ticker",
@@ -89,8 +87,8 @@ def update_graph_fig(basket):
 
 
 @callback(Output("ticker", "figure"), Input("dropdown-selection", "value"))
-def update_graph(ticker):
-    dff = df[df["ticker"] == ticker]
+def update_graph(ticker: str) -> go.Figure:
+    dff = candles_df[candles_df["ticker"] == ticker]
     fig = go.Figure(
         go.Candlestick(
             x=dff.index,
@@ -109,5 +107,4 @@ def update_graph(ticker):
 
 
 if __name__ == "__main__":
-    print("Running the dashboard...")
     app.run(debug=True)

@@ -1,21 +1,22 @@
 import pandas as pd
 
 
-def get_bestworst(df, tickers, n=4):
+def get_bestworst(
+    candle_df: pd.DataFrame, tickers: list[str], n: int = 4
+) -> tuple[list[str], list[str]]:
     ticker_returns = {}
-    for i, ticker in enumerate(tickers):
-        candles = df[df["ticker"] == ticker]
-        if candles["usdVolume"].mean() < 100:
+    for _, ticker in enumerate(tickers):
+        candles = candle_df[candle_df["ticker"] == ticker]
+        MIN_VOLUME = 100
+        if candles["usdVolume"].mean() < MIN_VOLUME:
             continue
 
         start_price = candles["close"].iloc[0]
         ticker_returns[ticker] = candles["close"].iloc[-1] / start_price
 
-    returns = pd.DataFrame(
-        ticker_returns.items(), columns=["ticker", "return"], index=None
-    )
-    returns.set_index("ticker", inplace=True)
-    returns.sort_values("return", ascending=False, inplace=True)
+    returns = pd.DataFrame(ticker_returns.items(), columns=["ticker", "return"], index=None)
+    returns = returns.set_index("ticker")
+    returns = returns.sort_values("return", ascending=False)
 
     top = returns.head(n).index.tolist()
     bottom = returns.tail(n).index.tolist()

@@ -1,15 +1,14 @@
 from asyncio import run
-from datetime import datetime
+from datetime import datetime, timezone
 
 from perpy.dydx import (
-    get_candles,
     get_all_markets,
+    get_candles,
 )
 
-
 tickers = run(get_all_markets())
-start = datetime(2024, 8, 19)
-df = run(get_candles(tickers, start=start))
+start = datetime(2024, 8, 19, tzinfo=timezone.utc)
+candles_df = run(get_candles(tickers, start=start))
 
 # tickers = df["ticker"].unique()
 # best, worst = get_bestworst(df, tickers, 5)

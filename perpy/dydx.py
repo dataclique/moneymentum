@@ -1,10 +1,12 @@
+import logging
 from asyncio import run, sleep
 from datetime import datetime, timedelta
+
+import numpy as np
+import pandas as pd
 from dydx_v4_client.indexer.rest.indexer_client import IndexerClient
 from dydx_v4_client.network import make_mainnet
 from tqdm.asyncio import tqdm_asyncio
-import pandas as pd
-import numpy as np
 
 NODE_URL = "https://dydx-rpc.publicnode.com:443"
 INDEXER_REST_URL = "https://indexer.dydx.trade"
@@ -16,8 +18,11 @@ MAINNET = make_mainnet(
     websocket_indexer=INDEXER_WEBSOCKET_URL,
 )
 
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
-async def setup_client():
+
+async def setup_client() -> IndexerClient:
     return IndexerClient(MAINNET.rest_indexer)
 
 
@@ -30,14 +35,12 @@ async def get_all_markets() -> list:
     response = await get_perpetual_markets()
     markets = [response["markets"][ticker] for ticker in response["markets"]]
 
-    df = pd.DataFrame(markets)
-    df = df[df["status"] == "ACTIVE"]
-    df = df[df["marketType"] == "CROSS"]
-    df["volume24H"] = df["volume24H"].astype(float)
-    # df = df[df["volume24H"] > 10000]
-    # df = df[df["trades24H"] > 10]
+    market_df = pd.DataFrame(markets)
+    market_df = market_df[market_df["status"] == "ACTIVE"]
+    market_df = market_df[market_df["marketType"] == "CROSS"]
+    market_df["volume24H"] = market_df["volume24H"].astype(float)
 
-    return df["ticker"].tolist()
+    return market_df["ticker"].tolist()
 
 
 def prep_candles(df: pd.DataFrame) -> pd.DataFrame:
@@ -50,15 +53,14 @@ def prep_candles(df: pd.DataFrame) -> pd.DataFrame:
     candles["close"] = candles["close"].astype(float)
     candles["volumeUSD"] = candles["volume_usd"].astype(float)
 
-    candles.drop_duplicates(subset=["timestamp", "ticker"], keep="first", inplace=True)
-    candles.set_index("timestamp", inplace=True)
-    candles.sort_index(inplace=True)
-
-    return candles  # .dropna()
+    return (
+        candles.drop_duplicates(subset=["timestamp", "ticker"], keep="first")
+        .set_index("timestamp")
+        .sort_index()
+    )
 
 
 async def get_candles_chunk(ticker: str, start: datetime, attempt: int = 1) -> list:
-    # print(f"Getting candles for {ticker} from {start} to {end}")
     end = start + timedelta(minutes=1000)
 
     try:
@@ -70,68 +72,54 @@ async def get_candles_chunk(ticker: str, start: datetime, attempt: int = 1) -> l
         )
         return res["candles"]
 
-    except Exception as e:
+    except (ValueError, KeyError) as e:
         if "too many requests" not in str.lower(str(e)) and len(str(e)) != 0:
-            print(
-                f"Get {ticker} candles from {start} to {end} attempt #{attempt} failed:\n{e}"
+            logger.exception(
+                "Get %(ticker)s candles from %(start)s to %(end)s attempt #%(attempt)s failed",
+                {"ticker": ticker, "start": start, "end": end, "attempt": attempt},
             )
 
-            if attempt > 16:
+            MAX_ATTEMPTS = 16
+            if attempt > MAX_ATTEMPTS:
                 return []
 
-            await sleep(10 * np.random.rand())
-            res = await get_candles_chunk(ticker, start, attempt + 1)
-            return res
+            rng = np.random.default_rng()
+            await sleep(10 * rng.random())
+            return await get_candles_chunk(ticker, start, attempt + 1)
 
-        else:
-            await sleep(10 * np.random.rand())
-            res = await get_candles_chunk(ticker, start)
-            return res
+        rng = np.random.default_rng()
+        await sleep(10 * rng.random())
+        return await get_candles_chunk(ticker, start)
 
 
-async def get_candles(tickers, start: datetime = datetime(2024, 8, 1)):
-    end = datetime.now()
+async def get_candles(
+    tickers: list[str], start: datetime = datetime(2024, 8, 1, tzinfo=datetime.UTC)
+) -> pd.DataFrame:
+    end = datetime.now(tz=datetime.UTC)
     since = (end - start).total_seconds() / 60 / 60
     chunks = int(since / 1000) + 1
     delta = timedelta(hours=1000)
 
-    # print("Reading existing candles...")
-    # df = pd.read_csv("./data/hourly.csv")
-
-    print("Preparing candle fetching tasks...")
+    logger.info("Preparing candle fetching tasks...")
     timestamps = [start + chunk * delta for chunk in range(chunks + 1)]
-    # existing_pairs = set(zip(pd.to_datetime(df["timestamp"]), df["ticker"]))
 
-    tasks = [
-        get_candles_chunk(ticker, start)
-        for ticker in tickers
-        for start in timestamps
-        # if (pd.to_datetime(start).tz_localize("UTC"), ticker) not in existing_pairs
-    ]
+    tasks = [get_candles_chunk(ticker, start) for ticker in tickers for start in timestamps]
 
-    print("Starting candle fetching...")
+    logger.info("Starting candle fetching...")
     res = await tqdm_asyncio.gather(*tasks, position=0)
     merged = [candle for chunk in res for candle in chunk]
 
     candles = prep_candles(pd.DataFrame(merged))
-    # candles = prep_candles(
-    #     pd.concat([df, prep_candles(pd.DataFrame(merged)).reset_index()])
-    #     if len(merged) > 0
-    #     else df
-    # )
-
-    # Specify ISO 8601 format for timestamp
     candles.to_csv("./data/hourly.csv", date_format="%Y-%m-%dT%H:%M:%S.%fZ")
     return candles
 
 
 async def get_order_history(
-    address="dydx1ef7ez77nd9ruxd6yysetcg06atlztdgvnv3h45",
+    address: str = "dydx1ef7ez77nd9ruxd6yysetcg06atlztdgvnv3h45",
 ) -> pd.DataFrame:
     orders = await client.account.get_subaccount_orders(address, 0)
-    df = pd.DataFrame(orders)
-    df["size"] = df["size"].astype(float)
-    df["price"] = df["price"].astype(float)
-    df.set_index("updatedAt", inplace=True)
-    df.sort_index(inplace=True)
-    return df
+    orders_df = pd.DataFrame(orders)
+    orders_df["size"] = orders_df["size"].astype(float)
+    orders_df["price"] = orders_df["price"].astype(float)
+
+    return orders_df.set_index("updatedAt").sort_index()

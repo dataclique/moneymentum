@@ -94,7 +94,7 @@ select = [
     # "N",  # pep8-naming
     # "RUF",  # Ruff-specific rules
 ]
-ignore = ["ANN101", "COM812", "D202", "D203", "D212"]
+ignore = ["ANN101", "COM812", "D202", "D203", "D212", "ISC001", "S101"]
 
 # Allow fix for all enabled rules (when `--fix`) is provided.
 fixable = ["ALL"]

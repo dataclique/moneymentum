@@ -1,4 +1,5 @@
-from datetime import datetime
+from datetime import datetime, timezone
+
 import pandas as pd
 import pytest
 
@@ -6,12 +7,12 @@ from perpy.dydx import get_all_markets, get_candles
 
 
 @pytest.mark.asyncio
-async def test_tickers_and_candles():
+async def test_tickers_and_candles() -> None:
     tickers = await get_all_markets()
     assert len(tickers) > 0
 
-    start = datetime(2024, 8, 25)
-    end = datetime.utcnow().replace(second=0, microsecond=0)
+    start = datetime(2024, 8, 25, tzinfo=timezone.utc)
+    end = datetime.now(tz=timezone.utc).replace(second=0, microsecond=0)
     candles = await get_candles(tickers[:2], start=start)
 
     assert candles is not None

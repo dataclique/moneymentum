@@ -1,9 +1,17 @@
 import matplotlib.pyplot as plt
+import pandas as pd
 
 colors = plt.rcParams["axes.prop_cycle"].by_key()["color"]
 
 
-def plot_tickers(ax, df, tickers, inv_colors_ix=False, title="perp returns"):
+def plot_tickers(
+    ax: plt.Axes,
+    df: pd.DataFrame,
+    tickers: list[str],
+    *,  # Force keyword arguments after this point
+    inv_colors_ix: bool = False,
+    title: str = "perp returns",
+) -> None:
     for i, ticker in enumerate(tickers):
         candles = df[df["ticker"] == ticker]
         label = ticker.split("-")[0]

@@ -1,30 +1,29 @@
-from dash import Dash, html, dcc
+from asyncio import run
+
 import dash_bootstrap_components as dbc
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objs as go
-from asyncio import run
+from dash import Dash, dcc, html
 
 from perpy import dydx
 
 tickers = run(dydx.get_all_markets())
-df = run(dydx.get_candles(tickers))
-# df = dydx.prep_candles(pd.read_csv("./data/candles.csv"))
-# tickers = df["ticker"].unique()
+candles_df = run(dydx.get_candles(tickers))
+# candles_df = dydx.prep_candles(pd.read_csv("./data/candles.csv"))
+# tickers = candles_df["ticker"].unique()
 
-df["return"] = df.groupby("ticker")["close"].pct_change()
-print(df)
-df = df.dropna()
-print(df)
+candles_df["return"] = candles_df.groupby("ticker")["close"].pct_change()
+candles_df = candles_df.dropna()
 
-volume_df = df.pivot(columns="ticker", values="volume_usd")
+volume_df = candles_df.pivot_table(columns="ticker", values="volume_usd", index=candles_df.index)
 
 market_df = pd.DataFrame(index=volume_df.index)
 market_df["volume"] = volume_df.sum(axis=1)
 
 volume_ratio_df = volume_df.div(market_df["volume"], axis=0)
 
-returns_df = df.pivot(columns="ticker", values="return")
+returns_df = candles_df.pivot_table(columns="ticker", values="return", index=candles_df.index)
 returns_df["market"] = returns_df.mul(volume_ratio_df).sum(axis=1)
 
 cum_returns_df = returns_df.cumsum()
@@ -119,5 +118,4 @@ app.layout = dbc.Container(
 
 
 if __name__ == "__main__":
-    print("Running the dashboard...")
     app.run(debug=True)

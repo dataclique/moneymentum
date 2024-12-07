@@ -1,10 +1,12 @@
 from asyncio import run
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+
+import matplotlib.pyplot as plt
+import pandas as pd
+from dydx_v4_client.exceptions import APIError, RequestError
 from dydx_v4_client.indexer.rest.indexer_client import IndexerClient
 from dydx_v4_client.network import make_mainnet
 from tqdm.asyncio import tqdm_asyncio
-import matplotlib.pyplot as plt
-import pandas as pd
 
 NODE_URL = "https://dydx-rpc.publicnode.com:443"
 INDEXER_REST_URL = "https://indexer.dydx.trade"
@@ -16,8 +18,13 @@ MAINNET = make_mainnet(
     websocket_indexer=INDEXER_WEBSOCKET_URL,
 )
 
+# Constants
+VOLUME_THRESHOLD = 10000
+TRADE_THRESHOLD = 10
+MIN_VOLUME = 100
 
-async def setup_client():
+
+async def setup_client() -> IndexerClient:
     return IndexerClient(MAINNET.rest_indexer)
 
 
@@ -30,17 +37,17 @@ async def get_all_markets() -> list:
     response = await get_perpetual_markets()
     markets = [response["markets"][ticker] for ticker in response["markets"]]
 
-    df = pd.DataFrame(markets)
-    df = df[df["status"] == "ACTIVE"]
-    df = df[df["marketType"] == "CROSS"]
-    df["volume24H"] = df["volume24H"].astype(float)
-    df = df[df["volume24H"] > 10000]
-    df = df[df["trades24H"] > 10]
+    market_df = pd.DataFrame(markets)
+    market_df = market_df[market_df["status"] == "ACTIVE"]
+    market_df = market_df[market_df["marketType"] == "CROSS"]
+    market_df["volume24H"] = market_df["volume24H"].astype(float)
+    market_df = market_df[market_df["volume24H"] > VOLUME_THRESHOLD]
+    market_df = market_df[market_df["trades24H"] > TRADE_THRESHOLD]
 
-    return df["ticker"].tolist()
+    return market_df["ticker"].tolist()
 
 
-async def get_candles_chunk(ticker: str, end, chunks) -> pd.DataFrame:
+async def get_candles_chunk(ticker: str, end: datetime, chunks: int) -> pd.DataFrame:
     delta = timedelta(minutes=1000)
     start = end - chunks * delta
     end = start + delta
@@ -53,12 +60,12 @@ async def get_candles_chunk(ticker: str, end, chunks) -> pd.DataFrame:
             to_iso=end.isoformat(),
         )
         return pd.DataFrame(res["candles"])
-    except Exception:
+    except (RequestError, APIError):
         res = await get_candles_chunk(ticker, end, chunks)
-        return res
+        return pd.DataFrame(res["candles"])
 
 
-end = datetime.now()
+end = datetime.now(tz=timezone.utc)
 
 
 async def get_candles(ticker: str) -> pd.DataFrame:
@@ -67,56 +74,43 @@ async def get_candles(ticker: str) -> pd.DataFrame:
     res3 = await get_candles_chunk(ticker, end, 3)
 
     res = [res1, res2, res3]
-    df = pd.concat(res, ignore_index=True)
+    candles = pd.concat(res, ignore_index=True)
 
-    df["startedAt"] = pd.to_datetime(df["startedAt"])
-    df["open"] = df["open"].astype(float)
-    df["high"] = df["high"].astype(float)
-    df["low"] = df["low"].astype(float)
-    df["close"] = df["close"].astype(float)
-    df["usdVolume"] = df["usdVolume"].astype(float)
-    return df
+    candles["startedAt"] = pd.to_datetime(candles["startedAt"])
+    candles["open"] = candles["open"].astype(float)
+    candles["high"] = candles["high"].astype(float)
+    candles["low"] = candles["low"].astype(float)
+    candles["close"] = candles["close"].astype(float)
+    candles["usdVolume"] = candles["usdVolume"].astype(float)
+    return candles
 
 
 tickers = run(get_all_markets())
 
 
-def get_picks():
+def get_picks() -> tuple[list, list]:
     tasks = [get_candles_chunk(ticker, end, 4) for ticker in tickers]
     res = run(tqdm_asyncio.gather(*tasks))
 
-    df = pd.DataFrame()
-    df = pd.concat(res, ignore_index=True)
-
-    df["startedAt"] = pd.to_datetime(df["startedAt"])
-    df["open"] = df["open"].astype(float)
-    df["high"] = df["high"].astype(float)
-    df["low"] = df["low"].astype(float)
-    df["close"] = df["close"].astype(float)
-    df["usdVolume"] = df["usdVolume"].astype(float)
-
-    df.set_index("startedAt", inplace=True)
-    df.sort_index(inplace=True)
+    candles_df = pd.concat(res, ignore_index=True)
+    candles_df = candles_df.set_index("startedAt")
+    candles_df = candles_df.sort_index()
 
     ticker_returns = {}
-    for i, ticker in enumerate(tickers):
-        candles = df[df["ticker"] == ticker]
-        if candles["usdVolume"].mean() < 100:
+    for _, ticker in enumerate(tickers):
+        candles = candles_df[candles_df["ticker"] == ticker]
+        if candles["usdVolume"].mean() < MIN_VOLUME:
             continue
 
         start_price = candles["close"].iloc[0]
-        df.loc[df["ticker"] == ticker, "return"] = candles["close"] / start_price
+        candles_df.loc[candles_df["ticker"] == ticker, "return"] = candles["close"] / start_price
         ticker_returns[ticker] = candles["close"].iloc[-1] / start_price
 
-    returns = pd.DataFrame(
-        ticker_returns.items(), columns=["ticker", "return"], index=None
-    )
-    returns.set_index("ticker", inplace=True)
-    returns.sort_values("return", ascending=False, inplace=True)
-    print(returns)
+    returns = pd.DataFrame(ticker_returns.items(), columns=["ticker", "return"])
+    returns = returns.set_index("ticker")
+    returns = returns.sort_values("return", ascending=False)
 
-    df["inv_return"] = 1 / df["return"]
-    print(df)
+    candles_df["inv_return"] = 1 / candles_df["return"]
 
     n = 4
     top = returns.head(n).index.tolist()
@@ -130,38 +124,39 @@ tickers = run(get_all_markets())
 tasks = [get_candles(ticker) for ticker in tickers]
 res = run(tqdm_asyncio.gather(*tasks))
 
-df = pd.DataFrame()
-df = pd.concat(res, ignore_index=True)
-df.set_index("startedAt", inplace=True)
-df.sort_index(inplace=True)
+market_data = pd.DataFrame()
+market_data = pd.concat(res, ignore_index=True)
+market_data = market_data.set_index("startedAt")
+market_data = market_data.sort_index()
 
-for i, ticker in enumerate(tickers):
-    candles = df[df["ticker"] == ticker]
-    if candles["usdVolume"].mean() < 100:
+for _, ticker in enumerate(tickers):
+    candles = market_data[market_data["ticker"] == ticker]
+    if candles["usdVolume"].mean() < MIN_VOLUME:
         continue
 
     start_price = candles["close"].iloc[0]
-    df.loc[df["ticker"] == ticker, "return"] = candles["close"] / start_price
+    market_data.loc[market_data["ticker"] == ticker, "return"] = candles["close"] / start_price
 
-df["inv_return"] = 1 / df["return"]
-print(df)
+market_data["inv_return"] = 1 / market_data["return"]
 
-market = df.groupby("startedAt")["return"].mean()
-inv_market = df.groupby("startedAt")["inv_return"].mean()
-long_returns = df[df["ticker"].isin(top)].groupby("startedAt")["return"].mean()
-short_returns = df[df["ticker"].isin(bottom)].groupby("startedAt")["inv_return"].mean()
+market = market_data.groupby("startedAt")["return"].mean()
+inv_market = market_data.groupby("startedAt")["inv_return"].mean()
+long_returns = market_data[market_data["ticker"].isin(top)].groupby("startedAt")["return"].mean()
+short_returns = (
+    market_data[market_data["ticker"].isin(bottom)].groupby("startedAt")["inv_return"].mean()
+)
 portfolio = (long_returns + short_returns) / 2
 
 colors = plt.rcParams["axes.prop_cycle"].by_key()["color"]
 fig, ax = plt.subplots(3, figsize=(12, 8))
 
-for i, ticker in enumerate(top):
-    candles = df[df["ticker"] == ticker]
+for _, ticker in enumerate(top):
+    candles = market_data[market_data["ticker"] == ticker]
     label = ticker.split("-")[0]
     ax[0].plot(candles["return"], label=label, color=colors[0])
 
-for i, ticker in enumerate(bottom):
-    candles = df[df["ticker"] == ticker]
+for _, ticker in enumerate(bottom):
+    candles = market_data[market_data["ticker"] == ticker]
     label = ticker.split("-")[0]
     ax[0].plot(candles["return"], label=label, color=colors[1])
 

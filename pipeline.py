@@ -29,7 +29,8 @@ class Pipeline:
         self.days = days
         self.logger = self._setup_logging(log_level)
         self.spark = self._get_spark()
-        self.ohlcv_dir = "data/hyperliquid/ohlcv"
+        self.data_dir = "data"
+        self.ohlcv_dir = f"{self.data_dir}/hyperliquid-ohlcv"
 
     def _setup_logging(self, log_level: int) -> logging.Logger:
         # Console handler provides colored logs to the terminal
@@ -106,10 +107,7 @@ class Pipeline:
         results = await asyncio.gather(*tasks)
         return [candle for candles in results for candle in candles]  # Flatten results
 
-    async def get_candles_df(self, spark: SparkSession | None = None) -> DataFrame:
-        if spark is None:
-            spark = self.get_spark()
-
+    async def get_candles_df(self) -> DataFrame:
         self.logger.debug("Initializing exchange...")
         exchange = ccxt.hyperliquid({"asyncio_loop": asyncio.get_event_loop()})
         self.logger.info("Exchange initialized: %s", exchange)
@@ -131,7 +129,7 @@ class Pipeline:
 
         # Convert to pandas then to spark DataFrame
         pdf = pd.DataFrame(all_candles)
-        ohlcv_df = spark.createDataFrame(
+        ohlcv_df = self.spark.createDataFrame(
             pdf, schema=SchemaOHLCV.add(T.StructField("symbol", T.StringType()))
         )
         self.logger.info("Converted to Spark DataFrame: %s", ohlcv_df.printSchema())
@@ -144,8 +142,8 @@ class Pipeline:
 
         return timestamp_df.orderBy("timestamp").cache()
 
-    def get_cumsum_window(self) -> W.Window:
-        # Define window for cumulative sum
+    def _get_cumsum_window(self) -> W.Window:
+        # Keep as internal helper method since it's used by other transforms
         self.logger.debug("Defining cumulative sum window...")
         return (
             W.Window.partitionBy("symbol")
@@ -153,15 +151,10 @@ class Pipeline:
             .rowsBetween(W.Window.unboundedPreceding, 0)
         )
 
-    def get_returns_df(
-        self, candles_df: DataFrame | None = None, spark: SparkSession | None = None
-    ) -> DataFrame:
-        if candles_df is None:
-            candles_df = self.get_candles_df(spark=spark)
-
+    def with_returns(self, df: DataFrame) -> DataFrame:
         self.logger.debug("Calculating returns...")
         return (
-            candles_df.withColumn(
+            df.withColumn(
                 "return",
                 (
                     F.col("close")
@@ -177,26 +170,19 @@ class Pipeline:
                 ),
             )
             .withColumn(
-                "total_return", F.exp(F.sum("log_return").over(self.get_cumsum_window())) - 1
+                "total_return", F.exp(F.sum("log_return").over(self._get_cumsum_window())) - 1
             )
         )
 
-    def get_volatility_df(
-        self, returns_df: DataFrame | None = None, spark: SparkSession | None = None
-    ) -> DataFrame:
-        if returns_df is None:
-            returns_df = self.get_returns_df(spark)
-
-        periods = 24
+    def with_volatility(self, df: DataFrame, periods: int = 24) -> DataFrame:
         self.logger.debug("Calculating volatility for %s periods", periods)
 
-        # Count the number of non-null returns in the window
         count_window = (
             W.Window.partitionBy("symbol").orderBy("timestamp").rowsBetween(-periods + 1, 0)
         )
 
         return (
-            returns_df.withColumn("count", F.count("log_return").over(count_window))
+            df.withColumn("count", F.count("log_return").over(count_window))
             .withColumn(
                 "volatility",
                 F.when(
@@ -207,32 +193,21 @@ class Pipeline:
             .drop("count")
         )
 
-    def is_btc(self, df: DataFrame) -> DataFrame:
-        return df.filter(F.col("symbol") == F.lit("BTC"))
-
-    def get_beta_df(
-        self,
-        returns_df: DataFrame | None = None,
-        spark: SparkSession | None = None,
-        periods: int | None = None,
-    ) -> DataFrame:
+    def with_beta(self, df: DataFrame, periods: int | None = None) -> DataFrame:
         if periods is None:
             periods = self.days * 24 - 1
-
-        if returns_df is None:
-            returns_df = self.get_returns_df(spark)
 
         self.logger.debug("Calculating beta for %s periods", periods)
 
         # Get BTC returns
         btc_returns = (
-            returns_df.filter(F.col("symbol") == "BTC")
+            df.filter(F.col("symbol") == "BTC")
             .select("timestamp", "log_return")
             .withColumnRenamed("log_return", "btc_return")
         )
 
         # Join BTC returns with all symbols
-        joined_df = returns_df.join(btc_returns, "timestamp", "left")
+        joined_df = df.join(btc_returns, "timestamp", "left")
 
         # Define window for rolling calculations
         rolling_window = (
@@ -240,7 +215,7 @@ class Pipeline:
         )
 
         # Calculate rolling covariance and variance
-        beta_df = (
+        return (
             joined_df.withColumn("count", F.count("log_return").over(rolling_window))
             .withColumn(
                 "covariance",
@@ -255,11 +230,12 @@ class Pipeline:
             )
             .withColumn("beta", F.col("covariance") / F.col("btc_variance"))
             .withColumn(
-                "btc_total_return", F.exp(F.sum("btc_return").over(self.get_cumsum_window()))
+                "btc_total_return", F.exp(F.sum("btc_return").over(self._get_cumsum_window()))
             )
         )
 
-        return beta_df.withColumn(
+    def with_adj_return(self, df: DataFrame) -> DataFrame:
+        return df.withColumn(
             "adj_return",
             F.when(F.col("beta") > 0, F.col("total_return") / F.col("beta")).otherwise(
                 F.col("total_return") * (1 - F.col("beta"))
@@ -267,41 +243,44 @@ class Pipeline:
         )
 
     def save_csv(self, name: str, df: DataFrame) -> None:
-        df.coalesce(1).write.mode("overwrite").option("header", "true").format("csv").save(
-            f"{name}_temp"
-        )
+        # Ensure data directory exists
+        Path(self.data_dir).mkdir(exist_ok=True)
 
-        dir_path = Path(f"{name}_temp")
+        # Save as a single CSV file
+        output_path = f"{self.data_dir}/{name}"
+        df.coalesce(1).write.mode("overwrite").option("header", "true").csv(output_path)
+
+        # Get the CSV file from the directory and move it
+        dir_path = Path(output_path)
         csv_file = next(dir_path.glob("*.csv"))
-        csv_file.rename(f"{name}.csv")
+        target_path = dir_path.parent / f"{name}.csv"
+        csv_file.rename(target_path)
 
-        # Delete all files in beta_temp directory
+        # Clean up the directory
         for file in dir_path.iterdir():
             file.unlink()
-
-        # Now the directory will be empty and can be removed
         dir_path.rmdir()
-        self.logger.info("Saved to %s.csv", name)
+        self.logger.info("Saved to %s", target_path)
 
     def run(self) -> None:
-        spark = self._get_spark()
+        if Path(f"{self.data_dir}/beta.csv").exists():
+            self.logger.info("Beta.csv already exists, skipping...")
 
-        # Get candles data regardless of whether beta.csv exists
-        self.logger.info("Starting pipeline...")
-        candles_df = asyncio.run(self.get_candles_df(spark=spark))
-        self.logger.info("Candles DataFrame: %s", candles_df.show(truncate=False))
+            self.logger.info("Starting pipeline...")
+            candles_df = asyncio.run(self.get_candles_df())
+            self.logger.info("Candles DataFrame: %s", candles_df.show(truncate=False))
 
-        returns_df = self.get_returns_df(candles_df)
-        self.logger.info("Returns DataFrame: %s", returns_df.show(truncate=False))
+            transformed_df = (
+                candles_df.transform(self.with_returns)
+                .transform(self.with_volatility)
+                .transform(self.with_beta)
+                .transform(self.with_adj_return)
+            )
 
-        vol_df = self.get_volatility_df(returns_df)
-        self.logger.info("Volatility DataFrame: %s", vol_df.show(truncate=False))
+            self.logger.info("Beta DataFrame: %s", transformed_df.show(truncate=False))
+            self.save_csv("beta", transformed_df)
 
-        beta_df = self.get_beta_df(vol_df)
-        self.logger.info("Beta DataFrame: %s", beta_df.show(truncate=False))
-        self.save_csv("beta", beta_df)
-
-        beta_df = spark.read.csv("beta.csv", header=True, inferSchema=True)
+        beta_df = self.spark.read.csv("beta.csv", header=True, inferSchema=True)
 
         sample_df = (
             beta_df.filter(F.col("symbol").isNotNull())

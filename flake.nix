@@ -1,19 +1,19 @@
 {
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-24.05";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-24.11";
     flake-utils.url = "github:numtide/flake-utils";
 
-    pre-commit-hooks.url = "github:cachix/git-hooks.nix";
-    pre-commit-hooks.inputs.nixpkgs.follows = "nixpkgs";
+    git-hooks.url = "github:cachix/git-hooks.nix";
+    git-hooks.inputs.nixpkgs.follows = "nixpkgs";
 
     devenv.url = "github:cachix/devenv";
     devenv.inputs = {
       nixpkgs.follows = "nixpkgs";
-      pre-commit-hooks.follows = "pre-commit-hooks";
+      git-hooks.follows = "git-hooks";
     };
   };
 
-  outputs = { nixpkgs, flake-utils, pre-commit-hooks, devenv, ... }@inputs:
+  outputs = { nixpkgs, flake-utils, git-hooks, devenv, ... }@inputs:
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs { inherit system; };
@@ -30,17 +30,17 @@
           denofmt.enable = true;
         };
 
-        deps = with pkgs; [ ];
+        deps = with pkgs; [ cacert clang jdk11 ];
         env = { };
         src = ./.;
 
-      in rec {
+      in {
         devShells.default = devenv.lib.mkShell {
           inherit inputs pkgs;
           modules = [{
             # https://devenv.sh/reference/options/
-            packages = with pkgs; deps ++ [ clang ruff-lsp ];
-            enterShell = "fswatch hyper.py | xargs -n 1 python";
+            packages = with pkgs; deps ++ [ ruff-lsp ];
+            # enterShell = "fswatch hyper.py | xargs -n 1 python";
 
             languages = {
               nix.enable = true;
@@ -49,18 +49,18 @@
                 package = pkgs.python310;
                 venv.enable = true;
                 venv.requirements = builtins.readFile ./requirements.txt;
+                libraries = deps;
               };
             };
 
             inherit env;
-            pre-commit = { inherit hooks; };
+            git-hooks = { inherit hooks; };
             difftastic.enable = true;
             cachix.enable = true;
           }];
         };
 
-        checks.pre-commit =
-          pre-commit-hooks.lib.${system}.run { inherit hooks src; };
+        checks.git-hooks = git-hooks.lib.${system}.run { inherit hooks src; };
       });
 
   nixConfig = {

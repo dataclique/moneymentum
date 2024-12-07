@@ -8,6 +8,7 @@ matplotlib
 numpy
 pandas
 plotly
+pyspark
 pytest
 pytest-asyncio
 python-lsp-black

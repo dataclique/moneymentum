@@ -1,4 +1,7 @@
+aiohttp
 bt
+ccxt
+colorlog
 dash
 dash-bootstrap-components
 dydx-v4-client

@@ -184,11 +184,12 @@ class Pipeline:
         return (
             df.withColumn("count", F.count("log_return").over(count_window))
             .withColumn(
+                "stddev",
+                F.when(F.col("count") >= periods, F.stddev(F.col("log_return")).over(count_window)),
+            )
+            .withColumn(
                 "volatility",
-                F.when(
-                    F.col("count") >= periods,
-                    F.stddev(F.col("log_return")).over(count_window) * F.sqrt(F.lit(periods)),
-                ),
+                F.when(F.col("count") >= periods, F.col("stddev") * F.sqrt(F.lit(periods))),
             )
             .drop("count")
         )
@@ -321,6 +322,8 @@ class Pipeline:
             .select(
                 F.col("timestamp"),
                 F.col("symbol"),
+                F.col("stddev"),
+                F.col("volatility"),
                 F.col("beta"),
                 (F.col("cum_return") * F.lit(100)).alias("cum_return_pct"),
                 (F.col("adj_return") * F.lit(100)).alias("adj_return_pct"),

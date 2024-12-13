@@ -170,7 +170,7 @@ class Pipeline:
                 ),
             )
             .withColumn(
-                "total_return", F.exp(F.sum("log_return").over(self._get_cumsum_window())) - 1
+                "cum_return", F.exp(F.sum("log_return").over(self._get_cumsum_window())) - 1
             )
         )
 
@@ -200,10 +200,8 @@ class Pipeline:
         self.logger.debug("Calculating beta for %s periods", periods)
 
         # Get BTC returns
-        btc_returns = (
-            df.filter(F.col("symbol") == "BTC")
-            .select("timestamp", "log_return")
-            .withColumnRenamed("log_return", "btc_return")
+        btc_returns = df.filter(F.col("symbol") == "BTC").select(
+            F.col("timestamp"), F.col("log_return").alias("btc_return")
         )
 
         # Join BTC returns with all symbols
@@ -230,16 +228,47 @@ class Pipeline:
             )
             .withColumn("beta", F.col("covariance") / F.col("btc_variance"))
             .withColumn(
-                "btc_total_return", F.exp(F.sum("btc_return").over(self._get_cumsum_window()))
+                "btc_cum_return", F.exp(F.sum("btc_return").over(self._get_cumsum_window()))
             )
         )
 
     def with_adj_return(self, df: DataFrame) -> DataFrame:
         return df.withColumn(
             "adj_return",
-            F.when(F.col("beta") > 0, F.col("total_return") / F.col("beta")).otherwise(
-                F.col("total_return") * (1 - F.col("beta"))
+            F.when(F.col("beta") > 0, F.col("cum_return") / F.col("beta")).otherwise(
+                F.col("cum_return") * (1 - F.col("beta"))
             ),
+        )
+
+    def with_information_discreteness(self, df: DataFrame) -> DataFrame:
+        self.logger.debug("Calculating information discreteness...")
+
+        # Calculate sign of overall return
+        window = self._get_cumsum_window()
+
+        return (
+            df.withColumn("return_sign", F.signum(F.col("cum_return")))
+            .withColumn("is_positive_return", F.when(F.col("log_return") > 0, 1).otherwise(0))
+            .withColumn("is_negative_return", F.when(F.col("log_return") < 0, 1).otherwise(0))
+            .withColumn("cum_samples", F.count("log_return").over(window))
+            .withColumn(
+                "pct_positive", F.sum("is_positive_return").over(window) / F.col("cum_samples")
+            )
+            .withColumn(
+                "pct_negative", F.sum("is_negative_return").over(window) / F.col("cum_samples")
+            )
+            .withColumn(
+                "information_discreteness",
+                F.col("return_sign") * (F.col("pct_negative") - F.col("pct_positive")),
+            )
+            .drop(
+                "is_positive_return",
+                "is_negative_return",
+                "cum_samples",
+                "pct_positive",
+                "pct_negative",
+                "return_sign",
+            )
         )
 
     def save_csv(self, name: str, df: DataFrame) -> None:
@@ -263,34 +292,39 @@ class Pipeline:
         self.logger.info("Saved to %s", target_path)
 
     def run(self) -> None:
-        if Path(f"{self.data_dir}/beta.csv").exists():
-            self.logger.info("Beta.csv already exists, skipping...")
+        self.logger.info("Starting pipeline...")
 
-            self.logger.info("Starting pipeline...")
+        candles_file_name = "ohlcv"
+        candles_path = f"{self.data_dir}/{candles_file_name}.csv"
+
+        if not Path(candles_path).exists():
             candles_df = asyncio.run(self.get_candles_df())
             self.logger.info("Candles DataFrame: %s", candles_df.show(truncate=False))
+            self.save_csv(candles_file_name, candles_df)
 
-            transformed_df = (
-                candles_df.transform(self.with_returns)
-                .transform(self.with_volatility)
-                .transform(self.with_beta)
-                .transform(self.with_adj_return)
-            )
+        candles_df = self.spark.read.csv(candles_path, header=True, inferSchema=True)
 
-            self.logger.info("Beta DataFrame: %s", transformed_df.show(truncate=False))
-            self.save_csv("beta", transformed_df)
+        transformed_df = (
+            candles_df.transform(self.with_returns)
+            .transform(self.with_volatility)
+            .transform(self.with_beta)
+            .transform(self.with_adj_return)
+            .transform(self.with_information_discreteness)
+        )
 
-        beta_df = self.spark.read.csv("beta.csv", header=True, inferSchema=True)
+        self.logger.info("Beta DataFrame: %s", transformed_df.show(truncate=False))
+        self.save_csv("beta", transformed_df)
 
         sample_df = (
-            beta_df.filter(F.col("symbol").isNotNull())
+            transformed_df.filter(F.col("symbol").isNotNull())
             .dropna()
             .select(
                 F.col("timestamp"),
                 F.col("symbol"),
                 F.col("beta"),
-                (F.col("total_return") * F.lit(100)).alias("total_return_pct"),
+                (F.col("cum_return") * F.lit(100)).alias("cum_return_pct"),
                 (F.col("adj_return") * F.lit(100)).alias("adj_return_pct"),
+                F.col("information_discreteness"),
             )
             .orderBy("timestamp", "adj_return_pct", "beta")
             .cache()

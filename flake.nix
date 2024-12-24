@@ -31,7 +31,7 @@
         };
 
         deps = with pkgs; [ cacert clang jdk11 ];
-        env = { };
+        env = { JAVA_HOME = pkgs.jdk11; };
         src = ./.;
 
       in {

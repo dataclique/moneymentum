@@ -26,7 +26,7 @@ SchemaOHLCV = T.StructType(
 
 class Pipeline:
     def __init__(self, days: int = 30, log_level: int = logging.DEBUG) -> None:
-        self.days = days
+        self.periods = days * 24
         self.logger = self._setup_logging(log_level)
         self.spark = self._get_spark()
         self.data_dir = "data"
@@ -134,13 +134,13 @@ class Pipeline:
         )
         self.logger.info("Converted to Spark DataFrame: %s", ohlcv_df.printSchema())
 
-        # Adjust timestamp as before
-        timestamp_df = ohlcv_df.withColumn(
-            "timestamp", F.from_unixtime(F.unix_timestamp("timestamp") - 4 * 3600)
-        )
-        self.logger.info("Adjusted timestamp: %s", timestamp_df.printSchema())
+        # # Adjust timestamp as before
+        # timestamp_df = ohlcv_df.withColumn(
+        #     "timestamp", F.from_unixtime(F.unix_timestamp("timestamp") - 4 * 3600)
+        # )
+        # self.logger.info("Adjusted timestamp: %s", timestamp_df.printSchema())
 
-        return timestamp_df.orderBy("timestamp").cache()
+        return ohlcv_df.orderBy("timestamp").cache()
 
     def _get_cumsum_window(self) -> W.Window:
         # Keep as internal helper method since it's used by other transforms
@@ -174,31 +174,37 @@ class Pipeline:
             )
         )
 
-    def with_volatility(self, df: DataFrame, periods: int = 24) -> DataFrame:
-        self.logger.debug("Calculating volatility for %s periods", periods)
+    def with_volatility(self, df: DataFrame) -> DataFrame:
+        # we have self.periods candles, so self.periods - 1 returns
+        return_periods = self.periods - 1
+        self.logger.debug("Calculating volatility for %s periods", return_periods)
 
         count_window = (
-            W.Window.partitionBy("symbol").orderBy("timestamp").rowsBetween(-periods + 1, 0)
+            W.Window.partitionBy("symbol").orderBy("timestamp").rowsBetween(-return_periods + 1, 0)
         )
 
         return (
             df.withColumn("count", F.count("log_return").over(count_window))
             .withColumn(
                 "stddev",
-                F.when(F.col("count") >= periods, F.stddev(F.col("log_return")).over(count_window)),
+                F.when(
+                    F.col("count") >= return_periods,
+                    F.stddev(F.col("log_return")).over(count_window),
+                ),
             )
             .withColumn(
                 "volatility",
-                F.when(F.col("count") >= periods, F.col("stddev") * F.sqrt(F.lit(periods))),
+                F.when(
+                    F.col("count") >= return_periods,
+                    F.col("stddev") * F.sqrt(F.lit(return_periods)),
+                ),
             )
             .drop("count")
         )
 
-    def with_beta(self, df: DataFrame, periods: int | None = None) -> DataFrame:
-        if periods is None:
-            periods = self.days * 24 - 1
-
-        self.logger.debug("Calculating beta for %s periods", periods)
+    def with_beta(self, df: DataFrame) -> DataFrame:
+        return_periods = self.periods - 1
+        self.logger.debug("Calculating beta for %s periods", return_periods)
 
         # Get BTC returns
         btc_returns = df.filter(F.col("symbol") == "BTC").select(
@@ -210,7 +216,7 @@ class Pipeline:
 
         # Define window for rolling calculations
         rolling_window = (
-            W.Window.partitionBy("symbol").orderBy("timestamp").rowsBetween(-periods + 1, 0)
+            W.Window.partitionBy("symbol").orderBy("timestamp").rowsBetween(-return_periods + 1, 0)
         )
 
         # Calculate rolling covariance and variance
@@ -219,13 +225,15 @@ class Pipeline:
             .withColumn(
                 "covariance",
                 F.when(
-                    F.col("count") >= periods,
+                    F.col("count") >= return_periods,
                     F.covar_pop("log_return", "btc_return").over(rolling_window),
                 ),
             )
             .withColumn(
                 "btc_variance",
-                F.when(F.col("count") >= periods, F.var_pop("btc_return").over(rolling_window)),
+                F.when(
+                    F.col("count") >= return_periods, F.var_pop("btc_return").over(rolling_window)
+                ),
             )
             .withColumn("beta", F.col("covariance") / F.col("btc_variance"))
             .withColumn(
@@ -251,12 +259,12 @@ class Pipeline:
             df.withColumn("return_sign", F.signum(F.col("cum_return")))
             .withColumn("is_positive_return", F.when(F.col("log_return") > 0, 1).otherwise(0))
             .withColumn("is_negative_return", F.when(F.col("log_return") < 0, 1).otherwise(0))
-            .withColumn("cum_samples", F.count("log_return").over(window))
+            .withColumn("num_samples", F.count("log_return").over(window))
             .withColumn(
-                "pct_positive", F.sum("is_positive_return").over(window) / F.col("cum_samples")
+                "pct_positive", F.sum("is_positive_return").over(window) / F.col("num_samples")
             )
             .withColumn(
-                "pct_negative", F.sum("is_negative_return").over(window) / F.col("cum_samples")
+                "pct_negative", F.sum("is_negative_return").over(window) / F.col("num_samples")
             )
             .withColumn(
                 "information_discreteness",
@@ -265,7 +273,7 @@ class Pipeline:
             .drop(
                 "is_positive_return",
                 "is_negative_return",
-                "cum_samples",
+                "num_samples",
                 "pct_positive",
                 "pct_negative",
                 "return_sign",
@@ -313,11 +321,13 @@ class Pipeline:
             .transform(self.with_information_discreteness)
         )
 
-        self.logger.info("Beta DataFrame: %s", transformed_df.show(truncate=False))
+        self.logger.info("Beta DataFrame:")
+        transformed_df.show()
         self.save_csv("beta", transformed_df)
 
         sample_df = (
-            transformed_df.filter(F.col("symbol").isNotNull())
+            transformed_df.withColumn("cum_return_pct", F.col("cum_return") * F.lit(100))
+            .withColumn("adj_return_pct", F.col("adj_return") * F.lit(100))
             .dropna()
             .select(
                 F.col("timestamp"),
@@ -325,15 +335,16 @@ class Pipeline:
                 F.col("stddev"),
                 F.col("volatility"),
                 F.col("beta"),
-                (F.col("cum_return") * F.lit(100)).alias("cum_return_pct"),
-                (F.col("adj_return") * F.lit(100)).alias("adj_return_pct"),
+                F.col("cum_return_pct"),
+                F.col("adj_return_pct"),
                 F.col("information_discreteness"),
             )
             .orderBy("timestamp", "adj_return_pct", "beta")
             .cache()
         )
 
-        self.logger.info("Sample DataFrame: %s", sample_df.show(truncate=False))
+        self.logger.info("Sample DataFrame:")
+        sample_df.show(truncate=False)
         self.save_csv("sample", sample_df)
 
 

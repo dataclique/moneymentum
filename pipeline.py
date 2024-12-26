@@ -26,6 +26,7 @@ SchemaOHLCV = T.StructType(
 
 class Pipeline:
     def __init__(self, days: int = 30, log_level: int = logging.DEBUG) -> None:
+        self.days = days
         self.periods = days * 24
         self.logger = self._setup_logging(log_level)
         self.spark = self._get_spark()
@@ -99,13 +100,80 @@ class Pipeline:
             self.logger.exception("Error fetching data for %s", symbol)
         return []
 
-    async def fetch_all_candles(
+    async def fetch_funding_rate_history(
+        self,
+        exchange: ccxt.Exchange,
+        symbol: str,
+        since: int,
+        limit: int = 1000,
+    ) -> list[dict[str, Any]]:
+        """Fetch funding rate history for a single symbol asynchronously."""
+        try:
+            self.logger.debug("Fetching funding rate for %s...", symbol)
+            funding_rates = await exchange.fetch_funding_rate_history(
+                symbol, since=since, limit=limit
+            )
+            self.logger.info("Fetched %s funding rates for %s", len(funding_rates), symbol)
+
+            return [
+                {
+                    "timestamp": datetime.fromtimestamp(rate["timestamp"] / 1000, tz=timezone.utc),
+                    "funding_rate": rate["fundingRate"],
+                    "symbol": symbol.replace("/", "_").replace(":", "_").replace("_USDC", ""),
+                }
+                for rate in funding_rates
+            ]
+        except (ccxt.NetworkError, ccxt.ExchangeError):
+            self.logger.exception("Error fetching funding rate for %s", symbol)
+        return []
+
+    from datetime import datetime
+
+    async def fetch_all_data(
         self, exchange: ccxt.Exchange, symbols: list[str], timeframe: str, since: int
     ) -> list[dict[str, Any]]:
-        """Fetch OHLCV data for all symbols concurrently."""
-        tasks = [self.fetch_ohlcv(exchange, symbol, timeframe, since) for symbol in symbols]
-        results = await asyncio.gather(*tasks)
-        return [candle for candles in results for candle in candles]  # Flatten results
+        """Fetch OHLCV and funding rate data for all symbols concurrently."""
+        ohlcv_tasks = [self.fetch_ohlcv(exchange, symbol, timeframe, since) for symbol in symbols]
+        funding_rate_tasks = [
+            self.fetch_funding_rate_history(exchange, symbol, since) for symbol in symbols
+        ]
+
+        ohlcv_results = await asyncio.gather(*ohlcv_tasks)
+        funding_rate_results = await asyncio.gather(*funding_rate_tasks)
+
+        ohlcv_data = [candle for candles in ohlcv_results for candle in candles]
+        funding_rate_data = [rate for rates in funding_rate_results for rate in rates]
+
+        # neeed this, cause for ohlcv and funding_rate
+        # we have different timestamps with different types:
+        # ohlcv format:        2024-11-26T15:00:00+00:00
+        # funding_rate format: 2024-11-26T15:00:00.097000+00:00
+        def normalize_timestamp(timestamp: str | datetime) -> datetime:
+            if isinstance(timestamp, datetime):
+                # If it's already a datetime object, normalize it and return
+                return timestamp.replace(microsecond=0)
+            if isinstance(timestamp, str):
+                # If it's a string, parse it and return as a datetime object
+                return datetime.fromisoformat(timestamp.replace("Z", "+00:00")).replace(
+                    microsecond=0
+                )
+            error_message = f"Unsupported timestamp type: {type(timestamp)}"
+            raise TypeError(error_message)
+
+        for rate in funding_rate_data:
+            rate["timestamp"] = normalize_timestamp(rate["timestamp"])
+        for candle in ohlcv_data:
+            candle["timestamp"] = normalize_timestamp(candle["timestamp"])
+
+        funding_rate_map = {
+            (rate["symbol"], rate["timestamp"]): rate["funding_rate"] for rate in funding_rate_data
+        }
+        for candle in ohlcv_data:
+            candle["funding_rate"] = funding_rate_map.get(
+                (candle["symbol"], candle["timestamp"]), None
+            )
+
+        return ohlcv_data
 
     async def get_candles_df(self) -> DataFrame:
         self.logger.debug("Initializing exchange...")
@@ -123,22 +191,24 @@ class Pipeline:
         perp_symbols = [s for s in symbols if "PERP" in s or markets[s].get("type") == "swap"]
         self.logger.info("Found %s perpetual symbols", len(perp_symbols))
 
-        # Fetch all candles concurrently
-        all_candles = await self.fetch_all_candles(exchange, perp_symbols, timeframe, since)
-        self.logger.info("Fetched %s candles", len(all_candles))
+        # Fetch all data concurrently
+        all_data = await self.fetch_all_data(exchange, perp_symbols, timeframe, since)
 
-        # Convert to pandas then to spark DataFrame
-        pdf = pd.DataFrame(all_candles)
+        self.logger.info("Fetched %s records", len(all_data))
+
+        # Convert to pandas then to Spark DataFrame
+        pdf = pd.DataFrame(all_data)
+
+        # Create Spark DataFrame
         ohlcv_df = self.spark.createDataFrame(
-            pdf, schema=SchemaOHLCV.add(T.StructField("symbol", T.StringType()))
+            pdf,
+            schema=SchemaOHLCV.add(T.StructField("symbol", T.StringType())).add(
+                T.StructField("funding_rate", T.DoubleType())
+            ),
         )
-        self.logger.info("Converted to Spark DataFrame: %s", ohlcv_df.printSchema())
 
-        # # Adjust timestamp as before
-        # timestamp_df = ohlcv_df.withColumn(
-        #     "timestamp", F.from_unixtime(F.unix_timestamp("timestamp") - 4 * 3600)
-        # )
-        # self.logger.info("Adjusted timestamp: %s", timestamp_df.printSchema())
+        # ohlcv_df = self.spark.createDataFrame(pdf, schema=SchemaOHLCV)
+        self.logger.info("Converted to Spark DataFrame: %s", ohlcv_df.printSchema())
 
         return ohlcv_df.orderBy("timestamp").cache()
 
@@ -322,7 +392,7 @@ class Pipeline:
         )
 
         self.logger.info("Beta DataFrame:")
-        transformed_df.show()
+        transformed_df.show(truncate=False)
         self.save_csv("beta", transformed_df)
 
         sample_df = (
@@ -338,6 +408,7 @@ class Pipeline:
                 F.col("cum_return_pct"),
                 F.col("adj_return_pct"),
                 F.col("information_discreteness"),
+                F.col("funding_rate"),
             )
             .orderBy("timestamp", "adj_return_pct", "beta")
             .cache()

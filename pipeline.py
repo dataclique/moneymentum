@@ -105,29 +105,51 @@ class Pipeline:
         exchange: ccxt.Exchange,
         symbol: str,
         since: int,
-        limit: int = 1000,
     ) -> list[dict[str, Any]]:
-        """Fetch funding rate history for a single symbol asynchronously."""
-        try:
-            self.logger.debug("Fetching funding rate for %s...", symbol)
-            funding_rates = await exchange.fetch_funding_rate_history(
-                symbol, since=since, limit=limit
-            )
-            self.logger.info("Fetched %s funding rates for %s", len(funding_rates), symbol)
+        """Fetch funding rate history for a single symbol asynchronously, handling pagination."""
+        all_funding_rates = []
+        current_since = since
 
-            return [
-                {
-                    "timestamp": datetime.fromtimestamp(rate["timestamp"] / 1000, tz=timezone.utc),
-                    "funding_rate": rate["fundingRate"],
-                    "symbol": symbol.replace("/", "_").replace(":", "_").replace("_USDC", ""),
-                }
-                for rate in funding_rates
-            ]
+        try:
+            while True:
+                self.logger.debug("Fetching funding rate for %s since %s...", symbol, current_since)
+                funding_rates = await exchange.fetch_funding_rate_history(
+                    symbol, since=current_since
+                )
+
+                if not funding_rates:
+                    self.logger.info("No more funding rates found for %s.", symbol)
+                    break
+
+                self.logger.info("Fetched %s funding rates for %s", len(funding_rates), symbol)
+
+                # Add the current batch of funding rates to the list
+                all_funding_rates.extend(
+                    {
+                        "timestamp": datetime.fromtimestamp(
+                            rate["timestamp"] / 1000, tz=timezone.utc
+                        ),
+                        "funding_rate": rate["fundingRate"],
+                        "symbol": symbol.replace("/", "_").replace(":", "_").replace("_USDC", ""),
+                    }
+                    for rate in funding_rates
+                )
+
+                # Update `current_since` for the next batch (timestamp of the last record + 1 ms)
+                current_since = funding_rates[-1]["timestamp"] + 1
+
+                # If fewer records than the API's max limit are returned,
+                # we've fetched all available data
+                # Maximum we can get for 1 call is 500 (I got this number experimatally)
+                max_records_of_funding_rates_for_one_call = 500
+
+                if len(funding_rates) < max_records_of_funding_rates_for_one_call:
+                    break
+
         except (ccxt.NetworkError, ccxt.ExchangeError):
             self.logger.exception("Error fetching funding rate for %s", symbol)
-        return []
 
-    from datetime import datetime
+        return all_funding_rates
 
     async def fetch_all_data(
         self, exchange: ccxt.Exchange, symbols: list[str], timeframe: str, since: int
@@ -192,7 +214,7 @@ class Pipeline:
         self.logger.info("Found %s perpetual symbols", len(perp_symbols))
 
         # Fetch all data concurrently
-        all_data = await self.fetch_all_data(exchange, perp_symbols, timeframe, since)
+        all_data = await self.fetch_all_data(exchange, perp_symbols[:2], timeframe, since)
 
         self.logger.info("Fetched %s records", len(all_data))
 

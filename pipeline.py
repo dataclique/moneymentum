@@ -214,7 +214,7 @@ class Pipeline:
         self.logger.info("Found %s perpetual symbols", len(perp_symbols))
 
         # Fetch all data concurrently
-        all_data = await self.fetch_all_data(exchange, perp_symbols[:2], timeframe, since)
+        all_data = await self.fetch_all_data(exchange, perp_symbols, timeframe, since)
 
         self.logger.info("Fetched %s records", len(all_data))
 

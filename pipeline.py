@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 import colorlog
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from ccxt import async_support as ccxt
@@ -12,6 +13,39 @@ from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql import types as T
 from pyspark.sql import window as W
+from statsmodels.tsa.stattools import adfuller, coint
+
+
+def plot_returns(Xs: list[pd.Series]) -> None:
+    for X in Xs:
+        X_return = X.pct_change()[1:]
+        plt.hist(X_return, bins=20, label=X.name)
+
+    plt.xlabel("Return")
+    plt.ylabel("Frequency")
+    plt.legend()
+    plt.show()
+
+
+def plot_price(X: pd.Series, ticker: str) -> None:
+    SMA7D = X.rolling(window=7).mean()
+    SMA30D = X.rolling(window=30).mean()
+    SMA90D = X.rolling(window=90).mean()
+
+    plt.plot(X.index, X.values)
+    plt.plot(SMA7D.index, SMA7D.values)
+    plt.plot(SMA30D.index, SMA30D.values)
+    plt.plot(SMA90D.index, SMA90D.values)
+
+    plt.ylabel("Price")
+    plt.legend([ticker, "7D SMA", "30D SMA", "90D SMA"])
+
+
+def get_ticker_price_pdf(ticker: str, candles_df: DataFrame) -> pd.Series:
+    prices = candles_df.filter(F.col("symbol") == ticker).toPandas().set_index("timestamp")["close"]
+    prices.name = ticker
+    return prices
+
 
 SchemaOHLCV = T.StructType(
     [
@@ -39,6 +73,8 @@ class Pipeline:
         self.data_dir = "data"
         self.ohlcv_dir = f"{self.data_dir}/hyperliquid-ohlcv"
 
+        self.lookback_periods = lookback_periods
+        self.forward_periods = forward_periods
         self.symbol_window = W.Window.partitionBy("symbol").orderBy("timestamp")
         self.rolling_window = self.symbol_window.rowsBetween(-lookback_periods + 1, 0)
         self.forward_window = self.symbol_window.rowsBetween(0, forward_periods)
@@ -77,7 +113,15 @@ class Pipeline:
 
     def _get_spark(self) -> SparkSession:
         self.logger.debug("Creating Spark session...")
-        spark = SparkSession.builder.appName("pipeline").getOrCreate()
+        spark = (
+            SparkSession.builder.appName("pipeline")
+            .config("spark.sql.adaptive.enabled", "true")
+            .config("spark.sql.adaptive.coalescePartitions.enabled", "true")
+            .config("spark.sql.shuffle.partitions", "200")
+            .config("spark.default.parallelism", "200")
+            .config("spark.sql.broadcastTimeout", "600")
+            .getOrCreate()
+        )
         spark.sparkContext.setLogLevel("ERROR")
         self.logger.debug("Spark session created.")
         return spark
@@ -168,10 +212,31 @@ class Pipeline:
         candles_path = f"{self.data_dir}/{candles_file_name}.csv"
         return self.spark.read.schema(SchemaOHLCV).csv(candles_path).cache()
 
+    def test_stationarity(self, timeseries: pd.Series, cutoff: float = 0.01) -> bool:
+        pvalue = adfuller(timeseries)[1]
+        if pvalue < cutoff:
+            self.logger.info("%s is likely stationary", timeseries.name)
+            return True
+
+        self.logger.error("%s is likely not stationary", timeseries.name)
+        return False
+
+    def test_cointegration(self, X: pd.Series, Y: pd.Series, cutoff: float = 0.01) -> bool:
+        res = coint(X, Y)
+        _, pvalue, _ = res
+        if pvalue < cutoff:
+            self.logger.info("%s and %s are likely cointegrated", X.name, Y.name)
+            self.logger.debug("result: %s", res)
+            return True
+
+        self.logger.error("%s and %s are likely not cointegrated", X.name, Y.name)
+        return False
+
     def with_returns(self, df: DataFrame) -> DataFrame:
         self.logger.debug("Calculating returns...")
         return (
-            df.withColumn(
+            df.withColumn("count", F.count("close").over(self.symbol_window))
+            .withColumn(
                 "return",
                 (F.col("close") - F.lag("close").over(self.symbol_window))
                 / F.lag("close").over(self.symbol_window),
@@ -180,7 +245,67 @@ class Pipeline:
                 "log_return",
                 F.log(F.col("close") / F.lag("close").over(self.symbol_window)),
             )
-            .withColumn("cum_return", F.exp(F.sum("log_return").over(self.cumsum_window)) - 1)
+            .withColumn(
+                "cum_return",
+                F.when(
+                    F.col("count") >= self.lookback_periods,
+                    F.exp(F.sum("log_return").over(self.rolling_window)) - 1,
+                ),
+            )
+        )
+
+    def with_bollinger(self, df: DataFrame) -> DataFrame:
+        self.logger.debug("Calculating bollinger bands...")
+        df.show()
+
+        return (
+            df.withColumn(
+                "sma",
+                F.when(
+                    F.col("count") > self.lookback_periods, F.avg("close").over(self.rolling_window)
+                ),
+            )
+            .withColumn("price_stddev", F.stddev("close").over(self.rolling_window))
+            .withColumn("return_stddev", F.stddev("log_return").over(self.rolling_window))
+            .withColumn("bollinger_upper", F.col("sma") + (F.col("price_stddev") * 2))
+            .withColumn("bollinger_lower", F.col("sma") - (F.col("price_stddev") * 2))
+            .withColumn(
+                "max",
+                F.when(
+                    F.col("count") >= self.lookback_periods,
+                    F.max("high").over(self.rolling_window),
+                ),
+            )
+            .withColumn(
+                "min",
+                F.when(
+                    F.col("count") >= self.lookback_periods,
+                    F.min("low").over(self.rolling_window),
+                ),
+            )
+        )
+
+    def with_zscore(self, df: DataFrame) -> DataFrame:
+        return (
+            df.withColumn("price_zscore", (F.col("close") - F.col("sma")) / F.col("price_stddev"))
+            .withColumn("z_max", F.max(F.abs("price_zscore")).over(self.rolling_window))
+            .withColumn("z_to_max", F.col("price_zscore") / F.col("z_max"))
+        )
+
+    def with_auto_regression(self, df: DataFrame) -> DataFrame:
+        return df.withColumn(
+            "auto_regression",
+            F.corr(F.col("log_return"), F.lag("log_return", 1).over(self.symbol_window)).over(
+                self.rolling_window
+            ),
+        )
+
+    def with_forward_return(self, df: DataFrame) -> DataFrame:
+        return df.withColumn(
+            "forward_return", F.exp(F.sum("log_return").over(self.forward_window)) - 1
+        ).withColumn(
+            "price_zscore_fw_return_corr",
+            F.corr(F.col("price_zscore"), F.col("forward_return")).over(self.rolling_window),
         )
 
     def with_volatility(self, df: DataFrame) -> DataFrame:

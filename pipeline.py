@@ -1,10 +1,11 @@
 import asyncio
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import colorlog
+import numpy as np
 import pandas as pd
 from ccxt import async_support as ccxt
 from pyspark.sql import DataFrame, SparkSession
@@ -20,24 +21,35 @@ SchemaOHLCV = T.StructType(
         T.StructField("low", T.DoubleType()),
         T.StructField("close", T.DoubleType()),
         T.StructField("volume", T.DoubleType()),
+        T.StructField("symbol", T.StringType()),
+        T.StructField("ticker", T.StringType()),
     ]
 )
 
 
 class Pipeline:
-    def __init__(self, days: int = 30, log_level: int = logging.DEBUG) -> None:
-        self.periods = days * 24
+    def __init__(
+        self,
+        lookback_periods: int = 30 * 24,
+        forward_periods: int = 7 * 24,
+        log_level: int = logging.DEBUG,
+    ) -> None:
         self.logger = self._setup_logging(log_level)
         self.spark = self._get_spark()
         self.data_dir = "data"
         self.ohlcv_dir = f"{self.data_dir}/hyperliquid-ohlcv"
+
+        self.symbol_window = W.Window.partitionBy("symbol").orderBy("timestamp")
+        self.rolling_window = self.symbol_window.rowsBetween(-lookback_periods + 1, 0)
+        self.forward_window = self.symbol_window.rowsBetween(0, forward_periods)
+        self.cumsum_window = self.symbol_window.rowsBetween(W.Window.unboundedPreceding, 0)
 
     def _setup_logging(self, log_level: int) -> logging.Logger:
         # Console handler provides colored logs to the terminal
         console_handler = logging.StreamHandler()
         console_handler.setFormatter(
             colorlog.ColoredFormatter(
-                fmt="%(log_color)s%(levelname)s:%(name)s: %(reset)s%(message)s\n",
+                fmt="%(log_color)s%(levelname)s:%(name)s: %(reset)s%(message)s",
                 log_colors={
                     "DEBUG": "blue",
                     "INFO": "green",
@@ -78,10 +90,26 @@ class Pipeline:
         since: int,
     ) -> list[dict[str, Any]]:
         """Fetch OHLCV data for a single symbol asynchronously."""
+
+        # https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/info-endpoint#candle-snapshot
+        HL_OHLCV_LIMIT = 5000
+        rng = np.random.default_rng()
+        random_delay = rng.uniform(0.01, 300)
+        await asyncio.sleep(random_delay)
+
         try:
-            self.logger.debug("Fetching data for %s...", symbol)
-            ohlcv = await exchange.fetch_ohlcv(symbol, timeframe, since=since)
-            self.logger.info("Fetched %s candles for %s", len(ohlcv), symbol)
+            self.logger.debug(
+                "Fetching %s candles after sleeping %s seconds...", symbol, random_delay
+            )
+            ohlcv = await exchange.fetch_ohlcv(
+                symbol,
+                timeframe,
+                since=since,
+                limit=HL_OHLCV_LIMIT,
+            )
+            self.logger.info("Fetched %s %s candles", len(ohlcv), symbol)
+
+            ticker = symbol.replace("/", "_").replace(":", "_").replace("_USDC", "")
 
             return [
                 {
@@ -91,7 +119,8 @@ class Pipeline:
                     "low": candle[3],
                     "close": candle[4],
                     "volume": candle[5],
-                    "symbol": symbol.replace("/", "_").replace(":", "_").replace("_USDC", ""),
+                    "symbol": symbol,
+                    "ticker": ticker,
                 }
                 for candle in ohlcv
             ]
@@ -107,13 +136,13 @@ class Pipeline:
         results = await asyncio.gather(*tasks)
         return [candle for candles in results for candle in candles]  # Flatten results
 
-    async def get_candles_df(self) -> DataFrame:
+    async def get_candles_df(self, timeframe: str = "1h") -> DataFrame:
         self.logger.debug("Initializing exchange...")
         exchange = ccxt.hyperliquid({"asyncio_loop": asyncio.get_event_loop()})
         self.logger.info("Exchange initialized: %s", exchange)
 
-        timeframe = "1h"
-        start_date = datetime.now(timezone.utc) - timedelta(days=self.days)
+        # Only last 5000 candles available
+        start_date = datetime(2024, 1, 1, tzinfo=timezone.utc).replace(hour=0, minute=0, second=0)
         self.logger.info("Fetching data since: %s", start_date)
         since = int(start_date.timestamp() * 1000)
 
@@ -129,116 +158,69 @@ class Pipeline:
 
         # Convert to pandas then to spark DataFrame
         pdf = pd.DataFrame(all_candles)
-        ohlcv_df = self.spark.createDataFrame(
-            pdf, schema=SchemaOHLCV.add(T.StructField("symbol", T.StringType()))
-        )
+        ohlcv_df = self.spark.createDataFrame(pdf, schema=SchemaOHLCV)
         self.logger.info("Converted to Spark DataFrame: %s", ohlcv_df.printSchema())
 
-        # # Adjust timestamp as before
-        # timestamp_df = ohlcv_df.withColumn(
-        #     "timestamp", F.from_unixtime(F.unix_timestamp("timestamp") - 4 * 3600)
-        # )
-        # self.logger.info("Adjusted timestamp: %s", timestamp_df.printSchema())
+        candles_df = ohlcv_df.orderBy("timestamp")
+        candles_file_name = f"ohlcv{timeframe}"
+        self.save_csv(candles_file_name, candles_df)
 
-        return ohlcv_df.orderBy("timestamp").cache()
-
-    def _get_cumsum_window(self) -> W.Window:
-        # Keep as internal helper method since it's used by other transforms
-        self.logger.debug("Defining cumulative sum window...")
-        return (
-            W.Window.partitionBy("symbol")
-            .orderBy("timestamp")
-            .rowsBetween(W.Window.unboundedPreceding, 0)
-        )
+        candles_path = f"{self.data_dir}/{candles_file_name}.csv"
+        return self.spark.read.schema(SchemaOHLCV).csv(candles_path).cache()
 
     def with_returns(self, df: DataFrame) -> DataFrame:
         self.logger.debug("Calculating returns...")
         return (
             df.withColumn(
                 "return",
-                (
-                    F.col("close")
-                    - F.lag("close").over(W.Window.partitionBy("symbol").orderBy("timestamp"))
-                )
-                / F.lag("close").over(W.Window.partitionBy("symbol").orderBy("timestamp")),
+                (F.col("close") - F.lag("close").over(self.symbol_window))
+                / F.lag("close").over(self.symbol_window),
             )
             .withColumn(
                 "log_return",
-                F.log(
-                    F.col("close")
-                    / F.lag("close").over(W.Window.partitionBy("symbol").orderBy("timestamp"))
-                ),
+                F.log(F.col("close") / F.lag("close").over(self.symbol_window)),
             )
-            .withColumn(
-                "cum_return", F.exp(F.sum("log_return").over(self._get_cumsum_window())) - 1
-            )
+            .withColumn("cum_return", F.exp(F.sum("log_return").over(self.cumsum_window)) - 1)
         )
 
     def with_volatility(self, df: DataFrame) -> DataFrame:
-        # we have self.periods candles, so self.periods - 1 returns
-        return_periods = self.periods - 1
-        self.logger.debug("Calculating volatility for %s periods", return_periods)
-
-        count_window = (
-            W.Window.partitionBy("symbol").orderBy("timestamp").rowsBetween(-return_periods + 1, 0)
-        )
-
         return (
-            df.withColumn("count", F.count("log_return").over(count_window))
+            df.withColumn("count", F.count("log_return").over(self.rolling_window))
             .withColumn(
                 "stddev",
-                F.when(
-                    F.col("count") >= return_periods,
-                    F.stddev(F.col("log_return")).over(count_window),
-                ),
+                F.stddev(F.col("log_return")).over(self.rolling_window),
             )
             .withColumn(
-                "volatility",
-                F.when(
-                    F.col("count") >= return_periods,
-                    F.col("stddev") * F.sqrt(F.lit(return_periods)),
-                ),
+                "annualized_volatility",
+                F.col("stddev") * F.sqrt(F.lit(365 * 24)),
             )
             .drop("count")
         )
 
     def with_beta(self, df: DataFrame) -> DataFrame:
-        return_periods = self.periods - 1
-        self.logger.debug("Calculating beta for %s periods", return_periods)
+        self.logger.debug("Calculating beta...")
 
         # Get BTC returns
-        btc_returns = df.filter(F.col("symbol") == "BTC").select(
+        btc_returns = df.filter(F.col("ticker") == "BTC").select(
             F.col("timestamp"), F.col("log_return").alias("btc_return")
         )
 
         # Join BTC returns with all symbols
         joined_df = df.join(btc_returns, "timestamp", "left")
 
-        # Define window for rolling calculations
-        rolling_window = (
-            W.Window.partitionBy("symbol").orderBy("timestamp").rowsBetween(-return_periods + 1, 0)
-        )
-
         # Calculate rolling covariance and variance
         return (
-            joined_df.withColumn("count", F.count("log_return").over(rolling_window))
+            joined_df.withColumn("count", F.count("log_return").over(self.rolling_window))
             .withColumn(
                 "covariance",
-                F.when(
-                    F.col("count") >= return_periods,
-                    F.covar_pop("log_return", "btc_return").over(rolling_window),
-                ),
+                F.covar_pop("log_return", "btc_return").over(self.rolling_window),
             )
             .withColumn(
                 "btc_variance",
-                F.when(
-                    F.col("count") >= return_periods, F.var_pop("btc_return").over(rolling_window)
-                ),
+                F.var_pop("btc_return").over(self.rolling_window),
             )
             .withColumn("beta", F.col("covariance") / F.col("btc_variance"))
-            .withColumn(
-                "btc_cum_return", F.exp(F.sum("btc_return").over(self._get_cumsum_window()))
-            )
+            .withColumn("btc_cum_return", F.exp(F.sum("btc_return").over(self.cumsum_window)))
         )
 
     def with_adj_return(self, df: DataFrame) -> DataFrame:
@@ -253,18 +235,18 @@ class Pipeline:
         self.logger.debug("Calculating information discreteness...")
 
         # Calculate sign of overall return
-        window = self._get_cumsum_window()
-
         return (
             df.withColumn("return_sign", F.signum(F.col("cum_return")))
             .withColumn("is_positive_return", F.when(F.col("log_return") > 0, 1).otherwise(0))
             .withColumn("is_negative_return", F.when(F.col("log_return") < 0, 1).otherwise(0))
-            .withColumn("num_samples", F.count("log_return").over(window))
+            .withColumn("num_samples", F.count("log_return").over(self.cumsum_window))
             .withColumn(
-                "pct_positive", F.sum("is_positive_return").over(window) / F.col("num_samples")
+                "pct_positive",
+                F.sum("is_positive_return").over(self.cumsum_window) / F.col("num_samples"),
             )
             .withColumn(
-                "pct_negative", F.sum("is_negative_return").over(window) / F.col("num_samples")
+                "pct_negative",
+                F.sum("is_negative_return").over(self.cumsum_window) / F.col("num_samples"),
             )
             .withColumn(
                 "information_discreteness",
@@ -284,9 +266,16 @@ class Pipeline:
         # Ensure data directory exists
         Path(self.data_dir).mkdir(exist_ok=True)
 
-        # Save as a single CSV file
+        # Convert timestamp to UTC before saving
+        df_utc = df.withColumn(
+            "timestamp", F.from_utc_timestamp(F.to_utc_timestamp(F.col("timestamp"), "UTC"), "UTC")
+        )
+
+        # Save as a single CSV file with UTC timestamp format
         output_path = f"{self.data_dir}/{name}"
-        df.coalesce(1).write.mode("overwrite").option("header", "true").csv(output_path)
+        df_utc.coalesce(1).write.mode("overwrite").option("header", "true").option(
+            "timestampFormat", "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'"
+        ).csv(output_path)
 
         # Get the CSV file from the directory and move it
         dir_path = Path(output_path)
@@ -303,15 +292,16 @@ class Pipeline:
     def run(self) -> None:
         self.logger.info("Starting pipeline...")
 
-        candles_file_name = "ohlcv"
-        candles_path = f"{self.data_dir}/{candles_file_name}.csv"
-
-        if not Path(candles_path).exists():
+        reload = False
+        path = "data/ohlcv1h.csv"
+        if reload or not Path(path).exists():
             candles_df = asyncio.run(self.get_candles_df())
-            self.logger.info("Candles DataFrame: %s", candles_df.show(truncate=False))
-            self.save_csv(candles_file_name, candles_df)
+        else:
+            candles_df = self.spark.read.schema(SchemaOHLCV).csv(path, header=True)
 
-        candles_df = self.spark.read.csv(candles_path, header=True, inferSchema=True)
+        self.logger.info("Candles DataFrame:")
+        candles_df.show(truncate=False)
+        candles_df.describe().show()
 
         transformed_df = (
             candles_df.transform(self.with_returns)
@@ -331,9 +321,9 @@ class Pipeline:
             .dropna()
             .select(
                 F.col("timestamp"),
-                F.col("symbol"),
+                F.col("ticker"),
                 F.col("stddev"),
-                F.col("volatility"),
+                F.col("annualized_volatility"),
                 F.col("beta"),
                 F.col("cum_return_pct"),
                 F.col("adj_return_pct"),

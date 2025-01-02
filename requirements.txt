@@ -1,6 +1,8 @@
 aiohttp
 ccxt
 colorlog
+matplotlib
 numpy
 pandas
 pyspark
+statsmodels

@@ -6,3 +6,4 @@ numpy
 pandas
 pyspark
 statsmodels
+tenacity

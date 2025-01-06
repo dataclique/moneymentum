@@ -83,9 +83,13 @@ class Pipeline:
     def _setup_logging(self, log_level: int) -> logging.Logger:
         # Console handler provides colored logs to the terminal
         console_handler = logging.StreamHandler()
+        fmt = (
+            "%(thin_white)s%(asctime)s%(reset)s "
+            "%(log_color)s%(levelname)s %(name)s%(reset)s %(message)s"
+        )
         console_handler.setFormatter(
             colorlog.ColoredFormatter(
-                fmt="%(log_color)s%(levelname)s:%(name)s: %(reset)s%(message)s",
+                fmt=fmt,
                 log_colors={
                     "DEBUG": "blue",
                     "INFO": "green",
@@ -93,14 +97,24 @@ class Pipeline:
                     "ERROR": "red",
                     "CRITICAL": "red,bg_white",
                 },
-            ),
+                secondary_log_colors={
+                    "thin_white": {
+                        "DEBUG": "thin_white",
+                        "INFO": "thin_white",
+                        "WARNING": "thin_white",
+                        "ERROR": "thin_white",
+                        "CRITICAL": "thin_white",
+                    }
+                },
+                datefmt="%Y-%m-%d %H:%M:%S",
+            )
         )
 
         # File handler saves all logs to a file
         logging.basicConfig(
             level=logging.ERROR,
             format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-            datefmt="%Y-%m-%d %H:%M:%S",
+            datefmt="%Y-%m-%dT%H:%M:%S%z",
             handlers=[
                 console_handler,
                 logging.FileHandler("pipeline.log"),
@@ -126,7 +140,11 @@ class Pipeline:
         self.logger.debug("Spark session created.")
         return spark
 
-    @retry(stop=stop_after_attempt(1000), wait=wait_exponential(multiplier=1.01, min=0.25, max=100))
+    @retry(
+        stop=stop_after_attempt(10),
+        wait=wait_exponential(multiplier=1.12, min=0.25, max=10),
+        reraise=True,
+    )
     async def fetch_ohlcv(
         self,
         exchange: ccxt.Exchange,
@@ -141,9 +159,12 @@ class Pipeline:
             symbol,
             timeframe,
             since=since,
-            limit=5000,  # HL_OHLCV_LIMIT
+            limit=5000,  # Hyperliquid OHLCV limit
         )
-        self.logger.info("Fetched %s %s candles", len(ohlcv), symbol)
+        since_date = datetime.fromtimestamp(since / 1000, tz=timezone.utc).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
+        self.logger.info("Fetched %s %s candles since %s", len(ohlcv), symbol, since_date)
 
         ticker = symbol.replace("/", "_").replace(":", "_").replace("_USDC", "")
 
@@ -169,49 +190,83 @@ class Pipeline:
         results = await asyncio.gather(*tasks)
         return [candle for candles in results for candle in candles]  # Flatten results
 
-    @retry(stop=stop_after_attempt(1000), wait=wait_exponential(multiplier=1.01, min=0.25, max=100))
+    @retry(
+        stop=stop_after_attempt(10),
+        wait=wait_exponential(multiplier=1.5, min=1, max=10),
+        reraise=True,
+    )
+    async def fetch_funding_rate_batch(
+        self,
+        exchange: ccxt.Exchange,
+        symbol: str,
+        since: int,
+    ) -> list[dict[str, Any]]:
+        """Fetch a single batch of funding rate history for a symbol."""
+        since_date = datetime.fromtimestamp(since / 1000, tz=timezone.utc).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
+        self.logger.debug("Fetching funding rates for %s since %s...", symbol, since_date)
+        try:
+            funding_rates = await exchange.fetch_funding_rate_history(symbol, since=since)
+
+            if funding_rates:
+                self.logger.info(
+                    "Fetched %s funding rates for %s since %s",
+                    len(funding_rates),
+                    symbol,
+                    since_date,
+                )
+                return [
+                    {
+                        "timestamp": datetime.fromtimestamp(
+                            rate["timestamp"] / 1000, tz=timezone.utc
+                        ),
+                        "funding_rate": rate["fundingRate"],
+                        "symbol": symbol.replace("/", "_").replace(":", "_").replace("_USDC", ""),
+                    }
+                    for rate in funding_rates
+                ]
+        except ccxt.ExchangeNotAvailable as e:
+            self.logger.warning("Exchange not available for %s: %s", symbol, str(e))
+        return []
+
     async def fetch_funding_rate_history(
         self,
         exchange: ccxt.Exchange,
         symbol: str,
         since: int,
     ) -> list[dict[str, Any]]:
-        """Fetch funding rate history for a single symbol asynchronously, handling pagination."""
-        all_funding_rates = []
-        current_since = since
+        """Fetch all funding rate history for a symbol using concurrent requests."""
+        # Calculate time ranges for all requests
+        max_records_per_call = 500
+        hours_per_batch = max_records_per_call  # Assuming hourly data
+        total_hours = int(
+            (
+                datetime.now(timezone.utc) - datetime.fromtimestamp(since / 1000, timezone.utc)
+            ).total_seconds()
+            / 3600
+        )
 
-        while True:
-            self.logger.debug("Fetching funding rate for %s since %s...", symbol, current_since)
-            funding_rates = await exchange.fetch_funding_rate_history(symbol, since=current_since)
+        # Generate all timestamp ranges
+        since_values = [
+            since + (i * hours_per_batch * 3600 * 1000)  # Convert hours to milliseconds
+            for i in range((total_hours // hours_per_batch) + 1)
+        ]
 
-            if not funding_rates:
-                self.logger.info("No more funding rates found for %s.", symbol)
-                break
+        # Create all tasks
+        tasks = [
+            self.fetch_funding_rate_batch(exchange, symbol, batch_since)
+            for batch_since in since_values
+        ]
 
-            self.logger.info("Fetched %s funding rates for %s", len(funding_rates), symbol)
+        # Fetch all batches concurrently
+        self.logger.info("Spawning %d concurrent requests for %s", len(tasks), symbol)
+        results = await asyncio.gather(*tasks)
 
-            # Add the current batch of funding rates to the list
-            all_funding_rates.extend(
-                {
-                    "timestamp": datetime.fromtimestamp(rate["timestamp"] / 1000, tz=timezone.utc),
-                    "funding_rate": rate["fundingRate"],
-                    "symbol": symbol.replace("/", "_").replace(":", "_").replace("_USDC", ""),
-                }
-                for rate in funding_rates
-            )
+        # Combine and sort all results
+        all_funding_rates = [rate for batch in results if batch for rate in batch]
 
-            # Update `current_since` for the next batch (timestamp of the last record + 1 ms)
-            current_since = funding_rates[-1]["timestamp"] + 1
-
-            # If fewer records than the API's max limit are returned,
-            # we've fetched all available data
-            # Maximum we can get for 1 call is 500 (I got this number experimatally)
-            max_records_of_funding_rates_for_one_call = 500
-
-            if len(funding_rates) < max_records_of_funding_rates_for_one_call:
-                break
-
-        return all_funding_rates
+        return sorted(all_funding_rates, key=lambda x: x["timestamp"])
 
     async def get_candles_df(self, timeframe: str = "1h") -> DataFrame:
         self.logger.debug("Initializing exchange...")
@@ -219,7 +274,7 @@ class Pipeline:
         self.logger.info("Exchange initialized: %s", exchange)
 
         # Only last 5000 candles available
-        start_date = datetime(2024, 1, 1, tzinfo=timezone.utc).replace(hour=0, minute=0, second=0)
+        start_date = datetime(2024, 12, 1, tzinfo=timezone.utc).replace(hour=0, minute=0, second=0)
         self.logger.info("Fetching data since: %s", start_date)
         since = int(start_date.timestamp() * 1000)
 
@@ -341,6 +396,13 @@ class Pipeline:
                 "sma",
                 F.when(
                     F.col("count") > self.lookback_periods, F.avg("close").over(self.rolling_window)
+                ),
+            )
+            .withColumn(
+                "mean_return",
+                F.when(
+                    F.col("count") > self.lookback_periods,
+                    F.avg("log_return").over(self.rolling_window),
                 ),
             )
             .withColumn("price_stddev", F.stddev("close").over(self.rolling_window))

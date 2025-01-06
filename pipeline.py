@@ -1,51 +1,26 @@
 import asyncio
 import logging
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Literal
 
-import colorlog
-import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 from ccxt import async_support as ccxt
-from pyspark.sql import DataFrame, SparkSession
+from pyspark.sql import DataFrame
 from pyspark.sql import functions as F
 from pyspark.sql import types as T
-from pyspark.sql import window as W
-from statsmodels.tsa.stattools import adfuller, coint
-from tenacity import retry, stop_after_attempt, wait_exponential
 
+from yang import util
+from yang.chronos import Chronos
+from yang.dataloader.hyperliquid.ohlcv import HyperliquidDataLoaderOHLCV
 
-def plot_returns(Xs: list[pd.Series]) -> None:
-    for X in Xs:
-        X_return = X.pct_change()[1:]
-        plt.hist(X_return, bins=20, label=X.name)
+if __name__ == "__main__":
+    util.setup_logging()
 
-    plt.xlabel("Return")
-    plt.ylabel("Frequency")
-    plt.legend()
-    plt.show()
-
-
-def plot_price(X: pd.Series, ticker: str) -> None:
-    SMA7D = X.rolling(window=7).mean()
-    SMA30D = X.rolling(window=30).mean()
-    SMA90D = X.rolling(window=90).mean()
-
-    plt.plot(X.index, X.values)
-    plt.plot(SMA7D.index, SMA7D.values)
-    plt.plot(SMA30D.index, SMA30D.values)
-    plt.plot(SMA90D.index, SMA90D.values)
-
-    plt.ylabel("Price")
-    plt.legend([ticker, "7D SMA", "30D SMA", "90D SMA"])
-
-
-def get_ticker_price_pdf(ticker: str, candles_df: DataFrame) -> pd.Series:
-    prices = candles_df.filter(F.col("symbol") == ticker).toPandas().set_index("timestamp")["close"]
-    prices.name = ticker
-    return prices
-
+logger = logging.getLogger(__name__)
+logger.setLevel(util.LOG_LEVEL)
 
 SchemaOHLCV = T.StructType(
     [
@@ -60,243 +35,123 @@ SchemaOHLCV = T.StructType(
     ]
 )
 
+Timeframe = Literal["1h", "1d", "1w"]
 
+
+@F.udf(returnType=T.FloatType())
+def long_score(  # noqa: PLR0913
+    # ticker: str,
+    close: float,
+    min_price: float,
+    max_price: float,
+    mean_return: float,
+    return_stddev: float,
+    beta: float,
+    price_zscore: float,
+    timeframe: Timeframe,
+) -> float:
+    drawdown_factor = -((close / max_price) - 1)
+    ranup_factor = (close / min_price) - 1
+    range_factor = drawdown_factor / ranup_factor
+
+    if timeframe == "1h":
+        annualized_return = mean_return * 365 * 24
+        annualized_volatility = return_stddev * np.sqrt(365 * 24)
+    elif timeframe == "1d":
+        annualized_return = mean_return * 365
+        annualized_volatility = return_stddev * np.sqrt(365)
+    elif timeframe == "1w":
+        annualized_return = mean_return * 52
+        annualized_volatility = return_stddev * np.sqrt(52)
+
+    risk_free_rate = 0.045
+    risk_adjusted_return_factor = (annualized_return - risk_free_rate) / (
+        annualized_volatility * beta
+    )
+
+    mean_reversion_factor = np.exp(-price_zscore * 0.01)
+    return float(range_factor * risk_adjusted_return_factor * mean_reversion_factor)
+
+
+@F.udf(returnType=T.FloatType())
+def short_score(  # noqa: PLR0913
+    # ticker: str,
+    close: float,
+    min_price: float,
+    max_price: float,
+    mean_return: float,
+    return_stddev: float,
+    beta: float,
+    price_zscore: float,
+    timeframe: Timeframe,
+) -> float:
+    smoked_factor = (close / min_price) - 1
+    ranup_factor = 1 - (close / max_price)
+    range_factor = smoked_factor / ranup_factor
+
+    if timeframe == "1h":
+        annualized_return = mean_return * 365 * 24
+        annualized_volatility = return_stddev * np.sqrt(365 * 24)
+    elif timeframe == "1d":
+        annualized_return = mean_return * 365
+        annualized_volatility = return_stddev * np.sqrt(365)
+    elif timeframe == "1w":
+        annualized_return = mean_return * 52
+        annualized_volatility = return_stddev * np.sqrt(52)
+
+    risk_free_rate = 0.045
+    risk_adjusted_return_factor = (-annualized_return - risk_free_rate) / (
+        annualized_volatility * beta
+    )
+
+    mean_reversion_factor = np.exp(price_zscore * 0.01)
+    return float(range_factor * risk_adjusted_return_factor * mean_reversion_factor)
+
+
+@dataclass
 class Pipeline:
-    def __init__(
-        self,
-        lookback_periods: int = 30 * 24,
-        forward_periods: int = 7 * 24,
-        log_level: int = logging.DEBUG,
-    ) -> None:
-        self.logger = self._setup_logging(log_level)
-        self.spark = self._get_spark()
-        self.data_dir = "data"
-        self.ohlcv_dir = f"{self.data_dir}/hyperliquid-ohlcv"
+    spark = util.get_spark()
+    loader_ohlcv = HyperliquidDataLoaderOHLCV()
 
-        self.lookback_periods = lookback_periods
-        self.forward_periods = forward_periods
-        self.symbol_window = W.Window.partitionBy("symbol").orderBy("timestamp")
-        self.rolling_window = self.symbol_window.rowsBetween(-lookback_periods + 1, 0)
-        self.forward_window = self.symbol_window.rowsBetween(0, forward_periods)
-        self.cumsum_window = self.symbol_window.rowsBetween(W.Window.unboundedPreceding, 0)
+    timeframe: Timeframe = "1h"
 
-    def _setup_logging(self, log_level: int) -> logging.Logger:
-        # Console handler provides colored logs to the terminal
-        console_handler = logging.StreamHandler()
-        fmt = (
-            "%(thin_white)s%(asctime)s%(reset)s "
-            "%(log_color)s%(levelname)s %(name)s%(reset)s %(message)s"
-        )
-        console_handler.setFormatter(
-            colorlog.ColoredFormatter(
-                fmt=fmt,
-                log_colors={
-                    "DEBUG": "blue",
-                    "INFO": "green",
-                    "WARNING": "yellow",
-                    "ERROR": "red",
-                    "CRITICAL": "red,bg_white",
-                },
-                secondary_log_colors={
-                    "thin_white": {
-                        "DEBUG": "thin_white",
-                        "INFO": "thin_white",
-                        "WARNING": "thin_white",
-                        "ERROR": "thin_white",
-                        "CRITICAL": "thin_white",
-                    }
-                },
-                datefmt="%Y-%m-%d %H:%M:%S",
-            )
+    async def get_candles_df(self, timeframe: Timeframe) -> DataFrame:
+        start_date: datetime = datetime(2024, 6, 1, tzinfo=timezone.utc).replace(
+            hour=0, minute=0, second=0, microsecond=0
         )
 
-        # File handler saves all logs to a file
-        logging.basicConfig(
-            level=logging.ERROR,
-            format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-            datefmt="%Y-%m-%dT%H:%M:%S%z",
-            handlers=[
-                console_handler,
-                logging.FileHandler("pipeline.log"),
-            ],
-        )
-
-        logger = logging.getLogger(__name__)
-        logger.setLevel(log_level)
-        return logger
-
-    def _get_spark(self) -> SparkSession:
-        self.logger.debug("Creating Spark session...")
-        spark = (
-            SparkSession.builder.appName("pipeline")
-            .config("spark.sql.adaptive.enabled", "true")
-            .config("spark.sql.adaptive.coalescePartitions.enabled", "true")
-            .config("spark.sql.shuffle.partitions", "200")
-            .config("spark.default.parallelism", "200")
-            .config("spark.sql.broadcastTimeout", "600")
-            .getOrCreate()
-        )
-        spark.sparkContext.setLogLevel("ERROR")
-        self.logger.debug("Spark session created.")
-        return spark
-
-    @retry(
-        stop=stop_after_attempt(10),
-        wait=wait_exponential(multiplier=1.12, min=0.25, max=10),
-        reraise=True,
-    )
-    async def fetch_ohlcv(
-        self,
-        exchange: ccxt.Exchange,
-        symbol: str,
-        timeframe: str,
-        since: int,
-    ) -> list[dict[str, Any]]:
-        """Fetch OHLCV data for a single symbol asynchronously."""
-
-        self.logger.debug("Fetching %s candles...", symbol)
-        ohlcv = await exchange.fetch_ohlcv(
-            symbol,
-            timeframe,
-            since=since,
-            limit=5000,  # Hyperliquid OHLCV limit
-        )
-        since_date = datetime.fromtimestamp(since / 1000, tz=timezone.utc).strftime(
-            "%Y-%m-%d %H:%M:%S"
-        )
-        self.logger.info("Fetched %s %s candles since %s", len(ohlcv), symbol, since_date)
-
-        ticker = symbol.replace("/", "_").replace(":", "_").replace("_USDC", "")
-
-        return [
-            {
-                "timestamp": datetime.fromtimestamp(candle[0] / 1000, tz=timezone.utc),
-                "open": candle[1],
-                "high": candle[2],
-                "low": candle[3],
-                "close": candle[4],
-                "volume": candle[5],
-                "symbol": symbol,
-                "ticker": ticker,
-            }
-            for candle in ohlcv
-        ]
-
-    async def fetch_all_candles(
-        self, exchange: ccxt.Exchange, symbols: list[str], timeframe: str, since: int
-    ) -> list[dict[str, Any]]:
-        """Fetch OHLCV data for all symbols concurrently."""
-        tasks = [self.fetch_ohlcv(exchange, symbol, timeframe, since) for symbol in symbols]
-        results = await asyncio.gather(*tasks)
-        return [candle for candles in results for candle in candles]  # Flatten results
-
-    @retry(
-        stop=stop_after_attempt(10),
-        wait=wait_exponential(multiplier=1.5, min=1, max=10),
-        reraise=True,
-    )
-    async def fetch_funding_rate_batch(
-        self,
-        exchange: ccxt.Exchange,
-        symbol: str,
-        since: int,
-    ) -> list[dict[str, Any]]:
-        """Fetch a single batch of funding rate history for a symbol."""
-        since_date = datetime.fromtimestamp(since / 1000, tz=timezone.utc).strftime(
-            "%Y-%m-%d %H:%M:%S"
-        )
-        self.logger.debug("Fetching funding rates for %s since %s...", symbol, since_date)
-        try:
-            funding_rates = await exchange.fetch_funding_rate_history(symbol, since=since)
-
-            if funding_rates:
-                self.logger.info(
-                    "Fetched %s funding rates for %s since %s",
-                    len(funding_rates),
-                    symbol,
-                    since_date,
-                )
-                return [
-                    {
-                        "timestamp": datetime.fromtimestamp(
-                            rate["timestamp"] / 1000, tz=timezone.utc
-                        ),
-                        "funding_rate": rate["fundingRate"],
-                        "symbol": symbol.replace("/", "_").replace(":", "_").replace("_USDC", ""),
-                    }
-                    for rate in funding_rates
-                ]
-        except ccxt.ExchangeNotAvailable as e:
-            self.logger.warning("Exchange not available for %s: %s", symbol, str(e))
-        return []
-
-    async def fetch_funding_rate_history(
-        self,
-        exchange: ccxt.Exchange,
-        symbol: str,
-        since: int,
-    ) -> list[dict[str, Any]]:
-        """Fetch all funding rate history for a symbol using concurrent requests."""
-        # Calculate time ranges for all requests
-        max_records_per_call = 500
-        hours_per_batch = max_records_per_call  # Assuming hourly data
-        total_hours = int(
-            (
-                datetime.now(timezone.utc) - datetime.fromtimestamp(since / 1000, timezone.utc)
-            ).total_seconds()
-            / 3600
-        )
-
-        # Generate all timestamp ranges
-        since_values = [
-            since + (i * hours_per_batch * 3600 * 1000)  # Convert hours to milliseconds
-            for i in range((total_hours // hours_per_batch) + 1)
-        ]
-
-        # Create all tasks
-        tasks = [
-            self.fetch_funding_rate_batch(exchange, symbol, batch_since)
-            for batch_since in since_values
-        ]
-
-        # Fetch all batches concurrently
-        self.logger.info("Spawning %d concurrent requests for %s", len(tasks), symbol)
-        results = await asyncio.gather(*tasks)
-
-        # Combine and sort all results
-        all_funding_rates = [rate for batch in results if batch for rate in batch]
-
-        return sorted(all_funding_rates, key=lambda x: x["timestamp"])
-
-    async def get_candles_df(self, timeframe: str = "1h") -> DataFrame:
-        self.logger.debug("Initializing exchange...")
+        logger.debug("Initializing exchange...")
         exchange = ccxt.hyperliquid({"asyncio_loop": asyncio.get_event_loop()})
-        self.logger.info("Exchange initialized: %s", exchange)
+        logger.info("Exchange initialized: %s", exchange)
 
         # Only last 5000 candles available
-        start_date = datetime(2024, 12, 1, tzinfo=timezone.utc).replace(hour=0, minute=0, second=0)
-        self.logger.info("Fetching data since: %s", start_date)
+        logger.info("Fetching data since: %s", start_date)
         since = int(start_date.timestamp() * 1000)
 
         # Get all perpetual pairs
         markets = await exchange.load_markets()
         symbols = list(markets.keys())
         perp_symbols = [s for s in symbols if "PERP" in s or markets[s].get("type") == "swap"]
-        self.logger.info("Found %s perpetual symbols", len(perp_symbols))
+        logger.info("Found %s perpetual symbols", len(perp_symbols))
 
-        # Fetch OHLCV and funding rate data concurrently
-        ohlcv_tasks = [self.fetch_ohlcv(exchange, symbol, timeframe, since) for symbol in symbols]
-        funding_rate_tasks = [
-            self.fetch_funding_rate_history(exchange, symbol, since) for symbol in symbols
+        # Fetch OHLCV data concurrently
+        ohlcv_tasks = [
+            self.loader_ohlcv.fetch_ohlcv(exchange, symbol, timeframe, since) for symbol in symbols
         ]
 
-        ohlcv_results, funding_rate_results = await asyncio.gather(
-            asyncio.gather(*ohlcv_tasks), asyncio.gather(*funding_rate_tasks)
-        )
+        # funding_rate_tasks = [
+        #     self.fetch_funding_rate_history(exchange, symbol, since) for symbol in symbols
+        # ]
+
+        # ohlcv_results, funding_rate_results = await asyncio.gather(
+        #     asyncio.gather(*ohlcv_tasks), asyncio.gather(*funding_rate_tasks)
+        # )
+
+        ohlcv_results = await asyncio.gather(*ohlcv_tasks)
 
         # Flatten results
         ohlcv_data = [candle for candles in ohlcv_results for candle in candles]
-        funding_rate_data = [rate for rates in funding_rate_results for rate in rates]
+        # funding_rate_data = [rate for rates in funding_rate_results for rate in rates]
 
         def normalize_timestamp(timestamp: str | datetime) -> datetime:
             if isinstance(timestamp, datetime):
@@ -311,309 +166,140 @@ class Pipeline:
             raise TypeError(error_message)
 
         # Normalize timestamps
-        for rate in funding_rate_data:
-            rate["timestamp"] = normalize_timestamp(rate["timestamp"])
+        # for rate in funding_rate_data:
+        #     rate["timestamp"] = normalize_timestamp(rate["timestamp"])
         for candle in ohlcv_data:
             candle["timestamp"] = normalize_timestamp(candle["timestamp"])
 
         # Create funding rate lookup map
-        funding_rate_map = {
-            (rate["symbol"], rate["timestamp"]): rate["funding_rate"] for rate in funding_rate_data
-        }
+        # funding_rate_map = {
+        #     (rate["symbol"], rate["timestamp"]): rate["funding_rate"] for rate in funding_rate_data  # noqa: E501
+        # }
 
         # Add funding rate to OHLCV data
-        for candle in ohlcv_data:
-            candle["funding_rate"] = funding_rate_map.get(
-                (candle["symbol"], candle["timestamp"]), None
-            )
+        # for candle in ohlcv_data:
+        #     candle["funding_rate"] = funding_rate_map.get(
+        #         (candle["symbol"], candle["timestamp"]), None
+        #     )
 
         # Update schema to include funding_rate
-        schema = T.StructType(
-            SchemaOHLCV.fields + [T.StructField("funding_rate", T.DoubleType(), nullable=True)]
-        )
+        # schema = T.StructType(
+        #     SchemaOHLCV.fields + [T.StructField("funding_rate", T.DoubleType(), nullable=True)]
+        # )
 
         # Convert to Spark DataFrame
         pdf = pd.DataFrame(ohlcv_data)
-        ohlcv_df = self.spark.createDataFrame(pdf, schema=schema)
-        self.logger.info("Converted to Spark DataFrame: %s", ohlcv_df.printSchema())
+        ohlcv_df = self.spark.createDataFrame(pdf, schema=SchemaOHLCV)
+        logger.info("Converted to Spark DataFrame: %s", ohlcv_df.printSchema())
 
         # Save and return
         candles_df = ohlcv_df.orderBy("timestamp")
         candles_file_name = f"ohlcv{timeframe}"
-        self.save_csv(candles_file_name, candles_df)
+        util.save_csv(candles_file_name, candles_df)
 
-        candles_path = f"{self.data_dir}/{candles_file_name}.csv"
-        return self.spark.read.schema(schema).csv(candles_path).cache()
-
-    def test_stationarity(self, timeseries: pd.Series, cutoff: float = 0.01) -> bool:
-        pvalue = adfuller(timeseries)[1]
-        if pvalue < cutoff:
-            self.logger.info("%s is likely stationary", timeseries.name)
-            return True
-
-        self.logger.error("%s is likely not stationary", timeseries.name)
-        return False
-
-    def test_cointegration(self, X: pd.Series, Y: pd.Series, cutoff: float = 0.01) -> bool:
-        res = coint(X, Y)
-        _, pvalue, _ = res
-        if pvalue < cutoff:
-            self.logger.info("%s and %s are likely cointegrated", X.name, Y.name)
-            self.logger.debug("result: %s", res)
-            return True
-
-        self.logger.error("%s and %s are likely not cointegrated", X.name, Y.name)
-        return False
-
-    def with_returns(self, df: DataFrame) -> DataFrame:
-        self.logger.debug("Calculating returns...")
-        return (
-            df.withColumn("count", F.count("close").over(self.symbol_window))
-            .withColumn(
-                "return",
-                (F.col("close") - F.lag("close").over(self.symbol_window))
-                / F.lag("close").over(self.symbol_window),
-            )
-            .withColumn(
-                "log_return",
-                F.log(F.col("close") / F.lag("close").over(self.symbol_window)),
-            )
-            .withColumn(
-                "cum_return",
-                F.when(
-                    F.col("count") >= self.lookback_periods,
-                    F.exp(F.sum("log_return").over(self.rolling_window)) - 1,
-                ),
-            )
-        )
-
-    def with_bollinger(self, df: DataFrame) -> DataFrame:
-        self.logger.debug("Calculating bollinger bands...")
-        df.show()
-
-        return (
-            df.withColumn(
-                "sma",
-                F.when(
-                    F.col("count") > self.lookback_periods, F.avg("close").over(self.rolling_window)
-                ),
-            )
-            .withColumn(
-                "mean_return",
-                F.when(
-                    F.col("count") > self.lookback_periods,
-                    F.avg("log_return").over(self.rolling_window),
-                ),
-            )
-            .withColumn("price_stddev", F.stddev("close").over(self.rolling_window))
-            .withColumn("return_stddev", F.stddev("log_return").over(self.rolling_window))
-            .withColumn("bollinger_upper", F.col("sma") + (F.col("price_stddev") * 2))
-            .withColumn("bollinger_lower", F.col("sma") - (F.col("price_stddev") * 2))
-            .withColumn(
-                "max",
-                F.when(
-                    F.col("count") >= self.lookback_periods,
-                    F.max("high").over(self.rolling_window),
-                ),
-            )
-            .withColumn(
-                "min",
-                F.when(
-                    F.col("count") >= self.lookback_periods,
-                    F.min("low").over(self.rolling_window),
-                ),
-            )
-        )
-
-    def with_zscore(self, df: DataFrame) -> DataFrame:
-        return (
-            df.withColumn("price_zscore", (F.col("close") - F.col("sma")) / F.col("price_stddev"))
-            .withColumn("z_max", F.max(F.abs("price_zscore")).over(self.rolling_window))
-            .withColumn("z_to_max", F.col("price_zscore") / F.col("z_max"))
-        )
-
-    def with_auto_regression(self, df: DataFrame) -> DataFrame:
-        return df.withColumn(
-            "auto_regression",
-            F.corr(F.col("log_return"), F.lag("log_return", 1).over(self.symbol_window)).over(
-                self.rolling_window
-            ),
-        )
-
-    def with_forward_return(self, df: DataFrame) -> DataFrame:
-        return df.withColumn(
-            "forward_return", F.exp(F.sum("log_return").over(self.forward_window)) - 1
-        ).withColumn(
-            "price_zscore_fw_return_corr",
-            F.corr(F.col("price_zscore"), F.col("forward_return")).over(self.rolling_window),
-        )
-
-    def with_volatility(self, df: DataFrame) -> DataFrame:
-        return (
-            df.withColumn("count", F.count("log_return").over(self.rolling_window))
-            .withColumn(
-                "stddev",
-                F.stddev(F.col("log_return")).over(self.rolling_window),
-            )
-            .withColumn(
-                "annualized_volatility",
-                F.col("stddev") * F.sqrt(F.lit(365 * 24)),
-            )
-            .drop("count")
-        )
-
-    def with_beta(self, df: DataFrame) -> DataFrame:
-        self.logger.debug("Calculating beta...")
-
-        # Get BTC returns
-        btc_returns = df.filter(F.col("ticker") == "BTC").select(
-            F.col("timestamp"), F.col("log_return").alias("btc_return")
-        )
-
-        # Join BTC returns with all symbols
-        joined_df = df.join(btc_returns, "timestamp", "left")
-
-        # Calculate rolling covariance and variance
-        return (
-            joined_df.withColumn("count", F.count("log_return").over(self.rolling_window))
-            .withColumn(
-                "covariance",
-                F.covar_pop("log_return", "btc_return").over(self.rolling_window),
-            )
-            .withColumn(
-                "btc_variance",
-                F.var_pop("btc_return").over(self.rolling_window),
-            )
-            .withColumn("beta", F.col("covariance") / F.col("btc_variance"))
-            .withColumn("btc_cum_return", F.exp(F.sum("btc_return").over(self.cumsum_window)))
-        )
-
-    def with_adj_return(self, df: DataFrame) -> DataFrame:
-        return df.withColumn(
-            "adj_return",
-            F.when(F.col("beta") > 0, F.col("cum_return") / F.col("beta")).otherwise(
-                F.col("cum_return") * (1 - F.col("beta"))
-            ),
-        )
-
-    def with_information_discreteness(self, df: DataFrame) -> DataFrame:
-        self.logger.debug("Calculating information discreteness...")
-
-        # Calculate sign of overall return
-        return (
-            df.withColumn("return_sign", F.signum(F.col("cum_return")))
-            .withColumn("is_positive_return", F.when(F.col("log_return") > 0, 1).otherwise(0))
-            .withColumn("is_negative_return", F.when(F.col("log_return") < 0, 1).otherwise(0))
-            .withColumn("num_samples", F.count("log_return").over(self.cumsum_window))
-            .withColumn(
-                "pct_positive",
-                F.sum("is_positive_return").over(self.cumsum_window) / F.col("num_samples"),
-            )
-            .withColumn(
-                "pct_negative",
-                F.sum("is_negative_return").over(self.cumsum_window) / F.col("num_samples"),
-            )
-            .withColumn(
-                "information_discreteness",
-                F.col("return_sign") * (F.col("pct_negative") - F.col("pct_positive")),
-            )
-            .drop(
-                "is_positive_return",
-                "is_negative_return",
-                "num_samples",
-                "pct_positive",
-                "pct_negative",
-                "return_sign",
-            )
-        )
-
-    def save_csv(self, name: str, df: DataFrame) -> None:
-        # Ensure data directory exists
-        Path(self.data_dir).mkdir(exist_ok=True)
-
-        # Save as a single CSV file with UTC timestamp format
-        output_path = f"{self.data_dir}/{name}"
-        df.coalesce(1).write.mode("overwrite").option("header", "true").option(
-            "timestampFormat", "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'"
-        ).csv(output_path)
-
-        # Get the CSV file from the directory and move it
-        dir_path = Path(output_path)
-        csv_file = next(dir_path.glob("*.csv"))
-        target_path = dir_path.parent / f"{name}.csv"
-        csv_file.rename(target_path)
-
-        # Clean up the directory
-        for file in dir_path.iterdir():
-            file.unlink()
-        dir_path.rmdir()
-        self.logger.info("Saved to %s", target_path)
+        candles_path = f"{util.DATA_DIR}/{candles_file_name}.csv"
+        return self.spark.read.schema(SchemaOHLCV).csv(candles_path).cache()
 
     def run(self) -> None:
-        self.logger.info("Starting pipeline...")
+        logger.info("Starting pipeline...")
 
-        candles_df = asyncio.run(self.get_candles_df())
-        tickers = [row.ticker for row in candles_df.select("ticker").distinct().collect()]
-
-        for ticker in tickers:
-            perp_df = candles_df.filter(F.col("ticker") == F.lit(ticker)).select(
-                F.col("timestamp").cast("date").alias("date"),
-                F.col("volume"),
-                F.col("open"),
-                F.col("high"),
-                F.col("low"),
-                F.col("close"),
-            )
-            perp_df.show()
-
-            self.save_csv(ticker, perp_df)
-
-        return
+        chronos = Chronos(timeframe=self.timeframe, lookback_periods=24 * 90)
 
         reload = False
-        path = "data/ohlcv1h.csv"
+        path = f"{util.DATA_DIR}/ohlcv{self.timeframe}.csv"
         if reload or not Path(path).exists():
-            candles_df = asyncio.run(self.get_candles_df())
+            candles_df = asyncio.run(self.get_candles_df(timeframe=self.timeframe))
         else:
-            candles_df = self.spark.read.schema(SchemaOHLCV).csv(path, header=True)
+            candles_df = self.spark.read.schema(SchemaOHLCV).csv(path, header=True).cache()
 
-        self.logger.info("Candles DataFrame:")
+        logger.info("Candles DataFrame:")
         candles_df.show(truncate=False)
         candles_df.describe().show()
 
-        transformed_df = (
-            candles_df.transform(self.with_returns)
-            .transform(self.with_volatility)
-            .transform(self.with_beta)
-            .transform(self.with_adj_return)
-            .transform(self.with_information_discreteness)
-        )
-
-        self.logger.info("Beta DataFrame:")
-        transformed_df.show()
-        self.save_csv("beta", transformed_df)
-
-        sample_df = (
-            transformed_df.withColumn("cum_return_pct", F.col("cum_return") * F.lit(100))
-            .withColumn("adj_return_pct", F.col("adj_return") * F.lit(100))
-            .dropna()
-            .select(
-                F.col("timestamp"),
-                F.col("ticker"),
-                F.col("stddev"),
-                F.col("annualized_volatility"),
-                F.col("beta"),
-                F.col("cum_return_pct"),
-                F.col("adj_return_pct"),
-                F.col("information_discreteness"),
-            )
-            .orderBy("timestamp", "adj_return_pct", "beta")
+        analysis_df = (
+            candles_df.transform(chronos.with_returns)
+            .transform(chronos.with_sma)
+            .transform(chronos.with_zscore)
+            .transform(chronos.with_volatility)
+            .transform(chronos.with_beta)
+            .transform(chronos.with_information_discreteness)
             .cache()
         )
 
-        self.logger.info("Sample DataFrame:")
-        sample_df.show(truncate=False)
-        self.save_csv("sample", sample_df)
+        # Get latest entries
+        latest = analysis_df.select(F.max("timestamp")).first()[0]
+        latest_entries = (
+            analysis_df.filter(F.col("timestamp") == F.lit(latest))
+            .orderBy("symbol")
+            .drop("forward_return", "price_zscore_fw_return_corr")
+            .dropna()
+            .cache()
+        )
+
+        latest_entries.show(vertical=True)
+        latest_entries.count()
+
+        pick_limit = 10
+
+        long_score_df = latest_entries.withColumn(
+            "long_score",
+            long_score(
+                # F.col("ticker"),
+                F.col("close"),
+                F.col("min"),
+                F.col("max"),
+                F.col("mean_return"),
+                F.col("return_stddev"),
+                F.col("beta"),
+                F.col("price_zscore"),
+                F.lit(self.timeframe),
+            ).orderBy("long_score", ascending=False),
+        )
+
+        long_picks = long_score_df.select(
+            F.col("symbol"),
+            F.col("information_discreteness"),
+            F.col("beta"),
+            F.col("price_stddev"),
+            F.col("long_score"),
+        ).limit(pick_limit)
+
+        logger.info("Long picks:")
+        long_picks.show()
+
+        short_score_df = latest_entries.withColumn(
+            "short_score",
+            short_score(
+                # F.col("ticker"),
+                F.col("close"),
+                F.col("min"),
+                F.col("max"),
+                F.col("mean_return"),
+                F.col("return_stddev"),
+                F.col("beta"),
+                F.col("price_zscore"),
+                F.lit(self.timeframe),
+            ),
+        ).orderBy("short_score", ascending=False)
+
+        short_picks = short_score_df.select(
+            F.col("symbol"),
+            F.col("information_discreteness"),
+            F.col("beta"),
+            F.col("price_stddev"),
+            F.col("short_score"),
+        ).limit(pick_limit)
+
+        logger.info("Short picks:")
+        short_picks.show()
+
+        picks = long_picks.withColumn("type", F.lit("long")).union(
+            short_picks.withColumn("type", F.lit("short")),
+        )
+
+        picks.show()
+
+        util.save_csv("picks", picks)
 
 
 if __name__ == "__main__":

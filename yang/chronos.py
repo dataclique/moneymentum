@@ -33,7 +33,7 @@ class Chronos:
         ticker_count = len(df.select("ticker").dropna().distinct().collect())
         logger.debug("Initial count: %d; Ticker count: %d", initial_count, ticker_count)
 
-        count_df = df.withColumn("count", F.count("close").over(self.symbol_window))
+        count_df = df.withColumn("count", F.count("close").over(self.symbol_window)).cache()
         count_count = count_df.select("count").dropna().count()
         assert count_count == initial_count, "Count column count should match initial count"
         logger.debug("Count column count (%d) check passed.", count_count)
@@ -50,22 +50,7 @@ class Chronos:
         )
         logger.debug("Return column count (%d) check passed.", return_count)
 
-        rolling_cum_df = return_df.withColumn(
-            "cum_return",
-            F.when(
-                F.col("count") >= self.lookback_periods,
-                F.exp(F.sum("log_return").over(self.rolling_window)) - 1,
-            ),
-        )
-
-        rolling_cum_count = rolling_cum_df.select("cum_return").dropna().count()
-        assert 0 < rolling_cum_count < return_count, (
-            f"Rolling cumulative return column count ({rolling_cum_count})"
-            f"should satisfy 0 < {rolling_cum_count} < {return_count}"
-        )
-        logger.debug("Rolling cumulative return column count (%d) check passed.", rolling_cum_count)
-
-        return rolling_cum_df
+        return return_df
 
     def with_sma(self, df: DataFrame) -> DataFrame:
         logger.info("Calculating SMA...")
@@ -74,7 +59,7 @@ class Chronos:
         sma_df = df.withColumn(
             "sma",
             F.when(
-                F.col("count") > self.lookback_periods, F.avg("close").over(self.rolling_window)
+                F.col("count") >= self.lookback_periods, F.avg("close").over(self.rolling_window)
             ),
         )
 
@@ -94,19 +79,21 @@ class Chronos:
 
         mean_count = mean_df.select("mean_return").dropna().count()
         assert (
-            mean_count == sma_count
+            mean_count < sma_count  # -1 because we're looking at a difference
         ), f"Mean return column count ({mean_count}) should equal SMA column count ({sma_count})"
         logger.debug("Mean return column count (%d) check passed.", mean_count)
 
         stddev_df = mean_df.withColumn(
-            "price_stddev", F.stddev("close").over(self.rolling_window)
+            "price_stddev",
+            F.when(
+                F.col("count") > self.lookback_periods, F.stddev("close").over(self.rolling_window)
+            ),
         ).withColumn("return_stddev", F.stddev("log_return").over(self.rolling_window))
 
         stddev_count = stddev_df.select("price_stddev", "return_stddev").dropna().count()
-        assert 0 < stddev_count < mean_count, (
-            f"Price stddev column count ({stddev_count})"
-            f"should satisfy 0 < {stddev_count} < {mean_count}"
-        )
+        assert (
+            stddev_count == mean_count
+        ), f"Price stddev column count ({stddev_count}) should equal {mean_count}"
         logger.debug("Price stddev column count (%d) check passed.", stddev_count)
 
         max_min_df = stddev_df.withColumn(
@@ -125,10 +112,10 @@ class Chronos:
 
         min_count = max_min_df.select("min").dropna().count()
         max_count = max_min_df.select("max").dropna().count()
-        assert min_count == max_count == stddev_count, (
-            f"Min column count ({min_count})"
-            f"Max column count ({max_count})"
-            f"Stddev columns count ({stddev_count})"
+        assert min_count == max_count > stddev_count, (
+            f"Should be: min column count ({min_count})"
+            f" == max column count ({max_count})"
+            f" > stddev count ({stddev_count})"
         )
         logger.debug("Max/min column counts (%d, %d) check passed.", min_count, max_count)
 
@@ -153,8 +140,7 @@ class Chronos:
             annualization_factor = 52
 
         return (
-            df.withColumn("count", F.count("log_return").over(self.rolling_window))
-            .withColumn(
+            df.withColumn(
                 "stddev",
                 F.stddev(F.col("log_return")).over(self.rolling_window),
             )

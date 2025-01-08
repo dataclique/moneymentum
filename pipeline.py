@@ -226,10 +226,12 @@ class Pipeline:
             .cache()
         )
 
-        # Get latest entries
-        latest = analysis_df.select(F.max("timestamp")).first()[0]
+        # Get the latest timestamp
+        latest_row = analysis_df.select(F.max("timestamp")).first()[0]
+
+        # Filter the DataFrame using the latest timestamp
         latest_entries = (
-            analysis_df.filter(F.col("timestamp") == F.lit(latest))
+            analysis_df.filter(F.col("timestamp") == F.lit(latest_row))
             .orderBy("symbol")
             .drop("forward_return", "price_zscore_fw_return_corr")
             .dropna()
@@ -253,8 +255,8 @@ class Pipeline:
                 F.col("beta"),
                 F.col("price_zscore"),
                 F.lit(self.timeframe),
-            ).orderBy("long_score", ascending=False),
-        )
+            ),
+        ).orderBy("long_score", ascending=False)
 
         long_picks = long_score_df.select(
             F.col("symbol"),

@@ -50,7 +50,23 @@ class Chronos:
         )
         logger.debug("Return column count (%d) check passed.", return_count)
 
-        return return_df
+        rolling_cum_df = return_df.withColumn(
+            "cum_return",
+            F.when(
+                F.col("count") >= self.lookback_periods,
+                F.exp(F.sum("log_return").over(self.rolling_window)) - 1,
+            ),
+        )
+        rolling_cum_count = rolling_cum_df.select("cum_return").dropna().count()
+        assert 0 < rolling_cum_count < return_count, (
+            f"Rolling cumulative return column count ({rolling_cum_count})"
+            f"should satisfy 0 < {rolling_cum_count} < {return_count}"
+        )
+        logger.debug("Rolling cumulative return column count (%d) check passed.", rolling_cum_count)
+
+        util.save_csv("return", rolling_cum_df)
+
+        return rolling_cum_df
 
     def with_sma(self, df: DataFrame) -> DataFrame:
         logger.info("Calculating SMA...")

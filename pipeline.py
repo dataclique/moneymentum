@@ -136,7 +136,8 @@ class Pipeline:
 
         # Fetch OHLCV data concurrently
         ohlcv_tasks = [
-            self.loader_ohlcv.fetch_ohlcv(exchange, symbol, timeframe, since) for symbol in symbols
+            self.loader_ohlcv.fetch_ohlcv(exchange, symbol, timeframe, since)
+            for symbol in symbols[:2]
         ]
 
         # funding_rate_tasks = [
@@ -203,7 +204,7 @@ class Pipeline:
     def run(self) -> None:
         logger.info("Starting pipeline...")
 
-        chronos = Chronos(timeframe=self.timeframe, lookback_periods=24 * 90)
+        chronos = Chronos(timeframe=self.timeframe, lookback_periods=24)
 
         reload = False
         path = f"{util.DATA_DIR}/ohlcv{self.timeframe}.csv"
@@ -225,6 +226,8 @@ class Pipeline:
             .transform(chronos.with_information_discreteness)
             .cache()
         )
+
+        util.save_csv("analysis_df", analysis_df)
 
         # Get the latest timestamp
         latest_row = analysis_df.select(F.max("timestamp")).first()[0]

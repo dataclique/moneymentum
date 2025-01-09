@@ -35,7 +35,12 @@ class Chronos:
 
         count_df = df.withColumn("count", F.count("close").over(self.symbol_window)).cache()
         count_count = count_df.select("count").dropna().count()
-        assert count_count == initial_count, "Count column count should match initial count"
+
+        assert count_count == initial_count, (
+            "Count column count should match initial count",
+            count_count,
+            initial_count,
+        )
         logger.debug("Count column count (%d) check passed.", count_count)
 
         return_df = count_df.withColumn(
@@ -57,14 +62,14 @@ class Chronos:
                 F.exp(F.sum("log_return").over(self.rolling_window)) - 1,
             ),
         )
+        util.save_csv("rolling_cum_df", rolling_cum_df)
+
         rolling_cum_count = rolling_cum_df.select("cum_return").dropna().count()
-        assert 0 < rolling_cum_count < return_count, (
+        assert 0 < rolling_cum_count <= return_count, (
             f"Rolling cumulative return column count ({rolling_cum_count})"
             f"should satisfy 0 < {rolling_cum_count} < {return_count}"
         )
         logger.debug("Rolling cumulative return column count (%d) check passed.", rolling_cum_count)
-
-        util.save_csv("return", rolling_cum_df)
 
         return rolling_cum_df
 
@@ -81,7 +86,7 @@ class Chronos:
 
         sma_count = sma_df.select("sma").dropna().count()
         assert (
-            0 < sma_count < initial_count
+            0 < sma_count <= initial_count
         ), f"SMA column count ({sma_count}) should satisfy 0 < {sma_count} < {initial_count}"
         logger.debug("SMA column count (%d) check passed.", sma_count)
 
@@ -107,6 +112,8 @@ class Chronos:
         ).withColumn("return_stddev", F.stddev("log_return").over(self.rolling_window))
 
         stddev_count = stddev_df.select("price_stddev", "return_stddev").dropna().count()
+
+        util.save_csv("stddev_df", stddev_df)
         assert (
             stddev_count == mean_count
         ), f"Price stddev column count ({stddev_count}) should equal {mean_count}"

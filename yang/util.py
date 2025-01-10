@@ -8,6 +8,8 @@ from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 from statsmodels.tsa.stattools import adfuller, coint
 
+DEBUG = False
+
 
 def plot_returns(Xs: list[pd.Series]) -> None:
     for X in Xs:

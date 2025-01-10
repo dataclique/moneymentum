@@ -39,7 +39,7 @@
           inherit inputs pkgs;
           modules = [{
             # https://devenv.sh/reference/options/
-            packages = with pkgs; deps ++ [ ruff-lsp ];
+            packages = with pkgs; deps ++ [ ruff-lsp git-lfs ];
             # enterShell = "fswatch hyper.py | xargs -n 1 python";
 
             languages = {

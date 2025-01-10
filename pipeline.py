@@ -14,6 +14,8 @@ from pyspark.sql import types as T
 
 from yang import util
 from yang.chronos import Chronos
+from yang.dataloader.hyperliquid import normalize_timestamp
+from yang.dataloader.hyperliquid.markets import HyperliquidDataLoaderMarkets, SchemaPerpMarket
 from yang.dataloader.hyperliquid.ohlcv import HyperliquidDataLoaderOHLCV
 
 if __name__ == "__main__":
@@ -111,6 +113,7 @@ def short_score(  # noqa: PLR0913
 @dataclass
 class Pipeline:
     spark = util.get_spark()
+    loader_markets = HyperliquidDataLoaderMarkets(spark=spark)
     loader_ohlcv = HyperliquidDataLoaderOHLCV()
 
     timeframe: Timeframe = "1h"
@@ -128,11 +131,16 @@ class Pipeline:
         logger.info("Fetching data since: %s", start_date)
         since = int(start_date.timestamp() * 1000)
 
-        # Get all perpetual pairs
-        markets = await exchange.load_markets()
-        symbols = list(markets.keys())
-        perp_symbols = [s for s in symbols if "PERP" in s or markets[s].get("type") == "swap"]
-        logger.info("Found %s perpetual symbols", len(perp_symbols))
+        reload_markets = True
+        if reload_markets:
+            markets_df = await self.loader_markets.fetch_markets(exchange=exchange)
+        else:
+            markets_path = f"{util.DATA_DIR}/markets.csv"
+            markets_df = (
+                self.spark.read.schema(SchemaPerpMarket).csv(markets_path, header=True).cache()
+            )
+
+        symbols = markets_df.select("symbol").rdd.flatMap(lambda x: x).collect()
 
         # Fetch OHLCV data concurrently
         ohlcv_tasks = [
@@ -152,18 +160,6 @@ class Pipeline:
         # Flatten results
         ohlcv_data = [candle for candles in ohlcv_results for candle in candles]
         # funding_rate_data = [rate for rates in funding_rate_results for rate in rates]
-
-        def normalize_timestamp(timestamp: str | datetime) -> datetime:
-            if isinstance(timestamp, datetime):
-                # If it's already a datetime object, normalize it and return
-                return timestamp.replace(microsecond=0)
-            if isinstance(timestamp, str):
-                # If it's a string, parse it and return as a datetime object
-                return datetime.fromisoformat(timestamp.replace("Z", "+00:00")).replace(
-                    microsecond=0
-                )
-            error_message = f"Unsupported timestamp type: {type(timestamp)}"
-            raise TypeError(error_message)
 
         # Normalize timestamps
         # for rate in funding_rate_data:
@@ -198,112 +194,45 @@ class Pipeline:
         util.save_csv(candles_file_name, candles_df)
 
         candles_path = f"{util.DATA_DIR}/{candles_file_name}.csv"
-        return self.spark.read.schema(SchemaOHLCV).csv(candles_path).cache()
+        return self.spark.read.schema(SchemaOHLCV).csv(candles_path, header=True).cache()
 
-    def run(self) -> None:
+    async def run(self) -> None:
         logger.info("Starting pipeline...")
 
-        chronos = Chronos(timeframe=self.timeframe, lookback_periods=24 * 90)
+        chronos = Chronos(timeframe=self.timeframe, lookback_periods=24 * 3)
 
-        reload = False
+        reload = True
         path = f"{util.DATA_DIR}/ohlcv{self.timeframe}.csv"
         if reload or not Path(path).exists():
-            candles_df = asyncio.run(self.get_candles_df(timeframe=self.timeframe))
+            candles_df = await self.get_candles_df(timeframe=self.timeframe)
         else:
             candles_df = self.spark.read.schema(SchemaOHLCV).csv(path, header=True).cache()
 
         logger.info("Candles DataFrame:")
         candles_df.show(truncate=False)
-        candles_df.describe().show()
 
         analysis_df = (
             candles_df.transform(chronos.with_returns)
             .transform(chronos.with_sma)
             .transform(chronos.with_zscore)
-            .transform(chronos.with_volatility)
-            .transform(chronos.with_beta)
-            .transform(chronos.with_information_discreteness)
-            .cache()
+            # .transform(chronos.with_volatility)
+            # .transform(chronos.with_beta)
+            # .transform(chronos.with_information_discreteness)
+            .drop("count", "symbol", "open", "high", "low", "mean_return")
         )
 
-        # Get the latest timestamp
-        latest_row = analysis_df.select(F.max("timestamp")).first()[0]
+        # Get latest entries
+        latest = candles_df.select(F.max("timestamp")).first()[0]
+        logger.info("Latest timestamp: %s", latest)
+        latest_df = analysis_df.filter(F.col("timestamp") == F.lit(latest)).dropna().cache()
 
-        # Filter the DataFrame using the latest timestamp
-        latest_entries = (
-            analysis_df.filter(F.col("timestamp") == F.lit(latest_row))
-            .orderBy("symbol")
-            .drop("forward_return", "price_zscore_fw_return_corr")
-            .dropna()
-            .cache()
-        )
+        latest_df.show(vertical=True)
+        latest_df.count()
 
-        latest_entries.show(vertical=True)
-        latest_entries.count()
-
-        pick_limit = 10
-
-        long_score_df = latest_entries.withColumn(
-            "long_score",
-            long_score(
-                # F.col("ticker"),
-                F.col("close"),
-                F.col("min"),
-                F.col("max"),
-                F.col("mean_return"),
-                F.col("return_stddev"),
-                F.col("beta"),
-                F.col("price_zscore"),
-                F.lit(self.timeframe),
-            ),
-        ).orderBy("long_score", ascending=False)
-
-        long_picks = long_score_df.select(
-            F.col("symbol"),
-            F.col("information_discreteness"),
-            F.col("beta"),
-            F.col("price_stddev"),
-            F.col("long_score"),
-        ).limit(pick_limit)
-
-        logger.info("Long picks:")
-        long_picks.show()
-
-        short_score_df = latest_entries.withColumn(
-            "short_score",
-            short_score(
-                # F.col("ticker"),
-                F.col("close"),
-                F.col("min"),
-                F.col("max"),
-                F.col("mean_return"),
-                F.col("return_stddev"),
-                F.col("beta"),
-                F.col("price_zscore"),
-                F.lit(self.timeframe),
-            ),
-        ).orderBy("short_score", ascending=False)
-
-        short_picks = short_score_df.select(
-            F.col("symbol"),
-            F.col("information_discreteness"),
-            F.col("beta"),
-            F.col("price_stddev"),
-            F.col("short_score"),
-        ).limit(pick_limit)
-
-        logger.info("Short picks:")
-        short_picks.show()
-
-        picks = long_picks.withColumn("type", F.lit("long")).union(
-            short_picks.withColumn("type", F.lit("short")),
-        )
-
-        picks.show()
-
+        picks = latest_df.orderBy("price_zscore", ascending=True)
         util.save_csv("picks", picks)
 
 
 if __name__ == "__main__":
     pipeline = Pipeline()
-    pipeline.run()
+    asyncio.run(pipeline.run())

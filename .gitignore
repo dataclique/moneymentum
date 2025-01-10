@@ -6,6 +6,4 @@ __pycache__
 *.cabal
 *~
 .DS_Store
-/data/
-*.csv
 *.log

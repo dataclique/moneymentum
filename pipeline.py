@@ -232,7 +232,68 @@ class Pipeline:
         picks = latest_df.orderBy("price_zscore", ascending=True)
         util.save_csv("picks", picks)
 
+    async def test(self) -> None:
+        logger.info("Starting testing pipeline...")
+
+        chronos = Chronos(timeframe="1d", lookback_periods=370)
+
+        path = "./test_data/ohlcv1d.csv"
+        candles_df = self.spark.read.schema(SchemaOHLCV).csv(path, header=True).cache()
+
+        logger.info("Candles DataFrame:")
+        candles_df.show(truncate=False)
+
+        analysis_df = (
+            candles_df.transform(chronos.with_returns)
+            .transform(chronos.with_sma)
+            .transform(chronos.with_zscore)
+            .transform(chronos.with_volatility)
+            .transform(chronos.with_beta)
+            .transform(chronos.with_information_discreteness)
+            # .drop("count", "symbol", "open", "high", "low", "mean_return")
+        )
+
+        # TODO: don't need to save it, just debug
+        util.save_csv("0ANAL_df", analysis_df)
+
+        aave_last_record = (
+            analysis_df.filter(F.col("symbol") == "AAVE/USDC")
+            .orderBy(F.col("timestamp").desc())
+            .limit(1)
+            .collect()[0]
+        )
+
+        # TODO: something wrong with calculationof beta and covariance
+        actual_mean_return = aave_last_record["mean_return"]
+        actual_return_stddev = aave_last_record["return_stddev"]
+        actual_annualized_volatility = aave_last_record["annualized_volatility"]
+
+        # Google sheet: 0.29%
+        expected_mean_return = 0.0029290822331748565
+        # Google sheet: 0.05
+        expected_return_stddev = 0.05116662705011916
+        # Google sheet: 97.76%
+        expected_annualized_volatility = 0.9775370372243625
+
+        assert (
+            actual_mean_return == expected_mean_return
+        ), f"Mean return mismatch: {actual_mean_return} != {expected_mean_return}"
+        assert (
+            actual_return_stddev == expected_return_stddev
+        ), f"Return stddev mismatch: {actual_return_stddev} != {expected_return_stddev}"
+        assert (
+            actual_annualized_volatility == expected_annualized_volatility
+        ), f"Annualized volatility mismatch: {actual_annualized_volatility} != {expected_annualized_volatility}"
+
+        logger.info("All assertions passed for the last record of AAVE.")
+
+        # TODO: do the same for BTC
+        # TODO: dot the same for another token with different amount of candles
+
 
 if __name__ == "__main__":
     pipeline = Pipeline()
-    asyncio.run(pipeline.run())
+
+    asyncio.run(pipeline.test())
+
+    # asyncio.run(pipeline.run())

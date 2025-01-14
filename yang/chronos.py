@@ -207,7 +207,6 @@ class Chronos:
                 F.covar_pop("log_return", "btc_return").over(self.rolling_window),
             )
             .withColumn("beta", F.col("covariance") / (F.col("stddev") ** 2))
-            .withColumn("btc_cum_return", F.exp(F.sum("btc_return").over(self.rolling_window)))
         )
 
     def with_information_discreteness(self, df: DataFrame) -> DataFrame:

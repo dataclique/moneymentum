@@ -201,7 +201,7 @@ class Pipeline:
 
         chronos = Chronos(timeframe=self.timeframe, lookback_periods=24 * 3)
 
-        reload = True
+        reload = False
         path = f"{util.DATA_DIR}/ohlcv{self.timeframe}.csv"
         if reload or not Path(path).exists():
             candles_df = await self.get_candles_df(timeframe=self.timeframe)
@@ -213,11 +213,11 @@ class Pipeline:
 
         analysis_df = (
             candles_df.transform(chronos.with_returns)
+            .transform(chronos.with_volatility)
             .transform(chronos.with_sma)
             .transform(chronos.with_zscore)
-            # .transform(chronos.with_volatility)
-            # .transform(chronos.with_beta)
-            # .transform(chronos.with_information_discreteness)
+            .transform(chronos.with_beta)
+            .transform(chronos.with_information_discreteness)
             .drop("count", "symbol", "open", "high", "low", "mean_return")
         )
 

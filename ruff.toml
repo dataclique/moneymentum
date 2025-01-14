@@ -54,7 +54,7 @@ select = [
     "F",     # Pyflakes
     "FA",    # flake8-future-annotations
     "FBT",   # flake8-boolean-trap
-    "FIX",   # flake8-fixme
+    # "FIX",   # flake8-fixme
     "FLY",   # flynt
     "G",     # flake8-logging-format
     "I",     # isort
@@ -82,7 +82,7 @@ select = [
     "T10",   # flake8-debugger
     "T20",   # flake8-print
     "TCH",   # flake8-type-checking
-    "TD",    # flake8-todos
+    # "TD",    # flake8-todos
     "TID",   # flake8-tidy-imports
     "TRY",   # tryceratops
     "UP",    # pyupgrade

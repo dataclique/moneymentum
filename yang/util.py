@@ -1,14 +1,15 @@
 import logging
+import os
 from pathlib import Path
 
 import colorlog
 import matplotlib.pyplot as plt
 import pandas as pd
-from pyspark.sql import DataFrame, SparkSession
+from pyspark.sql import DataFrame, DataFrameReader, SparkSession
 from pyspark.sql import functions as F
 from statsmodels.tsa.stattools import adfuller, coint
 
-DEBUG = False
+DEBUG = True
 
 
 def plot_returns(Xs: list[pd.Series]) -> None:
@@ -97,8 +98,11 @@ def get_spark() -> SparkSession:
     ram_gigs = 12
     cores = 12
 
+    JDBC_DRIVER_PATH = os.getenv("JDBC_PATH")
+
     spark = (
         SparkSession.builder.appName("pipeline")
+        .config("spark.driver.extraClassPath", JDBC_DRIVER_PATH)
         # Memory and Spill Configurations
         .config("spark.memory.fraction", "0.8")
         .config("spark.memory.storageFraction", "0.3")
@@ -124,6 +128,19 @@ def get_spark() -> SparkSession:
     spark.sparkContext.setLogLevel("ERROR")
     logger.debug("Spark session created.")
     return spark
+
+
+def get_spark_pg_df_reader(
+    spark: SparkSession, db_url: str, db_user: str, db_password: str
+) -> DataFrameReader:
+    """Create a DataFrameReader for connecting to a PostgreSQL database."""
+    return (
+        spark.read.format("jdbc")
+        .option("driver", "org.postgresql.Driver")
+        .option("url", db_url)
+        .option("user", db_user)
+        .option("password", db_password)
+    )
 
 
 DATA_DIR = "data"

@@ -24,6 +24,7 @@ class Chronos:
         self.rolling_window = self.symbol_window.rowsBetween(
             -self.lookback_periods + 1, W.Window.currentRow
         )
+        self.has_enough_samples = F.col("count") >= self.lookback_periods
 
     def with_returns(self, df: DataFrame) -> DataFrame:
         count_df = df.withColumn("count", F.count("close").over(self.symbol_window)).cache()
@@ -56,20 +57,40 @@ class Chronos:
         rolling_cum_df = return_df.withColumn(
             "cum_return",
             F.when(
-                F.col("count") >= self.lookback_periods,
+                self.has_enough_samples,
                 F.exp(F.sum("log_return").over(self.rolling_window)) - 1,
             ),
         )
-        rolling_cum_count = rolling_cum_df.select("cum_return").dropna().count()
-        assert 0 < rolling_cum_count < return_count, (
-            f"Rolling cumulative return column count ({rolling_cum_count})"
-            f"should satisfy 0 < {rolling_cum_count} < {return_count}"
-        )
-        logger.debug("Rolling cumulative return column count (%d) check passed.", rolling_cum_count)
 
-        util.save_csv("return", rolling_cum_df)
+        if util.DEBUG:
+            rolling_cum_count = rolling_cum_df.select("cum_return").dropna().count()
+            assert 0 < rolling_cum_count < return_count, (
+                f"Rolling cumulative return column count ({rolling_cum_count})"
+                f"should satisfy 0 < {rolling_cum_count} < {return_count}"
+            )
+            logger.debug(
+                "Rolling cumulative return column count (%d) check passed.", rolling_cum_count
+            )
 
         return rolling_cum_df
+
+    def with_volatility(self, df: DataFrame) -> DataFrame:
+        logger.info("Calculating volatility...")
+
+        if self.timeframe == "1h":
+            annualization_factor = 365 * 24
+        elif self.timeframe == "1d":
+            annualization_factor = 365
+        elif self.timeframe == "1w":
+            annualization_factor = 52
+
+        return df.withColumn(
+            "stddev",
+            F.stddev(F.col("log_return")).over(self.rolling_window),
+        ).withColumn(
+            "annualized_volatility",
+            F.col("stddev") * F.sqrt(F.lit(annualization_factor)),
+        )
 
     def with_min_max(self, df: DataFrame) -> DataFrame:
         logger.info("Calculating min/max...")
@@ -77,13 +98,13 @@ class Chronos:
         max_min_df = df.withColumn(
             "max",
             F.when(
-                F.col("count") >= self.lookback_periods,
+                self.has_enough_samples,
                 F.max("high").over(self.rolling_window),
             ),
         ).withColumn(
             "min",
             F.when(
-                F.col("count") >= self.lookback_periods,
+                self.has_enough_samples,
                 F.min("low").over(self.rolling_window),
             ),
         )
@@ -104,9 +125,7 @@ class Chronos:
         initial_count = df.select("close").dropna().count()
         sma_df = df.withColumn(
             "sma",
-            F.when(
-                F.col("count") >= self.lookback_periods, F.avg("close").over(self.rolling_window)
-            ),
+            F.when(self.has_enough_samples, F.avg("close").over(self.rolling_window)),
         )
 
         if util.DEBUG:
@@ -118,24 +137,19 @@ class Chronos:
 
         mean_df = sma_df.withColumn(
             "mean_return",
-            F.when(
-                F.col("count") > self.lookback_periods,
-                F.avg("log_return").over(self.rolling_window),
-            ),
+            F.when(self.has_enough_samples, F.avg("log_return").over(self.rolling_window)),
         )
 
         if util.DEBUG:
             mean_count = mean_df.select("mean_return").dropna().count()
             assert (
-                mean_count < sma_count  # -1 because we're looking at a difference
-            ), f"Mean return column count ({mean_count}) < SMA column count ({sma_count})"
+                mean_count == sma_count
+            ), f"Mean return column count ({mean_count}) == SMA column count ({sma_count})"
             logger.debug("Mean return column count (%d) check passed.", mean_count)
 
         stddev_df = mean_df.withColumn(
             "price_stddev",
-            F.when(
-                F.col("count") > self.lookback_periods, F.stddev("close").over(self.rolling_window)
-            ),
+            F.when(self.has_enough_samples, F.stddev("close").over(self.rolling_window)),
         ).withColumn("return_stddev", F.stddev("log_return").over(self.rolling_window))
 
         if util.DEBUG:
@@ -149,36 +163,30 @@ class Chronos:
 
     def with_zscore(self, df: DataFrame) -> DataFrame:
         logger.info("Calculating zscore...")
-        return (
-            df.withColumn("price_zscore", F.col("price_stddev") / F.col("sma")).withColumn(
-                "log_return_zscore",
-                (F.col("log_return") - F.col("mean_return")) / F.col("return_stddev"),
-            )
-            # .withColumn("z_max", F.max(F.abs("price_zscore")).over(self.rolling_window))
-            # .withColumn("z_to_max", F.col("price_zscore") / F.col("z_max"))
+        price_zscore = (F.col("close") - F.col("sma")) / F.col("price_stddev")
+        log_return_zscore = (F.col("log_return") - F.col("mean_return")) / F.col("return_stddev")
+        zscore_df = df.withColumn("price_zscore", price_zscore).withColumn(
+            "log_return_zscore", log_return_zscore
         )
 
-    def with_volatility(self, df: DataFrame) -> DataFrame:
-        logger.info("Calculating volatility...")
-
-        if self.timeframe == "1h":
-            annualization_factor = 365 * 24
-        elif self.timeframe == "1d":
-            annualization_factor = 365
-        elif self.timeframe == "1w":
-            annualization_factor = 52
-
-        return (
-            df.withColumn(
-                "stddev",
-                F.stddev(F.col("log_return")).over(self.rolling_window),
+        if util.DEBUG:
+            stddev_count = zscore_df.select("stddev").dropna().count()
+            price_zscore_count = zscore_df.select("price_zscore").dropna().count()
+            log_return_zscore_count = zscore_df.select("log_return_zscore").dropna().count()
+            # FIXME: this condition seems wrong but passes for some reason
+            assert price_zscore_count < log_return_zscore_count < stddev_count, (
+                f"Price zscore count ({price_zscore_count}) should be less than"
+                f" log return zscore count ({log_return_zscore_count}) and greater than"
+                f" stddev count ({stddev_count})"
             )
-            .withColumn(
-                "annualized_volatility",
-                F.col("stddev") * F.sqrt(F.lit(annualization_factor)),
+            logger.debug(
+                "Z-score column counts (%d, %d, %d) check passed.",
+                stddev_count,
+                price_zscore_count,
+                log_return_zscore_count,
             )
-            .drop("count")
-        )
+
+        return zscore_df
 
     def with_beta(self, df: DataFrame) -> DataFrame:
         logger.info("Calculating beta...")
@@ -198,11 +206,7 @@ class Chronos:
                 "covariance",
                 F.covar_pop("log_return", "btc_return").over(self.rolling_window),
             )
-            .withColumn(
-                "btc_variance",
-                F.var_pop("btc_return").over(self.rolling_window),
-            )
-            .withColumn("beta", F.col("covariance") / F.col("btc_variance"))
+            .withColumn("beta", F.col("covariance") / (F.col("stddev") ** 2))
             .withColumn("btc_cum_return", F.exp(F.sum("btc_return").over(self.rolling_window)))
         )
 

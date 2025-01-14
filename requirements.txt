@@ -4,6 +4,8 @@ colorlog
 matplotlib
 numpy
 pandas
+plotly
+psycopg
 pyspark
 statsmodels
 tenacity

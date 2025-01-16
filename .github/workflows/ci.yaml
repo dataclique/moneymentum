@@ -1,0 +1,26 @@
+name: CI/CD
+
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches:
+      - master
+
+jobs:
+  pipeline:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: DeterminateSystems/nix-installer-action@main
+    - uses: DeterminateSystems/magic-nix-cache-action@main
+    - uses: DeterminateSystems/flake-checker-action@main
+
+    - name: Nix Flake check
+      run: nix flake check --impure --accept-flake-config --show-trace
+
+    - name: Nix Flake check
+      run: |
+        nix -v develop \
+          --impure --accept-flake-config --show-trace \
+          --command /bin/bash -c 'pytest'

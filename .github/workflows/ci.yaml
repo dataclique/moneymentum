@@ -23,6 +23,6 @@ jobs:
 
     - name: Run tests
       run: |
-        nix -v develop \
+        nix develop \
           --impure --accept-flake-config --show-trace \
           --command /bin/bash -c 'pytest'

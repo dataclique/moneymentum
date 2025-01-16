@@ -1,4 +1,5 @@
 # Exclude a variety of commonly ignored directories.
+force-exclude = true
 exclude = [
     ".bzr",
     ".direnv",
@@ -95,6 +96,7 @@ select = [
     # "RUF",  # Ruff-specific rules
 ]
 ignore = ["ANN101", "COM812", "D202", "D203", "D212", "E703", "ISC001", "S101", "TD002", "TD003"]
+exclude = ["tests/*"]
 
 # Allow fix for all enabled rules (when `--fix`) is provided.
 fixable = ["ALL"]

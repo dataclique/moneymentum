@@ -232,6 +232,7 @@ class Pipeline:
         picks = latest_df.orderBy("price_zscore", ascending=True)
         util.save_csv("picks", picks)
 
+
 if __name__ == "__main__":
     pipeline = Pipeline()
 

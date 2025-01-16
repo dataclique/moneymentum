@@ -10,6 +10,8 @@ on:
 jobs:
   pipeline:
     runs-on: ubuntu-latest
+    env:
+      NIXPKGS_ALLOW_UNFREE: 1
     steps:
     - uses: actions/checkout@v4
     - uses: DeterminateSystems/nix-installer-action@main
@@ -19,7 +21,7 @@ jobs:
     - name: Nix Flake check
       run: nix flake check --impure --accept-flake-config --show-trace
 
-    - name: Nix Flake check
+    - name: Run tests
       run: |
         nix -v develop \
           --impure --accept-flake-config --show-trace \

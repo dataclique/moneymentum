@@ -235,4 +235,5 @@ class Pipeline:
 
 if __name__ == "__main__":
     pipeline = Pipeline()
+
     asyncio.run(pipeline.run())

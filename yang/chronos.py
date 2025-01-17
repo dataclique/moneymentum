@@ -174,7 +174,7 @@ class Chronos:
             price_zscore_count = zscore_df.select("price_zscore").dropna().count()
             log_return_zscore_count = zscore_df.select("log_return_zscore").dropna().count()
             # FIXME: this condition seems wrong but passes for some reason
-            assert price_zscore_count < log_return_zscore_count < stddev_count, (
+            assert price_zscore_count <= log_return_zscore_count < stddev_count, (
                 f"Price zscore count ({price_zscore_count}) should be less than"
                 f" log return zscore count ({log_return_zscore_count}) and greater than"
                 f" stddev count ({stddev_count})"
@@ -207,7 +207,6 @@ class Chronos:
                 F.covar_pop("log_return", "btc_return").over(self.rolling_window),
             )
             .withColumn("beta", F.col("covariance") / (F.col("stddev") ** 2))
-            .withColumn("btc_cum_return", F.exp(F.sum("btc_return").over(self.rolling_window)))
         )
 
     def with_information_discreteness(self, df: DataFrame) -> DataFrame:

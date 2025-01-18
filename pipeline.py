@@ -171,6 +171,12 @@ class Pipeline:
                 .when(F.col("direction") == "short", -F.col("ma_potential_return"))
                 .otherwise(0),
             )
+            .withColumn(
+                "position_weight",
+                F.when(F.col("beta") > 0, F.col("position_weight") / F.col("beta")).otherwise(
+                    F.col("position_weight") / (-F.col("beta"))
+                ),
+            )
             # Scale position weights to target leverage
             .withColumn(
                 "position_weight",
@@ -259,7 +265,7 @@ class Pipeline:
         # Calculate portfolio beta
         portfolio_returns = (
             strategy_returns.groupBy("timestamp")
-            .agg(F.sum("weighted_position_return").alias("portfolio_return"))
+            .agg(F.sum("weighted_position_return").alias("log_return"))
             .withColumn("symbol", F.lit("ma_portfolio"))
         )
 
@@ -267,13 +273,11 @@ class Pipeline:
             F.col("timestamp"), F.col("log_return")
         )
 
-        portfolio_beta_df = portfolio_returns.transform(
-            lambda df: chronos.with_beta(
-                df,
-                return_col="portfolio_return",
-                index_returns=index_returns,
-            )
-        ).agg(F.avg("beta").alias("portfolio_beta"))
+        portfolio_beta_df = (
+            portfolio_returns.transform(chronos.with_volatility)
+            .transform(lambda df: chronos.with_beta(df, index_returns=index_returns))
+            .agg(F.avg("beta").alias("portfolio_beta"))
+        )
 
         # Combine metrics
         metrics = metrics.crossJoin(portfolio_beta_df).cache()

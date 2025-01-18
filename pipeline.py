@@ -40,7 +40,7 @@ SchemaOHLCV = T.StructType(
 @dataclass
 class Pipeline:
     reload: bool
-    zscore_threshold: float
+    n_tokens: int
 
     spark: SparkSession
     loader_markets: HyperliquidDataLoaderMarkets
@@ -147,17 +147,25 @@ class Pipeline:
             .drop("count", "symbol", "open", "high", "low", "mean_return")
         )
 
-        mean_reversion_strategy = F.when(
-            F.col("price_zscore") > F.lit(self.zscore_threshold), "short"
-        ).otherwise(F.when(F.col("price_zscore") < -F.lit(self.zscore_threshold), "long"))
-
+        window_spec = W.Window.partitionBy("timestamp").orderBy(F.col("price_zscore"))
         picks_df = (
-            analysis_df.orderBy("price_zscore", ascending=True)
+            analysis_df.filter(F.col("price_zscore").isNotNull())
+            .withColumn("rank", F.row_number().over(window_spec))
+            .withColumn(
+                "reverse_rank",
+                F.row_number().over(window_spec.orderBy(F.col("price_zscore").desc())),
+            )
+            .withColumn(
+                "direction",
+                F.when(F.col("rank") <= F.lit(self.n_tokens), "long").otherwise(
+                    F.when(F.col("reverse_rank") <= F.lit(self.n_tokens), "short")
+                ),
+            )
             .select(
                 F.col("timestamp"),
                 F.col("ticker"),
                 F.col("close"),
-                mean_reversion_strategy.alias("direction"),
+                F.col("direction"),
                 F.col("price_zscore"),
                 F.col("sma"),
                 F.col("annualized_volatility"),
@@ -245,12 +253,12 @@ if __name__ == "__main__":
     spark = util.get_spark()
     pipeline = Pipeline(
         reload=False,
-        zscore_threshold=1.1,
+        n_tokens=10,
         spark=spark,
         loader_markets=HyperliquidDataLoaderMarkets(spark=spark),
         loader_ohlcv=HyperliquidDataLoaderOHLCV(),
         timeframe="1d",
-        lookback_periods=300,
+        lookback_periods=100,
         start_date=datetime(2023, 6, 1, tzinfo=timezone.utc).replace(
             hour=0,
             minute=0,

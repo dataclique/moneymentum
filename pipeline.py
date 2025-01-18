@@ -3,12 +3,10 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Literal
 
-import numpy as np
 import pandas as pd
 from ccxt import async_support as ccxt
-from pyspark.sql import DataFrame
+from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql import types as T
 
@@ -16,7 +14,7 @@ from yang import util
 from yang.chronos import Chronos
 from yang.dataloader.hyperliquid import normalize_timestamp
 from yang.dataloader.hyperliquid.markets import HyperliquidDataLoaderMarkets, SchemaPerpMarket
-from yang.dataloader.hyperliquid.ohlcv import HyperliquidDataLoaderOHLCV
+from yang.dataloader.hyperliquid.ohlcv import HyperliquidDataLoaderOHLCV, Timeframe
 
 if __name__ == "__main__":
     util.setup_logging()
@@ -37,99 +35,28 @@ SchemaOHLCV = T.StructType(
     ]
 )
 
-Timeframe = Literal["1h", "1d", "1w"]
-
-
-@F.udf(returnType=T.FloatType())
-def long_score(  # noqa: PLR0913
-    # ticker: str,
-    close: float,
-    min_price: float,
-    max_price: float,
-    mean_return: float,
-    return_stddev: float,
-    beta: float,
-    price_zscore: float,
-    timeframe: Timeframe,
-) -> float:
-    drawdown_factor = -((close / max_price) - 1)
-    ranup_factor = (close / min_price) - 1
-    range_factor = drawdown_factor / ranup_factor
-
-    if timeframe == "1h":
-        annualized_return = mean_return * 365 * 24
-        annualized_volatility = return_stddev * np.sqrt(365 * 24)
-    elif timeframe == "1d":
-        annualized_return = mean_return * 365
-        annualized_volatility = return_stddev * np.sqrt(365)
-    elif timeframe == "1w":
-        annualized_return = mean_return * 52
-        annualized_volatility = return_stddev * np.sqrt(52)
-
-    risk_free_rate = 0.045
-    risk_adjusted_return_factor = (annualized_return - risk_free_rate) / (
-        annualized_volatility * beta
-    )
-
-    mean_reversion_factor = np.exp(-price_zscore * 0.01)
-    return float(range_factor * risk_adjusted_return_factor * mean_reversion_factor)
-
-
-@F.udf(returnType=T.FloatType())
-def short_score(  # noqa: PLR0913
-    # ticker: str,
-    close: float,
-    min_price: float,
-    max_price: float,
-    mean_return: float,
-    return_stddev: float,
-    beta: float,
-    price_zscore: float,
-    timeframe: Timeframe,
-) -> float:
-    smoked_factor = (close / min_price) - 1
-    ranup_factor = 1 - (close / max_price)
-    range_factor = smoked_factor / ranup_factor
-
-    if timeframe == "1h":
-        annualized_return = mean_return * 365 * 24
-        annualized_volatility = return_stddev * np.sqrt(365 * 24)
-    elif timeframe == "1d":
-        annualized_return = mean_return * 365
-        annualized_volatility = return_stddev * np.sqrt(365)
-    elif timeframe == "1w":
-        annualized_return = mean_return * 52
-        annualized_volatility = return_stddev * np.sqrt(52)
-
-    risk_free_rate = 0.045
-    risk_adjusted_return_factor = (-annualized_return - risk_free_rate) / (
-        annualized_volatility * beta
-    )
-
-    mean_reversion_factor = np.exp(price_zscore * 0.01)
-    return float(range_factor * risk_adjusted_return_factor * mean_reversion_factor)
-
 
 @dataclass
 class Pipeline:
-    spark = util.get_spark()
-    loader_markets = HyperliquidDataLoaderMarkets(spark=spark)
-    loader_ohlcv = HyperliquidDataLoaderOHLCV()
+    reload: bool
+    zscore_threshold: float
 
-    timeframe: Timeframe = "1h"
+    spark: SparkSession
+    loader_markets: HyperliquidDataLoaderMarkets
+    loader_ohlcv: HyperliquidDataLoaderOHLCV
+
+    timeframe: Timeframe
+    lookback_periods: int
+    start_date: datetime
 
     async def get_candles_df(self, timeframe: Timeframe) -> DataFrame:
-        start_date: datetime = datetime(2024, 6, 1, tzinfo=timezone.utc).replace(
-            hour=0, minute=0, second=0, microsecond=0
-        )
-
         logger.debug("Initializing exchange...")
         exchange = ccxt.hyperliquid({"asyncio_loop": asyncio.get_event_loop()})
         logger.info("Exchange initialized: %s", exchange)
 
         # Only last 5000 candles available
-        logger.info("Fetching data since: %s", start_date)
-        since = int(start_date.timestamp() * 1000)
+        logger.info("Fetching data since: %s", self.start_date)
+        since = int(self.start_date.timestamp() * 1000)
 
         reload_markets = True
         if reload_markets:
@@ -199,11 +126,8 @@ class Pipeline:
     async def run(self) -> None:
         logger.info("Starting pipeline...")
 
-        chronos = Chronos(timeframe=self.timeframe, lookback_periods=24 * 3)
-
-        reload = False
         path = f"{util.DATA_DIR}/ohlcv{self.timeframe}.csv"
-        if reload or not Path(path).exists():
+        if self.reload or not Path(path).exists():
             candles_df = await self.get_candles_df(timeframe=self.timeframe)
         else:
             candles_df = self.spark.read.schema(SchemaOHLCV).csv(path, header=True).cache()
@@ -211,6 +135,7 @@ class Pipeline:
         logger.info("Candles DataFrame:")
         candles_df.show(truncate=False)
 
+        chronos = Chronos(timeframe=self.timeframe, lookback_periods=self.lookback_periods)
         analysis_df = (
             candles_df.transform(chronos.with_returns)
             .transform(chronos.with_volatility)
@@ -221,19 +146,50 @@ class Pipeline:
             .drop("count", "symbol", "open", "high", "low", "mean_return")
         )
 
+        mean_reversion_strategy = F.when(
+            F.col("price_zscore") > F.lit(self.zscore_threshold), "short"
+        ).otherwise(F.when(F.col("price_zscore") < -F.lit(self.zscore_threshold), "long"))
+
+        picks_df = (
+            analysis_df.orderBy("price_zscore", ascending=True)
+            .select(
+                F.col("timestamp"),
+                F.col("ticker"),
+                F.col("close"),
+                mean_reversion_strategy.alias("direction"),
+                F.col("price_zscore"),
+                F.col("sma"),
+                F.col("annualized_volatility"),
+            )
+            .filter(F.col("direction").isNotNull())
+        )
+
         # Get latest entries
         latest = candles_df.select(F.max("timestamp")).first()[0]
         logger.info("Latest timestamp: %s", latest)
-        latest_df = analysis_df.filter(F.col("timestamp") == F.lit(latest)).dropna().cache()
+        latest_df = picks_df.filter(F.col("timestamp") == F.lit(latest)).dropna().cache()
 
-        latest_df.show(vertical=True)
+        latest_df.show()
         latest_df.count()
-
-        picks = latest_df.orderBy("price_zscore", ascending=True)
-        util.save_csv("picks", picks)
+        util.save_csv("picks", latest_df)
 
 
 if __name__ == "__main__":
-    pipeline = Pipeline()
+    spark = util.get_spark()
+    pipeline = Pipeline(
+        reload=True,
+        zscore_threshold=2.0,
+        spark=spark,
+        loader_markets=HyperliquidDataLoaderMarkets(spark=spark),
+        loader_ohlcv=HyperliquidDataLoaderOHLCV(),
+        timeframe="1d",
+        lookback_periods=365,
+        start_date=datetime(2023, 6, 1, tzinfo=timezone.utc).replace(
+            hour=0,
+            minute=0,
+            second=0,
+            microsecond=0,
+        ),
+    )
 
     asyncio.run(pipeline.run())

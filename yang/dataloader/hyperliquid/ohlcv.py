@@ -2,7 +2,7 @@ import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Literal
 
 from ccxt import async_support as ccxt
 from tenacity import retry, stop_after_attempt, wait_exponential
@@ -11,6 +11,9 @@ from yang import util
 
 logger = logging.getLogger(__name__)
 logger.setLevel(util.LOG_LEVEL)
+
+
+Timeframe = Literal["1h", "1d", "1w"]
 
 
 @dataclass

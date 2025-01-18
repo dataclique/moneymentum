@@ -179,25 +179,30 @@ class Chronos:
 
         return zscore_df
 
-    def with_beta(self, df: DataFrame) -> DataFrame:
+    def with_beta(
+        self, df: DataFrame, return_col: str = "log_return", index_returns: DataFrame = None
+    ) -> DataFrame:
         logger.info("Calculating beta...")
 
         # Get BTC returns
-        btc_returns = df.filter(F.col("ticker") == "BTC").select(
-            F.col("timestamp"), F.col("log_return").alias("btc_return")
-        )
+        index_returns = (
+            df.filter(F.col("ticker") == "BTC").select(F.col("timestamp"), F.col("log_return"))
+            if index_returns is None
+            else index_returns
+        ).withColumnRenamed("log_return", "index_return")
 
         # Join BTC returns with all symbols
-        joined_df = df.join(btc_returns, "timestamp", "left")
+        joined_df = df.join(index_returns, "timestamp", "left")
 
         # Calculate rolling covariance and variance
         return (
-            joined_df.withColumn("count", F.count("log_return").over(self.rolling_window))
+            joined_df.withColumn("count", F.count(return_col).over(self.rolling_window))
             .withColumn(
                 "covariance",
-                F.covar_pop("log_return", "btc_return").over(self.rolling_window),
+                F.covar_pop(return_col, "index_return").over(self.rolling_window),
             )
             .withColumn("beta", F.col("covariance") / (F.col("stddev") ** 2))
+            .drop("index_return")
         )
 
     def with_information_discreteness(self, df: DataFrame) -> DataFrame:

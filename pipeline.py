@@ -41,6 +41,7 @@ SchemaOHLCV = T.StructType(
 class Pipeline:
     reload: bool
     n_tokens: int
+    leverage: float
 
     spark: SparkSession
     loader_markets: HyperliquidDataLoaderMarkets
@@ -147,13 +148,16 @@ class Pipeline:
             .drop("count", "symbol", "open", "high", "low", "mean_return")
         )
 
-        window_spec = W.Window.partitionBy("timestamp").orderBy(F.col("price_zscore"))
+        ma_potential_return = (F.col("sma") - F.col("close")) / F.col("close")
+        ranking_col = F.col("price_zscore")
+        window_spec = W.Window.partitionBy("timestamp").orderBy(ranking_col)
         picks_df = (
-            analysis_df.filter(F.col("price_zscore").isNotNull())
+            analysis_df.withColumn("ma_potential_return", ma_potential_return)
+            .filter(ranking_col.isNotNull())
             .withColumn("rank", F.row_number().over(window_spec))
             .withColumn(
                 "reverse_rank",
-                F.row_number().over(window_spec.orderBy(F.col("price_zscore").desc())),
+                F.row_number().over(window_spec.orderBy(ranking_col.desc())),
             )
             .withColumn(
                 "direction",
@@ -161,15 +165,30 @@ class Pipeline:
                     F.when(F.col("reverse_rank") <= F.lit(self.n_tokens), "short")
                 ),
             )
+            .withColumn(
+                "position_weight",
+                F.when(F.col("direction") == "long", F.col("ma_potential_return"))
+                .when(F.col("direction") == "short", -F.col("ma_potential_return"))
+                .otherwise(0),
+            )
+            # Scale position weights to target leverage
+            .withColumn(
+                "position_weight",
+                F.col("position_weight")
+                * F.lit(self.leverage)
+                / F.sum(F.abs(F.col("position_weight"))).over(W.Window.partitionBy("timestamp")),
+            )
             .select(
                 F.col("timestamp"),
                 F.col("ticker"),
-                F.col("close"),
                 F.col("direction"),
+                F.col("close"),
                 F.col("price_zscore"),
+                F.col("position_weight"),
                 F.col("sma"),
                 F.col("annualized_volatility"),
                 F.col("log_return"),
+                F.col("beta"),
             )
             .filter(F.col("direction").isNotNull())
         )
@@ -196,22 +215,35 @@ class Pipeline:
             )
         )
 
-        # Join signals with next day returns
-        strategy_returns = picks_df.join(next_day_returns, ["timestamp", "ticker"]).withColumn(
-            "position_return",
-            F.when(F.col("direction") == "long", F.col("next_log_return")).when(
-                F.col("direction") == "short", -F.col("next_log_return")
-            ),
+        # Join signals with next day returns and calculate weighted returns
+        strategy_returns = (
+            picks_df.join(next_day_returns, ["timestamp", "ticker"])
+            .withColumn(
+                "position_return",
+                F.when(F.col("direction") == "long", F.col("next_log_return")).when(
+                    F.col("direction") == "short", -F.col("next_log_return")
+                ),
+            )
+            # Normalize weights within each timestamp
+            .withColumn(
+                "normalized_weight",
+                F.abs(F.col("position_weight"))
+                / F.sum(F.abs(F.col("position_weight"))).over(W.Window.partitionBy("timestamp")),
+            )
+            # Calculate weighted position returns
+            .withColumn(
+                "weighted_position_return", F.col("position_return") * F.col("normalized_weight")
+            )
         )
 
-        # Calculate daily strategy performance
+        # Update daily performance calculation to use weighted returns
         daily_performance = (
             strategy_returns.groupBy("timestamp")
             .agg(
                 F.count("*").alias("number_of_positions"),
                 F.avg("position_return").alias("avg_daily_return"),
                 F.stddev("position_return").alias("daily_std"),
-                F.sum("position_return").alias("total_return"),
+                F.sum("weighted_position_return").alias("total_return"),
             )
             .orderBy("timestamp")
         )
@@ -220,8 +252,31 @@ class Pipeline:
         metrics = daily_performance.agg(
             (F.exp(F.avg("total_return")) - 1).alias("avg_daily_portfolio_return"),
             F.stddev("total_return").alias("portfolio_daily_std"),
-            F.avg("number_of_positions").alias("avg_daily_positions"),
+            F.countDistinct("timestamp").alias("portfolio_periods"),
+            F.sum("number_of_positions").alias("total_positions"),
         )
+
+        # Calculate portfolio beta
+        portfolio_returns = (
+            strategy_returns.groupBy("timestamp")
+            .agg(F.sum("weighted_position_return").alias("portfolio_return"))
+            .withColumn("symbol", F.lit("ma_portfolio"))
+        )
+
+        index_returns = analysis_df.filter(F.col("ticker") == "BTC").select(
+            F.col("timestamp"), F.col("log_return")
+        )
+
+        portfolio_beta_df = portfolio_returns.transform(
+            lambda df: chronos.with_beta(
+                df,
+                return_col="portfolio_return",
+                index_returns=index_returns,
+            )
+        ).agg(F.avg("beta").alias("portfolio_beta"))
+
+        # Combine metrics
+        metrics = metrics.crossJoin(portfolio_beta_df).cache()
 
         if self.timeframe == "1w":
             annualized_factor = 52
@@ -230,14 +285,10 @@ class Pipeline:
         elif self.timeframe == "1h":
             annualized_factor = 365 * 24
 
-        annualized_sharpe = (
-            metrics.withColumn(
-                "annualized_return", F.col("avg_daily_portfolio_return") * annualized_factor
-            )
-            .withColumn(
-                "annualized_std", F.col("portfolio_daily_std") * F.sqrt(F.lit(annualized_factor))
-            )
-            .withColumn("sharpe_ratio", F.col("annualized_return") / F.col("annualized_std"))
+        annualized_sharpe = metrics.select(
+            (F.col("avg_daily_portfolio_return") * annualized_factor).alias("annualized_return"),
+            (F.col("portfolio_daily_std") * F.sqrt(F.lit(annualized_factor))).alias("annual_vol"),
+            (F.col("annualized_return") / F.col("annual_vol")).alias("sharpe_ratio"),
         )
 
         logger.info("Strategy Performance Metrics:")
@@ -253,12 +304,13 @@ if __name__ == "__main__":
     spark = util.get_spark()
     pipeline = Pipeline(
         reload=False,
-        n_tokens=10,
+        n_tokens=4,
+        leverage=3.0,
         spark=spark,
         loader_markets=HyperliquidDataLoaderMarkets(spark=spark),
         loader_ohlcv=HyperliquidDataLoaderOHLCV(),
         timeframe="1d",
-        lookback_periods=100,
+        lookback_periods=90,
         start_date=datetime(2023, 6, 1, tzinfo=timezone.utc).replace(
             hour=0,
             minute=0,

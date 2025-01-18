@@ -9,6 +9,7 @@ from ccxt import async_support as ccxt
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql import types as T
+from pyspark.sql import window as W
 
 from yang import util
 from yang.chronos import Chronos
@@ -160,6 +161,7 @@ class Pipeline:
                 F.col("price_zscore"),
                 F.col("sma"),
                 F.col("annualized_volatility"),
+                F.col("log_return"),
             )
             .filter(F.col("direction").isNotNull())
         )
@@ -173,17 +175,82 @@ class Pipeline:
         latest_df.count()
         util.save_csv("picks", latest_df)
 
+        # Calculate returns for each signal
+        next_day_returns = (
+            analysis_df.select("timestamp", "ticker", "log_return")
+            .withColumn(
+                "next_timestamp",
+                F.lead("timestamp").over(W.Window.partitionBy("ticker").orderBy("timestamp")),
+            )
+            .withColumn(
+                "next_log_return",
+                F.lead("log_return").over(W.Window.partitionBy("ticker").orderBy("timestamp")),
+            )
+        )
+
+        # Join signals with next day returns
+        strategy_returns = picks_df.join(next_day_returns, ["timestamp", "ticker"]).withColumn(
+            "position_return",
+            F.when(F.col("direction") == "long", F.col("next_log_return")).when(
+                F.col("direction") == "short", -F.col("next_log_return")
+            ),
+        )
+
+        # Calculate daily strategy performance
+        daily_performance = (
+            strategy_returns.groupBy("timestamp")
+            .agg(
+                F.count("*").alias("number_of_positions"),
+                F.avg("position_return").alias("avg_daily_return"),
+                F.stddev("position_return").alias("daily_std"),
+                F.sum("position_return").alias("total_return"),
+            )
+            .orderBy("timestamp")
+        )
+
+        # Calculate strategy metrics
+        metrics = daily_performance.agg(
+            (F.exp(F.avg("total_return")) - 1).alias("avg_daily_portfolio_return"),
+            F.stddev("total_return").alias("portfolio_daily_std"),
+            F.avg("number_of_positions").alias("avg_daily_positions"),
+        )
+
+        if self.timeframe == "1w":
+            annualized_factor = 52
+        elif self.timeframe == "1d":
+            annualized_factor = 365
+        elif self.timeframe == "1h":
+            annualized_factor = 365 * 24
+
+        annualized_sharpe = (
+            metrics.withColumn(
+                "annualized_return", F.col("avg_daily_portfolio_return") * annualized_factor
+            )
+            .withColumn(
+                "annualized_std", F.col("portfolio_daily_std") * F.sqrt(F.lit(annualized_factor))
+            )
+            .withColumn("sharpe_ratio", F.col("annualized_return") / F.col("annualized_std"))
+        )
+
+        logger.info("Strategy Performance Metrics:")
+        metrics.show()
+        annualized_sharpe.show()
+
+        # Save performance metrics
+        util.save_csv("strategy_performance", daily_performance)
+        util.save_csv("strategy_metrics", metrics)
+
 
 if __name__ == "__main__":
     spark = util.get_spark()
     pipeline = Pipeline(
-        reload=True,
-        zscore_threshold=2.0,
+        reload=False,
+        zscore_threshold=1.1,
         spark=spark,
         loader_markets=HyperliquidDataLoaderMarkets(spark=spark),
         loader_ohlcv=HyperliquidDataLoaderOHLCV(),
         timeframe="1d",
-        lookback_periods=365,
+        lookback_periods=300,
         start_date=datetime(2023, 6, 1, tzinfo=timezone.utc).replace(
             hour=0,
             minute=0,

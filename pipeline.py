@@ -42,14 +42,20 @@ class Pipeline:
     reload: bool
     n_tokens: int
     leverage: float
+    starting_equity: float
+    min_position_size: float
 
     spark: SparkSession
-    loader_markets: HyperliquidDataLoaderMarkets
-    loader_ohlcv: HyperliquidDataLoaderOHLCV
 
     timeframe: Timeframe
     lookback_periods: int
     start_date: datetime
+
+    def __post_init__(self) -> None:
+        self.loader_markets: HyperliquidDataLoaderMarkets = HyperliquidDataLoaderMarkets(
+            spark=self.spark
+        )
+        self.loader_ohlcv: HyperliquidDataLoaderOHLCV = HyperliquidDataLoaderOHLCV()
 
     async def get_candles_df(self, timeframe: Timeframe) -> DataFrame:
         logger.debug("Initializing exchange...")
@@ -177,12 +183,22 @@ class Pipeline:
                     F.col("position_weight") / (-F.col("beta"))
                 ),
             )
-            # Scale position weights to target leverage
+            .withColumn("position_size", F.col("position_weight") * F.lit(self.starting_equity))
             .withColumn(
                 "position_weight",
-                F.col("position_weight")
+                F.col("position_size")
                 * F.lit(self.leverage)
-                / F.sum(F.abs(F.col("position_weight"))).over(W.Window.partitionBy("timestamp")),
+                / F.sum(F.abs(F.col("position_size"))).over(W.Window.partitionBy("timestamp")),
+            )
+            .withColumn("position_size", F.col("position_weight") * F.lit(self.starting_equity))
+            .withColumn(
+                "position_size",
+                F.when(F.abs(F.col("position_size")) < F.lit(self.min_position_size), 0).otherwise(
+                    F.col("position_size")
+                ),
+            )
+            .withColumn(
+                "direction", F.when(F.col("position_size") == 0, None).otherwise(F.col("direction"))
             )
             .select(
                 F.col("timestamp"),
@@ -190,10 +206,10 @@ class Pipeline:
                 F.col("direction"),
                 F.col("close"),
                 F.col("price_zscore"),
+                F.col("position_size"),
                 F.col("position_weight"),
                 F.col("sma"),
                 F.col("annualized_volatility"),
-                F.col("log_return"),
                 F.col("beta"),
             )
             .filter(F.col("direction").isNotNull())
@@ -202,7 +218,12 @@ class Pipeline:
         # Get latest entries
         latest = candles_df.select(F.max("timestamp")).first()[0]
         logger.info("Latest timestamp: %s", latest)
-        latest_df = picks_df.filter(F.col("timestamp") == F.lit(latest)).dropna().cache()
+        latest_df = (
+            picks_df.filter(F.col("timestamp") == F.lit(latest))
+            .dropna()
+            .select("direction", "ticker", "position_size", "price_zscore", "close")
+            .cache()
+        )
 
         latest_df.show()
         latest_df.count()
@@ -230,15 +251,8 @@ class Pipeline:
                     F.col("direction") == "short", -F.col("next_log_return")
                 ),
             )
-            # Normalize weights within each timestamp
             .withColumn(
-                "normalized_weight",
-                F.abs(F.col("position_weight"))
-                / F.sum(F.abs(F.col("position_weight"))).over(W.Window.partitionBy("timestamp")),
-            )
-            # Calculate weighted position returns
-            .withColumn(
-                "weighted_position_return", F.col("position_return") * F.col("normalized_weight")
+                "weighted_position_return", F.col("position_return") * F.col("position_weight")
             )
         )
 
@@ -300,27 +314,46 @@ class Pipeline:
         annualized_sharpe.show()
 
         # Save performance metrics
-        util.save_csv("strategy_performance", daily_performance)
         util.save_csv("strategy_metrics", metrics)
+        util.save_csv("strategy_performance", annualized_sharpe)
 
 
 if __name__ == "__main__":
     spark = util.get_spark()
-    pipeline = Pipeline(
-        reload=False,
-        n_tokens=4,
-        leverage=3.0,
-        spark=spark,
-        loader_markets=HyperliquidDataLoaderMarkets(spark=spark),
-        loader_ohlcv=HyperliquidDataLoaderOHLCV(),
-        timeframe="1d",
-        lookback_periods=90,
-        start_date=datetime(2023, 6, 1, tzinfo=timezone.utc).replace(
-            hour=0,
-            minute=0,
-            second=0,
-            microsecond=0,
-        ),
+    timeframe = "1d"
+
+    if timeframe == "1w":
+        lookback_periods = 52
+        n_tokens = 2
+    elif timeframe == "1d":
+        lookback_periods = 90
+        n_tokens = 6
+    elif timeframe == "1h":
+        lookback_periods = 7 * 24
+        n_tokens = 5
+
+    start_date = datetime(2023, 6, 1, tzinfo=timezone.utc).replace(
+        hour=0,
+        minute=0,
+        second=0,
+        microsecond=0,
     )
 
+    # Create list of configurations to test
+    n_tokens_range = range(2, 9)  # 2 to 8 inclusive
+    results = []
+
+    # Run pipeline for each n_tokens value
+    logger.info("Running backtest with n_tokens=%d", n_tokens)
+    pipeline = Pipeline(
+        reload=True,
+        spark=spark,
+        timeframe=timeframe,
+        n_tokens=n_tokens,
+        leverage=3.0,
+        starting_equity=75.52,
+        min_position_size=11,
+        start_date=start_date,
+        lookback_periods=lookback_periods,
+    )
     asyncio.run(pipeline.run())

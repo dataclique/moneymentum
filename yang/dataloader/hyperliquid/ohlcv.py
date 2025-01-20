@@ -38,14 +38,9 @@ class HyperliquidDataLoaderOHLCV:
             since=since,
             limit=5000,  # Hyperliquid OHLCV limit
         )
-        since_date = datetime.fromtimestamp(since / 1000, tz=timezone.utc).strftime(
-            "%Y-%m-%d %H:%M:%S"
-        )
-        logger.info("Fetched %s %s candles since %s", len(ohlcv), symbol, since_date)
 
         ticker = symbol.replace("/", "_").replace(":", "_").replace("_USDC", "")
-
-        return [
+        ohlcv = [
             {
                 "timestamp": datetime.fromtimestamp(candle[0] / 1000, tz=timezone.utc),
                 "open": candle[1],
@@ -58,6 +53,10 @@ class HyperliquidDataLoaderOHLCV:
             }
             for candle in ohlcv
         ]
+
+        earliest_date = ohlcv[0]["timestamp"].strftime("%Y-%m-%d %H:%M:%S")
+        logger.info("Fetched %s %s candles since %s", len(ohlcv), symbol, earliest_date)
+        return ohlcv
 
     async def fetch_all_candles(
         self, exchange: ccxt.Exchange, symbols: list[str], timeframe: str, since: int

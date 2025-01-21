@@ -16,7 +16,6 @@ logger.setLevel(util.LOG_LEVEL)
 class Chronos:
     lookback_periods: int
     timeframe: Literal["1h", "1d", "1w"]
-    risk_free: float
 
     spark = util.get_spark()
 
@@ -237,7 +236,7 @@ class Chronos:
             )
         )
 
-    def with_sharpe(self, df: DataFrame) -> DataFrame:
+    def with_sharpe(self, df: DataFrame, risk_free: float = 0.0) -> DataFrame:
         logger.info("Calculating sharpe...")
 
         if self.timeframe == "1h":
@@ -252,5 +251,5 @@ class Chronos:
         )
 
         return df_annualized_return.withColumn(
-            "sharpe", (F.col("annualized_return") - self.risk_free) / F.col("annualized_volatility")
+            "sharpe", (F.col("annualized_return") - risk_free) / F.col("annualized_volatility")
         )

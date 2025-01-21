@@ -50,7 +50,6 @@ class Pipeline:
     timeframe: Timeframe
     lookback_periods: int
     start_date: datetime
-    risk_free: float = 0.0  # 4.5% = 0.045
 
     def __post_init__(self) -> None:
         self.loader_markets: HyperliquidDataLoaderMarkets = HyperliquidDataLoaderMarkets(

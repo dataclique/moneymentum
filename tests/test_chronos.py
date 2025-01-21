@@ -22,8 +22,8 @@ def test_aave_last_record(spark_session):
 
     # lookback_periods = 370, because we have 370 records
     # and we need window size equal to amount of all records
-    # risk_free = 4.5% as in Google sheet
-    chronos = Chronos(timeframe="1d", lookback_periods=370, risk_free=4.5 / 100)
+    # risk_free = 4.5% as in United States Fed Funds Interest Rate
+    chronos = Chronos(timeframe="1d", lookback_periods=370)
     analysis_df = (
         candles_df.transform(chronos.with_returns)
         .transform(chronos.with_volatility)
@@ -31,7 +31,7 @@ def test_aave_last_record(spark_session):
         .transform(chronos.with_zscore)
         .transform(chronos.with_beta)
         .transform(chronos.with_information_discreteness)
-        .transform(chronos.with_sharpe)
+        .transform(lambda df: chronos.with_sharpe(df, risk_free=4.5 / 100))
     )
 
     aave_last_record = (
@@ -66,8 +66,8 @@ def test_btc_last_record(spark_session):
 
     # lookback_periods = 370, because we have 370 records
     # and we need window size equal to amount of all records
-    # risk_free = 4.5% as in Google sheet
-    chronos = Chronos(timeframe="1d", lookback_periods=370, risk_free=4.5 / 100)
+    # risk_free = 4.5% as in United States Fed Funds Interest Rate
+    chronos = Chronos(timeframe="1d", lookback_periods=370)
     analysis_df = (
         candles_df.transform(chronos.with_returns)
         .transform(chronos.with_volatility)
@@ -75,7 +75,7 @@ def test_btc_last_record(spark_session):
         .transform(chronos.with_zscore)
         .transform(chronos.with_beta)
         .transform(chronos.with_information_discreteness)
-        .transform(chronos.with_sharpe)
+        .transform(lambda df: chronos.with_sharpe(df, risk_free=4.5 / 100))
     )
 
     btc_last_record = (
@@ -111,8 +111,8 @@ def test_ai_last_record(spark_session):
 
     # lookback_periods = 52, because we have 52 records
     # and we need window size equal to amount of all records
-    # risk_free = 4.5% as in Google sheet
-    chronos2 = Chronos(timeframe="1w", lookback_periods=52, risk_free=4.5 / 100)
+    # risk_free = 4.5% as in United States Fed Funds Interest Rate
+    chronos2 = Chronos(timeframe="1w", lookback_periods=52)
     analysis_df2 = (
         candles_df2.transform(chronos2.with_returns)
         .transform(chronos2.with_volatility)
@@ -120,7 +120,7 @@ def test_ai_last_record(spark_session):
         .transform(chronos2.with_zscore)
         .transform(chronos2.with_beta)
         .transform(chronos2.with_information_discreteness)
-        .transform(chronos2.with_sharpe)
+        .transform(lambda df: chronos2.with_sharpe(df, risk_free=4.5 / 100))
     )
 
     ai_last_record = (

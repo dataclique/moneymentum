@@ -50,6 +50,7 @@ class Pipeline:
     timeframe: Timeframe
     lookback_periods: int
     start_date: datetime
+    risk_free: float = 0.0  # 4.5% = 0.045
 
     def __post_init__(self) -> None:
         self.loader_markets: HyperliquidDataLoaderMarkets = HyperliquidDataLoaderMarkets(
@@ -143,7 +144,11 @@ class Pipeline:
         logger.info("Candles DataFrame:")
         candles_df.show(truncate=False)
 
-        chronos = Chronos(timeframe=self.timeframe, lookback_periods=self.lookback_periods)
+        chronos = Chronos(
+            timeframe=self.timeframe,
+            lookback_periods=self.lookback_periods,
+            risk_free=self.risk_free,
+        )
         analysis_df = (
             candles_df.transform(chronos.with_returns)
             .transform(chronos.with_volatility)
@@ -151,7 +156,8 @@ class Pipeline:
             .transform(chronos.with_zscore)
             .transform(chronos.with_beta)
             .transform(chronos.with_information_discreteness)
-            .drop("count", "symbol", "open", "high", "low", "mean_return")
+            .transform(chronos.with_sharpe)
+            .drop("count", "symbol", "open", "high", "low", "mean_return", "annualized_return")
         )
 
         ma_potential_return = (F.col("sma") - F.col("close")) / F.col("close")

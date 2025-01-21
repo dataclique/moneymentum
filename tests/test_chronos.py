@@ -22,6 +22,7 @@ def test_aave_last_record(spark_session):
 
     # lookback_periods = 370, because we have 370 records
     # and we need window size equal to amount of all records
+    # risk_free = 4.5% as in United States Fed Funds Interest Rate
     chronos = Chronos(timeframe="1d", lookback_periods=370)
     analysis_df = (
         candles_df.transform(chronos.with_returns)
@@ -30,6 +31,7 @@ def test_aave_last_record(spark_session):
         .transform(chronos.with_zscore)
         .transform(chronos.with_beta)
         .transform(chronos.with_information_discreteness)
+        .transform(lambda df: chronos.with_sharpe(df, risk_free=4.5 / 100))
     )
 
     aave_last_record = (
@@ -50,6 +52,8 @@ def test_aave_last_record(spark_session):
     assert aave_last_record["beta"] == 0.29206334291840363, "Beta mismatch"
     # Google sheet: 7.67E-04
     assert aave_last_record["covariance"] == 7.646287605794159e-4, "Covariance mismatch"
+    # Google sheet: 1.91
+    assert aave_last_record["sharpe"] == 1.9107210298591863, "Sharpe mismatch"
 
     logger.info("AAVE last record assertions passed.")
 
@@ -62,6 +66,7 @@ def test_btc_last_record(spark_session):
 
     # lookback_periods = 370, because we have 370 records
     # and we need window size equal to amount of all records
+    # risk_free = 4.5% as in United States Fed Funds Interest Rate
     chronos = Chronos(timeframe="1d", lookback_periods=370)
     analysis_df = (
         candles_df.transform(chronos.with_returns)
@@ -70,6 +75,7 @@ def test_btc_last_record(spark_session):
         .transform(chronos.with_zscore)
         .transform(chronos.with_beta)
         .transform(chronos.with_information_discreteness)
+        .transform(lambda df: chronos.with_sharpe(df, risk_free=4.5 / 100))
     )
 
     btc_last_record = (
@@ -91,6 +97,8 @@ def test_btc_last_record(spark_session):
     assert btc_last_record["beta"] == 0.9972899728997291, "Beta mismatch"
     # Google sheet: 7.53E-04
     assert btc_last_record["covariance"] == 7.508014553322255e-4, "Covariance mismatch"
+    # Google sheet: 2.20
+    assert btc_last_record["sharpe"] == 2.2022163385448854, "Sharpe mismatch"
 
     logger.info("BTC last record assertions passed.")
 
@@ -103,6 +111,7 @@ def test_ai_last_record(spark_session):
 
     # lookback_periods = 52, because we have 52 records
     # and we need window size equal to amount of all records
+    # risk_free = 4.5% as in United States Fed Funds Interest Rate
     chronos2 = Chronos(timeframe="1w", lookback_periods=52)
     analysis_df2 = (
         candles_df2.transform(chronos2.with_returns)
@@ -111,6 +120,7 @@ def test_ai_last_record(spark_session):
         .transform(chronos2.with_zscore)
         .transform(chronos2.with_beta)
         .transform(chronos2.with_information_discreteness)
+        .transform(lambda df: chronos2.with_sharpe(df, risk_free=4.5 / 100))
     )
 
     ai_last_record = (
@@ -132,5 +142,7 @@ def test_ai_last_record(spark_session):
     assert ai_last_record["beta"] == 0.27410619693561644, "Beta mismatch"
     # Google sheet: 7.27E-03
     assert ai_last_record["covariance"] == 0.007126803962757325, "Covariance mismatch"
+    # Google sheet: -0.46
+    assert ai_last_record["sharpe"] == -0.4551910183347762, "Sharpe mismatch"
 
     logger.info("AI last record assertions passed.")

@@ -235,3 +235,21 @@ class Chronos:
                 "return_sign",
             )
         )
+
+    def with_sharpe(self, df: DataFrame, risk_free: float = 0.0) -> DataFrame:
+        logger.info("Calculating sharpe...")
+
+        if self.timeframe == "1h":
+            annualization_factor = 365 * 24
+        elif self.timeframe == "1d":
+            annualization_factor = 365
+        elif self.timeframe == "1w":
+            annualization_factor = 52
+
+        df_annualized_return = df.withColumn(
+            "annualized_return", F.exp(F.col("mean_return") * annualization_factor) - 1
+        )
+
+        return df_annualized_return.withColumn(
+            "sharpe", (F.col("annualized_return") - risk_free) / F.col("annualized_volatility")
+        )

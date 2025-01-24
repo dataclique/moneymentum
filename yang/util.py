@@ -9,8 +9,6 @@ from pyspark.sql import DataFrame, DataFrameReader, SparkSession
 from pyspark.sql import functions as F
 from statsmodels.tsa.stattools import adfuller, coint
 
-DEBUG = True
-
 
 def plot_returns(Xs: list[pd.Series]) -> None:
     for X in Xs:
@@ -85,7 +83,8 @@ def setup_logging() -> None:
     )
 
 
-LOG_LEVEL = logging.DEBUG
+DEBUG = True
+LOG_LEVEL = logging.DEBUG if DEBUG else logging.INFO
 
 logger = logging.getLogger(__name__)
 logger.setLevel(LOG_LEVEL)

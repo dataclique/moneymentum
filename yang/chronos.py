@@ -194,8 +194,9 @@ class Chronos:
         # Join BTC returns with all symbols
         joined_df = df.join(index_returns, "timestamp", "left")
 
-        # Calculate rolling covariance and variance
-        return (
+        initial_count = joined_df.select(return_col).dropna().count()
+
+        beta_df = (
             joined_df.withColumn("count", F.count(return_col).over(self.rolling_window))
             .withColumn(
                 "covariance",
@@ -205,11 +206,22 @@ class Chronos:
             .drop("index_return")
         )
 
+        if util.DEBUG:
+            beta_count = beta_df.select("beta").dropna().count()
+            assert 0 < beta_count < initial_count, (
+                f"Beta column count ({beta_count}) "
+                f"should satisfy 0 < {beta_count} < {initial_count}"
+            )
+            logger.debug("Beta column count (%d) check passed.", beta_count)
+
+        return beta_df
+
     def with_information_discreteness(self, df: DataFrame) -> DataFrame:
         logger.info("Calculating information discreteness...")
 
-        # Calculate sign of overall return
-        return (
+        initial_count = df.select("log_return").dropna().count()
+
+        id_df = (
             df.withColumn("return_sign", F.signum(F.col("cum_return")))
             .withColumn("is_positive_return", F.when(F.col("log_return") > 0, 1).otherwise(0))
             .withColumn("is_negative_return", F.when(F.col("log_return") < 0, 1).otherwise(0))
@@ -235,6 +247,16 @@ class Chronos:
                 "return_sign",
             )
         )
+
+        if util.DEBUG:
+            id_count = id_df.select("information_discreteness").dropna().count()
+            assert 0 < id_count < initial_count, (
+                f"Information discreteness column count ({id_count}) "
+                f"should satisfy 0 < {id_count} < {initial_count}"
+            )
+            logger.debug("Information discreteness column count (%d) check passed.", id_count)
+
+        return id_df
 
     def with_sharpe(self, df: DataFrame, risk_free: float = 0.0) -> DataFrame:
         logger.info("Calculating sharpe...")

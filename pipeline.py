@@ -1,7 +1,8 @@
 import asyncio
 import logging
+import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -14,10 +15,8 @@ from pyspark.sql import window as W
 from yang import util
 from yang.chronos import Chronos
 from yang.dataloader.hyperliquid.markets import HyperliquidDataLoaderMarkets, SchemaPerpMarket
-from yang.dataloader.hyperliquid.ohlcv import (
-    HyperliquidDataLoaderOHLCV,
-    Timeframe,
-)
+from yang.dataloader.hyperliquid.ohlcv import HyperliquidDataLoaderOHLCV, Timeframe
+from yang.exe import ExecutionEngine
 
 if __name__ == "__main__":
     util.setup_logging()
@@ -60,10 +59,14 @@ class Pipeline:
         )
         self.loader_ohlcv: HyperliquidDataLoaderOHLCV = HyperliquidDataLoaderOHLCV()
 
-    async def get_candles_df(self, timeframe: Timeframe) -> DataFrame:
+    def get_hyperliquid(self) -> ccxt.Exchange:
         logger.debug("Initializing exchange...")
         exchange = ccxt.hyperliquid({"asyncio_loop": asyncio.get_event_loop()})
         logger.info("Exchange initialized: %s", exchange)
+        return exchange
+
+    async def get_candles_df(self, timeframe: Timeframe) -> DataFrame:
+        exchange = self.get_hyperliquid()
 
         # Only last 5000 candles available
         logger.info("Fetching data since: %s", self.start_date)
@@ -97,10 +100,10 @@ class Pipeline:
             return max(since, last_timestamp_ms)
 
         ohlcv_tasks = [
-            self.loader_ohlcv.fetch_ohlcv(
-                exchange, symbol, timeframe, get_symbol_start_time(symbol)
+            self.loader_ohlcv.fetch_or_empty(
+                exchange, symbol, timeframe, get_symbol_start_time(symbol), idx
             )
-            for symbol in symbols
+            for idx, symbol in enumerate(symbols)
         ]
 
         ohlcv_data = [
@@ -149,7 +152,7 @@ class Pipeline:
 
         return self.spark.read.schema(SchemaOHLCV).csv(candles_file_path, header=True).cache()
 
-    async def run(self) -> None:
+    async def run(self) -> DataFrame:
         logger.info("Starting pipeline...")
 
         candles_df = await self.get_candles_df(timeframe=self.timeframe)
@@ -168,6 +171,7 @@ class Pipeline:
             .transform(chronos.with_sharpe)
             .transform(chronos.with_sortino)
             .drop("count", "symbol", "open", "high", "low", "mean_return", "annualized_return")
+            .drop("count", "open", "high", "low", "mean_return")
         )
 
         ma_potential_return = (F.col("sma") - F.col("close")) / F.col("close")
@@ -218,6 +222,7 @@ class Pipeline:
             )
             .select(
                 F.col("timestamp"),
+                F.col("symbol"),
                 F.col("ticker"),
                 F.col("direction"),
                 F.col("close"),
@@ -231,108 +236,121 @@ class Pipeline:
             .filter(F.col("direction").isNotNull())
         )
 
-        # Get latest entries
         latest = candles_df.select(F.max("timestamp")).first()[0]
         logger.info("Latest timestamp: %s", latest)
-        latest_df = (
+        target_portfolio = (
             picks_df.filter(F.col("timestamp") == F.lit(latest))
             .dropna()
-            .select("direction", "ticker", "position_size", "price_zscore", "close")
+            .select("direction", "symbol", "ticker", "position_size", "price_zscore", "close")
             .cache()
         )
 
-        latest_df.show()
-        latest_df.count()
-        util.save_csv("picks", latest_df)
+        target_portfolio.show()
 
-        # Calculate returns for each signal
-        next_day_returns = (
-            analysis_df.select("timestamp", "ticker", "log_return")
-            .withColumn(
-                "next_timestamp",
-                F.lead("timestamp").over(W.Window.partitionBy("ticker").orderBy("timestamp")),
+        if util.DEBUG:
+            # Calculate returns for each signal
+            next_day_returns = (
+                analysis_df.select("timestamp", "ticker", "log_return")
+                .withColumn(
+                    "next_timestamp",
+                    F.lead("timestamp").over(W.Window.partitionBy("ticker").orderBy("timestamp")),
+                )
+                .withColumn(
+                    "next_log_return",
+                    F.lead("log_return").over(W.Window.partitionBy("ticker").orderBy("timestamp")),
+                )
             )
-            .withColumn(
-                "next_log_return",
-                F.lead("log_return").over(W.Window.partitionBy("ticker").orderBy("timestamp")),
-            )
-        )
 
-        # Join signals with next day returns and calculate weighted returns
-        strategy_returns = (
-            picks_df.join(next_day_returns, ["timestamp", "ticker"])
-            .withColumn(
-                "position_return",
-                F.when(F.col("direction") == "long", F.col("next_log_return")).when(
-                    F.col("direction") == "short", -F.col("next_log_return")
+            # Join signals with next day returns and calculate weighted returns
+            strategy_returns = (
+                picks_df.join(next_day_returns, ["timestamp", "ticker"])
+                .withColumn(
+                    "position_return",
+                    F.when(F.col("direction") == "long", F.col("next_log_return")).when(
+                        F.col("direction") == "short", -F.col("next_log_return")
+                    ),
+                )
+                .withColumn(
+                    "weighted_position_return", F.col("position_return") * F.col("position_weight")
+                )
+            )
+
+            # Update daily performance calculation to use weighted returns
+            daily_performance = (
+                strategy_returns.groupBy("timestamp")
+                .agg(
+                    F.count("*").alias("number_of_positions"),
+                    F.avg("position_return").alias("avg_daily_return"),
+                    F.stddev("position_return").alias("daily_std"),
+                    F.sum("weighted_position_return").alias("total_return"),
+                )
+                .orderBy("timestamp")
+            )
+
+            # Calculate strategy metrics
+            metrics = daily_performance.agg(
+                (F.exp(F.avg("total_return")) - 1).alias("avg_daily_portfolio_return"),
+                F.stddev("total_return").alias("portfolio_daily_std"),
+                F.countDistinct("timestamp").alias("portfolio_periods"),
+                F.sum("number_of_positions").alias("total_positions"),
+            )
+
+            # Add debug logging for strategy returns
+            logger.debug("Strategy returns count: %d", strategy_returns.count())
+            logger.debug("Strategy returns schema:")
+            strategy_returns.printSchema()
+            strategy_returns.show(5)
+
+            # Calculate portfolio returns with debug logging
+            portfolio_returns = (
+                strategy_returns.groupBy("timestamp")
+                .agg(F.sum("weighted_position_return").alias("log_return"))
+                .withColumn("symbol", F.lit("ma_portfolio"))
+            )
+
+            logger.debug("Portfolio returns count: %d", portfolio_returns.count())
+            logger.debug("Portfolio returns schema:")
+            portfolio_returns.printSchema()
+            portfolio_returns.show(5)
+
+            index_returns = analysis_df.filter(F.col("ticker") == "BTC").select(
+                F.col("timestamp"), F.col("log_return")
+            )
+
+            portfolio_beta_df = (
+                portfolio_returns.transform(chronos.with_volatility)
+                .transform(lambda df: chronos.with_beta(df, index_returns=index_returns))
+                .agg(F.avg("beta").alias("portfolio_beta"))
+            )
+
+            metrics = metrics.crossJoin(portfolio_beta_df).cache()
+
+            if self.timeframe == "1w":
+                annualized_factor = 52
+            elif self.timeframe == "1d":
+                annualized_factor = 365
+            elif self.timeframe == "1h":
+                annualized_factor = 365 * 24
+
+            annualized_sharpe = metrics.select(
+                (F.col("avg_daily_portfolio_return") * annualized_factor).alias(
+                    "annualized_return"
                 ),
+                (F.col("portfolio_daily_std") * F.sqrt(F.lit(annualized_factor))).alias(
+                    "annual_vol"
+                ),
+                (F.col("annualized_return") / F.col("annual_vol")).alias("sharpe_ratio"),
             )
-            .withColumn(
-                "weighted_position_return", F.col("position_return") * F.col("position_weight")
-            )
-        )
 
-        # Update daily performance calculation to use weighted returns
-        daily_performance = (
-            strategy_returns.groupBy("timestamp")
-            .agg(
-                F.count("*").alias("number_of_positions"),
-                F.avg("position_return").alias("avg_daily_return"),
-                F.stddev("position_return").alias("daily_std"),
-                F.sum("weighted_position_return").alias("total_return"),
-            )
-            .orderBy("timestamp")
-        )
+            logger.info("Strategy Performance Metrics:")
+            metrics.show()
+            annualized_sharpe.show()
 
-        # Calculate strategy metrics
-        metrics = daily_performance.agg(
-            (F.exp(F.avg("total_return")) - 1).alias("avg_daily_portfolio_return"),
-            F.stddev("total_return").alias("portfolio_daily_std"),
-            F.countDistinct("timestamp").alias("portfolio_periods"),
-            F.sum("number_of_positions").alias("total_positions"),
-        )
-
-        # Calculate portfolio beta
-        portfolio_returns = (
-            strategy_returns.groupBy("timestamp")
-            .agg(F.sum("weighted_position_return").alias("log_return"))
-            .withColumn("symbol", F.lit("ma_portfolio"))
-        )
-
-        index_returns = analysis_df.filter(F.col("ticker") == "BTC").select(
-            F.col("timestamp"), F.col("log_return")
-        )
-
-        portfolio_beta_df = (
-            portfolio_returns.transform(chronos.with_volatility)
-            .transform(lambda df: chronos.with_beta(df, index_returns=index_returns))
-            .agg(F.avg("beta").alias("portfolio_beta"))
-        )
-
-        # Combine metrics
-        metrics = metrics.crossJoin(portfolio_beta_df).cache()
-
-        if self.timeframe == "1w":
-            annualized_factor = 52
-        elif self.timeframe == "1d":
-            annualized_factor = 365
-        elif self.timeframe == "1h":
-            annualized_factor = 365 * 24
-
-        annualized_sharpe = metrics.select(
-            (F.col("avg_daily_portfolio_return") * annualized_factor).alias("annualized_return"),
-            (F.col("portfolio_daily_std") * F.sqrt(F.lit(annualized_factor))).alias("annual_vol"),
-            (F.col("annualized_return") / F.col("annual_vol")).alias("sharpe_ratio"),
-        )
-
-        logger.info("Strategy Performance Metrics:")
-        metrics.show()
-        annualized_sharpe.show()
+        return target_portfolio
 
 
 if __name__ == "__main__":
-    spark = util.get_spark()
-    timeframe = "1d"
+    timeframe = "1h"
 
     # TODO: This is repeated in multiple places. Make it a helper function
     if timeframe == "1w":
@@ -345,28 +363,45 @@ if __name__ == "__main__":
         lookback_periods = 7 * 24
         n_tokens = 5
 
+    spark = util.get_spark()
     start_date = datetime(2023, 6, 1, tzinfo=timezone.utc).replace(
         hour=0,
         minute=0,
         second=0,
         microsecond=0,
     )
-
-    # Create list of configurations to test
-    n_tokens_range = range(2, 9)  # 2 to 8 inclusive
-    results = []
-
-    # Run pipeline for each n_tokens value
-    logger.info("Running backtest with n_tokens=%d", n_tokens)
-    pipeline = Pipeline(
+    min_position_size_usd = 11
+    exe = ExecutionEngine(spark=spark, min_position_size_usd=min_position_size_usd)
+    pipeline_kwargs = dict(
         reload=True,
         spark=spark,
         timeframe=timeframe,
         n_tokens=n_tokens,
         leverage=3.0,
-        starting_equity=75.52,
-        min_position_size=11,
+        min_position_size=min_position_size_usd,
         start_date=start_date,
         lookback_periods=lookback_periods,
     )
-    asyncio.run(pipeline.run())
+
+    def step() -> None:
+        current_portfolio = exe.get_positions()
+        starting_equity = current_portfolio.select(F.sum("notional")).first()[0]
+
+        pipeline = Pipeline(**pipeline_kwargs, starting_equity=starting_equity)
+        target_portfolio = asyncio.run(pipeline.run())
+        exe.rebalance(target_portfolio)
+
+    # Run once immediately on start
+    logger.info("Starting the initial run...")
+    step()
+
+    while True:
+        # Calculate time until next hour, accounting for execution time
+        now = datetime.now(timezone.utc)
+        next_hour = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+        sleep_duration = (next_hour - now).total_seconds()
+
+        logger.info("Sleeping for %d seconds until the top of the hour...", sleep_duration)
+        time.sleep(sleep_duration)
+
+        step()

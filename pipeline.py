@@ -146,7 +146,6 @@ class Pipeline:
         chronos = Chronos(
             timeframe=self.timeframe,
             lookback_periods=self.lookback_periods,
-            risk_free=self.risk_free,
         )
         analysis_df = (
             candles_df.transform(chronos.with_returns)
@@ -322,6 +321,34 @@ class Pipeline:
         util.save_csv("strategy_metrics", metrics)
         util.save_csv("strategy_performance", annualized_sharpe)
 
+    async def test(self):
+        logger.info("Starting pipeline...")
+
+        path = "./test_data/ohlcv1d.csv"
+
+        candles_df = self.spark.read.schema(SchemaOHLCV).csv(path, header=True).cache()
+
+        logger.info("Candles DataFrame:")
+        candles_df.show(truncate=False)
+
+        chronos = Chronos(
+            timeframe=self.timeframe,
+            lookback_periods=self.lookback_periods,
+        )
+        analysis_df = (
+            candles_df.transform(chronos.with_returns)
+            .transform(chronos.with_volatility)
+            .transform(chronos.with_sma)
+            .transform(chronos.with_zscore)
+            .transform(chronos.with_beta)
+            .transform(chronos.with_information_discreteness)
+            .transform(lambda df: chronos.with_sharpe(df, risk_free=4.5 / 100))
+            .transform(lambda df: chronos.with_sortino(df, risk_free=4.5 / 100))
+            # .drop("count", "symbol", "open", "high", "low")
+        )
+
+        util.save_csv("0analysis_df", analysis_df)
+
 
 if __name__ == "__main__":
     spark = util.get_spark()
@@ -359,6 +386,8 @@ if __name__ == "__main__":
         starting_equity=75.52,
         min_position_size=11,
         start_date=start_date,
-        lookback_periods=lookback_periods,
+        lookback_periods=369,
+        # TODO: here should be 370 (like records!)
     )
-    asyncio.run(pipeline.run())
+    # asyncio.run(pipeline.run())
+    asyncio.run(pipeline.test())

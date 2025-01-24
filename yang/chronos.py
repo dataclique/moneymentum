@@ -253,3 +253,53 @@ class Chronos:
         return df_annualized_return.withColumn(
             "sharpe", (F.col("annualized_return") - risk_free) / F.col("annualized_volatility")
         )
+
+    # TODO: fix self.has_enough_samples and lookback window
+    def with_sortino(self, df: DataFrame, risk_free: float = 0.0) -> DataFrame:
+        logger.info("Calculating sortino...")
+
+        if self.timeframe == "1h":
+            annualization_factor = 0.000013  # 0.0013%
+        elif self.timeframe == "1d":
+            annualization_factor = 0.0003  # 0.03%
+        elif self.timeframe == "1w":
+            annualization_factor = 0.0021  # 0.21%
+
+        df_log_return_subtract_mar = df.withColumn(
+            "log_return_subtract_mar", F.col("log_return") - annualization_factor
+        )
+
+        df_squared_negative = df_log_return_subtract_mar.withColumn(
+            "negative_squared",
+            F.when(
+                F.col("log_return_subtract_mar") < 0, F.col("log_return_subtract_mar") ** 2
+            ).otherwise(0),
+        )
+
+        df_sum_negative_squared = df_squared_negative.withColumn(
+            "sum_negative_squared",
+            # self.has_enough_samples
+            F.when(self.has_enough_samples, F.sum("negative_squared").over(self.rolling_window)),
+        )
+
+        df_count_observations = df_sum_negative_squared.withColumn(
+            "count_observations",
+            F.when(
+                self.has_enough_samples,
+                F.count("log_return_subtract_mar").over(self.rolling_window),
+            ),
+        )
+
+        df_downside_deviation = df_count_observations.withColumn(
+            "downside_variance", F.col("sum_negative_squared") / F.col("count_observations")
+        ).withColumn(
+            # Take the square root to get the downside deviation
+            "downside_deviation",
+            F.sqrt(F.col("downside_variance")),
+        )
+
+        # .drop("negative_squared", "sum_negative_squared", "count_observations", "downside_variance")
+
+        return df_downside_deviation.withColumn(
+            "sortino", (F.col("annualized_return") - risk_free) / F.col("downside_deviation")
+        )

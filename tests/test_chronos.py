@@ -54,6 +54,8 @@ def test_aave_last_record(spark_session):
     assert aave_last_record["covariance"] == 7.646287605794159e-4, "Covariance mismatch"
     # Google sheet: 1.91
     assert aave_last_record["sharpe"] == 1.9107210298591863, "Sharpe mismatch"
+    # Google sheet: 57.17803317
+    assert aave_last_record["sortino"] == 57.10213905519965, "Sortino mismatch"
 
     logger.info("AAVE last record assertions passed.")
 
@@ -99,6 +101,8 @@ def test_btc_last_record(spark_session):
     assert btc_last_record["covariance"] == 7.508014553322255e-4, "Covariance mismatch"
     # Google sheet: 2.20
     assert btc_last_record["sharpe"] == 2.2022163385448854, "Sharpe mismatch"
+    # Google sheet: 65.15
+    assert btc_last_record["sortino"] == 65.0821483382264, "Sortino mismatch"
 
     logger.info("BTC last record assertions passed.")
 
@@ -144,5 +148,7 @@ def test_ai_last_record(spark_session):
     assert ai_last_record["covariance"] == 0.007126803962757325, "Covariance mismatch"
     # Google sheet: -0.46
     assert ai_last_record["sharpe"] == -0.4551910183347762, "Sharpe mismatch"
+    # Google sheet: -4.25
+    assert ai_last_record["sortino"] == -4.224094157586738, "Sortino mismatch"
 
     logger.info("AI last record assertions passed.")

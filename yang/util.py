@@ -10,8 +10,6 @@ from pyspark.sql import DataFrame, DataFrameReader, SparkSession
 from pyspark.sql import functions as F
 from statsmodels.tsa.stattools import adfuller, coint
 
-DEBUG = True
-
 
 class LookbackPeriods(TypedDict):
     lookback_periods: int
@@ -124,7 +122,9 @@ def setup_logging() -> None:
     )
 
 
-LOG_LEVEL = logging.DEBUG
+DEBUG = True
+BACKTEST = False
+LOG_LEVEL = logging.DEBUG if DEBUG else logging.INFO
 
 logger = logging.getLogger(__name__)
 logger.setLevel(LOG_LEVEL)

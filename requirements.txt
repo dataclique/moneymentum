@@ -9,5 +9,6 @@ plotly
 psycopg
 pyspark
 pytest
+python-dotenv
 statsmodels
 tenacity

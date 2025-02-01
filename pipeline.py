@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
@@ -16,8 +17,6 @@ from yang.dataloader.hyperliquid.markets import HyperliquidDataLoaderMarkets, Sc
 from yang.dataloader.hyperliquid.ohlcv import (
     HyperliquidDataLoaderOHLCV,
     Timeframe,
-    load_existing_candles,
-    update_candles,
 )
 
 if __name__ == "__main__":
@@ -80,8 +79,27 @@ class Pipeline:
 
         symbols = markets_df.select("symbol").rdd.flatMap(lambda x: x).collect()
 
-        # Fetch OHLCV data concurrently
-        ohlcv_tasks = [update_candles(exchange, symbol, timeframe, since) for symbol in symbols[:2]]
+        candles_file_path = f"{util.DATA_DIR}/ohlcv{timeframe}.csv"
+        if os.path.exists(candles_file_path):
+            existing_df = pd.read_csv(candles_file_path, parse_dates=["timestamp"])
+        else:
+            existing_df = None
+
+        symbol_time_array = []
+
+        for symbol in symbols:
+            if existing_df is not None:
+                symbol_df = existing_df[existing_df["symbol"] == symbol]
+                if not symbol_df.empty:
+                    last_timestamp_ms = int(symbol_df.iloc[-1]["timestamp"].timestamp() * 1000)
+                    symbol_time_array.append((symbol, max(since, last_timestamp_ms)))
+                    continue
+            symbol_time_array.append((symbol, since))
+
+        ohlcv_tasks = [
+            self.loader_ohlcv.fetch_ohlcv(exchange, symbol, timeframe, time)
+            for (symbol, time) in symbol_time_array[:2]
+        ]
 
         # funding_rate_tasks = [
         #     self.fetch_funding_rate_history(exchange, symbol, since) for symbol in symbols
@@ -120,33 +138,31 @@ class Pipeline:
         #     SchemaOHLCV.fields + [T.StructField("funding_rate", T.DoubleType(), nullable=True)]
         # )
 
-        # Save and return
-        candles_file_name = f"ohlcv{timeframe}"
-        candles_file = f"{util.DATA_DIR}/{candles_file_name}.csv"
-        existing_df = load_existing_candles(candles_file)
-
         pdf = pd.DataFrame(ohlcv_data)
+        pdf["timestamp"] = pd.to_datetime(pdf["timestamp"], utc=True)
+        pdf["timestamp"] = pdf["timestamp"].dt.tz_localize(None)
 
-        # Remove duplicates (keep the latest entry for each timestamp-symbol pair)
-        if not existing_df.empty:
+        if existing_df is not None:
+            existing_df["timestamp"] = pd.to_datetime(existing_df["timestamp"], utc=True)
+            existing_df["timestamp"] = existing_df["timestamp"].dt.tz_localize(None)
             combined_df = pd.concat([existing_df, pdf], ignore_index=True)
             combined_df = combined_df.sort_values(by=["timestamp"])
-            updated_df = combined_df.drop_duplicates(subset=["timestamp", "symbol"], keep="last")
+            combined_df = combined_df.drop_duplicates(subset=["timestamp", "symbol"], keep="last")
+            ohlcv_df = self.spark.createDataFrame(combined_df, schema=SchemaOHLCV)
         else:
-            updated_df = pdf
-
-        ohlcv_df = self.spark.createDataFrame(updated_df, schema=SchemaOHLCV)
-        ohlcv_df.printSchema()
+            ohlcv_df = self.spark.createDataFrame(pdf, schema=SchemaOHLCV)
 
         logger.info("Converted to Spark DataFrame with schema logged.")
+        ohlcv_df.printSchema()
+        ohlcv_df.show()
 
         candles_df = ohlcv_df.orderBy("timestamp")
 
-        util.save_csv(candles_file_name, candles_df)
-        # save_csv2(candles_file, updated_df)
+        candles_file_name = f"ohlcv{timeframe}"
 
-        candles_path = f"{util.DATA_DIR}/{candles_file_name}.csv"
-        return self.spark.read.schema(SchemaOHLCV).csv(candles_path, header=True).cache()
+        util.save_csv(candles_file_name, candles_df)
+
+        return self.spark.read.schema(SchemaOHLCV).csv(candles_file_path, header=True).cache()
 
     async def run(self) -> None:
         logger.info("Starting pipeline...")
@@ -156,8 +172,6 @@ class Pipeline:
         logger.info("Candles DataFrame:")
         candles_df.show(truncate=False)
 
-        print("Fetched")
-        return
         chronos = Chronos(
             timeframe=self.timeframe,
             lookback_periods=self.lookback_periods,
@@ -336,38 +350,10 @@ class Pipeline:
         util.save_csv("strategy_metrics", metrics)
         util.save_csv("strategy_performance", annualized_sharpe)
 
-    async def test(self):
-        logger.info("Starting pipeline...")
-
-        path = "./test_data/ohlcv1d.csv"
-
-        candles_df = self.spark.read.schema(SchemaOHLCV).csv(path, header=True).cache()
-
-        logger.info("Candles DataFrame:")
-        candles_df.show(truncate=False)
-
-        chronos = Chronos(
-            timeframe=self.timeframe,
-            lookback_periods=self.lookback_periods,
-        )
-        analysis_df = (
-            candles_df.transform(chronos.with_returns)
-            .transform(chronos.with_volatility)
-            .transform(chronos.with_sma)
-            .transform(chronos.with_zscore)
-            .transform(chronos.with_beta)
-            .transform(chronos.with_information_discreteness)
-            .transform(lambda df: chronos.with_sharpe(df, risk_free=4.5 / 100))
-            .transform(lambda df: chronos.with_sortino(df, risk_free=4.5 / 100))
-            # .drop("count", "symbol", "open", "high", "low")
-        )
-
-        util.save_csv("0analysis_df", analysis_df)
-
 
 if __name__ == "__main__":
     spark = util.get_spark()
-    timeframe = "1d"
+    timeframe = "1w"
 
     if timeframe == "1w":
         lookback_periods = 52

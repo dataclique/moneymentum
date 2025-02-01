@@ -152,6 +152,7 @@ def save_csv(name: str, df: DataFrame) -> None:
 
     # Save as a single CSV file with UTC timestamp format
     output_path = f"{DATA_DIR}/{name}"
+
     df.coalesce(1).write.mode("overwrite").option("header", "true").option(
         "timestampFormat", "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'"
     ).csv(output_path)

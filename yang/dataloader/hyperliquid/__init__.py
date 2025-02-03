@@ -1,6 +1,7 @@
 from datetime import datetime
 
 
+# Only need to normalize data for funding_rate and candles
 def normalize_timestamp(timestamp: str | datetime) -> datetime:
     if isinstance(timestamp, datetime):
         # If it's already a datetime object, normalize it and return

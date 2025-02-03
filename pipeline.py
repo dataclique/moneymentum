@@ -1,8 +1,8 @@
 import asyncio
 import logging
-import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 
 import pandas as pd
 from ccxt import async_support as ccxt
@@ -80,7 +80,7 @@ class Pipeline:
         symbols = markets_df.select("symbol").rdd.flatMap(lambda x: x).collect()
 
         candles_file_path = f"{util.DATA_DIR}/ohlcv{timeframe}.csv"
-        if os.path.exists(candles_file_path):
+        if Path(candles_file_path).exists():
             existing_df = pd.read_csv(candles_file_path, parse_dates=["timestamp"])
         else:
             existing_df = None
@@ -184,6 +184,7 @@ class Pipeline:
             .transform(chronos.with_beta)
             .transform(chronos.with_information_discreteness)
             .transform(chronos.with_sharpe)
+            .transform(chronos.with_sortino)
             .drop("count", "symbol", "open", "high", "low", "mean_return", "annualized_return")
         )
 
@@ -353,7 +354,7 @@ class Pipeline:
 
 if __name__ == "__main__":
     spark = util.get_spark()
-    timeframe = "1w"
+    timeframe = "1d"
 
     if timeframe == "1w":
         lookback_periods = 52

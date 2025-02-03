@@ -98,7 +98,7 @@ class Pipeline:
 
         ohlcv_tasks = [
             self.loader_ohlcv.fetch_ohlcv(exchange, symbol, timeframe, time)
-            for (symbol, time) in symbol_time_array[:2]
+            for (symbol, time) in symbol_time_array
         ]
 
         # funding_rate_tasks = [

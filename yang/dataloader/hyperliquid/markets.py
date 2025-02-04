@@ -26,6 +26,7 @@ SchemaPerpMarket = T.StructType(
         T.StructField("maxLeverage", T.IntegerType()),
         T.StructField("funding", T.DoubleType()),
         T.StructField("openInterest", T.DoubleType()),
+        T.StructField("markPx", T.DoubleType()),
     ]
 )
 
@@ -73,6 +74,7 @@ class HyperliquidDataLoaderMarkets:
                 "maxLeverage": int(markets[symbol]["info"]["maxLeverage"]),
                 "funding": float(markets[symbol]["info"]["funding"]),
                 "openInterest": float(markets[symbol]["info"]["openInterest"]),
+                "markPx": float(markets[symbol]["info"]["markPx"]),
             }
             for symbol in perp_symbols
         ]

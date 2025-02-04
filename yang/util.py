@@ -84,6 +84,7 @@ def setup_logging() -> None:
 
 
 DEBUG = True
+BACKTEST = False
 LOG_LEVEL = logging.DEBUG if DEBUG else logging.INFO
 
 logger = logging.getLogger(__name__)

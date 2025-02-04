@@ -63,7 +63,11 @@ SchemaPerpPosition = T.StructType(
 class ExecutionEngine:
     spark: SparkSession
     min_position_size_usd: float
+    leverage: int
     exchange, params = _get_hyperliquid()
+
+    def get_balance(self) -> float:
+        return self.exchange.fetch_balance()["total"]["USDC"]
 
     def get_positions(self) -> DataFrame:
         fetched_positions = self.exchange.fetch_positions()
@@ -102,37 +106,67 @@ class ExecutionEngine:
         price: float,
     ) -> None:
         try:
+            logger.info("Setting leverage to %d", self.leverage)
+            self.exchange.set_leverage(symbol=symbol, leverage=self.leverage, params=self.params)
+
+            # Quantize amount to 3 significant figures
+            quantized_amount = float(f"{amount:.3g}")
+
             logger.debug(
-                "Placing %s %s order for %s of %s at %s...", order_type, side, amount, symbol, price
+                "Placing %s %s order for %s of %s at %s...",
+                order_type,
+                side,
+                quantized_amount,
+                symbol,
+                price,
             )
             self.exchange.create_order(
-                symbol, type=order_type, side=side, amount=amount, price=price, params=self.params
+                symbol,
+                type=order_type,
+                side=side,
+                amount=quantized_amount,
+                price=price,
+                params=self.params,
             )
             logger.info(
-                "Placed %s %s order for %s of %s at %s", order_type, side, amount, symbol, price
+                "Placed %s %s order for %s of %s at %s",
+                order_type,
+                side,
+                quantized_amount,
+                symbol,
+                price,
             )
         except Exception:
             logger.exception(
                 "Error placing a %s %s order for %s of %s at %s",
                 order_type,
                 side,
-                amount,
+                quantized_amount,
                 symbol,
                 price,
             )
 
     def _handle_position_changes(self, portfolio_updates: DataFrame) -> None:
-        # Handle closings
         closings = portfolio_updates.filter(F.col("action") == "close")
         for row in closings.collect():
             logger.info("Closing %s %s...", row.symbol, row.direction.upper())
-            self.place_trade(
-                symbol=row.symbol,
-                side="sell" if row.direction == "long" else "buy",
-                order_type="market",
-                amount=row.current_size / row.close,
-                price=row.close,
-            )
+
+            try:
+                ticker = self.exchange.fetch_ticker(row.symbol)
+                close_price = ticker["last"] if ticker["last"] else ticker["close"]
+
+                self.place_trade(
+                    symbol=row.symbol,
+                    side="sell" if row.direction == "long" else "buy",
+                    order_type="market",
+                    amount=row.current_size / close_price,
+                    price=close_price,
+                )
+            except Exception:
+                logger.exception(
+                    "Error fetching price or closing position for %s",
+                    row.symbol,
+                )
 
         # Handle updates
         position_updates = portfolio_updates.filter(F.col("action") == "update")
@@ -140,9 +174,9 @@ class ExecutionEngine:
             diff = row.target_size - row.current_size
             diff_position_size = diff / row.close
 
-            logger.info("Updating %s: %s", row.symbol, diff_position_size)
-
             if abs(diff) > self.min_position_size_usd:
+                logger.info("Updating %s: %s", row.symbol, diff_position_size)
+
                 is_buy = (row.direction == "long" and diff > 0) or (
                     row.direction == "short" and diff < 0
                 )

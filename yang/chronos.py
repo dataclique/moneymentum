@@ -276,7 +276,7 @@ class Chronos:
             "sharpe", (F.col("annualized_return") - risk_free) / F.col("annualized_volatility")
         )
 
-    def with_sortino(self, df: DataFrame) -> DataFrame:
+    def with_sortino(self, df: DataFrame, risk_free: float = 0.0) -> DataFrame:
         logger.info("Calculating sortino...")
 
         # Based on HyperLiquid neutral funding rates.
@@ -335,5 +335,5 @@ class Chronos:
         )
 
         return annualized_return_df.withColumn(
-            "sortino", F.col("annualized_return") / F.col("downside_deviation")
+            "sortino", (F.col("annualized_return") - risk_free) / F.col("downside_deviation")
         )

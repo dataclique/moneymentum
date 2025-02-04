@@ -6,7 +6,6 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pandas as pd
-from ccxt import async_support as ccxt
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql import types as T
@@ -16,7 +15,7 @@ from yang import util
 from yang.chronos import Chronos
 from yang.dataloader.hyperliquid.markets import HyperliquidDataLoaderMarkets, SchemaPerpMarket
 from yang.dataloader.hyperliquid.ohlcv import HyperliquidDataLoaderOHLCV, Timeframe
-from yang.exe import ExecutionEngine
+from yang.exe import ExecutionEngine, _get_hyperliquid
 
 if __name__ == "__main__":
     util.setup_logging()
@@ -59,16 +58,13 @@ class Pipeline:
         )
         self.loader_ohlcv: HyperliquidDataLoaderOHLCV = HyperliquidDataLoaderOHLCV()
 
-    def get_hyperliquid(self) -> ccxt.Exchange:
-        logger.debug("Initializing exchange...")
-        exchange = ccxt.hyperliquid({"asyncio_loop": asyncio.get_event_loop()})
-        logger.info("Exchange initialized: %s", exchange)
-        return exchange
-
     async def get_candles_df(self, timeframe: Timeframe) -> DataFrame:
-        exchange = self.get_hyperliquid()
+        candles_file_path = f"{util.DATA_DIR}/ohlcv{timeframe}.csv"
+        if not self.reload:
+            return self.spark.read.schema(SchemaOHLCV).csv(candles_file_path, header=True).cache()
 
         # Only last 5000 candles available
+        exchange, _ = _get_hyperliquid()
         logger.info("Fetching data since: %s", self.start_date)
         since = int(self.start_date.timestamp() * 1000)
 
@@ -82,11 +78,11 @@ class Pipeline:
 
         symbols = markets_df.select("symbol").rdd.flatMap(lambda x: x).collect()
 
-        candles_file_path = f"{util.DATA_DIR}/ohlcv{timeframe}.csv"
-        if Path(candles_file_path).exists():
-            existing_df = pd.read_csv(candles_file_path, parse_dates=["timestamp"])
-        else:
-            existing_df = None
+        existing_df = (
+            pd.read_csv(candles_file_path, parse_dates=["timestamp"])
+            if Path(candles_file_path).exists()
+            else None
+        )
 
         def get_symbol_start_time(symbol: str) -> int:
             if existing_df is None:
@@ -101,9 +97,9 @@ class Pipeline:
 
         ohlcv_tasks = [
             self.loader_ohlcv.fetch_or_empty(
-                exchange, symbol, timeframe, get_symbol_start_time(symbol), idx
+                exchange, symbol, timeframe, get_symbol_start_time(symbol)
             )
-            for idx, symbol in enumerate(symbols)
+            for symbol in symbols
         ]
 
         ohlcv_data = [
@@ -154,7 +150,6 @@ class Pipeline:
 
     async def run(self) -> DataFrame:
         logger.info("Starting pipeline...")
-
         candles_df = await self.get_candles_df(timeframe=self.timeframe)
 
         logger.info("Candles DataFrame:")
@@ -167,10 +162,9 @@ class Pipeline:
             .transform(chronos.with_sma)
             .transform(chronos.with_zscore)
             .transform(chronos.with_beta)
-            .transform(chronos.with_information_discreteness)
-            .transform(chronos.with_sharpe)
-            .transform(chronos.with_sortino)
-            .drop("count", "symbol", "open", "high", "low", "mean_return", "annualized_return")
+            # .transform(chronos.with_information_discreteness)
+            # .transform(chronos.with_sharpe)
+            # .transform(chronos.with_sortino)
             .drop("count", "open", "high", "low", "mean_return")
         )
 
@@ -247,7 +241,7 @@ class Pipeline:
 
         target_portfolio.show()
 
-        if util.DEBUG:
+        if util.BACKTEST:
             # Calculate returns for each signal
             next_day_returns = (
                 analysis_df.select("timestamp", "ticker", "log_return")
@@ -371,22 +365,25 @@ if __name__ == "__main__":
         microsecond=0,
     )
     min_position_size_usd = 11
-    exe = ExecutionEngine(spark=spark, min_position_size_usd=min_position_size_usd)
+    leverage: int = 3
+    exe = ExecutionEngine(
+        spark=spark,
+        leverage=leverage,
+        min_position_size_usd=min_position_size_usd,
+    )
     pipeline_kwargs = dict(
         reload=True,
         spark=spark,
         timeframe=timeframe,
         n_tokens=n_tokens,
-        leverage=3.0,
+        leverage=leverage,
         min_position_size=min_position_size_usd,
         start_date=start_date,
         lookback_periods=lookback_periods,
     )
 
     def step() -> None:
-        current_portfolio = exe.get_positions()
-        starting_equity = current_portfolio.select(F.sum("notional")).first()[0]
-
+        starting_equity = exe.get_balance()
         pipeline = Pipeline(**pipeline_kwargs, starting_equity=starting_equity)
         target_portfolio = asyncio.run(pipeline.run())
         exe.rebalance(target_portfolio)
@@ -395,13 +392,16 @@ if __name__ == "__main__":
     logger.info("Starting the initial run...")
     step()
 
-    while True:
-        # Calculate time until next hour, accounting for execution time
+    every_minutes = 10
+    period = timedelta(minutes=every_minutes)
+    while not util.BACKTEST:  # runs forever unless we're backtesting
         now = datetime.now(timezone.utc)
-        next_hour = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
-        sleep_duration = (next_hour - now).total_seconds()
+        quantized_minute = now.minute // every_minutes * every_minutes
+        quantized_now = now.replace(minute=quantized_minute, second=0, microsecond=0)
+        until = quantized_now + period
 
-        logger.info("Sleeping for %d seconds until the top of the hour...", sleep_duration)
+        sleep_duration = (until - now).total_seconds()
+        logger.info("Sleeping until %s", until.isoformat())
         time.sleep(sleep_duration)
 
         step()

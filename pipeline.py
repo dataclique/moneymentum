@@ -113,8 +113,6 @@ class Pipeline:
         # Normalize timestamps
         # for rate in funding_rate_data:
         #     rate["timestamp"] = normalize_timestamp(rate["timestamp"])
-        # for candle in ohlcv_data:
-        #     candle["timestamp"] = normalize_timestamp(candle["timestamp"])
 
         # Create funding rate lookup map
         # funding_rate_map = {
@@ -126,11 +124,6 @@ class Pipeline:
         #     candle["funding_rate"] = funding_rate_map.get(
         #         (candle["symbol"], candle["timestamp"]), None
         #     )
-
-        # Update schema to include funding_rate
-        # schema = T.StructType(
-        #     SchemaOHLCV.fields + [T.StructField("funding_rate", T.DoubleType(), nullable=True)]
-        # )
 
         pdf = pd.DataFrame(ohlcv_data)
         pdf["timestamp"] = pd.to_datetime(pdf["timestamp"], utc=True)
@@ -151,9 +144,7 @@ class Pipeline:
         ohlcv_df.show()
 
         candles_df = ohlcv_df.orderBy("timestamp")
-
         candles_file_name = f"ohlcv{timeframe}"
-
         util.save_csv(candles_file_name, candles_df)
 
         return self.spark.read.schema(SchemaOHLCV).csv(candles_file_path, header=True).cache()
@@ -337,8 +328,6 @@ class Pipeline:
         logger.info("Strategy Performance Metrics:")
         metrics.show()
         annualized_sharpe.show()
-
-        # Save performance metrics
 
 
 if __name__ == "__main__":

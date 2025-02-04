@@ -254,15 +254,18 @@ class Chronos:
             "sharpe", (F.col("annualized_return") - risk_free) / F.col("annualized_volatility")
         )
 
-    def with_sortino(self, df: DataFrame, risk_free: float = 0.0) -> DataFrame:
+    def with_sortino(self, df: DataFrame) -> DataFrame:
         logger.info("Calculating sortino...")
 
+        # Based on HyperLiquid neutral funding rates.
+        # See funding comparison page for more details:
+        # https://app.hyperliquid.xyz/fundingComparison
         if self.timeframe == "1h":
-            annulized = 0.000013  # 0.0013%
+            min_acceptable_return = 0.000013  # 0.0013%
         elif self.timeframe == "1d":
-            annulized = 0.0003  # 0.03%
+            min_acceptable_return = 0.0003  # 0.03%
         elif self.timeframe == "1w":
-            annulized = 0.0021  # 0.21%
+            min_acceptable_return = 0.0021  # 0.21%
 
         if self.timeframe == "1h":
             annualization_factor = 365 * 24
@@ -271,31 +274,31 @@ class Chronos:
         elif self.timeframe == "1w":
             annualization_factor = 52
 
-        df_log_return_subtract_mar = df.withColumn(
-            "log_return_subtract_mar", F.col("log_return") - annulized
+        above_mar_df = df.withColumn(
+            "log_return_above_mar", F.col("log_return") - min_acceptable_return
         )
 
-        df_squared_negative = df_log_return_subtract_mar.withColumn(
+        squared_negative_df = above_mar_df.withColumn(
             "negative_squared",
-            F.when(
-                F.col("log_return_subtract_mar") < 0, F.col("log_return_subtract_mar") ** 2
-            ).otherwise(0),
+            F.when(F.col("log_return_above_mar") < 0, F.col("log_return_above_mar") ** 2).otherwise(
+                0
+            ),
         )
 
-        df_sum_negative_squared = df_squared_negative.withColumn(
+        sum_negative_squared_df = squared_negative_df.withColumn(
             "sum_negative_squared",
             F.when(self.has_enough_samples, F.sum("negative_squared").over(self.rolling_window)),
         )
 
-        df_count_observations = df_sum_negative_squared.withColumn(
+        count_observations_df = sum_negative_squared_df.withColumn(
             "count_observations",
             F.when(
                 self.has_enough_samples,
-                F.count("log_return_subtract_mar").over(self.rolling_window),
+                F.count("log_return_above_mar").over(self.rolling_window),
             ),
         )
 
-        df_downside_deviation = df_count_observations.withColumn(
+        downside_deviation_df = count_observations_df.withColumn(
             "downside_variance", F.col("sum_negative_squared") / F.col("count_observations")
         ).withColumn(
             # Take the square root to get the downside deviation
@@ -303,12 +306,12 @@ class Chronos:
             F.sqrt(F.col("downside_variance")),
         )
 
-        df_annualized_return = df_downside_deviation.withColumn(
+        annualized_return_df = downside_deviation_df.withColumn(
             "annualized_return", F.exp(F.col("mean_return") * annualization_factor) - 1
         ).drop(
             "negative_squared", "sum_negative_squared", "count_observations", "downside_variance"
         )
 
-        return df_annualized_return.withColumn(
-            "sortino", (F.col("annualized_return") - risk_free) / F.col("downside_deviation")
+        return annualized_return_df.withColumn(
+            "sortino", F.col("annualized_return") / F.col("downside_deviation")
         )

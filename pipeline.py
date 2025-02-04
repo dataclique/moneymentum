@@ -13,9 +13,11 @@ from pyspark.sql import window as W
 
 from yang import util
 from yang.chronos import Chronos
-from yang.dataloader.hyperliquid import normalize_timestamp
 from yang.dataloader.hyperliquid.markets import HyperliquidDataLoaderMarkets, SchemaPerpMarket
-from yang.dataloader.hyperliquid.ohlcv import HyperliquidDataLoaderOHLCV, Timeframe
+from yang.dataloader.hyperliquid.ohlcv import (
+    HyperliquidDataLoaderOHLCV,
+    Timeframe,
+)
 
 if __name__ == "__main__":
     util.setup_logging()
@@ -50,6 +52,7 @@ class Pipeline:
     timeframe: Timeframe
     lookback_periods: int
     start_date: datetime
+    reload_markets: bool = True
 
     def __post_init__(self) -> None:
         self.loader_markets: HyperliquidDataLoaderMarkets = HyperliquidDataLoaderMarkets(
@@ -66,8 +69,7 @@ class Pipeline:
         logger.info("Fetching data since: %s", self.start_date)
         since = int(self.start_date.timestamp() * 1000)
 
-        reload_markets = True
-        if reload_markets:
+        if self.reload_markets:
             markets_df = await self.loader_markets.fetch_markets(exchange=exchange)
         else:
             markets_path = f"{util.DATA_DIR}/markets.csv"
@@ -77,30 +79,40 @@ class Pipeline:
 
         symbols = markets_df.select("symbol").rdd.flatMap(lambda x: x).collect()
 
-        # Fetch OHLCV data concurrently
+        candles_file_path = f"{util.DATA_DIR}/ohlcv{timeframe}.csv"
+        if Path(candles_file_path).exists():
+            existing_df = pd.read_csv(candles_file_path, parse_dates=["timestamp"])
+        else:
+            existing_df = None
+
+        def get_symbol_start_time(symbol: str) -> int:
+            if existing_df is None:
+                return since
+
+            symbol_df = existing_df[existing_df["symbol"] == symbol]
+            if symbol_df.empty:
+                return since
+
+            last_timestamp_ms = int(symbol_df.iloc[-1]["timestamp"].timestamp() * 1000)
+            return max(since, last_timestamp_ms)
+
         ohlcv_tasks = [
-            self.loader_ohlcv.fetch_ohlcv(exchange, symbol, timeframe, since) for symbol in symbols
+            self.loader_ohlcv.fetch_ohlcv(
+                exchange, symbol, timeframe, get_symbol_start_time(symbol)
+            )
+            for symbol in symbols
         ]
 
-        # funding_rate_tasks = [
-        #     self.fetch_funding_rate_history(exchange, symbol, since) for symbol in symbols
-        # ]
+        ohlcv_data = [
+            candle for candles in await asyncio.gather(*ohlcv_tasks) for candle in candles
+        ]
 
-        # ohlcv_results, funding_rate_results = await asyncio.gather(
-        #     asyncio.gather(*ohlcv_tasks), asyncio.gather(*funding_rate_tasks)
-        # )
-
-        ohlcv_results = await asyncio.gather(*ohlcv_tasks)
-
-        # Flatten results
-        ohlcv_data = [candle for candles in ohlcv_results for candle in candles]
+        # TODO: Move funding rate to a separate method
         # funding_rate_data = [rate for rates in funding_rate_results for rate in rates]
 
         # Normalize timestamps
         # for rate in funding_rate_data:
         #     rate["timestamp"] = normalize_timestamp(rate["timestamp"])
-        for candle in ohlcv_data:
-            candle["timestamp"] = normalize_timestamp(candle["timestamp"])
 
         # Create funding rate lookup map
         # funding_rate_map = {
@@ -113,41 +125,39 @@ class Pipeline:
         #         (candle["symbol"], candle["timestamp"]), None
         #     )
 
-        # Update schema to include funding_rate
-        # schema = T.StructType(
-        #     SchemaOHLCV.fields + [T.StructField("funding_rate", T.DoubleType(), nullable=True)]
-        # )
-
-        # Convert to Spark DataFrame
         pdf = pd.DataFrame(ohlcv_data)
-        ohlcv_df = self.spark.createDataFrame(pdf, schema=SchemaOHLCV)
-        logger.info("Converted to Spark DataFrame: %s", ohlcv_df.printSchema())
+        pdf["timestamp"] = pd.to_datetime(pdf["timestamp"], utc=True)
+        pdf["timestamp"] = pdf["timestamp"].dt.tz_localize(None)
 
-        # Save and return
+        if existing_df is not None:
+            existing_df["timestamp"] = pd.to_datetime(existing_df["timestamp"], utc=True)
+            existing_df["timestamp"] = existing_df["timestamp"].dt.tz_localize(None)
+            combined_df = pd.concat([existing_df, pdf], ignore_index=True)
+            combined_df = combined_df.sort_values(by=["timestamp"])
+            combined_df = combined_df.drop_duplicates(subset=["timestamp", "symbol"], keep="last")
+            ohlcv_df = self.spark.createDataFrame(combined_df, schema=SchemaOHLCV).cache()
+        else:
+            ohlcv_df = self.spark.createDataFrame(pdf, schema=SchemaOHLCV).cache()
+
+        logger.info("Converted to Spark DataFrame with schema logged.")
+        ohlcv_df.printSchema()
+        ohlcv_df.show()
+
         candles_df = ohlcv_df.orderBy("timestamp")
         candles_file_name = f"ohlcv{timeframe}"
         util.save_csv(candles_file_name, candles_df)
 
-        candles_path = f"{util.DATA_DIR}/{candles_file_name}.csv"
-        return self.spark.read.schema(SchemaOHLCV).csv(candles_path, header=True).cache()
+        return self.spark.read.schema(SchemaOHLCV).csv(candles_file_path, header=True).cache()
 
     async def run(self) -> None:
         logger.info("Starting pipeline...")
 
-        path = f"{util.DATA_DIR}/ohlcv{self.timeframe}.csv"
-        if self.reload or not Path(path).exists():
-            candles_df = await self.get_candles_df(timeframe=self.timeframe)
-        else:
-            candles_df = self.spark.read.schema(SchemaOHLCV).csv(path, header=True).cache()
+        candles_df = await self.get_candles_df(timeframe=self.timeframe)
 
         logger.info("Candles DataFrame:")
         candles_df.show(truncate=False)
 
-        chronos = Chronos(
-            timeframe=self.timeframe,
-            lookback_periods=self.lookback_periods,
-            risk_free=self.risk_free,
-        )
+        chronos = Chronos(timeframe=self.timeframe, lookback_periods=self.lookback_periods)
         analysis_df = (
             candles_df.transform(chronos.with_returns)
             .transform(chronos.with_volatility)
@@ -156,6 +166,7 @@ class Pipeline:
             .transform(chronos.with_beta)
             .transform(chronos.with_information_discreteness)
             .transform(chronos.with_sharpe)
+            .transform(chronos.with_sortino)
             .drop("count", "symbol", "open", "high", "low", "mean_return", "annualized_return")
         )
 
@@ -318,15 +329,12 @@ class Pipeline:
         metrics.show()
         annualized_sharpe.show()
 
-        # Save performance metrics
-        util.save_csv("strategy_metrics", metrics)
-        util.save_csv("strategy_performance", annualized_sharpe)
-
 
 if __name__ == "__main__":
     spark = util.get_spark()
     timeframe = "1d"
 
+    # TODO: This is repeated in multiple places. Make it a helper function
     if timeframe == "1w":
         lookback_periods = 52
         n_tokens = 2

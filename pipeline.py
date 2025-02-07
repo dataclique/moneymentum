@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -37,6 +38,13 @@ SchemaOHLCV = T.StructType(
         T.StructField("ticker", T.StringType()),
     ]
 )
+
+# TODO: integrate it to code
+lookback_periods_dict = {
+    "1w": (52, 2),
+    "1d": (90, 6),
+    "1h": (7 * 24, 5),
+}
 
 
 @dataclass
@@ -96,16 +104,56 @@ class Pipeline:
             last_timestamp_ms = int(symbol_df.iloc[-1]["timestamp"].timestamp() * 1000)
             return max(since, last_timestamp_ms)
 
-        ohlcv_tasks = [
-            self.loader_ohlcv.fetch_ohlcv(
-                exchange, symbol, timeframe, get_symbol_start_time(symbol)
-            )
-            for symbol in symbols
-        ]
+        current_time_ms = int(time.time() * 1000)
+        # TODO: inegrate lookback_periods
+        # lookback_periods, n_tokens = lookback_periods_dict.get(timeframe, (0, 0))
+        # lookback_duration_ms = lookback_periods * n_tokens * 60 * 60 * 1000  # Convert to milliseconds
 
-        ohlcv_data = [
-            candle for candles in await asyncio.gather(*ohlcv_tasks) for candle in candles
-        ]
+        period = 0
+        if timeframe == "1w":
+            period = 7 * 24 * 60 * 60 * 1000
+        elif timeframe == "1d":
+            period = 24 * 60 * 60 * 1000
+        elif timeframe == "1h":
+            period = 60 * 60 * 1000
+
+        print(f"current time ms: {current_time_ms}")
+        print(f"period: {period}")
+
+        tokens_for_candles = set()
+        tokens_for_markets = set()
+
+        # TODO: remove all print
+        # TODO: test that method for all timeframes
+
+        # TODO: need a decision about really old tokens with 0 new fetched candles
+        # they are slowing down procces
+        for symbol in symbols:
+            last_timestamp_ms = get_symbol_start_time(symbol)
+            print(f"{symbol}: {last_timestamp_ms}")
+            if current_time_ms - last_timestamp_ms > period:
+                tokens_for_candles.add(symbol)
+            else:
+                tokens_for_markets.add(symbol)
+
+        if tokens_for_markets:
+            market_data = await exchange.load_markets()
+            for symbol in tokens_for_markets:
+                mark_px = market_data.get(symbol, {}).get("info", {}).get("markPx")
+                print(f"{symbol}: {mark_px}")
+
+        if tokens_for_candles:
+            ohlcv_tasks = [
+                self.loader_ohlcv.fetch_ohlcv(
+                    exchange, symbol, timeframe, get_symbol_start_time(symbol)
+                )
+                for symbol in tokens_for_candles
+            ]
+            ohlcv_data = [
+                candle for candles in await asyncio.gather(*ohlcv_tasks) for candle in candles
+            ]
+        else:
+            ohlcv_data = []
 
         # TODO: Move funding rate to a separate method
         # funding_rate_data = [rate for rates in funding_rate_results for rate in rates]
@@ -132,9 +180,20 @@ class Pipeline:
         if existing_df is not None:
             existing_df["timestamp"] = pd.to_datetime(existing_df["timestamp"], utc=True)
             existing_df["timestamp"] = existing_df["timestamp"].dt.tz_localize(None)
+
+            if tokens_for_markets:
+                for symbol in tokens_for_markets:
+                    mark_px = market_data.get(symbol, {}).get("info", {}).get("markPx")
+                    if mark_px is not None:
+                        latest_index = existing_df[existing_df["symbol"] == symbol][
+                            "timestamp"
+                        ].idxmax()
+                        existing_df.at[latest_index, "close"] = float(mark_px)
+
             combined_df = pd.concat([existing_df, pdf], ignore_index=True)
             combined_df = combined_df.sort_values(by=["timestamp"])
             combined_df = combined_df.drop_duplicates(subset=["timestamp", "symbol"], keep="last")
+
             ohlcv_df = self.spark.createDataFrame(combined_df, schema=SchemaOHLCV).cache()
         else:
             ohlcv_df = self.spark.createDataFrame(pdf, schema=SchemaOHLCV).cache()
@@ -329,6 +388,29 @@ class Pipeline:
         metrics.show()
         annualized_sharpe.show()
 
+    async def test(self) -> None:
+        logger.info("Starting pipeline...")
+
+        candles_df = await self.get_candles_df(timeframe=self.timeframe)
+
+        logger.info("Candles DataFrame:")
+        candles_df.show(truncate=False)
+
+        chronos = Chronos(timeframe=self.timeframe, lookback_periods=self.lookback_periods)
+        analysis_df = (
+            candles_df.transform(chronos.with_returns)
+            .transform(chronos.with_volatility)
+            .transform(chronos.with_sma)
+            .transform(chronos.with_zscore)
+            .transform(chronos.with_beta)
+            .transform(chronos.with_information_discreteness)
+            .transform(chronos.with_sharpe)
+            .transform(chronos.with_sortino)
+            .drop("count", "symbol", "open", "high", "low", "mean_return", "annualized_return")
+        )
+
+        util.save_csv("anal0", analysis_df)
+
 
 if __name__ == "__main__":
     spark = util.get_spark()
@@ -369,4 +451,5 @@ if __name__ == "__main__":
         start_date=start_date,
         lookback_periods=lookback_periods,
     )
-    asyncio.run(pipeline.run())
+    # asyncio.run(pipeline.run())
+    asyncio.run(pipeline.test())

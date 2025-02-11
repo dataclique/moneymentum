@@ -4,6 +4,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TypedDict
 
 import pandas as pd
 from ccxt import async_support as ccxt
@@ -39,26 +40,46 @@ SchemaOHLCV = T.StructType(
     ]
 )
 
-# TODO: integrate it to code
-lookback_periods_dict = {
-    "1w": (52, 2),
-    "1d": (90, 6),
-    "1h": (7 * 24, 5),
+
+class LookbackPeriods(TypedDict):
+    lookback_periods: int
+    n_tokens: int
+    time_in_ms: int
+    annualized_factor: int
+
+
+lookback_periods_dict: dict[str, LookbackPeriods] = {
+    "1w": {
+        "lookback_periods": 52,
+        "n_tokens": 2,
+        "time_in_ms": 7 * 24 * 60 * 60 * 1000,
+        "annualized_factor": 52,
+    },
+    "1d": {
+        "lookback_periods": 90,
+        "n_tokens": 6,
+        "time_in_ms": 24 * 60 * 60 * 1000,
+        "annualized_factor": 365,
+    },
+    "1h": {
+        "lookback_periods": 7 * 24,
+        "n_tokens": 5,
+        "time_in_ms": 60 * 60 * 1000,
+        "annualized_factor": 365 * 24,
+    },
 }
 
 
 @dataclass
 class Pipeline:
     reload: bool
-    n_tokens: int
     leverage: float
     starting_equity: float
     min_position_size: float
-
+    config: LookbackPeriods
     spark: SparkSession
 
     timeframe: Timeframe
-    lookback_periods: int
     start_date: datetime
     reload_markets: bool = True
 
@@ -105,33 +126,12 @@ class Pipeline:
             return max(since, last_timestamp_ms)
 
         current_time_ms = int(time.time() * 1000)
-        # TODO: inegrate lookback_periods
-        # lookback_periods, n_tokens = lookback_periods_dict.get(timeframe, (0, 0))
-        # lookback_duration_ms = lookback_periods * n_tokens * 60 * 60 * 1000  # Convert to milliseconds
-
-        period = 0
-        if timeframe == "1w":
-            period = 7 * 24 * 60 * 60 * 1000
-        elif timeframe == "1d":
-            period = 24 * 60 * 60 * 1000
-        elif timeframe == "1h":
-            period = 60 * 60 * 1000
-
-        print(f"current time ms: {current_time_ms}")
-        print(f"period: {period}")
-
         tokens_for_candles = set()
         tokens_for_markets = set()
 
-        # TODO: remove all print
-        # TODO: test that method for all timeframes
-
-        # TODO: need a decision about really old tokens with 0 new fetched candles
-        # they are slowing down procces
         for symbol in symbols:
             last_timestamp_ms = get_symbol_start_time(symbol)
-            print(f"{symbol}: {last_timestamp_ms}")
-            if current_time_ms - last_timestamp_ms > period:
+            if current_time_ms - last_timestamp_ms > config["time_in_ms"]:
                 tokens_for_candles.add(symbol)
             else:
                 tokens_for_markets.add(symbol)
@@ -140,7 +140,6 @@ class Pipeline:
             market_data = await exchange.load_markets()
             for symbol in tokens_for_markets:
                 mark_px = market_data.get(symbol, {}).get("info", {}).get("markPx")
-                print(f"{symbol}: {mark_px}")
 
         if tokens_for_candles:
             ohlcv_tasks = [
@@ -154,24 +153,6 @@ class Pipeline:
             ]
         else:
             ohlcv_data = []
-
-        # TODO: Move funding rate to a separate method
-        # funding_rate_data = [rate for rates in funding_rate_results for rate in rates]
-
-        # Normalize timestamps
-        # for rate in funding_rate_data:
-        #     rate["timestamp"] = normalize_timestamp(rate["timestamp"])
-
-        # Create funding rate lookup map
-        # funding_rate_map = {
-        #     (rate["symbol"], rate["timestamp"]): rate["funding_rate"] for rate in funding_rate_data  # noqa: E501
-        # }
-
-        # Add funding rate to OHLCV data
-        # for candle in ohlcv_data:
-        #     candle["funding_rate"] = funding_rate_map.get(
-        #         (candle["symbol"], candle["timestamp"]), None
-        #     )
 
         pdf = pd.DataFrame(ohlcv_data)
         pdf["timestamp"] = pd.to_datetime(pdf["timestamp"], utc=True)
@@ -216,7 +197,7 @@ class Pipeline:
         logger.info("Candles DataFrame:")
         candles_df.show(truncate=False)
 
-        chronos = Chronos(timeframe=self.timeframe, lookback_periods=self.lookback_periods)
+        chronos = Chronos(timeframe=self.timeframe, lookback_periods=config["lookback_periods"])
         analysis_df = (
             candles_df.transform(chronos.with_returns)
             .transform(chronos.with_volatility)
@@ -242,8 +223,8 @@ class Pipeline:
             )
             .withColumn(
                 "direction",
-                F.when(F.col("rank") <= F.lit(self.n_tokens), "long").otherwise(
-                    F.when(F.col("reverse_rank") <= F.lit(self.n_tokens), "short")
+                F.when(F.col("rank") <= F.lit(config["n_tokens"]), "long").otherwise(
+                    F.when(F.col("reverse_rank") <= F.lit(config["n_tokens"]), "short")
                 ),
             )
             .withColumn(
@@ -371,16 +352,13 @@ class Pipeline:
         # Combine metrics
         metrics = metrics.crossJoin(portfolio_beta_df).cache()
 
-        if self.timeframe == "1w":
-            annualized_factor = 52
-        elif self.timeframe == "1d":
-            annualized_factor = 365
-        elif self.timeframe == "1h":
-            annualized_factor = 365 * 24
-
         annualized_sharpe = metrics.select(
-            (F.col("avg_daily_portfolio_return") * annualized_factor).alias("annualized_return"),
-            (F.col("portfolio_daily_std") * F.sqrt(F.lit(annualized_factor))).alias("annual_vol"),
+            (F.col("avg_daily_portfolio_return") * config["annualized_factor"]).alias(
+                "annualized_return"
+            ),
+            (F.col("portfolio_daily_std") * F.sqrt(F.lit(config["annualized_factor"]))).alias(
+                "annual_vol"
+            ),
             (F.col("annualized_return") / F.col("annual_vol")).alias("sharpe_ratio"),
         )
 
@@ -388,44 +366,10 @@ class Pipeline:
         metrics.show()
         annualized_sharpe.show()
 
-    async def test(self) -> None:
-        logger.info("Starting pipeline...")
-
-        candles_df = await self.get_candles_df(timeframe=self.timeframe)
-
-        logger.info("Candles DataFrame:")
-        candles_df.show(truncate=False)
-
-        chronos = Chronos(timeframe=self.timeframe, lookback_periods=self.lookback_periods)
-        analysis_df = (
-            candles_df.transform(chronos.with_returns)
-            .transform(chronos.with_volatility)
-            .transform(chronos.with_sma)
-            .transform(chronos.with_zscore)
-            .transform(chronos.with_beta)
-            .transform(chronos.with_information_discreteness)
-            .transform(chronos.with_sharpe)
-            .transform(chronos.with_sortino)
-            .drop("count", "symbol", "open", "high", "low", "mean_return", "annualized_return")
-        )
-
-        util.save_csv("anal0", analysis_df)
-
-
 if __name__ == "__main__":
     spark = util.get_spark()
-    timeframe = "1d"
-
-    # TODO: This is repeated in multiple places. Make it a helper function
-    if timeframe == "1w":
-        lookback_periods = 52
-        n_tokens = 2
-    elif timeframe == "1d":
-        lookback_periods = 90
-        n_tokens = 6
-    elif timeframe == "1h":
-        lookback_periods = 7 * 24
-        n_tokens = 5
+    timeframe = "1w"
+    config = lookback_periods_dict[timeframe]
 
     start_date = datetime(2023, 6, 1, tzinfo=timezone.utc).replace(
         hour=0,
@@ -439,17 +383,15 @@ if __name__ == "__main__":
     results = []
 
     # Run pipeline for each n_tokens value
-    logger.info("Running backtest with n_tokens=%d", n_tokens)
+    logger.info("Running backtest with n_tokens=%d", config["n_tokens"])
     pipeline = Pipeline(
         reload=True,
         spark=spark,
         timeframe=timeframe,
-        n_tokens=n_tokens,
         leverage=3.0,
         starting_equity=75.52,
         min_position_size=11,
         start_date=start_date,
-        lookback_periods=lookback_periods,
+        config=config,
     )
-    # asyncio.run(pipeline.run())
-    asyncio.run(pipeline.test())
+    asyncio.run(pipeline.run())

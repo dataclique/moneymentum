@@ -7,6 +7,7 @@ from pyspark.sql import functions as F
 from pyspark.sql import window as W
 
 from yang import util
+from yang.shared import LookbackPeriods
 
 logger = logging.getLogger(__name__)
 logger.setLevel(util.LOG_LEVEL)
@@ -74,22 +75,15 @@ class Chronos:
 
         return rolling_cum_df
 
-    def with_volatility(self, df: DataFrame) -> DataFrame:
+    def with_volatility(self, df: DataFrame, config: LookbackPeriods) -> DataFrame:
         logger.info("Calculating volatility...")
-
-        if self.timeframe == "1h":
-            annualization_factor = 365 * 24
-        elif self.timeframe == "1d":
-            annualization_factor = 365
-        elif self.timeframe == "1w":
-            annualization_factor = 52
 
         return df.withColumn(
             "stddev",
             F.stddev(F.col("log_return")).over(self.rolling_window),
         ).withColumn(
             "annualized_volatility",
-            F.col("stddev") * F.sqrt(F.lit(annualization_factor)),
+            F.col("stddev") * F.sqrt(F.lit(config["annualized_factor"])),
         )
 
     def with_min_max(self, df: DataFrame) -> DataFrame:
@@ -236,46 +230,24 @@ class Chronos:
             )
         )
 
-    def with_sharpe(self, df: DataFrame, risk_free: float = 0.0) -> DataFrame:
+    def with_sharpe(
+        self, df: DataFrame, config: LookbackPeriods, risk_free: float = 0.0
+    ) -> DataFrame:
         logger.info("Calculating sharpe...")
 
-        if self.timeframe == "1h":
-            annualization_factor = 365 * 24
-        elif self.timeframe == "1d":
-            annualization_factor = 365
-        elif self.timeframe == "1w":
-            annualization_factor = 52
-
         df_annualized_return = df.withColumn(
-            "annualized_return", F.exp(F.col("mean_return") * annualization_factor) - 1
+            "annualized_return", F.exp(F.col("mean_return") * config["annualized_factor"]) - 1
         )
 
         return df_annualized_return.withColumn(
             "sharpe", (F.col("annualized_return") - risk_free) / F.col("annualized_volatility")
         )
 
-    def with_sortino(self, df: DataFrame) -> DataFrame:
+    def with_sortino(self, df: DataFrame, config: LookbackPeriods) -> DataFrame:
         logger.info("Calculating sortino...")
 
-        # Based on HyperLiquid neutral funding rates.
-        # See funding comparison page for more details:
-        # https://app.hyperliquid.xyz/fundingComparison
-        if self.timeframe == "1h":
-            min_acceptable_return = 0.000013  # 0.0013%
-        elif self.timeframe == "1d":
-            min_acceptable_return = 0.0003  # 0.03%
-        elif self.timeframe == "1w":
-            min_acceptable_return = 0.0021  # 0.21%
-
-        if self.timeframe == "1h":
-            annualization_factor = 365 * 24
-        elif self.timeframe == "1d":
-            annualization_factor = 365
-        elif self.timeframe == "1w":
-            annualization_factor = 52
-
         above_mar_df = df.withColumn(
-            "log_return_above_mar", F.col("log_return") - min_acceptable_return
+            "log_return_above_mar", F.col("log_return") - config["min_acceptable_return"]
         )
 
         squared_negative_df = above_mar_df.withColumn(
@@ -307,7 +279,7 @@ class Chronos:
         )
 
         annualized_return_df = downside_deviation_df.withColumn(
-            "annualized_return", F.exp(F.col("mean_return") * annualization_factor) - 1
+            "annualized_return", F.exp(F.col("mean_return") * config["annualized_factor"]) - 1
         ).drop(
             "negative_squared", "sum_negative_squared", "count_observations", "downside_variance"
         )

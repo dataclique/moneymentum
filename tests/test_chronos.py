@@ -4,6 +4,7 @@ from pyspark.sql import functions as F
 
 # Assuming Chronos, SchemaOHLCV, and the logger are imported or defined elsewhere
 from pipeline import Chronos, SchemaOHLCV, logger
+from yang.shared import LOOKBACK_PERIODS_DICT
 
 
 @pytest.fixture(scope="module")
@@ -20,19 +21,22 @@ def test_aave_last_record(spark_session):
     path = "./test_data/ohlcv1d.csv"
     candles_df = spark_session.read.schema(SchemaOHLCV).csv(path, header=True).cache()
 
+    timeframe = "1d"
+    config = LOOKBACK_PERIODS_DICT[timeframe]
+
     # lookback_periods = 370, because we have 370 records
     # and we need window size equal to amount of all records
     # risk_free = 4.5% as in United States Fed Funds Interest Rate
-    chronos = Chronos(timeframe="1d", lookback_periods=369)
+    chronos = Chronos(timeframe=timeframe, lookback_periods=369)
     analysis_df = (
         candles_df.transform(chronos.with_returns)
-        .transform(chronos.with_volatility)
+        .transform(lambda df: chronos.with_volatility(df, config))
         .transform(chronos.with_sma)
         .transform(chronos.with_zscore)
         .transform(chronos.with_beta)
         .transform(chronos.with_information_discreteness)
-        .transform(lambda df: chronos.with_sortino(df, risk_free=4.5 / 100))
-        .transform(lambda df: chronos.with_sharpe(df, risk_free=4.5 / 100))
+        .transform(lambda df: chronos.with_sharpe(df, config, risk_free=4.5 / 100))
+        .transform(lambda df: chronos.with_sortino(df, config))
     )
 
     aave_last_record = (
@@ -55,8 +59,8 @@ def test_aave_last_record(spark_session):
     assert aave_last_record["covariance"] == 7.646287605794159e-4, "Covariance mismatch"
     # Google sheet: 1.91
     assert aave_last_record["sharpe"] == 1.9107210298591863, "Sharpe mismatch"
-    # Google sheet: 57.17803317
-    assert aave_last_record["sortino"] == 57.10213905519965, "Sortino mismatch"
+    # Google sheet: 58.55559538
+    assert aave_last_record["sortino"] == 58.47787278854239, "Sortino mismatch"
 
     logger.info("AAVE last record assertions passed.")
 
@@ -67,19 +71,22 @@ def test_btc_last_record(spark_session):
     path = "./test_data/ohlcv1d.csv"
     candles_df = spark_session.read.schema(SchemaOHLCV).csv(path, header=True).cache()
 
+    timeframe = "1d"
+    config = LOOKBACK_PERIODS_DICT[timeframe]
+
     # lookback_periods = 370, because we have 370 records
     # and we need window size equal to amount of all records
     # risk_free = 4.5% as in United States Fed Funds Interest Rate
-    chronos = Chronos(timeframe="1d", lookback_periods=369)
+    chronos = Chronos(timeframe=timeframe, lookback_periods=369)
     analysis_df = (
         candles_df.transform(chronos.with_returns)
-        .transform(chronos.with_volatility)
+        .transform(lambda df: chronos.with_volatility(df, config))
         .transform(chronos.with_sma)
         .transform(chronos.with_zscore)
         .transform(chronos.with_beta)
         .transform(chronos.with_information_discreteness)
-        .transform(lambda df: chronos.with_sortino(df, risk_free=4.5 / 100))
-        .transform(lambda df: chronos.with_sharpe(df, risk_free=4.5 / 100))
+        .transform(lambda df: chronos.with_sharpe(df, config, risk_free=4.5 / 100))
+        .transform(lambda df: chronos.with_sortino(df, config))
     )
 
     btc_last_record = (
@@ -103,8 +110,8 @@ def test_btc_last_record(spark_session):
     assert btc_last_record["covariance"] == 7.508014553322255e-4, "Covariance mismatch"
     # Google sheet: 2.20
     assert btc_last_record["sharpe"] == 2.2022163385448854, "Sharpe mismatch"
-    # Google sheet: 65.15
-    assert btc_last_record["sortino"] == 65.0821483382264, "Sortino mismatch"
+    # Google sheet: 67.69
+    assert btc_last_record["sortino"] == 67.61912314735203, "Sortino mismatch"
 
     logger.info("BTC last record assertions passed.")
 
@@ -112,26 +119,29 @@ def test_btc_last_record(spark_session):
 def test_ai_last_record(spark_session):
     logger.info("Testing AI last record...")
 
-    path2 = "./test_data/ohlcv1w.csv"
-    candles_df2 = spark_session.read.schema(SchemaOHLCV).csv(path2, header=True).cache()
+    path = "./test_data/ohlcv1w.csv"
+    candles_df = spark_session.read.schema(SchemaOHLCV).csv(path, header=True).cache()
+
+    timeframe = "1w"
+    config = LOOKBACK_PERIODS_DICT[timeframe]
 
     # lookback_periods = 52, because we have 52 records
     # and we need window size equal to amount of all records
     # risk_free = 4.5% as in United States Fed Funds Interest Rate
-    chronos2 = Chronos(timeframe="1w", lookback_periods=51)
-    analysis_df2 = (
-        candles_df2.transform(chronos2.with_returns)
-        .transform(chronos2.with_volatility)
-        .transform(chronos2.with_sma)
-        .transform(chronos2.with_zscore)
-        .transform(chronos2.with_beta)
-        .transform(chronos2.with_information_discreteness)
-        .transform(lambda df: chronos2.with_sortino(df, risk_free=4.5 / 100))
-        .transform(lambda df: chronos2.with_sharpe(df, risk_free=4.5 / 100))
+    chronos = Chronos(timeframe=timeframe, lookback_periods=51)
+    analysis_df = (
+        candles_df.transform(chronos.with_returns)
+        .transform(lambda df: chronos.with_volatility(df, config))
+        .transform(chronos.with_sma)
+        .transform(chronos.with_zscore)
+        .transform(chronos.with_beta)
+        .transform(chronos.with_information_discreteness)
+        .transform(lambda df: chronos.with_sharpe(df, config, risk_free=4.5 / 100))
+        .transform(lambda df: chronos.with_sortino(df, config))
     )
 
     ai_last_record = (
-        analysis_df2.filter(F.col("symbol") == "AI/USDC")
+        analysis_df.filter(F.col("symbol") == "AI/USDC")
         .orderBy(F.col("timestamp").desc())
         .limit(1)
         .collect()[0]
@@ -151,7 +161,7 @@ def test_ai_last_record(spark_session):
     assert ai_last_record["covariance"] == 0.007126803962757325, "Covariance mismatch"
     # Google sheet: -0.46
     assert ai_last_record["sharpe"] == -0.4551910183347762, "Sharpe mismatch"
-    # Google sheet: -4.25
-    assert ai_last_record["sortino"] == -4.224094157586738, "Sortino mismatch"
+    # Google sheet: -3.89
+    assert ai_last_record["sortino"] == -3.864954992414675, "Sortino mismatch"
 
     logger.info("AI last record assertions passed.")

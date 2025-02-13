@@ -382,11 +382,12 @@ if __name__ == "__main__":
         lookback_periods=lookback_periods,
     )
 
-    def step() -> None:
-        starting_equity = exe.get_balance()
+    def step(self) -> None:
+        starting_equity = self.get_balance()
+        logger.info(f"Starting equity: {starting_equity}")
         pipeline = Pipeline(**pipeline_kwargs, starting_equity=starting_equity)
         target_portfolio = asyncio.run(pipeline.run())
-        exe.rebalance(target_portfolio)
+        self.rebalance(target_portfolio)
 
     # Run once immediately on start
     logger.info("Starting the initial run...")

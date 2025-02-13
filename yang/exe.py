@@ -65,6 +65,7 @@ class ExecutionEngine:
     min_position_size_usd: float
     leverage: int
     exchange, params = _get_hyperliquid()
+    commission_rate: float = 0.001  # Example: 0.1% commission per trade
 
     def get_balance(self) -> float:
         return self.exchange.fetch_balance()["total"]["USDC"]
@@ -106,11 +107,22 @@ class ExecutionEngine:
         price: float,
     ) -> None:
         try:
+            # Simulate slippage (e.g., 0.1% for market orders)
+            slippage = 0.001  # Example: 0.1% slippage
+            adjusted_price = price * (1 + slippage) if side == "buy" else price * (1 - slippage)
+
             logger.info("Setting leverage to %d", self.leverage)
             self.exchange.set_leverage(symbol=symbol, leverage=self.leverage, params=self.params)
 
             # Quantize amount to 3 significant figures
             quantized_amount = float(f"{amount:.3g}")
+
+            # Calculate transaction cost
+            transaction_cost = quantized_amount * adjusted_price * self.commission_rate
+            logger.info(f"Transaction cost: {transaction_cost}")
+
+            # Deduct transaction cost from available capital
+            self.exchange.fetch_balance()["total"]["USDC"] -= transaction_cost
 
             logger.debug(
                 "Placing %s %s order for %s of %s at %s...",
@@ -118,14 +130,14 @@ class ExecutionEngine:
                 side,
                 quantized_amount,
                 symbol,
-                price,
+                adjusted_price,
             )
             self.exchange.create_order(
                 symbol,
                 type=order_type,
                 side=side,
                 amount=quantized_amount,
-                price=price,
+                price=adjusted_price,
                 params=self.params,
             )
             logger.info(
@@ -134,7 +146,7 @@ class ExecutionEngine:
                 side,
                 quantized_amount,
                 symbol,
-                price,
+                adjusted_price,
             )
         except Exception:
             logger.exception(
@@ -143,7 +155,7 @@ class ExecutionEngine:
                 side,
                 quantized_amount,
                 symbol,
-                price,
+                adjusted_price,
             )
 
     def _handle_position_changes(self, portfolio_updates: DataFrame) -> None:
@@ -206,13 +218,6 @@ class ExecutionEngine:
         # Log the initial size of target portfolio
         logger.info("Initial target portfolio size: %d", target_portfolio.count())
 
-        # Log key metrics statistics
-        target_portfolio.select(
-            F.min("price_zscore").alias("min_zscore"),
-            F.max("price_zscore").alias("max_zscore"),
-            # Add other relevant metrics
-        ).show()
-
         # Create a DataFrame of all position changes
         current_positions = current_portfolio.select(
             "symbol",
@@ -227,10 +232,6 @@ class ExecutionEngine:
             "close",
         )
 
-        # Log sizes at each step
-        logger.info("Current positions size: %d", current_positions.count())
-        logger.info("Target positions size: %d", target_positions.count())
-
         # Join current and target positions
         portfolio_updates = (
             target_positions.join(current_positions, ["symbol", "direction"], "full_outer")
@@ -243,6 +244,12 @@ class ExecutionEngine:
                 .otherwise("update"),
             )
         )
+
+        # Filter out updates where the difference is below the minimum position size
+        portfolio_updates = portfolio_updates.withColumn(
+            "diff",
+            F.col("target_size") - F.col("current_size"),
+        ).filter(F.abs(F.col("diff")) >= self.min_position_size_usd)
 
         logger.info("Portfolio updates:")
         portfolio_updates.show()

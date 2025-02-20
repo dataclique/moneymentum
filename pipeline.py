@@ -86,6 +86,8 @@ class Pipeline:
 
         if tokens_for_markets:
             market_data = await exchange.load_markets()
+        else:
+            market_data = None
 
         if tokens_for_candles:
             ohlcv_data = await self.load_ohlcv(exchange, tokens_for_candles, existing_df, since)

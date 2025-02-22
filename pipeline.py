@@ -332,7 +332,7 @@ class Pipeline:
 
 if __name__ == "__main__":
     spark = util.get_spark()
-    timeframe = "1d"
+    timeframe = "1h"
 
     # TODO: This is repeated in multiple places. Make it a helper function
     if timeframe == "1w":

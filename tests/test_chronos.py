@@ -4,7 +4,7 @@ from pyspark.sql import functions as F
 
 # Assuming Chronos, SchemaOHLCV, and the logger are imported or defined elsewhere
 from pipeline import Chronos, SchemaOHLCV, logger
-from yang.shared import LOOKBACK_PERIODS_DICT
+from yang.util import LOOKBACK_PERIODS_DICT
 
 
 @pytest.fixture(scope="module")

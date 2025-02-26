@@ -24,6 +24,7 @@
           nixfmt-classic.enable = true;
 
           # Python
+          mypy.enable = false;
           ruff.enable = true;
           ruff-format.enable = true;
           sort-requirements-txt.enable = true;

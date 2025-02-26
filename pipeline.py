@@ -16,11 +16,8 @@ from pyspark.sql import window as W
 from yang import util
 from yang.chronos import Chronos
 from yang.dataloader.hyperliquid.markets import HyperliquidDataLoaderMarkets, SchemaPerpMarket
-from yang.dataloader.hyperliquid.ohlcv import (
-    HyperliquidDataLoaderOHLCV,
-    Timeframe,
-)
-from yang.shared import LOOKBACK_PERIODS_DICT, LookbackPeriods
+from yang.dataloader.hyperliquid.ohlcv import HyperliquidDataLoaderOHLCV
+from yang.util import LOOKBACK_PERIODS_DICT, LookbackPeriods, Timeframe
 
 if __name__ == "__main__":
     util.setup_logging()
@@ -383,7 +380,7 @@ class Pipeline:
 
 if __name__ == "__main__":
     spark = util.get_spark()
-    timeframe = "1w"
+    timeframe: Timeframe = "1h"
     config = LOOKBACK_PERIODS_DICT[timeframe]
 
     start_date = datetime(2023, 6, 1, tzinfo=timezone.utc).replace(

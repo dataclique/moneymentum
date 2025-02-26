@@ -7,7 +7,7 @@ from pyspark.sql import functions as F
 from pyspark.sql import window as W
 
 from yang import util
-from yang.shared import LookbackPeriods
+from yang.util import LookbackPeriods
 
 logger = logging.getLogger(__name__)
 logger.setLevel(util.LOG_LEVEL)

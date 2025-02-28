@@ -50,7 +50,7 @@ class Pipeline:
 
     timeframe: Timeframe
     start_date: datetime
-    reload_markets: bool = True
+    reload_markets: bool = False
 
     def __post_init__(self) -> None:
         self.loader_markets: HyperliquidDataLoaderMarkets = HyperliquidDataLoaderMarkets(
@@ -88,6 +88,8 @@ class Pipeline:
 
         if tokens_for_candles:
             ohlcv_data = await self.load_ohlcv(exchange, tokens_for_candles, existing_df, since)
+        else:
+            ohlcv_data = None
 
         candles_df = self.build_df_from_data(
             ohlcv_data, existing_df, tokens_for_markets, market_data
@@ -99,15 +101,12 @@ class Pipeline:
         return self.spark.read.schema(SchemaOHLCV).csv(candles_file_path, header=True).cache()
 
     async def get_tradable_symbols(self, exchange: ccxt.Exchange) -> set:
-        if self.reload_markets:
-            markets_df = await self.loader_markets.fetch_markets(exchange=exchange)
-        else:
-            markets_path = f"{util.DATA_DIR}/markets.csv"
-            markets_df = (
-                self.spark.read.schema(SchemaPerpMarket).csv(markets_path, header=True).cache()
-            )
+        markets_df = await self.loader_markets.fetch_markets(
+            exchange=exchange, reload=self.reload_markets
+        )
+        filtered_df = markets_df.filter(not F.col("deprecated"))
 
-        return markets_df.select("symbol").rdd.flatMap(lambda x: x).collect()
+        return set(filtered_df.select("symbol").rdd.flatMap(lambda x: x).collect())
 
     def get_existing_df(self, file_path: str) -> DataFrame | None:
         if Path(file_path).exists():
@@ -190,7 +189,7 @@ class Pipeline:
                 )
                 ohlcv_df = self.spark.createDataFrame(combined_df, schema=SchemaOHLCV).cache()
             else:
-                ohlcv_df = existing_df
+                ohlcv_df = self.spark.createDataFrame(existing_df, schema=SchemaOHLCV).cache()
         else:
             ohlcv_df = self.spark.createDataFrame(pdf, schema=SchemaOHLCV).cache()
 
@@ -380,7 +379,7 @@ class Pipeline:
 
 if __name__ == "__main__":
     spark = util.get_spark()
-    timeframe: Timeframe = "1h"
+    timeframe: Timeframe = "1d"
     config = LOOKBACK_PERIODS_DICT[timeframe]
 
     start_date = datetime(2023, 6, 1, tzinfo=timezone.utc).replace(

@@ -41,7 +41,7 @@ class HyperliquidDataLoaderMarkets:
 
         market_path = f"{util.DATA_DIR}/markets.csv"
 
-        if not reload:
+        if not reload and Path(market_path).exists():
             return self.spark.read.csv(market_path, schema=SchemaPerpMarket, header=True)
 
         logger.info("Fetching markets...")

@@ -104,7 +104,7 @@ class Pipeline:
         markets_df = await self.loader_markets.fetch_markets(
             exchange=exchange, reload=self.reload_markets
         )
-        filtered_df = markets_df.filter(not F.col("deprecated"))
+        filtered_df = markets_df.filter(~F.col("deprecated"))
 
         return set(filtered_df.select("symbol").rdd.flatMap(lambda x: x).collect())
 

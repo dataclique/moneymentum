@@ -1,4 +1,5 @@
 import logging
+import math
 import os
 from pathlib import Path
 from typing import Literal, TypedDict
@@ -8,12 +9,10 @@ import matplotlib.pyplot as plt
 import pandas as pd
 from pyspark.sql import DataFrame, DataFrameReader, SparkSession
 from pyspark.sql import functions as F
-from statsmodels.tsa.stattools import adfuller, coint
-
-DEBUG = True
+from statsmodels.tsa.stattools import adfuller, coint  # type: ignore[import-untyped]
 
 
-class LookbackPeriods(TypedDict):
+class TimeframeConfig(TypedDict):
     lookback_periods: int
     n_tokens: int
     time_in_ms: int
@@ -21,12 +20,12 @@ class LookbackPeriods(TypedDict):
     min_acceptable_return: float
 
 
-Timeframe = Literal["1h", "1d", "1w"]
+Timeframe = Literal["15m", "1h", "1d", "1w"]
 
 # min_acceptable_return Based on HyperLiquid neutral funding rates.
 # See funding comparison page for more details:
 # https://app.hyperliquid.xyz/fundingComparison
-LOOKBACK_PERIODS_DICT: dict[Timeframe, LookbackPeriods] = {
+TIMEFRAME_CONFIGS: dict[Timeframe, TimeframeConfig] = {
     "1w": {
         "lookback_periods": 52,
         "n_tokens": 2,
@@ -48,13 +47,20 @@ LOOKBACK_PERIODS_DICT: dict[Timeframe, LookbackPeriods] = {
         "annualized_factor": 365 * 24,
         "min_acceptable_return": 0.000013,  # 0.0013%
     },
+    "15m": {
+        "lookback_periods": 24 * 4,
+        "n_tokens": 10,
+        "time_in_ms": 15 * 60 * 1000,
+        "annualized_factor": 365 * 24 * 4,
+        "min_acceptable_return": math.sqrt(math.sqrt(1.000013)) - 1,
+    },
 }
 
 
 def plot_returns(Xs: list[pd.Series]) -> None:
     for X in Xs:
         X_return = X.pct_change()[1:]
-        plt.hist(X_return, bins=20, label=X.name)
+        plt.hist(X_return, bins=20, label=str(X.name))
 
     plt.xlabel("Return")
     plt.ylabel("Frequency")
@@ -67,10 +73,10 @@ def plot_price(X: pd.Series, ticker: str) -> None:
     SMA30D = X.rolling(window=30).mean()
     SMA90D = X.rolling(window=90).mean()
 
-    plt.plot(X.index, X.values)
-    plt.plot(SMA7D.index, SMA7D.values)
-    plt.plot(SMA30D.index, SMA30D.values)
-    plt.plot(SMA90D.index, SMA90D.values)
+    plt.plot(X.index, X.to_numpy())
+    plt.plot(SMA7D.index, SMA7D.to_numpy())
+    plt.plot(SMA30D.index, SMA30D.to_numpy())
+    plt.plot(SMA90D.index, SMA90D.to_numpy())
 
     plt.ylabel("Price")
     plt.legend([ticker, "7D SMA", "30D SMA", "90D SMA"])
@@ -124,7 +130,9 @@ def setup_logging() -> None:
     )
 
 
-LOG_LEVEL = logging.DEBUG
+DEBUG = True
+BACKTEST = False
+LOG_LEVEL = logging.DEBUG if DEBUG else logging.INFO
 
 logger = logging.getLogger(__name__)
 logger.setLevel(LOG_LEVEL)

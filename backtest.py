@@ -3,15 +3,13 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from pyspark.sql import DataFrame, SparkSession
+from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
-from pyspark.sql import types as T
 from pyspark.sql import window as W
 
 from yang import util
 from yang.chronos import Chronos
 from yang.dataloader.hyperliquid import HyperliquidDataLoader
-from yang.exe import ExecutionEngine
 from yang.util import TIMEFRAME_CONFIGS, Timeframe, TimeframeConfig
 
 if __name__ == "__main__":
@@ -19,19 +17,6 @@ if __name__ == "__main__":
 
 logger = logging.getLogger(__name__)
 logger.setLevel(util.LOG_LEVEL)
-
-SchemaOHLCV = T.StructType(
-    [
-        T.StructField("timestamp", T.TimestampType()),
-        T.StructField("open", T.DoubleType()),
-        T.StructField("high", T.DoubleType()),
-        T.StructField("low", T.DoubleType()),
-        T.StructField("close", T.DoubleType()),
-        T.StructField("volume", T.DoubleType()),
-        T.StructField("symbol", T.StringType()),
-        T.StructField("ticker", T.StringType()),
-    ]
-)
 
 
 @dataclass
@@ -46,8 +31,9 @@ class Pipeline:
     start_date: datetime
     dataloader: HyperliquidDataLoader
 
-    async def run(self) -> DataFrame | None:
+    async def run(self) -> None:
         logger.info("Starting pipeline...")
+
         candles_df = await self.dataloader.get_candles_df()
 
         logger.info("Candles DataFrame:")
@@ -60,7 +46,10 @@ class Pipeline:
             .transform(chronos.with_sma)
             .transform(chronos.with_zscore)
             .transform(chronos.with_beta)
-            .drop("count", "open", "high", "low", "mean_return")
+            .transform(chronos.with_information_discreteness)
+            .transform(chronos.with_sharpe)
+            .transform(chronos.with_sortino)
+            .drop("count", "symbol", "open", "high", "low", "mean_return", "annualized_return")
         )
 
         ma_potential_return = (F.col("sma") - F.col("close")) / F.col("close")
@@ -111,7 +100,6 @@ class Pipeline:
             )
             .select(
                 F.col("timestamp"),
-                F.col("symbol"),
                 F.col("ticker"),
                 F.col("direction"),
                 F.col("close"),
@@ -128,25 +116,106 @@ class Pipeline:
         latest_row = candles_df.select(F.max("timestamp")).first()
         if latest_row is None:
             logger.error("No latest timestamp found")
-            return None
+            return
 
         latest = latest_row[0]
         logger.info("Latest timestamp: %s", latest)
-        target_portfolio = (
+        latest_df = (
             picks_df.filter(F.col("timestamp") == F.lit(latest))
             .dropna()
-            .select("direction", "symbol", "ticker", "position_size", "price_zscore", "close")
+            .select("direction", "ticker", "position_size", "price_zscore", "close")
             .cache()
         )
 
-        target_portfolio.show()
-        return target_portfolio
+        latest_df.show()
+        latest_df.count()
+
+        # Calculate returns for each signal
+        next_day_returns = (
+            analysis_df.select("timestamp", "ticker", "log_return")
+            .withColumn(
+                "next_timestamp",
+                F.lead("timestamp").over(W.Window.partitionBy("ticker").orderBy("timestamp")),
+            )
+            .withColumn(
+                "next_log_return",
+                F.lead("log_return").over(W.Window.partitionBy("ticker").orderBy("timestamp")),
+            )
+        )
+
+        # Join signals with next day returns and calculate weighted returns
+        strategy_returns = (
+            picks_df.join(next_day_returns, ["timestamp", "ticker"])
+            .withColumn(
+                "position_return",
+                F.when(F.col("direction") == "long", F.col("next_log_return")).when(
+                    F.col("direction") == "short", -F.col("next_log_return")
+                ),
+            )
+            .withColumn(
+                "weighted_position_return", F.col("position_return") * F.col("position_weight")
+            )
+        )
+
+        # Update daily performance calculation to use weighted returns
+        daily_performance = (
+            strategy_returns.groupBy("timestamp")
+            .agg(
+                F.count("*").alias("number_of_positions"),
+                F.avg("position_return").alias("avg_daily_return"),
+                F.stddev("position_return").alias("daily_std"),
+                F.sum("weighted_position_return").alias("total_return"),
+            )
+            .orderBy("timestamp")
+        )
+
+        # Calculate strategy metrics
+        metrics = daily_performance.agg(
+            (F.exp(F.avg("total_return")) - 1).alias("avg_daily_portfolio_return"),
+            F.stddev("total_return").alias("portfolio_daily_std"),
+            F.countDistinct("timestamp").alias("portfolio_periods"),
+            F.sum("number_of_positions").alias("total_positions"),
+        )
+
+        # Calculate portfolio beta
+        portfolio_returns = (
+            strategy_returns.groupBy("timestamp")
+            .agg(F.sum("weighted_position_return").alias("log_return"))
+            .withColumn("symbol", F.lit("ma_portfolio"))
+        )
+
+        index_returns = analysis_df.filter(F.col("ticker") == "BTC").select(
+            F.col("timestamp"), F.col("log_return")
+        )
+
+        portfolio_beta_df = (
+            portfolio_returns.transform(chronos.with_volatility)
+            .transform(lambda df: chronos.with_beta(df, index_returns=index_returns))
+            .agg(F.avg("beta").alias("portfolio_beta"))
+        )
+
+        # Combine metrics
+        metrics = metrics.crossJoin(portfolio_beta_df).cache()
+
+        annualized_sharpe = metrics.select(
+            (F.col("avg_daily_portfolio_return") * self.config["annualized_factor"]).alias(
+                "annualized_return"
+            ),
+            (F.col("portfolio_daily_std") * F.sqrt(F.lit(self.config["annualized_factor"]))).alias(
+                "annual_vol"
+            ),
+            (F.col("annualized_return") / F.col("annual_vol")).alias("sharpe_ratio"),
+        )
+
+        logger.info("Strategy Performance Metrics:")
+        metrics.show()
+        annualized_sharpe.show()
 
 
 async def main() -> None:
+    spark = util.get_spark()
     timeframe: Timeframe = "15m"
-    spark: SparkSession = util.get_spark()
-    config: TimeframeConfig = TIMEFRAME_CONFIGS[timeframe]
+    config = TIMEFRAME_CONFIGS[timeframe]
 
     start_date = datetime(2023, 6, 1, tzinfo=timezone.utc).replace(
         hour=0,
@@ -154,15 +223,8 @@ async def main() -> None:
         second=0,
         microsecond=0,
     )
-    min_position_size_usd = 11
+
     leverage: int = 5
-
-    exe = ExecutionEngine(
-        spark=spark,
-        leverage=leverage,
-        min_position_size_usd=min_position_size_usd,
-    )
-
     async with HyperliquidDataLoader(
         spark=spark,
         timeframe=timeframe,
@@ -170,31 +232,18 @@ async def main() -> None:
         config=config,
         min_leverage=leverage,
     ) as dataloader:
-        starting_equity = exe.get_balance()
+        logger.info("Running backtest with n_tokens=%d", config["n_tokens"])
         pipeline = Pipeline(
-            starting_equity=starting_equity,
             spark=spark,
             timeframe=timeframe,
-            leverage=float(leverage),
-            min_position_size=min_position_size_usd,
-            start_date=start_date,
-            config=config,
             dataloader=dataloader,
+            config=config,
+            leverage=float(leverage),
+            starting_equity=100,
+            min_position_size=11,
+            start_date=start_date,
         )
-
-        async def step() -> None:
-            try:
-                pipeline.starting_equity = exe.get_balance()
-                target_portfolio = await pipeline.run()
-                if target_portfolio is None:
-                    return
-
-                exe.rebalance(target_portfolio)
-            except Exception:
-                logger.exception("Error in step")
-
-        while True:
-            await step()
+        await pipeline.run()
 
 
 if __name__ == "__main__":

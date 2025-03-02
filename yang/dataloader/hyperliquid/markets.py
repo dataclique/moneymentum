@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pandas as pd
-from ccxt import async_support as ccxt
+from ccxt import async_support as ccxt  # type: ignore[import-untyped]
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import types as T
 
@@ -36,12 +36,12 @@ SchemaPerpMarket = T.StructType(
 class HyperliquidDataLoaderMarkets:
     spark: SparkSession
 
-    async def fetch_markets(self, exchange: ccxt.Exchange, *, reload: bool) -> DataFrame:
+    async def fetch_markets(self, exchange: ccxt.Exchange) -> DataFrame:
         """Fetch all perpetual symbols from the exchange."""
 
         market_path = f"{util.DATA_DIR}/markets.csv"
 
-        if not reload and Path(market_path).exists():
+        if Path(market_path).exists():
             return self.spark.read.csv(market_path, schema=SchemaPerpMarket, header=True)
 
         logger.info("Fetching markets...")

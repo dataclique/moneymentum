@@ -4,7 +4,7 @@ from pyspark.sql import functions as F
 
 # Assuming Chronos, SchemaOHLCV, and the logger are imported or defined elsewhere
 from pipeline import Chronos, SchemaOHLCV, logger
-from yang.util import LOOKBACK_PERIODS_DICT
+from yang.util import TIMEFRAME_CONFIGS
 
 
 @pytest.fixture(scope="module")
@@ -22,7 +22,7 @@ def test_aave_last_record(spark_session):
     candles_df = spark_session.read.schema(SchemaOHLCV).csv(path, header=True).cache()
 
     timeframe = "1d"
-    config = LOOKBACK_PERIODS_DICT[timeframe]
+    config = TIMEFRAME_CONFIGS[timeframe]
 
     # lookback_periods = 370, because we have 370 records
     # and we need window size equal to amount of all records
@@ -72,7 +72,7 @@ def test_btc_last_record(spark_session):
     candles_df = spark_session.read.schema(SchemaOHLCV).csv(path, header=True).cache()
 
     timeframe = "1d"
-    config = LOOKBACK_PERIODS_DICT[timeframe]
+    config = TIMEFRAME_CONFIGS[timeframe]
 
     # lookback_periods = 370, because we have 370 records
     # and we need window size equal to amount of all records
@@ -123,7 +123,7 @@ def test_ai_last_record(spark_session):
     candles_df = spark_session.read.schema(SchemaOHLCV).csv(path, header=True).cache()
 
     timeframe = "1w"
-    config = LOOKBACK_PERIODS_DICT[timeframe]
+    config = TIMEFRAME_CONFIGS[timeframe]
 
     # lookback_periods = 52, because we have 52 records
     # and we need window size equal to amount of all records

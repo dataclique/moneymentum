@@ -77,7 +77,7 @@ class Pipeline:
             tokens_for_markets = set()
             tokens_for_candles = set(symbols)
         else:
-            (tokens_for_candles, tokens_for_markets) = await self.sort_symbols_by_fetch_method(
+            (tokens_for_candles, tokens_for_markets) = self.sort_symbols_by_fetch_method(
                 existing_df, since, symbols
             )
 
@@ -108,12 +108,14 @@ class Pipeline:
 
         return set(filtered_df.select("symbol").rdd.flatMap(lambda x: x).collect())
 
-    def get_existing_df(self, file_path: str) -> DataFrame | None:
+    def get_existing_df(self, file_path: str) -> pd.DataFrame | None:
         if Path(file_path).exists():
             return pd.read_csv(file_path, parse_dates=["timestamp"])
         return None
 
-    def get_symbol_start_time(sefl, symbol: str, existing_df: DataFrame | None, since: int) -> int:
+    def get_symbol_start_time(
+        self, symbol: str, existing_df: pd.DataFrame | None, since: int
+    ) -> int:
         if existing_df is None:
             return since
 
@@ -124,8 +126,8 @@ class Pipeline:
         last_timestamp_ms = int(symbol_df.iloc[-1]["timestamp"].timestamp() * 1000)
         return max(since, last_timestamp_ms)
 
-    async def sort_symbols_by_fetch_method(
-        self, existing_df: DataFrame, since: int, symbols: set
+    def sort_symbols_by_fetch_method(
+        self, existing_df: pd.DataFrame, since: int, symbols: set
     ) -> tuple[set, set]:
         current_time_ms = int(time.time() * 1000)
         tokens_for_candles = set()
@@ -144,7 +146,7 @@ class Pipeline:
         self,
         exchange: ccxt.Exchange,
         tokens_for_candles: set,
-        existing_df: DataFrame | None,
+        existing_df: pd.DataFrame | None,
         since: int,
     ) -> list[dict[str, Any]]:
         ohlcv_tasks = [
@@ -159,7 +161,7 @@ class Pipeline:
     def build_df_from_data(
         self,
         ohlcv_data: list[dict[str, Any]] | None,
-        existing_df: DataFrame | None,
+        existing_df: pd.DataFrame | None,
         tokens_for_markets: set | None,
         market_data: dict,
     ) -> DataFrame:
@@ -392,10 +394,6 @@ if __name__ == "__main__":
         second=0,
         microsecond=0,
     )
-
-    # Create list of configurations to test
-    n_tokens_range = range(2, 9)  # 2 to 8 inclusive
-    results = []
 
     # Run pipeline for each n_tokens value
     logger.info("Running backtest with n_tokens=%d", config["n_tokens"])

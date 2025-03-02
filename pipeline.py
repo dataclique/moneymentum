@@ -15,7 +15,7 @@ from pyspark.sql import window as W
 
 from yang import util
 from yang.chronos import Chronos
-from yang.dataloader.hyperliquid.markets import HyperliquidDataLoaderMarkets, SchemaPerpMarket
+from yang.dataloader.hyperliquid.markets import HyperliquidDataLoaderMarkets
 from yang.dataloader.hyperliquid.ohlcv import HyperliquidDataLoaderOHLCV
 from yang.util import LOOKBACK_PERIODS_DICT, LookbackPeriods, Timeframe
 
@@ -181,9 +181,7 @@ class Pipeline:
                     existing_df.loc[latest_index, "close"] = float(mark_px)
 
             if ohlcv_data:
-                combined_df = pd.concat([existing_df, pdf], ignore_index=True).sort_values(
-                    by=["timestamp"]
-                )
+                combined_df = pd.concat([existing_df, pdf], ignore_index=True)
                 combined_df = combined_df.drop_duplicates(
                     subset=["timestamp", "symbol"], keep="last"
                 )
@@ -191,7 +189,13 @@ class Pipeline:
             else:
                 ohlcv_df = self.spark.createDataFrame(existing_df, schema=SchemaOHLCV).cache()
         else:
-            ohlcv_df = self.spark.createDataFrame(pdf, schema=SchemaOHLCV).cache()
+            existing_df["timestamp"] = pd.to_datetime(
+                existing_df["timestamp"], utc=True
+            ).dt.tz_localize(None)
+
+            combined_df = pd.concat([existing_df, pdf], ignore_index=True)
+            combined_df = combined_df.drop_duplicates(subset=["timestamp", "symbol"], keep="last")
+            ohlcv_df = self.spark.createDataFrame(combined_df, schema=SchemaOHLCV).cache()
 
         logger.info("Converted to Spark DataFrame with schema logged.")
         ohlcv_df.printSchema()
@@ -379,7 +383,7 @@ class Pipeline:
 
 if __name__ == "__main__":
     spark = util.get_spark()
-    timeframe: Timeframe = "1d"
+    timeframe: Timeframe = "1h"
     config = LOOKBACK_PERIODS_DICT[timeframe]
 
     start_date = datetime(2023, 6, 1, tzinfo=timezone.utc).replace(

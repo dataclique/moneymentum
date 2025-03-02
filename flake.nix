@@ -45,7 +45,8 @@
           inherit inputs pkgs;
           modules = [{
             # https://devenv.sh/reference/options/
-            packages = with pkgs; deps ++ [ ruff-lsp git-lfs timescaledb-tune ];
+            packages = with pkgs;
+              deps ++ [ ruff-lsp mypy git-lfs timescaledb-tune ];
             # enterShell = "fswatch hyper.py | xargs -n 1 python";
 
             services.postgres = {

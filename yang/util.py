@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 from pyspark.sql import DataFrame, DataFrameReader, SparkSession
 from pyspark.sql import functions as F
-from statsmodels.tsa.stattools import adfuller, coint
+from statsmodels.tsa.stattools import adfuller, coint  # type: ignore[import-untyped]
 
 
 class TimeframeConfig(TypedDict):
@@ -52,7 +52,7 @@ TIMEFRAME_CONFIGS: dict[Timeframe, TimeframeConfig] = {
 def plot_returns(Xs: list[pd.Series]) -> None:
     for X in Xs:
         X_return = X.pct_change()[1:]
-        plt.hist(X_return, bins=20, label=X.name)
+        plt.hist(X_return, bins=20, label=str(X.name))
 
     plt.xlabel("Return")
     plt.ylabel("Frequency")
@@ -65,10 +65,10 @@ def plot_price(X: pd.Series, ticker: str) -> None:
     SMA30D = X.rolling(window=30).mean()
     SMA90D = X.rolling(window=90).mean()
 
-    plt.plot(X.index, X.values)
-    plt.plot(SMA7D.index, SMA7D.values)
-    plt.plot(SMA30D.index, SMA30D.values)
-    plt.plot(SMA90D.index, SMA90D.values)
+    plt.plot(X.index, X.to_numpy())
+    plt.plot(SMA7D.index, SMA7D.to_numpy())
+    plt.plot(SMA30D.index, SMA30D.to_numpy())
+    plt.plot(SMA90D.index, SMA90D.to_numpy())
 
     plt.ylabel("Price")
     plt.legend([ticker, "7D SMA", "30D SMA", "90D SMA"])

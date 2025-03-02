@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-from ccxt import async_support as ccxt
+from ccxt import async_support as ccxt  # type: ignore[import-untyped]
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from yang import util
@@ -57,7 +57,7 @@ class HyperliquidDataLoaderFundingRates:
         ]
 
         # Fetch all batches concurrently
-        self.logger.info("Spawning %d concurrent requests for %s", len(tasks), symbol)
+        logger.info("Spawning %d concurrent requests for %s", len(tasks), symbol)
         results = await asyncio.gather(*tasks)
 
         # Combine and sort all results
@@ -80,12 +80,12 @@ class HyperliquidDataLoaderFundingRates:
         since_date = datetime.fromtimestamp(since / 1000, tz=timezone.utc).strftime(
             "%Y-%m-%d %H:%M:%S"
         )
-        self.logger.debug("Fetching funding rates for %s since %s...", symbol, since_date)
+        logger.debug("Fetching funding rates for %s since %s...", symbol, since_date)
         try:
             funding_rates = await exchange.fetch_funding_rate_history(symbol, since=since)
 
             if funding_rates:
-                self.logger.info(
+                logger.info(
                     "Fetched %s funding rates for %s since %s",
                     len(funding_rates),
                     symbol,
@@ -101,6 +101,6 @@ class HyperliquidDataLoaderFundingRates:
                     }
                     for rate in funding_rates
                 ]
-        except ccxt.ExchangeNotAvailable as e:
-            self.logger.warning("Exchange not available for %s: %s", symbol, str(e))
+        except ccxt.ExchangeNotAvailable:
+            logger.exception("Exchange not available for %s", symbol)
         return []

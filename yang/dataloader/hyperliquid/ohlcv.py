@@ -5,12 +5,27 @@ from datetime import datetime, timezone
 from typing import Any
 
 from ccxt import async_support as ccxt  # type: ignore[import-untyped]
+from pyspark.sql import types as T
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from yang import util
 
 logger = logging.getLogger(__name__)
 logger.setLevel(util.LOG_LEVEL)
+
+
+SchemaOHLCV = T.StructType(
+    [
+        T.StructField("timestamp", T.TimestampType()),
+        T.StructField("open", T.DoubleType()),
+        T.StructField("high", T.DoubleType()),
+        T.StructField("low", T.DoubleType()),
+        T.StructField("close", T.DoubleType()),
+        T.StructField("volume", T.DoubleType()),
+        T.StructField("symbol", T.StringType()),
+        T.StructField("ticker", T.StringType()),
+    ]
+)
 
 
 @dataclass

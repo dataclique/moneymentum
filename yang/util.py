@@ -1,4 +1,5 @@
 import logging
+import math
 import os
 from pathlib import Path
 from typing import Literal, TypedDict
@@ -19,7 +20,7 @@ class TimeframeConfig(TypedDict):
     min_acceptable_return: float
 
 
-Timeframe = Literal["1h", "1d", "1w"]
+Timeframe = Literal["15m", "1h", "1d", "1w"]
 
 # min_acceptable_return Based on HyperLiquid neutral funding rates.
 # See funding comparison page for more details:
@@ -45,6 +46,13 @@ TIMEFRAME_CONFIGS: dict[Timeframe, TimeframeConfig] = {
         "time_in_ms": 60 * 60 * 1000,
         "annualized_factor": 365 * 24,
         "min_acceptable_return": 0.000013,  # 0.0013%
+    },
+    "15m": {
+        "lookback_periods": 24 * 4,
+        "n_tokens": 10,
+        "time_in_ms": 15 * 60 * 1000,
+        "annualized_factor": 365 * 24 * 4,
+        "min_acceptable_return": math.sqrt(math.sqrt(1.000013)) - 1,
     },
 }
 

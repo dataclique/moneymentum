@@ -26,6 +26,10 @@ class HyperliquidDataLoader:
     timeframe: Timeframe
     config: TimeframeConfig
     spark: SparkSession
+    min_leverage: int
+
+    async def __aenter__(self):  # noqa: ANN204
+        return self
 
     def __post_init__(self) -> None:
         self.loader_markets: HyperliquidDataLoaderMarkets = HyperliquidDataLoaderMarkets(
@@ -37,14 +41,17 @@ class HyperliquidDataLoader:
         self.exchange = ccxt.hyperliquid({"asyncio_loop": asyncio.get_event_loop()})
         logger.info("Exchange initialized: %s", self.exchange)
 
+    async def __aexit__(self, exc_type, exc_val, exc_tb):  # noqa: ANN001, ANN204
+        await self.exchange.close()
+
     async def get_candles_df(self) -> DataFrame:
         candles_file_path = f"{util.DATA_DIR}/ohlcv{self.timeframe}.csv"
 
         since = int(self.start_date.timestamp() * 1000)
-        symbols = await self.get_tradable_symbols(self.exchange)
+        symbols = await self.get_tradable_symbols()
         existing_df = self.get_existing_df(candles_file_path)
 
-        (tokens_for_candles, tokens_for_markets) = (
+        (tokens_for_candle_updates, tokens_for_markets) = (
             self.sort_symbols_by_fetch_method(existing_df, since, symbols)
             if existing_df is not None
             else (set(), set(symbols))
@@ -55,10 +62,8 @@ class HyperliquidDataLoader:
         else:
             market_data = None
 
-        if tokens_for_candles:
-            ohlcv_data = await self.load_ohlcv(
-                self.exchange, tokens_for_candles, existing_df, since
-            )
+        if tokens_for_candle_updates:
+            ohlcv_data = await self.load_ohlcv(tokens_for_candle_updates, existing_df, since)
         else:
             ohlcv_data = None
 
@@ -71,9 +76,11 @@ class HyperliquidDataLoader:
 
         return self.spark.read.schema(SchemaOHLCV).csv(candles_file_path, header=True).cache()
 
-    async def get_tradable_symbols(self, exchange: ccxt.Exchange) -> set:
-        markets_df = await self.loader_markets.fetch_markets(exchange=exchange)
-        filtered_df = markets_df.filter(~F.col("deprecated"))
+    async def get_tradable_symbols(self) -> set:
+        markets_df = await self.loader_markets.fetch_markets(exchange=self.exchange)
+        filtered_df = markets_df.filter(~F.col("deprecated")).filter(
+            F.col("maxLeverage") >= F.lit(self.min_leverage)
+        )
 
         return set(filtered_df.select("symbol").rdd.flatMap(lambda x: x).collect())
 

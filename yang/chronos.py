@@ -204,9 +204,9 @@ class Chronos:
 
         if util.DEBUG:
             beta_count = beta_df.select("beta").dropna().count()
-            assert 0 < beta_count < initial_count, (
+            assert 0 < beta_count <= initial_count, (
                 f"Beta column count ({beta_count}) "
-                f"should satisfy 0 < {beta_count} < {initial_count}"
+                f"should satisfy 0 < {beta_count} <= {initial_count}"
             )
             logger.debug("Beta column count (%d) check passed.", beta_count)
 

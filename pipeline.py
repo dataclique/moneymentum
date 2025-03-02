@@ -143,8 +143,8 @@ class Pipeline:
         return target_portfolio
 
 
-if __name__ == "__main__":
-    timeframe: Timeframe = "1h"
+async def main() -> None:
+    timeframe: Timeframe = "15m"
     spark: SparkSession = util.get_spark()
     config: TimeframeConfig = TIMEFRAME_CONFIGS[timeframe]
 
@@ -155,7 +155,7 @@ if __name__ == "__main__":
         microsecond=0,
     )
     min_position_size_usd = 11
-    leverage: int = 3
+    leverage: int = 5
 
     exe = ExecutionEngine(
         spark=spark,
@@ -163,35 +163,39 @@ if __name__ == "__main__":
         min_position_size_usd=min_position_size_usd,
     )
 
-    dataloader = HyperliquidDataLoader(
+    async with HyperliquidDataLoader(
         spark=spark,
         timeframe=timeframe,
         start_date=start_date,
         config=config,
-    )
+        min_leverage=leverage,
+    ) as dataloader:
+        starting_equity = exe.get_balance()
+        pipeline = Pipeline(
+            starting_equity=starting_equity,
+            spark=spark,
+            timeframe=timeframe,
+            leverage=float(leverage),
+            min_position_size=min_position_size_usd,
+            start_date=start_date,
+            config=config,
+            dataloader=dataloader,
+        )
 
-    starting_equity = exe.get_balance()
-    pipeline = Pipeline(
-        starting_equity=starting_equity,
-        spark=spark,
-        timeframe=timeframe,
-        leverage=leverage,
-        min_position_size=min_position_size_usd,
-        start_date=start_date,
-        config=config,
-        dataloader=dataloader,
-    )
+        async def step() -> None:
+            try:
+                pipeline.starting_equity = exe.get_balance()
+                target_portfolio = await pipeline.run()
+                if target_portfolio is None:
+                    return
 
-    def step() -> None:
-        try:
-            pipeline.starting_equity = exe.get_balance()
-            target_portfolio = asyncio.run(pipeline.run())
-            if target_portfolio is None:
-                return
+                exe.rebalance(target_portfolio)
+            except Exception:
+                logger.exception("Error in step")
 
-            exe.rebalance(target_portfolio)
-        except Exception:
-            logger.exception("Error in step")
+        while True:
+            await step()
 
-    while True:
-        step()
+
+if __name__ == "__main__":
+    asyncio.run(main())

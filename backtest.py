@@ -65,8 +65,8 @@ class Pipeline:
             )
             .withColumn(
                 "direction",
-                F.when(F.col("rank") <= F.lit(config["n_tokens"]), "long").otherwise(
-                    F.when(F.col("reverse_rank") <= F.lit(config["n_tokens"]), "short")
+                F.when(F.col("rank") <= F.lit(self.config["n_tokens"]), "long").otherwise(
+                    F.when(F.col("reverse_rank") <= F.lit(self.config["n_tokens"]), "short")
                 ),
             )
             .withColumn(
@@ -198,10 +198,10 @@ class Pipeline:
         metrics = metrics.crossJoin(portfolio_beta_df).cache()
 
         annualized_sharpe = metrics.select(
-            (F.col("avg_daily_portfolio_return") * config["annualized_factor"]).alias(
+            (F.col("avg_daily_portfolio_return") * self.config["annualized_factor"]).alias(
                 "annualized_return"
             ),
-            (F.col("portfolio_daily_std") * F.sqrt(F.lit(config["annualized_factor"]))).alias(
+            (F.col("portfolio_daily_std") * F.sqrt(F.lit(self.config["annualized_factor"]))).alias(
                 "annual_vol"
             ),
             (F.col("annualized_return") / F.col("annual_vol")).alias("sharpe_ratio"),
@@ -212,9 +212,9 @@ class Pipeline:
         annualized_sharpe.show()
 
 
-if __name__ == "__main__":
+async def main() -> None:
     spark = util.get_spark()
-    timeframe: Timeframe = "1h"
+    timeframe: Timeframe = "15m"
     config = TIMEFRAME_CONFIGS[timeframe]
 
     start_date = datetime(2023, 6, 1, tzinfo=timezone.utc).replace(
@@ -224,22 +224,27 @@ if __name__ == "__main__":
         microsecond=0,
     )
 
-    dataloader = HyperliquidDataLoader(
+    leverage: int = 5
+    async with HyperliquidDataLoader(
         spark=spark,
         timeframe=timeframe,
         start_date=start_date,
         config=config,
-    )
+        min_leverage=leverage,
+    ) as dataloader:
+        logger.info("Running backtest with n_tokens=%d", config["n_tokens"])
+        pipeline = Pipeline(
+            spark=spark,
+            timeframe=timeframe,
+            dataloader=dataloader,
+            config=config,
+            leverage=float(leverage),
+            starting_equity=100,
+            min_position_size=11,
+            start_date=start_date,
+        )
+        await pipeline.run()
 
-    logger.info("Running backtest with n_tokens=%d", config["n_tokens"])
-    pipeline = Pipeline(
-        spark=spark,
-        timeframe=timeframe,
-        dataloader=dataloader,
-        config=config,
-        leverage=3.0,
-        starting_equity=75.52,
-        min_position_size=11,
-        start_date=start_date,
-    )
-    asyncio.run(pipeline.run())
+
+if __name__ == "__main__":
+    asyncio.run(main())

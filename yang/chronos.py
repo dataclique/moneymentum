@@ -173,7 +173,10 @@ class Chronos:
         return zscore_df
 
     def with_beta(
-        self, df: DataFrame, return_col: str = "log_return", index_returns: DataFrame = None
+        self,
+        df: DataFrame,
+        return_col: str = "log_return",
+        index_returns: DataFrame | None = None,
     ) -> DataFrame:
         logger.info("Calculating beta...")
 

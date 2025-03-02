@@ -3,6 +3,7 @@
     "mkhl.direnv",
     "jnoortheen.nix-ide",
     "ms-python.python",
-    "charliermarsh.ruff"
+    "charliermarsh.ruff",
+    "matangover.mypy"
   ]
 }

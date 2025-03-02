@@ -3,7 +3,7 @@ import os
 from dataclasses import dataclass
 from typing import Literal
 
-import ccxt
+import ccxt  # type: ignore[import-untyped]
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql import types as T
@@ -92,7 +92,7 @@ class ExecutionEngine:
             for position in fetched_positions
         ]
 
-        positions_df = self.spark.createDataFrame(positions, schema=SchemaPerpPosition)
+        positions_df = self.spark.createDataFrame(positions, schema=SchemaPerpPosition)  # type: ignore[type-var]
         logger.info("Fetched %d positions: ", len(positions))
         positions_df.show()
         return positions_df

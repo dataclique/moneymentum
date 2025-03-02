@@ -4,6 +4,7 @@ colorlog
 matplotlib
 numpy
 pandas
+pandas-stubs
 plotly
 psycopg
 pyspark

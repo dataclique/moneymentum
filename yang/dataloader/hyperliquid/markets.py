@@ -1,5 +1,6 @@
 import logging
 from dataclasses import dataclass
+from pathlib import Path
 
 import pandas as pd
 from ccxt import async_support as ccxt
@@ -26,6 +27,7 @@ SchemaPerpMarket = T.StructType(
         T.StructField("maxLeverage", T.IntegerType()),
         T.StructField("funding", T.DoubleType()),
         T.StructField("openInterest", T.DoubleType()),
+        T.StructField("deprecated", T.BooleanType()),
     ]
 )
 
@@ -33,16 +35,14 @@ SchemaPerpMarket = T.StructType(
 @dataclass
 class HyperliquidDataLoaderMarkets:
     spark: SparkSession
-    reload = False
 
-    async def fetch_markets(
-        self,
-        exchange: ccxt.Exchange,
-    ) -> DataFrame:
+    async def fetch_markets(self, exchange: ccxt.Exchange, *, reload: bool) -> DataFrame:
         """Fetch all perpetual symbols from the exchange."""
 
-        if not self.reload:
-            return self.spark.read.csv("data/markets.csv", schema=SchemaPerpMarket, header=True)
+        market_path = f"{util.DATA_DIR}/markets.csv"
+
+        if not reload and Path(market_path).exists():
+            return self.spark.read.csv(market_path, schema=SchemaPerpMarket, header=True)
 
         logger.info("Fetching markets...")
         markets = await exchange.load_markets()
@@ -73,6 +73,7 @@ class HyperliquidDataLoaderMarkets:
                 "maxLeverage": int(markets[symbol]["info"]["maxLeverage"]),
                 "funding": float(markets[symbol]["info"]["funding"]),
                 "openInterest": float(markets[symbol]["info"]["openInterest"]),
+                "deprecated": False,
             }
             for symbol in perp_symbols
         ]
@@ -80,6 +81,20 @@ class HyperliquidDataLoaderMarkets:
         logger.info("Found %s perpetual symbols", len(perp_symbols))
 
         markets_pdf = pd.DataFrame(markets)
+
+        if Path(market_path).exists():
+            old_df = self.spark.read.csv(market_path, schema=SchemaPerpMarket, header=True)
+            old_deprecated_status_df = old_df.select("symbol", "deprecated")
+            old_deprecated_status_pdf = old_deprecated_status_df.toPandas()
+
+            merged_df = markets_pdf.merge(
+                old_deprecated_status_pdf, on="symbol", suffixes=("_old", "_new"), how="left"
+            )
+
+            markets_pdf["deprecated"] = merged_df["deprecated_new"].fillna(
+                markets_pdf["deprecated"]
+            )
+
         markets_df = self.spark.createDataFrame(markets_pdf, schema=SchemaPerpMarket)
 
         util.save_csv("markets", markets_df)

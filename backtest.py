@@ -17,7 +17,7 @@ from yang import util
 from yang.chronos import Chronos
 from yang.dataloader.hyperliquid.markets import HyperliquidDataLoaderMarkets
 from yang.dataloader.hyperliquid.ohlcv import HyperliquidDataLoaderOHLCV
-from yang.util import LOOKBACK_PERIODS_DICT, LookbackPeriods, Timeframe
+from yang.util import TIMEFRAME_CONFIGS, Timeframe, TimeframeConfig
 
 if __name__ == "__main__":
     util.setup_logging()
@@ -45,7 +45,7 @@ class Pipeline:
     leverage: float
     starting_equity: float
     min_position_size: float
-    config: LookbackPeriods
+    config: TimeframeConfig
     spark: SparkSession
 
     timeframe: Timeframe
@@ -213,16 +213,16 @@ class Pipeline:
         logger.info("Candles DataFrame:")
         candles_df.show(truncate=False)
 
-        chronos = Chronos(timeframe=self.timeframe, lookback_periods=config["lookback_periods"])
+        chronos = Chronos(timeframe=self.timeframe, config=self.config)
         analysis_df = (
             candles_df.transform(chronos.with_returns)
-            .transform(lambda df: chronos.with_volatility(df, config=config))
+            .transform(chronos.with_volatility)
             .transform(chronos.with_sma)
             .transform(chronos.with_zscore)
             .transform(chronos.with_beta)
             .transform(chronos.with_information_discreteness)
-            .transform(lambda df: chronos.with_sharpe(df, config=config))
-            .transform(lambda df: chronos.with_sortino(df, config=config))
+            .transform(chronos.with_sharpe)
+            .transform(chronos.with_sortino)
             .drop("count", "symbol", "open", "high", "low", "mean_return", "annualized_return")
         )
 
@@ -299,7 +299,6 @@ class Pipeline:
 
         latest_df.show()
         latest_df.count()
-        util.save_csv("picks", latest_df)
 
         # Calculate returns for each signal
         next_day_returns = (
@@ -386,7 +385,7 @@ class Pipeline:
 if __name__ == "__main__":
     spark = util.get_spark()
     timeframe: Timeframe = "1h"
-    config = LOOKBACK_PERIODS_DICT[timeframe]
+    config = TIMEFRAME_CONFIGS[timeframe]
 
     start_date = datetime(2023, 6, 1, tzinfo=timezone.utc).replace(
         hour=0,

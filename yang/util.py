@@ -11,7 +11,7 @@ from pyspark.sql import functions as F
 from statsmodels.tsa.stattools import adfuller, coint
 
 
-class LookbackPeriods(TypedDict):
+class TimeframeConfig(TypedDict):
     lookback_periods: int
     n_tokens: int
     time_in_ms: int
@@ -24,7 +24,7 @@ Timeframe = Literal["1h", "1d", "1w"]
 # min_acceptable_return Based on HyperLiquid neutral funding rates.
 # See funding comparison page for more details:
 # https://app.hyperliquid.xyz/fundingComparison
-LOOKBACK_PERIODS_DICT: dict[Timeframe, LookbackPeriods] = {
+TIMEFRAME_CONFIGS: dict[Timeframe, TimeframeConfig] = {
     "1w": {
         "lookback_periods": 52,
         "n_tokens": 2,

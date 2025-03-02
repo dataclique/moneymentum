@@ -18,7 +18,7 @@ from yang.chronos import Chronos
 from yang.dataloader.hyperliquid.markets import HyperliquidDataLoaderMarkets
 from yang.dataloader.hyperliquid.ohlcv import HyperliquidDataLoaderOHLCV
 from yang.exe import ExecutionEngine
-from yang.util import LOOKBACK_PERIODS_DICT, LookbackPeriods, Timeframe
+from yang.util import TIMEFRAME_CONFIGS, Timeframe, TimeframeConfig
 
 if __name__ == "__main__":
     util.setup_logging()
@@ -46,7 +46,7 @@ class Pipeline:
     leverage: float
     starting_equity: float
     min_position_size: float
-    config: LookbackPeriods
+    config: TimeframeConfig
     spark: SparkSession
 
     timeframe: Timeframe
@@ -213,9 +213,7 @@ class Pipeline:
         logger.info("Candles DataFrame:")
         candles_df.show(truncate=False)
 
-        chronos = Chronos(
-            timeframe=self.timeframe, lookback_periods=self.config["lookback_periods"]
-        )
+        chronos = Chronos(timeframe=self.timeframe, config=self.config)
         analysis_df = (
             candles_df.transform(chronos.with_returns)
             .transform(chronos.with_volatility)
@@ -303,7 +301,7 @@ class Pipeline:
 if __name__ == "__main__":
     timeframe = "1h"
     spark: SparkSession = util.get_spark()
-    config: LookbackPeriods = LOOKBACK_PERIODS_DICT[timeframe]
+    config: TimeframeConfig = TIMEFRAME_CONFIGS[timeframe]
 
     start_date = datetime(2023, 6, 1, tzinfo=timezone.utc).replace(
         hour=0,

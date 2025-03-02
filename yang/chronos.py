@@ -1,13 +1,12 @@
 import logging
 from dataclasses import dataclass
-from typing import Literal
 
 from pyspark.sql import DataFrame
 from pyspark.sql import functions as F
 from pyspark.sql import window as W
 
 from yang import util
-from yang.util import LookbackPeriods
+from yang.util import Timeframe, TimeframeConfig
 
 logger = logging.getLogger(__name__)
 logger.setLevel(util.LOG_LEVEL)
@@ -15,17 +14,17 @@ logger.setLevel(util.LOG_LEVEL)
 
 @dataclass
 class Chronos:
-    lookback_periods: int
-    timeframe: Literal["1h", "1d", "1w"]
+    timeframe: Timeframe
+    config: TimeframeConfig
 
     spark = util.get_spark()
 
     def __post_init__(self) -> None:
         self.symbol_window = W.Window.partitionBy("symbol").orderBy("timestamp")
         self.rolling_window = self.symbol_window.rowsBetween(
-            -self.lookback_periods + 1, W.Window.currentRow
+            -self.config["lookback_periods"] + 1, W.Window.currentRow
         )
-        self.has_enough_samples = F.col("count") >= self.lookback_periods
+        self.has_enough_samples = F.col("count") >= self.config["lookback_periods"]
 
     def with_returns(self, df: DataFrame) -> DataFrame:
         count_df = df.withColumn("count", F.count("close").over(self.symbol_window)).cache()
@@ -75,7 +74,7 @@ class Chronos:
 
         return rolling_cum_df
 
-    def with_volatility(self, df: DataFrame, config: LookbackPeriods) -> DataFrame:
+    def with_volatility(self, df: DataFrame) -> DataFrame:
         logger.info("Calculating volatility...")
 
         return df.withColumn(
@@ -83,7 +82,7 @@ class Chronos:
             F.stddev(F.col("log_return")).over(self.rolling_window),
         ).withColumn(
             "annualized_volatility",
-            F.col("stddev") * F.sqrt(F.lit(config["annualized_factor"])),
+            F.col("stddev") * F.sqrt(F.lit(self.config["annualized_factor"])),
         )
 
     def with_min_max(self, df: DataFrame) -> DataFrame:
@@ -252,24 +251,22 @@ class Chronos:
 
         return id_df
 
-    def with_sharpe(
-        self, df: DataFrame, config: LookbackPeriods, risk_free: float = 0.0
-    ) -> DataFrame:
+    def with_sharpe(self, df: DataFrame, risk_free: float = 0.0) -> DataFrame:
         logger.info("Calculating sharpe...")
 
         df_annualized_return = df.withColumn(
-            "annualized_return", F.exp(F.col("mean_return") * config["annualized_factor"]) - 1
+            "annualized_return", F.exp(F.col("mean_return") * self.config["annualized_factor"]) - 1
         )
 
         return df_annualized_return.withColumn(
             "sharpe", (F.col("annualized_return") - risk_free) / F.col("annualized_volatility")
         )
 
-    def with_sortino(self, df: DataFrame, config: LookbackPeriods) -> DataFrame:
+    def with_sortino(self, df: DataFrame) -> DataFrame:
         logger.info("Calculating sortino...")
 
         above_mar_df = df.withColumn(
-            "log_return_above_mar", F.col("log_return") - config["min_acceptable_return"]
+            "log_return_above_mar", F.col("log_return") - self.config["min_acceptable_return"]
         )
 
         squared_negative_df = above_mar_df.withColumn(
@@ -301,7 +298,7 @@ class Chronos:
         )
 
         annualized_return_df = downside_deviation_df.withColumn(
-            "annualized_return", F.exp(F.col("mean_return") * config["annualized_factor"]) - 1
+            "annualized_return", F.exp(F.col("mean_return") * self.config["annualized_factor"]) - 1
         ).drop(
             "negative_squared", "sum_negative_squared", "count_observations", "downside_variance"
         )

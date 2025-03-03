@@ -57,15 +57,12 @@ class HyperliquidDataLoader:
             else self.sort_symbols_by_fetch_method(existing_df, since, symbols)
         )
 
-        if tokens_for_markets:
-            market_data = await self.exchange.load_markets()
-        else:
-            market_data = None
-
-        if tokens_for_candle_updates:
-            ohlcv_data = await self.load_ohlcv(tokens_for_candle_updates, existing_df, since)
-        else:
-            ohlcv_data = None
+        market_data = await self.exchange.load_markets() if tokens_for_markets else None
+        ohlcv_data = (
+            await self.exchange.load_ohlcv(tokens_for_candle_updates, since)
+            if tokens_for_candle_updates
+            else None
+        )
 
         candles_df = self.build_df_from_data(
             ohlcv_data, existing_df, tokens_for_markets, market_data

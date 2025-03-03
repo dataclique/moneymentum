@@ -52,9 +52,9 @@ class HyperliquidDataLoader:
         existing_df = self.get_existing_df(candles_file_path)
 
         (tokens_for_candle_updates, tokens_for_markets) = (
-            self.sort_symbols_by_fetch_method(existing_df, since, symbols)
-            if existing_df is not None
-            else (set(), set(symbols))
+            (set(symbols), set())
+            if existing_df is None
+            else self.sort_symbols_by_fetch_method(existing_df, since, symbols)
         )
 
         if tokens_for_markets:
@@ -116,6 +116,15 @@ class HyperliquidDataLoader:
             else:
                 tokens_for_markets.add(symbol)
 
+        assert (len(tokens_for_candles) + len(tokens_for_markets)) == len(
+            symbols
+        ), "Sum of sorted tokens not equal to unsorted set"
+        logger.info(
+            "Sorted tokens by fetching method:\nBy candles: %s\nBy market: %s",
+            len(tokens_for_candles),
+            len(tokens_for_markets),
+        )
+
         return tokens_for_candles, tokens_for_markets
 
     async def load_ohlcv(
@@ -140,42 +149,44 @@ class HyperliquidDataLoader:
         self,
         ohlcv_data: list[dict[str, Any]] | None,
         existing_df: pd.DataFrame | None,
-        tokens_for_markets: set | None,
+        tokens_updated_by_market: set | None,
         market_data: dict,
     ) -> DataFrame:
-        if ohlcv_data:
-            pdf = pd.DataFrame(ohlcv_data)
-            pdf["timestamp"] = pd.to_datetime(pdf["timestamp"], utc=True).dt.tz_localize(None)
+        def normalize_timestamps(df: pd.DataFrame) -> pd.DataFrame:
+            df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True).dt.tz_localize(None)
+            return df
 
-        # If we have tokens_for_makerts we also have existing_df
-        if tokens_for_markets:
-            existing_df["timestamp"] = pd.to_datetime(
-                existing_df["timestamp"], utc=True
-            ).dt.tz_localize(None)
-            for symbol in tokens_for_markets:
+        def update_closes(df: pd.DataFrame, tokens: set, market_data: dict) -> pd.DataFrame:
+            for symbol in tokens:
                 mark_px = market_data.get(symbol, {}).get("info", {}).get("markPx")
                 if mark_px is not None:
-                    latest_index = existing_df[existing_df["symbol"] == symbol][
-                        "timestamp"
-                    ].idxmax()
-                    existing_df.loc[latest_index, "close"] = float(mark_px)
+                    latest_index = df[df["symbol"] == symbol]["timestamp"].idxmax()
+                    df.loc[latest_index, "close"] = float(mark_px)
+            return df
 
-            if ohlcv_data:
-                combined_df = pd.concat([existing_df, pdf], ignore_index=True)
-                combined_df = combined_df.drop_duplicates(
-                    subset=["timestamp", "symbol"], keep="last"
-                )
-                ohlcv_df = self.spark.createDataFrame(combined_df, schema=SchemaOHLCV).cache()
-            else:
-                ohlcv_df = self.spark.createDataFrame(existing_df, schema=SchemaOHLCV).cache()
+        def combine_dfs(df1: pd.DataFrame, df2: pd.DataFrame) -> pd.DataFrame:
+            combined_df = pd.concat([df1, df2], ignore_index=True)
+            return combined_df.drop_duplicates(subset=["timestamp", "symbol"], keep="last")
+
+        candles_df = normalize_timestamps(pd.DataFrame(ohlcv_data)) if ohlcv_data else None
+
+        if existing_df is not None:
+            existing_df = normalize_timestamps(existing_df)
+            if tokens_updated_by_market:
+                existing_df = update_closes(existing_df, tokens_updated_by_market, market_data)
+
+        final_df = (
+            combine_dfs(existing_df, candles_df)
+            if existing_df is not None and candles_df is not None
+            else existing_df
+            if existing_df is not None
+            else candles_df
+        )
+
+        if final_df is not None:
+            ohlcv_df = self.spark.createDataFrame(final_df, schema=SchemaOHLCV).cache()
         else:
-            existing_df["timestamp"] = pd.to_datetime(
-                existing_df["timestamp"], utc=True
-            ).dt.tz_localize(None)
-
-            combined_df = pd.concat([existing_df, pdf], ignore_index=True)
-            combined_df = combined_df.drop_duplicates(subset=["timestamp", "symbol"], keep="last")
-            ohlcv_df = self.spark.createDataFrame(combined_df, schema=SchemaOHLCV).cache()
+            raise Exception("No data fetched and no existing df")
 
         logger.info("Converted to Spark DataFrame with schema logged.")
         ohlcv_df.printSchema()

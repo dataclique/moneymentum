@@ -29,7 +29,7 @@ def _get_hyperliquid(
             "timeout": 10000,  # 3 seconds
             "enableRateLimit": True,
             "options": {
-                "defaultSlippage": 0.01,  # slipage 1%
+                "defaultSlippage": 0.015,  # slipage 1.5%
                 "defaultType": "swap",  # Specify the market type if necessary
             },
             "rateLimit": 20,  # Adjust rate limit if necessary

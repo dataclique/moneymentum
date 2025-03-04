@@ -78,7 +78,7 @@ class HyperliquidDataLoader:
 
     async def get_tradable_symbols(self) -> set:
         markets_df = await self.loader_markets.fetch_markets(exchange=self.exchange)
-        filtered_df = markets_df.filter(~F.col("deprecated")).filter(
+        filtered_df = markets_df.filter(~F.col("disable")).filter(
             F.col("maxLeverage") >= F.lit(self.min_leverage)
         )
 

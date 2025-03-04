@@ -144,7 +144,7 @@ class Pipeline:
 
 
 async def main() -> None:
-    timeframe: Timeframe = "15m"
+    timeframe: Timeframe = "1w"
     spark: SparkSession = util.get_spark()
     config: TimeframeConfig = TIMEFRAME_CONFIGS[timeframe]
 

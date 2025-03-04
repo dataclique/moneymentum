@@ -20,6 +20,10 @@ logger = logging.getLogger(__name__)
 logger.setLevel(util.LOG_LEVEL)
 
 
+class HyperliquidDataLoaderError(Exception):
+    """Base exception class for HyperliquidDataLoader errors."""
+
+
 @dataclass
 class HyperliquidDataLoader:
     start_date: datetime
@@ -45,33 +49,35 @@ class HyperliquidDataLoader:
         await self.exchange.close()
 
     async def get_candles_df(self) -> DataFrame:
-        candles_file_path = f"{util.DATA_DIR}/ohlcv{self.timeframe}.csv"
+        ohlcv_file_path = f"{util.DATA_DIR}/ohlcv{self.timeframe}.csv"
 
         since = int(self.start_date.timestamp() * 1000)
-        symbols = await self.get_tradable_symbols()
-        existing_df = self.get_existing_df(candles_file_path)
+        tradable_symbols = await self.get_tradable_symbols()
+        existing_ohlcv_df = self.get_existing_ohlcv_df(ohlcv_file_path)
 
-        (tokens_for_candle_updates, tokens_for_markets) = (
-            (set(symbols), set())
-            if existing_df is None
-            else self.sort_symbols_by_fetch_method(existing_df, since, symbols)
+        (symbols_for_ohlcv_updates, symbols_for_market_updates) = (
+            (set(tradable_symbols), set())
+            if existing_ohlcv_df is None
+            else self.categorize_symbols_by_update_method(
+                existing_ohlcv_df, since, tradable_symbols
+            )
         )
 
-        market_data = await self.exchange.load_markets() if tokens_for_markets else None
+        market_info = await self.exchange.load_markets() if symbols_for_market_updates else None
         ohlcv_data = (
-            await self.exchange.load_ohlcv(tokens_for_candle_updates, since)
-            if tokens_for_candle_updates
+            await self.exchange.load_ohlcv(symbols_for_ohlcv_updates, since)
+            if symbols_for_ohlcv_updates
             else None
         )
 
-        candles_df = self.build_df_from_data(
-            ohlcv_data, existing_df, tokens_for_markets, market_data
+        candles_df = self.construct_ohlcv_dataframe(
+            ohlcv_data, existing_ohlcv_df, symbols_for_market_updates, market_info
         )
 
         candles_file_name = f"ohlcv{self.timeframe}"
         util.save_csv(candles_file_name, candles_df)
 
-        return self.spark.read.schema(SchemaOHLCV).csv(candles_file_path, header=True).cache()
+        return self.spark.read.schema(SchemaOHLCV).csv(ohlcv_file_path, header=True).cache()
 
     async def get_tradable_symbols(self) -> set:
         markets_df = await self.loader_markets.fetch_markets(exchange=self.exchange)
@@ -81,53 +87,53 @@ class HyperliquidDataLoader:
 
         return set(filtered_df.select("symbol").rdd.flatMap(lambda x: x).collect())
 
-    def get_existing_df(self, file_path: str) -> pd.DataFrame | None:
+    def get_existing_ohlcv_df(self, file_path: str) -> pd.DataFrame | None:
         if Path(file_path).exists():
             return pd.read_csv(file_path, parse_dates=["timestamp"])
         return None
 
     def get_symbol_start_time(
-        self, symbol: str, existing_df: pd.DataFrame | None, since: int
+        self, symbol: str, existing_ohlcv_df: pd.DataFrame | None, since: int
     ) -> int:
-        if existing_df is None:
+        if existing_ohlcv_df is None:
             return since
 
-        symbol_df = existing_df[existing_df["symbol"] == symbol]
+        symbol_df = existing_ohlcv_df[existing_ohlcv_df["symbol"] == symbol]
         if symbol_df.empty:
             return since
 
         last_timestamp_ms = int(symbol_df.iloc[-1]["timestamp"].timestamp() * 1000)
         return max(since, last_timestamp_ms)
 
-    def sort_symbols_by_fetch_method(
-        self, existing_df: pd.DataFrame, since: int, symbols: set
+    def categorize_symbols_by_update_method(
+        self, existing_ohlcv_df: pd.DataFrame, since: int, tradable_symbols: set
     ) -> tuple[set, set]:
         current_time_ms = int(time.time() * 1000)
-        tokens_for_candles = set()
-        tokens_for_markets = set()
+        symbols_for_ohlcv_updates = set()
+        symbols_for_market_updates = set()
 
-        for symbol in symbols:
-            last_timestamp_ms = self.get_symbol_start_time(symbol, existing_df, since)
+        for symbol in tradable_symbols:
+            last_timestamp_ms = self.get_symbol_start_time(symbol, existing_ohlcv_df, since)
             if current_time_ms - last_timestamp_ms > self.config["time_in_ms"]:
-                tokens_for_candles.add(symbol)
+                symbols_for_ohlcv_updates.add(symbol)
             else:
-                tokens_for_markets.add(symbol)
+                symbols_for_market_updates.add(symbol)
 
-        assert (len(tokens_for_candles) + len(tokens_for_markets)) == len(
-            symbols
+        assert (len(symbols_for_ohlcv_updates) + len(symbols_for_market_updates)) == len(
+            tradable_symbols
         ), "Sum of sorted tokens not equal to unsorted set"
         logger.info(
-            "Sorted tokens by fetching method:\nBy candles: %s\nBy market: %s",
-            len(tokens_for_candles),
-            len(tokens_for_markets),
+            "Sorted tokens by fetching method:\nBy ohlcv: %s\nBy market: %s",
+            len(symbols_for_ohlcv_updates),
+            len(symbols_for_market_updates),
         )
 
-        return tokens_for_candles, tokens_for_markets
+        return symbols_for_ohlcv_updates, symbols_for_market_updates
 
     async def load_ohlcv(
         self,
-        tokens_for_candles: set,
-        existing_df: pd.DataFrame | None,
+        symbols_for_ohlcv_updates: set,
+        existing_ohlcv_df: pd.DataFrame | None,
         since: int,
     ) -> list[dict[str, Any]]:
         ohlcv_tasks = [
@@ -135,17 +141,17 @@ class HyperliquidDataLoader:
                 self.exchange,
                 symbol,
                 self.timeframe,
-                self.get_symbol_start_time(symbol, existing_df, since),
+                self.get_symbol_start_time(symbol, existing_ohlcv_df, since),
             )
-            for symbol in tokens_for_candles
+            for symbol in symbols_for_ohlcv_updates
         ]
 
         return [candle for candles in await asyncio.gather(*ohlcv_tasks) for candle in candles]
 
-    def build_df_from_data(
+    def construct_ohlcv_dataframe(
         self,
-        ohlcv_data: list[dict[str, Any]] | None,
-        existing_df: pd.DataFrame | None,
+        ohlcv_records: list[dict[str, Any]] | None,
+        existing_ohlcv_df: pd.DataFrame | None,
         tokens_updated_by_market: set | None,
         market_data: dict,
     ) -> DataFrame:
@@ -165,25 +171,28 @@ class HyperliquidDataLoader:
             combined_df = pd.concat([df1, df2], ignore_index=True)
             return combined_df.drop_duplicates(subset=["timestamp", "symbol"], keep="last")
 
-        candles_df = normalize_timestamps(pd.DataFrame(ohlcv_data)) if ohlcv_data else None
+        candles_df = normalize_timestamps(pd.DataFrame(ohlcv_records)) if ohlcv_records else None
 
-        if existing_df is not None:
-            existing_df = normalize_timestamps(existing_df)
+        if existing_ohlcv_df is not None:
+            existing_ohlcv_df = normalize_timestamps(existing_ohlcv_df)
             if tokens_updated_by_market:
-                existing_df = update_closes(existing_df, tokens_updated_by_market, market_data)
+                existing_ohlcv_df = update_closes(
+                    existing_ohlcv_df, tokens_updated_by_market, market_data
+                )
 
         final_df = (
-            combine_dfs(existing_df, candles_df)
-            if existing_df is not None and candles_df is not None
-            else existing_df
-            if existing_df is not None
+            combine_dfs(existing_ohlcv_df, candles_df)
+            if existing_ohlcv_df is not None and candles_df is not None
+            else existing_ohlcv_df
+            if existing_ohlcv_df is not None
             else candles_df
         )
 
         if final_df is not None:
             ohlcv_df = self.spark.createDataFrame(final_df, schema=SchemaOHLCV).cache()
         else:
-            raise Exception("No data fetched and no existing df")
+            error_message = "No data fetched and no existing df"
+            raise HyperliquidDataLoaderError(error_message)
 
         logger.info("Converted to Spark DataFrame with schema logged.")
         ohlcv_df.printSchema()

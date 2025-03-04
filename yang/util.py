@@ -1,6 +1,5 @@
 import logging
 import math
-import os
 from pathlib import Path
 from typing import Literal, TypedDict
 
@@ -10,6 +9,12 @@ import pandas as pd
 from pyspark.sql import DataFrame, DataFrameReader, SparkSession
 from pyspark.sql import functions as F
 from statsmodels.tsa.stattools import adfuller, coint  # type: ignore[import-untyped]
+
+DEBUG = False
+LOG_LEVEL = logging.DEBUG if DEBUG else logging.INFO
+
+logger = logging.getLogger(__name__)
+logger.setLevel(LOG_LEVEL)
 
 
 class TimeframeConfig(TypedDict):
@@ -130,14 +135,6 @@ def setup_logging() -> None:
     )
 
 
-DEBUG = True
-BACKTEST = False
-LOG_LEVEL = logging.DEBUG if DEBUG else logging.INFO
-
-logger = logging.getLogger(__name__)
-logger.setLevel(LOG_LEVEL)
-
-
 def get_spark() -> SparkSession:
     logger.debug("Creating Spark session...")
 
@@ -145,11 +142,11 @@ def get_spark() -> SparkSession:
     ram_gigs = 12
     cores = 12
 
-    JDBC_DRIVER_PATH = os.getenv("JDBC_PATH")
+    # JDBC_DRIVER_PATH = os.getenv("JDBC_PATH")
 
     spark = (
-        SparkSession.builder.appName("pipeline")
-        .config("spark.driver.extraClassPath", JDBC_DRIVER_PATH)
+        SparkSession.builder.appName("moneymentum")
+        # .config("spark.driver.extraClassPath", JDBC_DRIVER_PATH)
         # Memory and Spill Configurations
         .config("spark.memory.fraction", "0.8")
         .config("spark.memory.storageFraction", "0.3")

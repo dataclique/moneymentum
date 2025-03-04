@@ -215,6 +215,7 @@ class Pipeline:
 async def main() -> None:
     spark = util.get_spark()
     timeframe: Timeframe = "15m"
+
     config = TIMEFRAME_CONFIGS[timeframe]
 
     start_date = datetime(2023, 6, 1, tzinfo=timezone.utc).replace(

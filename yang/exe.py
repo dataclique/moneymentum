@@ -7,6 +7,7 @@ import ccxt  # type: ignore[import-untyped]
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql import types as T
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 from yang import util
 
@@ -29,7 +30,7 @@ def _get_hyperliquid(
             "timeout": 10000,  # 3 seconds
             "enableRateLimit": True,
             "options": {
-                "defaultSlippage": 0.01,  # slipage 1%
+                "defaultSlippage": 0.015,  # slipage 1.5%
                 "defaultType": "swap",  # Specify the market type if necessary
             },
             "rateLimit": 20,  # Adjust rate limit if necessary
@@ -69,6 +70,11 @@ class ExecutionEngine:
     def get_balance(self) -> float:
         return self.exchange.fetch_balance()["total"]["USDC"]
 
+    @retry(
+        stop=stop_after_attempt(10),
+        wait=wait_exponential(multiplier=1.1, min=0.25, max=10),
+        reraise=True,
+    )
     def get_positions(self) -> DataFrame:
         fetched_positions = self.exchange.fetch_positions()
         positions = [
@@ -97,6 +103,11 @@ class ExecutionEngine:
         positions_df.show()
         return positions_df
 
+    @retry(
+        stop=stop_after_attempt(10),
+        wait=wait_exponential(multiplier=1.1, min=0.25, max=10),
+        reraise=True,
+    )
     def place_trade(
         self,
         symbol: str,

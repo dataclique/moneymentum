@@ -3,7 +3,8 @@ from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
 
 # Assuming Chronos, SchemaOHLCV, and the logger are imported or defined elsewhere
-from pipeline import Chronos, SchemaOHLCV, logger
+from pipeline import SchemaOHLCV, logger
+from yang.chronos import Chronos
 from yang.util import TIMEFRAME_CONFIGS
 
 

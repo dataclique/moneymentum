@@ -53,7 +53,7 @@ TIMEFRAME_CONFIGS: dict[Timeframe, TimeframeConfig] = {
         "min_acceptable_return": 0.000013,  # 0.0013%
     },
     "15m": {
-        "lookback_periods": 24 * 4,
+        "lookback_periods": 7 * 24 * 4,
         "n_tokens": 10,
         "time_in_ms": 15 * 60 * 1000,
         "annualized_factor": 365 * 24 * 4,

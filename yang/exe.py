@@ -213,18 +213,6 @@ class ExecutionEngine:
 
     def rebalance(self, target_portfolio: DataFrame) -> None:
         current_portfolio = self.get_positions()
-
-        # Log the initial size of target portfolio
-        logger.info("Initial target portfolio size: %d", target_portfolio.count())
-
-        # Log key metrics statistics
-        target_portfolio.select(
-            F.min("price_zscore").alias("min_zscore"),
-            F.max("price_zscore").alias("max_zscore"),
-            # Add other relevant metrics
-        ).show()
-
-        # Create a DataFrame of all position changes
         current_positions = current_portfolio.select(
             "symbol",
             F.col("side").alias("direction"),
@@ -239,8 +227,8 @@ class ExecutionEngine:
         )
 
         # Log sizes at each step
-        logger.info("Current positions size: %d", current_positions.count())
-        logger.info("Target positions size: %d", target_positions.count())
+        logger.info("Current portfolio size: %d", current_positions.count())
+        logger.info("Target portfolio size: %d", target_positions.count())
 
         # Join current and target positions
         portfolio_updates = (

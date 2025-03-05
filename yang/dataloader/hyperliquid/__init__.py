@@ -178,7 +178,8 @@ class HyperliquidDataLoader:
             ohlcv_df = self.spark.createDataFrame(combined_df, schema=SchemaOHLCV).cache()
 
         logger.info("Converted to Spark DataFrame with schema logged.")
-        ohlcv_df.printSchema()
-        ohlcv_df.show()
+        if util.DEBUG:
+            ohlcv_df.printSchema()
+            ohlcv_df.show()
 
         return ohlcv_df.orderBy("timestamp")

@@ -10,6 +10,7 @@ from pyspark.sql import window as W
 from yang import util
 from yang.chronos import Chronos
 from yang.dataloader.hyperliquid import HyperliquidDataLoader
+from yang.strat import Strategy
 from yang.util import TIMEFRAME_CONFIGS, Timeframe, TimeframeConfig
 
 if __name__ == "__main__":
@@ -20,7 +21,7 @@ logger.setLevel(util.LOG_LEVEL)
 
 
 @dataclass
-class Pipeline:
+class BacktestPipeline:
     leverage: float
     starting_equity: float
     min_position_size: float
@@ -29,7 +30,9 @@ class Pipeline:
 
     timeframe: Timeframe
     start_date: datetime
+
     dataloader: HyperliquidDataLoader
+    strategy: Strategy
 
     async def run(self) -> None:
         logger.info("Starting pipeline...")
@@ -40,78 +43,8 @@ class Pipeline:
         candles_df.show(truncate=False)
 
         chronos = Chronos(timeframe=self.timeframe, config=self.config)
-        analysis_df = (
-            candles_df.transform(chronos.with_returns)
-            .transform(chronos.with_volatility)
-            .transform(chronos.with_sma)
-            .transform(chronos.with_zscore)
-            .transform(chronos.with_beta)
-            .transform(chronos.with_information_discreteness)
-            .transform(chronos.with_sharpe)
-            .transform(chronos.with_sortino)
-            .drop("count", "symbol", "open", "high", "low", "mean_return", "annualized_return")
-        )
-
-        ma_potential_return = (F.col("sma") - F.col("close")) / F.col("close")
-        ranking_col = F.col("price_zscore")
-        window_spec = W.Window.partitionBy("timestamp").orderBy(ranking_col)
-        picks_df = (
-            analysis_df.withColumn("ma_potential_return", ma_potential_return)
-            .filter(ranking_col.isNotNull())
-            .withColumn("rank", F.row_number().over(window_spec))
-            .withColumn(
-                "reverse_rank",
-                F.row_number().over(window_spec.orderBy(ranking_col.desc())),
-            )
-            .withColumn(
-                "direction",
-                F.when(F.col("rank") <= F.lit(self.config["n_tokens"]), "long").otherwise(
-                    F.when(F.col("reverse_rank") <= F.lit(self.config["n_tokens"]), "short")
-                ),
-            )
-            .withColumn(
-                "position_weight",
-                F.when(F.col("direction") == "long", F.col("ma_potential_return"))
-                .when(F.col("direction") == "short", -F.col("ma_potential_return"))
-                .otherwise(0),
-            )
-            .withColumn(
-                "position_weight",
-                F.when(F.col("beta") > 0, F.col("position_weight") / F.col("beta")).otherwise(
-                    F.col("position_weight") / (-F.col("beta"))
-                ),
-            )
-            .withColumn("position_size", F.col("position_weight") * F.lit(self.starting_equity))
-            .withColumn(
-                "position_weight",
-                F.col("position_size")
-                * F.lit(self.leverage)
-                / F.sum(F.abs(F.col("position_size"))).over(W.Window.partitionBy("timestamp")),
-            )
-            .withColumn("position_size", F.col("position_weight") * F.lit(self.starting_equity))
-            .withColumn(
-                "position_size",
-                F.when(F.abs(F.col("position_size")) < F.lit(self.min_position_size), 0).otherwise(
-                    F.col("position_size")
-                ),
-            )
-            .withColumn(
-                "direction", F.when(F.col("position_size") == 0, None).otherwise(F.col("direction"))
-            )
-            .select(
-                F.col("timestamp"),
-                F.col("ticker"),
-                F.col("direction"),
-                F.col("close"),
-                F.col("price_zscore"),
-                F.col("position_size"),
-                F.col("position_weight"),
-                F.col("sma"),
-                F.col("annualized_volatility"),
-                F.col("beta"),
-            )
-            .filter(F.col("direction").isNotNull())
-        )
+        analysis_df = self.strategy.generate_analysis(candles_df)
+        picks_df = self.strategy.generate_picks(analysis_df)
 
         latest_row = candles_df.select(F.max("timestamp")).first()
         if latest_row is None:
@@ -120,12 +53,7 @@ class Pipeline:
 
         latest = latest_row[0]
         logger.info("Latest timestamp: %s", latest)
-        latest_df = (
-            picks_df.filter(F.col("timestamp") == F.lit(latest))
-            .dropna()
-            .select("direction", "ticker", "position_size", "price_zscore", "close")
-            .cache()
-        )
+        latest_df = picks_df.filter(F.col("timestamp") == F.lit(latest)).dropna().cache()
 
         latest_df.show()
         latest_df.count()
@@ -218,6 +146,8 @@ async def main() -> None:
 
     config = TIMEFRAME_CONFIGS[timeframe]
 
+    leverage: int = 5
+    min_position_size_usd = 11
     start_date = datetime(2023, 6, 1, tzinfo=timezone.utc).replace(
         hour=0,
         minute=0,
@@ -225,7 +155,6 @@ async def main() -> None:
         microsecond=0,
     )
 
-    leverage: int = 5
     async with HyperliquidDataLoader(
         spark=spark,
         timeframe=timeframe,
@@ -233,17 +162,19 @@ async def main() -> None:
         config=config,
         min_leverage=leverage,
     ) as dataloader:
-        logger.info("Running backtest with n_tokens=%d", config["n_tokens"])
-        pipeline = Pipeline(
+        kwargs = dict(
             spark=spark,
             timeframe=timeframe,
-            dataloader=dataloader,
             config=config,
             leverage=float(leverage),
             starting_equity=100,
-            min_position_size=11,
+            min_position_size=min_position_size_usd,
             start_date=start_date,
+            dataloader=dataloader,
         )
+
+        strategy = Strategy(**kwargs)
+        pipeline = BacktestPipeline(**kwargs, strategy=strategy)
         await pipeline.run()
 
 

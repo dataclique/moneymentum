@@ -309,3 +309,14 @@ class Chronos:
         return annualized_return_df.withColumn(
             "sortino", F.col("annualized_return") / F.col("downside_deviation")
         )
+
+    def with_autocorrelation(self, df: DataFrame) -> DataFrame:
+        logger.info("Calculating autocorrelation...")
+
+        lookback_periods = int(self.config["lookback_periods"] / 4)
+        rolling_window = self.symbol_window.rowsBetween(-lookback_periods + 1, W.Window.currentRow)
+
+        return df.withColumn(
+            "autocorrelation",
+            F.corr("log_return", F.lag("log_return").over(self.symbol_window)).over(rolling_window),
+        )

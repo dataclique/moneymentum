@@ -12,6 +12,10 @@ from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 
 from yang import util
+from yang.dataloader.hyperliquid.funding_rates import (
+    HyperliquidDataLoaderFundingRates,
+    SchemaFUNDINGRATE,
+)
 from yang.dataloader.hyperliquid.markets import HyperliquidDataLoaderMarkets
 from yang.dataloader.hyperliquid.ohlcv import HyperliquidDataLoaderOHLCV, SchemaOHLCV
 from yang.util import Timeframe, TimeframeConfig
@@ -41,6 +45,10 @@ class HyperliquidDataLoader:
         )
         self.loader_ohlcv: HyperliquidDataLoaderOHLCV = HyperliquidDataLoaderOHLCV()
 
+        self.loader_funding_rate: HyperliquidDataLoaderFundingRates = (
+            HyperliquidDataLoaderFundingRates()
+        )
+
         logger.debug("Initializing exchange...")
         self.exchange = ccxt.hyperliquid({"asyncio_loop": asyncio.get_event_loop()})
         logger.info("Exchange initialized: %s", self.exchange)
@@ -48,12 +56,36 @@ class HyperliquidDataLoader:
     async def __aexit__(self, exc_type, exc_val, exc_tb):  # noqa: ANN001, ANN204
         await self.exchange.close()
 
+    async def get_funding_rate_df(self) -> DataFrame:
+        funding_rate_file_path = f"{util.DATA_DIR}/funding_rate1h.csv"
+
+        since = int(self.start_date.timestamp() * 1000)
+        tradable_symbols = await self.get_tradable_symbols()
+        existing_funding_rate_df = self.get_existing_df(funding_rate_file_path)
+
+        funding_rate_data = await self.load_funding_rate(
+            set(list(tradable_symbols)[:2]), existing_funding_rate_df, since
+        )
+
+        funding_rate_df = self.construct_funding_rate_dataframe(
+            funding_rate_data, existing_funding_rate_df
+        )
+
+        funding_rate_file_name = "funding_rate1h"
+        util.save_csv(funding_rate_file_name, funding_rate_df)
+
+        return (
+            self.spark.read.schema(SchemaFUNDINGRATE)
+            .csv(funding_rate_file_path, header=True)
+            .cache()
+        )
+
     async def get_candles_df(self) -> DataFrame:
         ohlcv_file_path = f"{util.DATA_DIR}/ohlcv{self.timeframe}.csv"
 
         since = int(self.start_date.timestamp() * 1000)
         tradable_symbols = await self.get_tradable_symbols()
-        existing_ohlcv_df = self.get_existing_ohlcv_df(ohlcv_file_path)
+        existing_ohlcv_df = self.get_existing_df(ohlcv_file_path)
 
         (symbols_for_ohlcv_updates, symbols_for_market_updates) = (
             (set(tradable_symbols), set())
@@ -64,8 +96,9 @@ class HyperliquidDataLoader:
         )
 
         market_info = await self.exchange.load_markets() if symbols_for_market_updates else None
+
         ohlcv_data = (
-            await self.exchange.load_ohlcv(symbols_for_ohlcv_updates, since)
+            await self.load_ohlcv(symbols_for_ohlcv_updates, existing_ohlcv_df, since)
             if symbols_for_ohlcv_updates
             else None
         )
@@ -87,18 +120,19 @@ class HyperliquidDataLoader:
 
         return set(filtered_df.select("symbol").rdd.flatMap(lambda x: x).collect())
 
-    def get_existing_ohlcv_df(self, file_path: str) -> pd.DataFrame | None:
+    def get_existing_df(self, file_path: str) -> pd.DataFrame | None:
         if Path(file_path).exists():
             return pd.read_csv(file_path, parse_dates=["timestamp"])
         return None
 
     def get_symbol_start_time(
-        self, symbol: str, existing_ohlcv_df: pd.DataFrame | None, since: int
+        self, symbol: str, existing_df: pd.DataFrame | None, since: int
     ) -> int:
-        if existing_ohlcv_df is None:
+        if existing_df is None:
             return since
 
-        symbol_df = existing_ohlcv_df[existing_ohlcv_df["symbol"] == symbol]
+        symbol_df = existing_df[existing_df["symbol"] == symbol]
+
         if symbol_df.empty:
             return since
 
@@ -130,6 +164,25 @@ class HyperliquidDataLoader:
 
         return symbols_for_ohlcv_updates, symbols_for_market_updates
 
+    async def load_funding_rate(
+        self, symbols: set, existing_funding_rate_df: pd.DataFrame | None, since: int
+    ) -> list[dict[str, Any]]:
+        funding_rate_tasks = [
+            self.loader_funding_rate.fetch_funding_rate_history(
+                self.exchange,
+                symbol,
+                # POPCAT/USDC:USDC --> POPCAT, because funding_rate return only base
+                self.get_symbol_start_time(symbol.split("/")[0], existing_funding_rate_df, since),
+            )
+            for symbol in symbols
+        ]
+
+        return [
+            funding_rate
+            for funding_rates in await asyncio.gather(*funding_rate_tasks)
+            for funding_rate in funding_rates
+        ]
+
     async def load_ohlcv(
         self,
         symbols_for_ohlcv_updates: set,
@@ -147,6 +200,33 @@ class HyperliquidDataLoader:
         ]
 
         return [candle for candles in await asyncio.gather(*ohlcv_tasks) for candle in candles]
+
+    def construct_funding_rate_dataframe(
+        self, funding_rate_data: list[dict[str, Any]], existing_funding_rate_df: pd.DataFrame | None
+    ) -> DataFrame:
+        def normalize_timestamps(df: pd.DataFrame) -> pd.DataFrame:
+            df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True).dt.tz_localize(None)
+            return df
+
+        funding_rate_df = (
+            normalize_timestamps(pd.DataFrame(funding_rate_data)) if funding_rate_data else None
+        )
+
+        if existing_funding_rate_df is not None:
+            existing_funding_rate_df = normalize_timestamps(existing_funding_rate_df)
+
+            if funding_rate_df is None:
+                final_df = existing_funding_rate_df
+            else:
+                final_df = pd.concat([existing_funding_rate_df, funding_rate_df], ignore_index=True)
+                final_df.drop_duplicates(subset=["timestamp", "symbol"], keep="last")
+        elif funding_rate_df is not None:
+            final_df = funding_rate_df
+        else:
+            error_message = "No data fetched and no existing df"
+            raise HyperliquidDataLoaderError(error_message)
+
+        return self.spark.createDataFrame(final_df, schema=SchemaFUNDINGRATE).cache()
 
     def construct_ohlcv_dataframe(
         self,

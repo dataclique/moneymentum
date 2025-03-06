@@ -49,6 +49,9 @@ class TradingPipeline:
 
     async def run(self) -> DataFrame | None:
         logger.info("Running the pipeline...")
+        logger.info("Starting pipeline...")
+
+        _funding_rate_df = await self.dataloader.get_funding_rate_df()
         candles_df = await self.dataloader.get_candles_df()
 
         if util.DEBUG:

@@ -5,12 +5,22 @@ from datetime import datetime, timezone
 from typing import Any
 
 from ccxt import async_support as ccxt  # type: ignore[import-untyped]
+from pyspark.sql import types as T
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from yang import util
+from yang.dataloader.hyperliquid import HyperliquidDataLoaderError
 
 logger = logging.getLogger(__name__)
 logger.setLevel(util.LOG_LEVEL)
+
+SchemaFUNDINGRATE = T.StructType(
+    [
+        T.StructField("timestamp", T.TimestampType()),
+        T.StructField("funding_rate", T.DoubleType()),
+        T.StructField("symbol", T.StringType()),
+    ]
+)
 
 
 # Only need to normalize data for funding_rate and candles
@@ -43,6 +53,14 @@ class HyperliquidDataLoaderFundingRates:
             ).total_seconds()
             / 3600
         )
+
+        if total_hours < 0:
+            error_message = "Our df have timestamps from the future"
+            raise HyperliquidDataLoaderError(error_message)
+
+        # If nothing to fetch -- skip
+        if total_hours == 0:
+            return []
 
         # Generate all timestamp ranges
         since_values = [

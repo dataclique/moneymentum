@@ -100,7 +100,17 @@ async def main() -> None:
         config=config,
         min_leverage=leverage,
     ) as dataloader:
-        kwargs = dict(
+        starting_equity = exe.get_balance()
+
+        strategy = Strategy(
+            timeframe=timeframe,
+            config=config,
+            leverage=float(leverage),
+            starting_equity=starting_equity,
+            min_position_size=min_position_size_usd,
+        )
+
+        pipeline = TradingPipeline(
             spark=spark,
             timeframe=timeframe,
             config=config,
@@ -109,14 +119,14 @@ async def main() -> None:
             min_position_size=min_position_size_usd,
             start_date=start_date,
             dataloader=dataloader,
+            strategy=strategy,
         )
-
-        strategy = Strategy(**kwargs)
-        pipeline = TradingPipeline(**kwargs, strategy=strategy)
 
         async def step() -> None:
             try:
-                pipeline.starting_equity = exe.get_balance()
+                starting_equity = exe.get_balance()
+                pipeline.strategy.starting_equity = starting_equity
+                pipeline.starting_equity = starting_equity
                 target_portfolio = await pipeline.run()
                 if target_portfolio is None:
                     return

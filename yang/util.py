@@ -10,7 +10,7 @@ from pyspark.sql import DataFrame, DataFrameReader, SparkSession
 from pyspark.sql import functions as F
 from statsmodels.tsa.stattools import adfuller, coint  # type: ignore[import-untyped]
 
-DEBUG = False
+DEBUG = True
 LOG_LEVEL = logging.DEBUG if DEBUG else logging.INFO
 
 logger = logging.getLogger(__name__)

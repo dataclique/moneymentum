@@ -47,7 +47,7 @@ class HyperliquidDataLoaderFundingRates:
         symbol: str,
         since: int,
     ) -> list[dict[str, Any]]:
-        """Fetch all funding rate history for a symbol using concurrent requests."""
+        """Fetch all funding rate history for a symbol using batched concurrent requests."""
         # Calculate time ranges for all requests
         max_records_per_call = 500
         hours_per_batch = max_records_per_call  # Assuming hourly data
@@ -72,24 +72,38 @@ class HyperliquidDataLoaderFundingRates:
             for i in range((total_hours // hours_per_batch) + 1)
         ]
 
-        # Create all tasks
-        tasks = [
-            self.fetch_funding_rate_batch(exchange, symbol, batch_since)
-            for batch_since in since_values
-        ]
+        concurrent_requests = 8
+        all_funding_rates = []
 
-        # Fetch all batches concurrently
-        logger.info("Spawning %d concurrent requests for %s", len(tasks), symbol)
-        results = await asyncio.gather(*tasks)
+        for i in range(0, len(since_values), concurrent_requests):
+            batch_since_values = since_values[i : i + concurrent_requests]
+            # Create batch of tasks
+            tasks = [
+                self.fetch_funding_rate_batch(exchange, symbol, batch_since)
+                for batch_since in batch_since_values
+            ]
 
-        # Combine and sort all results
-        all_funding_rates = [rate for batch in results if batch for rate in batch]
+            logger.debug(
+                "Spawning %d concurrent requests for %s (group %d/%d)",
+                len(tasks),
+                symbol,
+                (i // concurrent_requests) + 1,
+                (len(since_values) + concurrent_requests - 1) // concurrent_requests,
+            )
+
+            # Fetch batch results concurrently
+            batch_results = await asyncio.gather(*tasks)
+
+            # Add batch results to overall results
+            for batch in batch_results:
+                if batch:
+                    all_funding_rates.extend(batch)
 
         return sorted(all_funding_rates, key=lambda x: x["timestamp"])
 
     @retry(
         stop=stop_after_attempt(10),
-        wait=wait_exponential(multiplier=1.5, min=1, max=10),
+        wait=wait_exponential(multiplier=2, min=1, max=100),
         reraise=True,
     )
     async def fetch_funding_rate_batch(

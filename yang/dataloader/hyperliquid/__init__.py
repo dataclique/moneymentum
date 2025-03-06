@@ -50,7 +50,14 @@ class HyperliquidDataLoader:
         )
 
         logger.debug("Initializing exchange...")
-        self.exchange = ccxt.hyperliquid({"asyncio_loop": asyncio.get_event_loop()})
+        self.exchange = ccxt.hyperliquid(
+            {
+                "asyncio_loop": asyncio.get_event_loop(),
+                "timeout": 10000,  # 3 seconds
+                "enableRateLimit": True,
+                "rateLimit": 20,  # Adjust rate limit if necessary
+            }
+        )
         logger.info("Exchange initialized: %s", self.exchange)
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):  # noqa: ANN001, ANN204
@@ -64,7 +71,7 @@ class HyperliquidDataLoader:
         existing_funding_rate_df = self.get_existing_df(funding_rate_file_path)
 
         funding_rate_data = await self.load_funding_rate(
-            set(list(tradable_symbols)[:2]), existing_funding_rate_df, since
+            set(tradable_symbols), existing_funding_rate_df, since
         )
 
         funding_rate_df = self.construct_funding_rate_dataframe(
@@ -167,21 +174,38 @@ class HyperliquidDataLoader:
     async def load_funding_rate(
         self, symbols: set, existing_funding_rate_df: pd.DataFrame | None, since: int
     ) -> list[dict[str, Any]]:
-        funding_rate_tasks = [
-            self.loader_funding_rate.fetch_funding_rate_history(
-                self.exchange,
-                symbol,
-                # POPCAT/USDC:USDC --> POPCAT, because funding_rate return only base
-                self.get_symbol_start_time(symbol.split("/")[0], existing_funding_rate_df, since),
-            )
-            for symbol in symbols
-        ]
+        batch_size = 8
+        all_funding_rates = []
 
-        return [
-            funding_rate
-            for funding_rates in await asyncio.gather(*funding_rate_tasks)
-            for funding_rate in funding_rates
-        ]
+        for i in range(0, len(symbols), batch_size):
+            batch_symbols = list(symbols)[i : i + batch_size]
+            funding_rate_tasks = [
+                self.loader_funding_rate.fetch_funding_rate_history(
+                    self.exchange,
+                    symbol,
+                    # POPCAT/USDC:USDC --> POPCAT, because funding_rate return only base
+                    self.get_symbol_start_time(
+                        symbol.split("/")[0], existing_funding_rate_df, since
+                    ),
+                )
+                for symbol in batch_symbols
+            ]
+
+            logger.info(
+                "Processing funding rate batch %d/%d (%d symbols)",
+                (i // batch_size) + 1,
+                (len(symbols) + batch_size - 1) // batch_size,
+                len(batch_symbols),
+            )
+
+            # Fetch batch results concurrently
+            batch_results = await asyncio.gather(*funding_rate_tasks)
+
+            # Add batch results to overall results
+            for funding_rates in batch_results:
+                all_funding_rates.extend(funding_rates)
+
+        return all_funding_rates
 
     async def load_ohlcv(
         self,

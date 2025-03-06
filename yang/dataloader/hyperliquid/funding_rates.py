@@ -9,7 +9,11 @@ from pyspark.sql import types as T
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from yang import util
-from yang.dataloader.hyperliquid import HyperliquidDataLoaderError
+
+
+class HyperliquidDataLoaderErrorFundingRate(Exception):
+    """Base exception class for HyperliquidDataLoader errors."""
+
 
 logger = logging.getLogger(__name__)
 logger.setLevel(util.LOG_LEVEL)
@@ -56,7 +60,7 @@ class HyperliquidDataLoaderFundingRates:
 
         if total_hours < 0:
             error_message = "Our df have timestamps from the future"
-            raise HyperliquidDataLoaderError(error_message)
+            raise HyperliquidDataLoaderErrorFundingRate(error_message)
 
         # If nothing to fetch -- skip
         if total_hours == 0:

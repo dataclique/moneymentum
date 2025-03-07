@@ -78,8 +78,13 @@ class HyperliquidDataLoader:
             funding_rate_data, existing_funding_rate_df
         )
 
-        funding_rate_file_name = "funding_rate1h"
-        util.save_csv(funding_rate_file_name, funding_rate_df)
+        if funding_rate_data:
+            funding_rate_file_name = "funding_rate1h"
+            util.save_csv(funding_rate_file_name, funding_rate_df)
+        else:
+            logger.info(
+                "No new funding rates found",
+            )
 
         return (
             self.spark.read.schema(SchemaFUNDINGRATE)
@@ -144,6 +149,7 @@ class HyperliquidDataLoader:
             return since
 
         last_timestamp_ms = int(symbol_df.iloc[-1]["timestamp"].timestamp() * 1000)
+
         return max(since, last_timestamp_ms)
 
     def categorize_symbols_by_update_method(
@@ -174,38 +180,21 @@ class HyperliquidDataLoader:
     async def load_funding_rate(
         self, symbols: set, existing_funding_rate_df: pd.DataFrame | None, since: int
     ) -> list[dict[str, Any]]:
-        batch_size = 8
-        all_funding_rates = []
-
-        for i in range(0, len(symbols), batch_size):
-            batch_symbols = list(symbols)[i : i + batch_size]
-            funding_rate_tasks = [
-                self.loader_funding_rate.fetch_funding_rate_history(
-                    self.exchange,
-                    symbol,
-                    # POPCAT/USDC:USDC --> POPCAT, because funding_rate return only base
-                    self.get_symbol_start_time(
-                        symbol.split("/")[0], existing_funding_rate_df, since
-                    ),
-                )
-                for symbol in batch_symbols
-            ]
-
-            logger.info(
-                "Processing funding rate batch %d/%d (%d symbols)",
-                (i // batch_size) + 1,
-                (len(symbols) + batch_size - 1) // batch_size,
-                len(batch_symbols),
+        funding_rate_tasks = [
+            self.loader_funding_rate.fetch_funding_rate_history(
+                self.exchange,
+                symbol,
+                # POPCAT/USDC:USDC --> POPCAT, because funding_rate return only base
+                self.get_symbol_start_time(symbol.split("/")[0], existing_funding_rate_df, since),
             )
+            for symbol in symbols
+        ]
 
-            # Fetch batch results concurrently
-            batch_results = await asyncio.gather(*funding_rate_tasks)
-
-            # Add batch results to overall results
-            for funding_rates in batch_results:
-                all_funding_rates.extend(funding_rates)
-
-        return all_funding_rates
+        return [
+            funding_rate
+            for funding_rates in await asyncio.gather(*funding_rate_tasks)
+            for funding_rate in funding_rates
+        ]
 
     async def load_ohlcv(
         self,
@@ -243,14 +232,17 @@ class HyperliquidDataLoader:
                 final_df = existing_funding_rate_df
             else:
                 final_df = pd.concat([existing_funding_rate_df, funding_rate_df], ignore_index=True)
-                final_df.drop_duplicates(subset=["timestamp", "symbol"], keep="last")
         elif funding_rate_df is not None:
             final_df = funding_rate_df
         else:
             error_message = "No data fetched and no existing df"
             raise HyperliquidDataLoaderError(error_message)
 
-        return self.spark.createDataFrame(final_df, schema=SchemaFUNDINGRATE).cache()
+        funding_rate_df_return = self.spark.createDataFrame(
+            final_df.drop_duplicates(), schema=SchemaFUNDINGRATE
+        ).cache()
+
+        return funding_rate_df_return.orderBy("timestamp")
 
     def construct_ohlcv_dataframe(
         self,

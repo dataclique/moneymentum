@@ -18,7 +18,7 @@ class HyperliquidDataLoaderErrorFundingRate(Exception):
 logger = logging.getLogger(__name__)
 logger.setLevel(util.LOG_LEVEL)
 
-SchemaFUNDINGRATE = T.StructType(
+SchemaFundingRate = T.StructType(
     [
         T.StructField("timestamp", T.TimestampType()),
         T.StructField("funding_rate", T.DoubleType()),

@@ -14,7 +14,7 @@ from pyspark.sql import functions as F
 from yang import util
 from yang.dataloader.hyperliquid.funding_rates import (
     HyperliquidDataLoaderFundingRates,
-    SchemaFUNDINGRATE,
+    SchemaFundingRate,
 )
 from yang.dataloader.hyperliquid.markets import HyperliquidDataLoaderMarkets
 from yang.dataloader.hyperliquid.ohlcv import HyperliquidDataLoaderOHLCV, SchemaOHLCV
@@ -87,7 +87,7 @@ class HyperliquidDataLoader:
             )
 
         return (
-            self.spark.read.schema(SchemaFUNDINGRATE)
+            self.spark.read.schema(SchemaFundingRate)
             .csv(funding_rate_file_path, header=True)
             .cache()
         )
@@ -239,7 +239,7 @@ class HyperliquidDataLoader:
             raise HyperliquidDataLoaderError(error_message)
 
         funding_rate_df_return = self.spark.createDataFrame(
-            final_df.drop_duplicates(), schema=SchemaFUNDINGRATE
+            final_df.drop_duplicates(), schema=SchemaFundingRate
         ).cache()
 
         return funding_rate_df_return.orderBy("timestamp")

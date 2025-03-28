@@ -1,5 +1,9 @@
 name: CI/CD
 
+concurrency:
+  group: ${{ github.ref }}-ci
+  cancel-in-progress: true
+
 on:
   workflow_dispatch:
   pull_request:
@@ -13,16 +17,16 @@ jobs:
     env:
       NIXPKGS_ALLOW_UNFREE: 1
     steps:
-    - uses: actions/checkout@v4
-    - uses: DeterminateSystems/nix-installer-action@main
-    - uses: DeterminateSystems/flakehub-cache-action@main
-    - uses: DeterminateSystems/flake-checker-action@main
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: DeterminateSystems/flakehub-cache-action@main
+      - uses: DeterminateSystems/flake-checker-action@main
 
-    - name: Nix Flake check
-      run: nix flake check --impure --accept-flake-config --show-trace
+      - name: Nix Flake check
+        run: nix flake check --impure --accept-flake-config --show-trace
 
-    # - name: Run tests
-    #   run: |
-    #     nix develop \
-    #       --impure --accept-flake-config --show-trace \
-    #       --command /bin/bash -c 'pytest'
+      # - name: Run tests
+      #   run: |
+      #     nix develop \
+      #       --impure --accept-flake-config --show-trace \
+      #       --command /bin/bash -c 'pytest'

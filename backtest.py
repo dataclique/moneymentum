@@ -37,6 +37,8 @@ class BacktestPipeline:
     async def run(self) -> None:
         logger.info("Starting pipeline...")
 
+        _funding_rate_df = await self.dataloader.get_funding_rate_df()
+
         candles_df = await self.dataloader.get_candles_df()
 
         logger.info("Candles DataFrame:")
@@ -147,6 +149,7 @@ async def main() -> None:
     config = TIMEFRAME_CONFIGS[timeframe]
 
     leverage: int = 5
+    starting_equity = 100
     min_position_size_usd = 11
     start_date = datetime(2023, 6, 1, tzinfo=timezone.utc).replace(
         hour=0,
@@ -162,19 +165,26 @@ async def main() -> None:
         config=config,
         min_leverage=leverage,
     ) as dataloader:
-        kwargs = dict(
+        strategy = Strategy(
+            timeframe=timeframe,
+            config=config,
+            leverage=float(leverage),
+            starting_equity=starting_equity,
+            min_position_size=min_position_size_usd,
+        )
+
+        pipeline = BacktestPipeline(
             spark=spark,
             timeframe=timeframe,
             config=config,
             leverage=float(leverage),
-            starting_equity=100,
+            starting_equity=starting_equity,
             min_position_size=min_position_size_usd,
             start_date=start_date,
             dataloader=dataloader,
+            strategy=strategy,
         )
 
-        strategy = Strategy(**kwargs)
-        pipeline = BacktestPipeline(**kwargs, strategy=strategy)
         await pipeline.run()
 
 

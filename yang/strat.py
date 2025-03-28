@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 logger.setLevel(util.LOG_LEVEL)
 
 
-@dataclass(frozen=True)
+@dataclass
 class Strategy:
     timeframe: Timeframe
     config: TimeframeConfig

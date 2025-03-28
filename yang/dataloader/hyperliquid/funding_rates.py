@@ -5,12 +5,26 @@ from datetime import datetime, timezone
 from typing import Any
 
 from ccxt import async_support as ccxt  # type: ignore[import-untyped]
+from pyspark.sql import types as T
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from yang import util
 
+
+class HyperliquidDataLoaderErrorFundingRate(Exception):
+    """Base exception class for HyperliquidDataLoader errors."""
+
+
 logger = logging.getLogger(__name__)
 logger.setLevel(util.LOG_LEVEL)
+
+SchemaFundingRate = T.StructType(
+    [
+        T.StructField("timestamp", T.TimestampType()),
+        T.StructField("funding_rate", T.DoubleType()),
+        T.StructField("symbol", T.StringType()),
+    ]
+)
 
 
 # Only need to normalize data for funding_rate and candles
@@ -44,6 +58,14 @@ class HyperliquidDataLoaderFundingRates:
             / 3600
         )
 
+        if total_hours < 0:
+            error_message = "Our df have timestamps from the future"
+            raise HyperliquidDataLoaderErrorFundingRate(error_message)
+
+        # If nothing to fetch -- skip
+        if total_hours == 0:
+            return []
+
         # Generate all timestamp ranges
         since_values = [
             since + (i * hours_per_batch * 3600 * 1000)  # Convert hours to milliseconds
@@ -67,7 +89,7 @@ class HyperliquidDataLoaderFundingRates:
 
     @retry(
         stop=stop_after_attempt(10),
-        wait=wait_exponential(multiplier=1.5, min=1, max=10),
+        wait=wait_exponential(multiplier=2, min=1, max=100),
         reraise=True,
     )
     async def fetch_funding_rate_batch(

@@ -25,16 +25,21 @@ class SMACrossoverAnalyzer:
     start_date: datetime
     dataloader: HyperliquidDataLoader
 
-    def calculate_sma_crossovers(self, candles_df: DataFrame) -> list[tuple[str, int]]:
+    def calculate_sma_crossovers(self, candles_df: DataFrame) -> DataFrame:
         """
         Calculate the number of times price crossed SMA for each token.
-        Returns a list of (token, crossover_count) tuples sorted by crossover count.
+        Returns a DataFrame with symbol and total_crosses columns, sorted by total_crosses in descending order.
         """
 
-        rolling_window = W.Window.partitionBy("symbol").orderBy("timestamp").rowsBetween(-self.config["lookback_periods"] + 1, W.Window.currentRow)
-        df_with_sma = candles_df.withColumn(
+        # Only the most recent lookback_periods records for each token
+        window = W.Window.partitionBy("symbol").orderBy(F.col("timestamp").desc())
+        recent_records = candles_df.withColumn("row_num", F.row_number().over(window)) \
+            .filter(F.col("row_num") <= self.lookback_periods) \
+            .drop("row_num")
+
+        df_with_sma = recent_records.withColumn(
             "sma",
-            F.avg("close").over(rolling_window)
+            F.avg("close").over(W.Window.partitionBy("symbol"))
         )
 
         df_with_crosses = df_with_sma.withColumn(
@@ -57,13 +62,11 @@ class SMACrossoverAnalyzer:
             ).otherwise(0)
         )
 
-        token_crosses = df_with_crosses.groupBy("symbol").agg(
+        return df_with_crosses.groupBy("symbol").agg(
             (F.sum("cross_up") + F.sum("cross_down")).alias("total_crosses")
         ).orderBy(F.col("total_crosses").desc())
 
-        return [(row["symbol"], row["total_crosses"]) for row in token_crosses.collect()]
-
-    async def analyze(self) -> list[tuple[str, int]]:
+    async def analyze(self) -> DataFrame:
         """
         Main analysis function that fetches data and calculates SMA crossovers.
         """
@@ -75,8 +78,8 @@ class SMACrossoverAnalyzer:
         
         # Log results
         logger.info("SMA Crossover Analysis Results:")
-        for token, crosses in crossover_results:
-            logger.info(f"{token}: {crosses} crosses")
+        for row in crossover_results.collect():
+            logger.info(f"{row['symbol']}: {row['total_crosses']} crosses")
             
         return crossover_results
 
@@ -108,10 +111,12 @@ async def main() -> None:
         )
         
         results = await analyzer.analyze()
+
+        util.save_csv("sma_crossover_analysis", results)
         
         print("\nTop 10 tokens with most SMA crosses:")
-        for token, crosses in results[:10]:
-            print(f"{token}: {crosses} crosses")
+        for row in results.orderBy(F.col("total_crosses").desc()).limit(10).collect():
+            print(f"{row['symbol']}: {row['total_crosses']} crosses")
 
 
 if __name__ == "__main__":

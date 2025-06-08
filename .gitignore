@@ -11,3 +11,4 @@ __pycache__
 /data/
 venv/
 /node_modules
+/public/data/

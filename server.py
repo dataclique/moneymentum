@@ -13,7 +13,7 @@ app = FastAPI()
 # Enable CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],  # React app URL
+    allow_origins=["http://localhost:5173"],  # React app URL
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -87,6 +87,7 @@ async def get_date_range():
 async def get_data(date_range: DateRange):
     """Get data for the specified date range"""
     try:
+        print(date_range)
         start_date = datetime.fromisoformat(date_range.start_date)
         end_date = datetime.fromisoformat(date_range.end_date)
     except ValueError:
@@ -103,6 +104,11 @@ async def get_data(date_range: DateRange):
 
     try:
         df = cache.get_data(start_date, end_date)
+        
+        # Group by both date and ticker to get the last record for each ticker each day
+        df['date'] = df['timestamp'].dt.date
+        df = df.sort_values('timestamp').groupby(['date', 'ticker']).last().reset_index()
+        df = df.drop('date', axis=1)  # Remove the temporary date column
         
         # Replace both numpy NaN and pandas NA with None
         df = df.replace({np.nan: None, pd.NA: None})

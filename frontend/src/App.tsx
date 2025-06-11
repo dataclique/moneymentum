@@ -2,16 +2,12 @@ import { useState, useEffect } from 'react';
 import { columns, type TradingData } from "./components/ui/columns"
 import { DataTable } from "./components/ui/data-table"
 
-async function reloadData(startDate: string, endDate: string): Promise<string> {
+async function reloadData(): Promise<string> {
   const response = await fetch('http://localhost:8000/api/reload_data', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({
-      start_date: startDate,
-      end_date: endDate,
-    }),
   });
   
   if (!response.ok) {
@@ -59,8 +55,8 @@ function App() {
   const [error, setError] = useState<string | null>(null);
   const [reloadMessage, setReloadMessage] = useState<string | null>(null);
   const [dateRange, setDateRange] = useState({
-    startDate: '2025-01-01',
-    endDate: '2025-01-01',
+    startDate: '2025-05-05',
+    endDate: '2025-05-05',
   });
 
   useEffect(() => {
@@ -84,7 +80,7 @@ function App() {
     try {
       setLoading(true);
       setError(null);
-      const message = await reloadData(dateRange.startDate, dateRange.endDate);
+      const message = await reloadData();
       setReloadMessage(message);
       // Refresh the data after reload
       const result = await getData(dateRange.startDate, dateRange.endDate);

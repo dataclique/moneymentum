@@ -7,6 +7,10 @@ import numpy as np
 from typing import List, Optional
 import uvicorn
 import os
+from yang.dataloader.hyperliquid import HyperliquidDataLoader
+from yang.strat import Strategy
+from pyspark.sql import SparkSession
+from yang.util import TIMEFRAME_CONFIGS, Timeframe
 
 app = FastAPI()
 
@@ -18,6 +22,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Initialize Spark
+spark = SparkSession.builder \
+    .appName("TradingAnalysis") \
+    .master("local[*]") \
+    .getOrCreate()
 
 # Cache for storing data and time range
 class DataCache:
@@ -75,6 +85,53 @@ class DateRange(BaseModel):
     start_date: str
     end_date: str
 
+async def run_pipeline(start_date: datetime) -> datetime:
+    """Run the trading pipeline and return the latest timestamp"""
+    try:
+        # Initialize components
+        timeframe: Timeframe = "1h"
+        config = TIMEFRAME_CONFIGS[timeframe]
+        
+        dataloader = HyperliquidDataLoader(
+            start_date=start_date,
+            timeframe=timeframe,
+            config=config,
+            spark=spark,
+            min_leverage=1
+        )
+        
+        strategy = Strategy(
+            leverage=1.0,
+            starting_equity=10000.0,
+            min_position_size=100.0,
+            config=config,
+            spark=spark,
+            timeframe=timeframe,
+            start_date=start_date
+        )
+
+        # Get candles data
+        candles_df = await dataloader.get_candles_df()
+        
+        # Generate analysis
+        analysis_df = strategy.generate_analysis(candles_df)
+        
+        # Convert to pandas and save
+        analysis_pd = analysis_df.toPandas()
+        analysis_pd.to_csv('data/trading_data.csv', index=False)
+        
+        # Get the latest timestamp
+        latest_timestamp = analysis_pd['timestamp'].max()
+        
+        # Reinitialize cache with new data
+        cache.initialize('data/trading_data.csv')
+        
+        return latest_timestamp
+        
+    except Exception as e:
+        print(f"Error in pipeline: {str(e)}")
+        raise
+
 @app.get("/api/date-range")
 async def get_date_range():
     """Get the available date range from the data"""
@@ -87,7 +144,6 @@ async def get_date_range():
 async def get_data(date_range: DateRange):
     """Get data for the specified date range"""
     try:
-        print(date_range)
         start_date = datetime.fromisoformat(date_range.start_date)
         end_date = datetime.fromisoformat(date_range.end_date)
     except ValueError:
@@ -115,6 +171,16 @@ async def get_data(date_range: DateRange):
         
         # Convert DataFrame to list of dictionaries
         return df.to_dict(orient='records')
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/reload_data")
+async def reload_data(date_range: DateRange):
+    """Reload data using the pipeline"""
+    try:
+        start_date = datetime.fromisoformat(date_range.start_date)
+        latest_timestamp = await run_pipeline(start_date)
+        return {"message": f"Data reloaded successfully. Latest timestamp: {latest_timestamp.isoformat()}"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

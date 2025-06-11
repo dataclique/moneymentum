@@ -32,7 +32,7 @@ export function DataTable<TData, TValue>({
   })
  
   return (
-    <div className="rounded-md border">
+    <div className="rounded-md border border-gray-700">
       <Table>
         <TableHeader>
           {table.getHeaderGroups().map((headerGroup) => (
@@ -68,8 +68,8 @@ export function DataTable<TData, TValue>({
             ))
           ) : (
             <TableRow>
-              <TableCell colSpan={columns.length} className="h-24 text-center">
-                No results.
+              <TableCell colSpan={columns.length} className="h-24 text-center text-gray-400">
+                Нет данных.
               </TableCell>
             </TableRow>
           )}

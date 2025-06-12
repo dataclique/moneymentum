@@ -12,6 +12,16 @@ from yang.dataloader.hyperliquid import HyperliquidDataLoader
 from yang.strat import Strategy
 from pyspark.sql import SparkSession
 from yang.util import TIMEFRAME_CONFIGS, Timeframe, get_spark
+import subprocess
+from typing import Iterator
+from fastapi.responses import StreamingResponse
+import signal
+
+# TODO: clear bullshit of cache
+# TODO: return some logs of reloading data
+# TODO: default show data for last date in df
+# TODO: fix EXPORT_JAVA bullshit
+# TODO: try to deploy
 
 app = FastAPI()
 
@@ -109,56 +119,22 @@ class DateRange(BaseModel):
     start_date: str
     end_date: str
 
-async def run_pipeline(start_date: datetime) -> datetime:
-    """Run the trading pipeline and return the latest timestamp"""
-    try:
-        # Initialize components
-        timeframe: Timeframe = "1h"
-        config = TIMEFRAME_CONFIGS[timeframe]
-        
-        dataloader = HyperliquidDataLoader(
-            start_date=start_date,
-            timeframe=timeframe,
-            config=config,
-            spark=spark,
-            min_leverage=1
-        )
-            
-        strategy = Strategy(
-            timeframe=timeframe,
-            config=config,
-            leverage=1.0,
-            starting_equity=10000.0,
-            min_position_size=100.0,
-        )
-
-        # Get candles data
-        candles_df = await dataloader.get_candles_df()
-        
-        # Generate analysis
-        analysis_df = strategy.generate_analysis(candles_df)
-        
-        # Convert to pandas and save
-        analysis_pd = analysis_df.toPandas()
-        analysis_pd.to_csv('data/analysis_df.csv', index=False)
-        
-        # Get the latest timestamp
-        latest_timestamp = analysis_pd['timestamp'].max()
-        
-        # Reinitialize cache with new data
-        cache.initialize('data/analysis_df.csv')
-        
-        return latest_timestamp
-        
-    except Exception as e:
-        print(f"Error in pipeline: {str(e)}")
-        raise
-
 @app.get("/api/date-range")
 async def get_date_range():
     """Get the available date range from the data"""
     try:
-        return cache.get_date_range()
+        date_range = cache.get_date_range()
+        # Get the last timestamp from the data
+        if not cache.df.empty:
+            last_timestamp = cache.df['timestamp'].max()
+            return {
+                **date_range,
+                "last_timestamp": last_timestamp.isoformat()
+            }
+        return {
+            **date_range,
+            "last_timestamp": None
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -171,21 +147,42 @@ async def get_data(date_range: DateRange):
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid date format")
 
-    if start_date > end_date:
+    print(date_range)
+    if start_date >= end_date:
         raise HTTPException(status_code=400, detail="Start date must be before end date")
-
-    if start_date < cache.min_date or end_date > cache.max_date:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Date range must be between {cache.min_date.isoformat()} and {cache.max_date.isoformat()}"
-        )
 
     try:
         df = cache.get_data(start_date, end_date)
         
-        # If DataFrame is empty, return empty list
+        # If DataFrame is empty, check if it's because of date range
         if df.empty:
-            return []
+            # Get the actual date range from the data
+            if not cache.df.empty:
+                min_timestamp = cache.df['timestamp'].min()
+                max_timestamp = cache.df['timestamp'].max()
+                
+                # Check if the requested range is completely outside our data
+                if end_date < min_timestamp:
+                    return {
+                        "data": [],
+                        "message": f"No records found for date range: {start_date.date()} to {end_date.date()} (earliest record is from {min_timestamp.date()})"
+                    }
+                elif start_date > max_timestamp:
+                    return {
+                        "data": [],
+                        "message": f"No records found for date range: {start_date.date()} to {end_date.date()} (latest record is from {max_timestamp.date()})"
+                    }
+                else:
+                    # This case shouldn't happen if get_data is working correctly
+                    return {
+                        "data": [],
+                        "message": f"No records found for date range: {start_date.date()} to {end_date.date()}"
+                    }
+            else:
+                return {
+                    "data": [],
+                    "message": "No data available in the system"
+                }
             
         # Group by both date and ticker to get the last record for each ticker each day
         df['date'] = df['timestamp'].dt.date
@@ -196,42 +193,84 @@ async def get_data(date_range: DateRange):
         df = df.replace({np.nan: None, pd.NA: None})
         
         # Convert DataFrame to list of dictionaries
-        return df.to_dict(orient='records')
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/api/reload_data")
-async def reload_data():
-    """Reload data using backtest.py script"""
-    try:
-        # Set JAVA_HOME and run backtest.py
-        env = os.environ.copy()
-        env['JAVA_HOME'] = '/usr/lib/jvm/java-11-openjdk-amd64'
-        
-        print("Running backtest.py")
-
-        result = subprocess.run(
-            ['python3', 'backtest.py'],
-            env=env,
-            capture_output=True,
-            text=True
-        )
-        
-        if result.returncode != 0:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Error running backtest.py: {result.stderr}"
-            )
-            
-        # Reinitialize cache with new data
-        cache.initialize('data/analysis_df.csv')
-        
         return {
-            "message": "Data reloaded successfully using backtest.py",
-            "output": result.stdout
+            "data": df.to_dict(orient='records'),
+            "message": None
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+# Global variable to track the current process
+current_process: subprocess.Popen[str] | None = None
+
+@app.post("/api/reload_data/stream")
+def reload_data_stream() -> StreamingResponse:
+    """Stream logs while running backtest.py"""
+    global current_process
+
+    def run_script() -> Iterator[str]:
+        global current_process
+        env = os.environ.copy()
+        yield "Running backtest.py...\n"
+
+        current_process = subprocess.Popen(
+            ["python3", "backtest.py"],
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True
+        )
+
+        try:
+            if current_process.stdout is None:
+                yield "Error: No stdout available\n"
+                return
+
+            for line in iter(current_process.stdout.readline, ''):
+                if not line:
+                    break
+                print(line, end='')
+                yield line  # Send line by line to frontend
+
+            current_process.wait()
+
+            if current_process.returncode != 0:
+                yield f"\nError: backtest.py exited with code {current_process.returncode}\n"
+            else:
+                yield "\n✅ backtest.py finished successfully.\n"
+
+            # Optional: reload cache
+            try:
+                cache.initialize('data/analysis_df.csv')
+                yield "✅ Cache reloaded.\n"
+            except Exception as e:
+                yield f"❌ Error reloading cache: {e}\n"
+        finally:
+            current_process = None
+
+    return StreamingResponse(run_script(), media_type="text/plain")
+
+@app.post("/api/stop_reload")
+async def stop_reload():
+    """Stop the current reload process"""
+    global current_process
+    if current_process is None:
+        raise HTTPException(status_code=400, detail="No process is currently running")
+    
+    try:
+        # Send SIGTERM only to the specific process
+        current_process.terminate()
+        # Wait for the process to terminate
+        current_process.wait(timeout=5)
+        current_process = None
+        return {"message": "Process stopped successfully"}
+    except subprocess.TimeoutExpired:
+        # If process doesn't terminate gracefully, force kill it
+        current_process.kill()
+        current_process = None
+        return {"message": "Process force stopped"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error stopping process: {str(e)}")
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000) 

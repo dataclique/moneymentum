@@ -1,21 +1,17 @@
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from datetime import datetime, timezone, timedelta
-import pandas as pd
-import numpy as np
-from typing import List, Optional
-import uvicorn
 import os
 import subprocess
-from yang.dataloader.hyperliquid import HyperliquidDataLoader
-from yang.strat import Strategy
-from pyspark.sql import SparkSession
-from yang.util import TIMEFRAME_CONFIGS, Timeframe, get_spark
-import subprocess
-from typing import Iterator
+from collections.abc import Iterator
+from datetime import datetime, timedelta, timezone
+
+import numpy as np
+import pandas as pd
+import uvicorn
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-import signal
+from pydantic import BaseModel
+
+from yang.util import get_spark
 
 # TODO: clear bullshit of cache
 # TODO: return some logs of reloading data
@@ -45,48 +41,50 @@ class DataCache:
         self.max_date = None
         self.initialized = False
 
-    def initialize(self, file_path: str):
-        if not self.initialized:
-            try:
-                # Get absolute path
-                abs_path = os.path.abspath(file_path)
-                print(f"Loading data from: {abs_path}")
-                
-                # Check if file exists
-                if not os.path.exists(abs_path):
-                    print(f"File {abs_path} does not exist. Initializing with empty DataFrame.")
-                    self.df = pd.DataFrame(columns=['timestamp'])
-                    # Set a wide default date range (1 year ago to 1 year ahead)
-                    now = datetime.now(timezone.utc)
-                    self.min_date = now - timedelta(days=365)
-                    self.max_date = now + timedelta(days=365)
-                    self.initialized = True
-                    return
-                
-                # Read only timestamp column first to get date range
-                self.df = pd.read_csv(abs_path, parse_dates=['timestamp'])
-                
-                # Ensure timestamp column is datetime
-                self.df['timestamp'] = pd.to_datetime(self.df['timestamp'])
-                
-                # Get min and max dates
-                self.min_date = self.df['timestamp'].min()
-                self.max_date = self.df['timestamp'].max()
-                
-                if self.min_date is pd.NaT or self.max_date is pd.NaT:
-                    raise ValueError("Invalid date range in data")
-                
-                self.initialized = True
-                print(f"Data loaded. Date range: {self.min_date} to {self.max_date}")
-            except Exception as e:
-                print(f"Error initializing data: {str(e)}")
-                # Initialize with empty DataFrame on error
-                self.df = pd.DataFrame(columns=['timestamp'])
+    def initialize(self, file_path: str, force: bool = False) -> None:
+        if self.initialized and not force:
+            return
+    
+        try:
+            # Get absolute path
+            abs_path = os.path.abspath(file_path)
+            print(f"Loading data from: {abs_path}")
+
+            # Check if file exists
+            if not os.path.exists(abs_path):
+                print(f"File {abs_path} does not exist. Initializing with empty DataFrame.")
+                self.df = pd.DataFrame(columns=["timestamp"])
                 # Set a wide default date range (1 year ago to 1 year ahead)
                 now = datetime.now(timezone.utc)
                 self.min_date = now - timedelta(days=365)
                 self.max_date = now + timedelta(days=365)
                 self.initialized = True
+                return
+            
+            # Read only timestamp column first to get date range
+            self.df = pd.read_csv(abs_path, parse_dates=["timestamp"])
+            
+            # Ensure timestamp column is datetime
+            self.df["timestamp"] = pd.to_datetime(self.df["timestamp"])
+            
+            # Get min and max dates
+            self.min_date = self.df["timestamp"].min()
+            self.max_date = self.df["timestamp"].max()
+            
+            if self.min_date is pd.NaT or self.max_date is pd.NaT:
+                raise ValueError("Invalid date range in data")
+            
+            self.initialized = True
+            print(f"Data loaded. Date range: {self.min_date} to {self.max_date}")
+        except Exception as e:
+            print(f"Error initializing data: {str(e)}")
+            # Initialize with empty DataFrame on error
+            self.df = pd.DataFrame(columns=["timestamp"])
+            # Set a wide default date range (1 year ago to 1 year ahead)
+            now = datetime.now(timezone.utc)
+            self.min_date = now - timedelta(days=365)
+            self.max_date = now + timedelta(days=365)
+            self.initialized = True
 
     def get_date_range(self):
         if not self.initialized:
@@ -100,7 +98,7 @@ class DataCache:
         if not self.initialized:
             raise HTTPException(status_code=500, detail="Data not initialized")
         if self.df.empty:
-            return pd.DataFrame(columns=['timestamp'])
+            return pd.DataFrame(columns=["timestamp"])
             
         # Convert input dates to UTC if they're naive
         if start_date.tzinfo is None:
@@ -108,12 +106,12 @@ class DataCache:
         if end_date.tzinfo is None:
             end_date = end_date.replace(tzinfo=timezone.utc)
             
-        mask = (self.df['timestamp'] >= start_date) & (self.df['timestamp'] <= end_date)
+        mask = (self.df["timestamp"] >= start_date) & (self.df["timestamp"] <= end_date)
         return self.df[mask]
 
 # Initialize cache
 cache = DataCache()
-cache.initialize('data/analysis_df.csv')  # Update this path to your CSV file
+cache.initialize("data/analysis_df.csv")
 
 class DateRange(BaseModel):
     start_date: str
@@ -124,9 +122,10 @@ async def get_date_range():
     """Get the available date range from the data"""
     try:
         date_range = cache.get_date_range()
+        print(date_range)
         # Get the last timestamp from the data
         if not cache.df.empty:
-            last_timestamp = cache.df['timestamp'].max()
+            last_timestamp = cache.df["timestamp"].max()
             return {
                 **date_range,
                 "last_timestamp": last_timestamp.isoformat()
@@ -147,7 +146,6 @@ async def get_data(date_range: DateRange):
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid date format")
 
-    print(date_range)
     if start_date >= end_date:
         raise HTTPException(status_code=400, detail="Start date must be before end date")
 
@@ -158,8 +156,8 @@ async def get_data(date_range: DateRange):
         if df.empty:
             # Get the actual date range from the data
             if not cache.df.empty:
-                min_timestamp = cache.df['timestamp'].min()
-                max_timestamp = cache.df['timestamp'].max()
+                min_timestamp = cache.df["timestamp"].min()
+                max_timestamp = cache.df["timestamp"].max()
                 
                 # Check if the requested range is completely outside our data
                 if end_date < min_timestamp:
@@ -167,34 +165,32 @@ async def get_data(date_range: DateRange):
                         "data": [],
                         "message": f"No records found for date range: {start_date.date()} to {end_date.date()} (earliest record is from {min_timestamp.date()})"
                     }
-                elif start_date > max_timestamp:
+                if start_date > max_timestamp:
                     return {
                         "data": [],
                         "message": f"No records found for date range: {start_date.date()} to {end_date.date()} (latest record is from {max_timestamp.date()})"
                     }
-                else:
-                    # This case shouldn't happen if get_data is working correctly
-                    return {
-                        "data": [],
-                        "message": f"No records found for date range: {start_date.date()} to {end_date.date()}"
-                    }
-            else:
+                # This case shouldn't happen if get_data is working correctly
                 return {
                     "data": [],
-                    "message": "No data available in the system"
+                    "message": f"No records found for date range: {start_date.date()} to {end_date.date()}"
                 }
+            return {
+                "data": [],
+                "message": "No data available in the system"
+            }
             
         # Group by both date and ticker to get the last record for each ticker each day
-        df['date'] = df['timestamp'].dt.date
-        df = df.sort_values('timestamp').groupby(['date', 'ticker']).last().reset_index()
-        df = df.drop('date', axis=1)  # Remove the temporary date column
+        df["date"] = df["timestamp"].dt.date
+        df = df.sort_values("timestamp").groupby(["date", "ticker"]).last().reset_index()
+        df = df.drop("date", axis=1)  # Remove the temporary date column
         
         # Replace both numpy NaN and pandas NA with None
         df = df.replace({np.nan: None, pd.NA: None})
         
         # Convert DataFrame to list of dictionaries
         return {
-            "data": df.to_dict(orient='records'),
+            "data": df.to_dict(orient="records"),
             "message": None
         }
     except Exception as e:
@@ -226,10 +222,10 @@ def reload_data_stream() -> StreamingResponse:
                 yield "Error: No stdout available\n"
                 return
 
-            for line in iter(current_process.stdout.readline, ''):
+            for line in iter(current_process.stdout.readline, ""):
                 if not line:
                     break
-                print(line, end='')
+                print(line, end="")
                 yield line  # Send line by line to frontend
 
             current_process.wait()
@@ -239,9 +235,8 @@ def reload_data_stream() -> StreamingResponse:
             else:
                 yield "\n✅ backtest.py finished successfully.\n"
 
-            # Optional: reload cache
             try:
-                cache.initialize('data/analysis_df.csv')
+                cache.initialize("data/analysis_df.csv", force=True)
                 yield "✅ Cache reloaded.\n"
             except Exception as e:
                 yield f"❌ Error reloading cache: {e}\n"

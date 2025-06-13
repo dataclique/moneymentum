@@ -59,7 +59,7 @@ class TradingPipeline:
 
         analysis_df = self.strategy.generate_analysis(candles_df)
 
-        util.save_csv('analysis_df', analysis_df)
+        util.save_csv("analysis_df", analysis_df)
         picks_df = self.strategy.generate_picks(analysis_df)
         latest_row = candles_df.select(F.max("timestamp")).first()
         if latest_row is None:

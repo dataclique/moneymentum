@@ -4,23 +4,6 @@ import { DataTable } from "./components/ui/data-table"
 import DatePicker from "react-datepicker";
 import "react-datepicker/dist/react-datepicker.css";
 
-async function reloadData(): Promise<string> {
-  const response = await fetch('http://localhost:8000/api/reload_data', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-  });
-  
-  if (!response.ok) {
-    const errorData = await response.json();
-    throw new Error(errorData.detail || `HTTP error! status: ${response.status}`);
-  }
-  
-  const data = await response.json();
-  return data.message;
-}
-
 async function getDateRange(): Promise<{ min_date: string; max_date: string; last_timestamp: string | null }> {
   const response = await fetch('http://localhost:8000/api/date-range');
   if (!response.ok) {
@@ -87,7 +70,6 @@ function App() {
             endDate: lastDate,
           });
         } else {
-          setError("No data available");
           setLoading(false);
         }
       } catch (err) {

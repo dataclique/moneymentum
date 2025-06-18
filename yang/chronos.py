@@ -36,9 +36,9 @@ class Chronos:
             logger.debug("Initial count: %d; Ticker count: %d", initial_count, ticker_count)
 
             count_count = count_df.select("count").dropna().count()
-            assert (
-                count_count == initial_count
-            ), f"Count column count ({count_count}) should match initial count ({initial_count})"
+            assert count_count == initial_count, (
+                f"Count column count ({count_count}) should match initial count ({initial_count})"
+            )
             logger.debug("Count column count (%d) check passed.", count_count)
 
         return_df = count_df.withColumn(
@@ -106,7 +106,7 @@ class Chronos:
             min_count = max_min_df.select("min").dropna().count()
             max_count = max_min_df.select("max").dropna().count()
             assert min_count == max_count, (
-                f"Should be: min column count ({min_count})" f" == max column count ({max_count})"
+                f"Should be: min column count ({min_count}) == max column count ({max_count})"
             )
             logger.debug("Max/min column counts (%d, %d) check passed.", min_count, max_count)
 
@@ -123,9 +123,9 @@ class Chronos:
 
         if util.DEBUG:
             sma_count = sma_df.select("sma").dropna().count()
-            assert (
-                0 < sma_count < initial_count
-            ), f"SMA column count ({sma_count}) should satisfy 0 < {sma_count} < {initial_count}"
+            assert 0 < sma_count < initial_count, (
+                f"SMA column count ({sma_count}) should satisfy 0 < {sma_count} < {initial_count}"
+            )
             logger.debug("SMA column count (%d) check passed.", sma_count)
 
         mean_df = sma_df.withColumn(
@@ -135,9 +135,9 @@ class Chronos:
 
         if util.DEBUG:
             mean_count = mean_df.select("mean_return").dropna().count()
-            assert (
-                mean_count == sma_count
-            ), f"Mean return column count ({mean_count}) == SMA column count ({sma_count})"
+            assert mean_count == sma_count, (
+                f"Mean return column count ({mean_count}) == SMA column count ({sma_count})"
+            )
             logger.debug("Mean return column count (%d) check passed.", mean_count)
 
         stddev_df = mean_df.withColumn(
@@ -147,9 +147,9 @@ class Chronos:
 
         if util.DEBUG:
             stddev_count = stddev_df.select("price_stddev", "return_stddev").dropna().count()
-            assert (
-                stddev_count == mean_count
-            ), f"Price stddev column count ({stddev_count}) should equal {mean_count}"
+            assert stddev_count == mean_count, (
+                f"Price stddev column count ({stddev_count}) should equal {mean_count}"
+            )
             logger.debug("Price stddev column count (%d) check passed.", stddev_count)
 
         return stddev_df

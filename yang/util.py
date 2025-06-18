@@ -148,8 +148,10 @@ def get_spark() -> SparkSession:
         SparkSession.builder.appName("moneymentum")
         .config("spark.driver.host", "127.0.0.1")
         .config("spark.driver.bindAddress", "127.0.0.1")
-        .config("spark.driver.port", "4040") # Используем 4040, это стандартный порт для Spark, если не занят
-        .config("spark.ui.port", "4041")     # Порт для Spark UI
+        .config(
+            "spark.driver.port", "4040"
+        )  # Используем 4040, это стандартный порт для Spark, если не занят
+        .config("spark.ui.port", "4041")  # Порт для Spark UI
         # ---------------------------------------------------
         # .config("spark.driver.extraClassPath", JDBC_DRIVER_PATH)
         # Memory and Spill Configurations
@@ -172,12 +174,13 @@ def get_spark() -> SparkSession:
         .config("spark.sql.files.maxPartitionBytes", "128m")  # Larger partition size
         .config("spark.sql.inMemoryColumnarStorage.compressed", "true")
         .config("spark.sql.inMemoryColumnarStorage.batchSize", "10000")
-        .master("local[*]") # Убедитесь, что эта строка есть и она ниже всех .config()
+        .master("local[*]")  # Убедитесь, что эта строка есть и она ниже всех .config()
         .getOrCreate()
     )
     spark.sparkContext.setLogLevel("ERROR")
     logger.debug("Spark session created.")
     return spark
+
 
 def get_spark_pg_df_reader(
     spark: SparkSession, db_url: str, db_user: str, db_password: str

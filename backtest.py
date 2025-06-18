@@ -46,9 +46,9 @@ class BacktestPipeline:
 
         chronos = Chronos(timeframe=self.timeframe, config=self.config)
         analysis_df = self.strategy.generate_analysis(candles_df)
-        
+
         util.save_csv("analysis_df", analysis_df)
-        
+
         return
         picks_df = self.strategy.generate_picks(analysis_df)
 

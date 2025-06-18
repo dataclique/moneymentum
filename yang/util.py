@@ -1,7 +1,7 @@
 import logging
 import math
 from pathlib import Path
-from typing import Literal, TypedDict, Dict
+from typing import Literal, TypedDict
 
 import colorlog
 import matplotlib.pyplot as plt
@@ -30,7 +30,7 @@ Timeframe = Literal["15m", "1h", "1d", "1w"]
 # min_acceptable_return Based on HyperLiquid neutral funding rates.
 # See funding comparison page for more details:
 # https://app.hyperliquid.xyz/fundingComparison
-TIMEFRAME_CONFIGS: Dict[Timeframe, TimeframeConfig] = {
+TIMEFRAME_CONFIGS: dict[Timeframe, TimeframeConfig] = {
     "1w": {
         "lookback_periods": 52,
         "n_tokens": 2,

@@ -31,12 +31,12 @@
           denofmt.enable = true;
         };
 
-        deps = with pkgs; [ cacert clang jdk11 ];
+        deps = with pkgs; [ cacert clang jdk17 zlib ];
         # jdbcPath = "${pkgs.postgresql_jdbc}/share/java/postgresql-jdbc.jar";
         # injectJdbc = " --driver-class-path ${jdbcPath} --jars ${jdbcPath}";
         env = {
           # JDBC_PATH = jdbcPath;
-          JAVA_HOME = pkgs.jdk11;
+          JAVA_HOME = pkgs.jdk17;
         };
         src = ./.;
 
@@ -55,7 +55,7 @@
                 package = pkgs.python310;
                 venv.enable = true;
                 venv.requirements = builtins.readFile ./requirements.txt;
-                libraries = deps;
+                libraries = deps ++ [ pkgs.zlib ];
               };
             };
 

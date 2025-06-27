@@ -49,7 +49,6 @@ class BacktestPipeline:
 
         util.save_csv("analysis_df", analysis_df)
 
-        return
         picks_df = self.strategy.generate_picks(analysis_df)
 
         latest_row = candles_df.select(F.max("timestamp")).first()

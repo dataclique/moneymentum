@@ -69,7 +69,7 @@ class SMACrossoverAnalyzer:
                 ).otherwise(0),
             )
         )
-        
+
         return (
             df_with_crosses.groupBy("symbol")
             .agg((F.sum("cross_up") + F.sum("cross_down")).alias("total_crosses"))

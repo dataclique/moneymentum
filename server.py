@@ -40,6 +40,7 @@ spark = get_spark()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
 # Cache for storing data and time range
 class DataCache:
     def __init__(self) -> None:
@@ -151,7 +152,6 @@ async def get_date_range() -> dict[str, Any]:
     return {**date_range, "last_timestamp": last_timestamp}
 
 
-
 @app.post("/api/data")
 async def get_data(date_range: DateRange) -> dict[str, Any]:
     """Get data for the specified date range"""
@@ -204,10 +204,7 @@ async def get_data(date_range: DateRange) -> dict[str, Any]:
         # Group by both date and ticker to get the last record for each ticker each day
         data_frame["date"] = data_frame["timestamp"].dt.date
         data_frame = (
-            data_frame.sort_values("timestamp")
-            .groupby(["date", "ticker"])
-            .last()
-            .reset_index()
+            data_frame.sort_values("timestamp").groupby(["date", "ticker"]).last().reset_index()
         )
         data_frame = data_frame.drop("date", axis=1)  # Remove the temporary date column
 
@@ -223,12 +220,13 @@ async def get_data(date_range: DateRange) -> dict[str, Any]:
 @app.post("/api/reload_data/stream")
 def reload_data_stream() -> StreamingResponse:
     """Stream logs while running backtest.py"""
+
     def run_script() -> Iterator[str]:
         env = os.environ.copy()
         yield "Running backtest.py...\n"
         # Use full path to python3 for S607, and command is static (not user input)
         python_path = "/usr/bin/python3"
-        process_holder["current"] = subprocess.Popen( # noqa: S603
+        process_holder["current"] = subprocess.Popen(  # noqa: S603
             [python_path, "backtest.py"],
             env=env,
             stdout=subprocess.PIPE,
@@ -257,6 +255,7 @@ def reload_data_stream() -> StreamingResponse:
                 yield f"❌ Error reloading cache: {e}\n"
         finally:
             process_holder["current"] = None
+
     return StreamingResponse(run_script(), media_type="text/plain")
 
 

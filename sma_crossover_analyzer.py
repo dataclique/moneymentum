@@ -37,9 +37,13 @@ class SMACrossoverAnalyzer:
             .filter(F.col("row_num") <= self.lookback_periods) \
             .drop("row_num")
 
+        # Calculate rolling SMA using a proper window with ordering
+        # Each row's SMA is calculated from the previous lookback_periods rows
+        rolling_window = W.Window.partitionBy("symbol").orderBy("timestamp").rowsBetween(-self.lookback_periods+1, 0)
+        
         df_with_sma = recent_records.withColumn(
             "sma",
-            F.avg("close").over(W.Window.partitionBy("symbol"))
+            F.avg("close").over(rolling_window)
         )
 
         df_with_crosses = df_with_sma.withColumn(
@@ -62,6 +66,8 @@ class SMACrossoverAnalyzer:
             ).otherwise(0)
         )
 
+        util.save_csv("sma_crossover_analysis2", df_with_crosses)
+
         return df_with_crosses.groupBy("symbol").agg(
             (F.sum("cross_up") + F.sum("cross_down")).alias("total_crosses")
         ).orderBy(F.col("total_crosses").desc())
@@ -75,7 +81,7 @@ class SMACrossoverAnalyzer:
         candles_df = await self.dataloader.get_candles_df()
         
         crossover_results = self.calculate_sma_crossovers(candles_df)
-        
+
         # Log results
         logger.info("SMA Crossover Analysis Results:")
         for row in crossover_results.collect():

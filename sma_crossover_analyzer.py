@@ -26,7 +26,7 @@ class SMACrossoverAnalyzer:
     def calculate_sma_crossovers(self, candles_df: DataFrame) -> DataFrame:
         """
         Calculate the number of times price crossed SMA for each token.
-        Returns a DataFrame with symbol and total_crosses columns, sorted by 
+        Returns a DataFrame with symbol and total_crosses columns, sorted by
         total_crosses in descending order.
         """
 

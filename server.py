@@ -1,6 +1,7 @@
 import logging
 import os
 import subprocess
+import sys
 from collections.abc import Iterator
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -224,8 +225,14 @@ def reload_data_stream() -> StreamingResponse:
     def run_script() -> Iterator[str]:
         env = os.environ.copy()
         yield "Running backtest.py...\n"
-        # Use full path to python3 for S607, and command is static (not user input)
-        python_path = "/usr/bin/python3"
+        python_path = sys.executable
+
+        if not Path(python_path).exists():
+            yield f"Error: Python executable not found at {python_path}\n"
+            return
+
+        logger.info("Attempting to run backtest.py using: %s", python_path)
+        # Use shell=False and pass arguments as list to avoid shell injection
         process_holder["current"] = subprocess.Popen(  # noqa: S603
             [python_path, "backtest.py"],
             env=env,
@@ -249,6 +256,7 @@ def reload_data_stream() -> StreamingResponse:
             else:
                 yield "\n✅ backtest.py finished successfully.\n"
             try:
+                # Убедитесь, что 'cache' и 'pd' импортированы и доступны
                 cache.initialize("data/analysis_df.csv", force=True)
                 yield "✅ Cache reloaded.\n"
             except (ValueError, FileNotFoundError, pd.errors.EmptyDataError) as e:

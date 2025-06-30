@@ -28,45 +28,58 @@ export type TradingData = {
   sortino: number | null;
 };
 
-export const columns: ColumnDef<TradingData>[] = [
-  {
-    accessorKey: "timestamp",
-    header: "Timestamp",
-  },
-  {
-    accessorKey: "ticker",
-    header: "Ticker",
-  },
-  {
-    accessorKey: "close",
-    header: "Close Price",
-  },
-  {
-    accessorKey: "volume",
-    header: "Volume",
-  },
-  {
-    accessorKey: "log_return",
-    header: "Log Return",
-  },
-  {
-    accessorKey: "cum_return",
-    header: "Cumulative Return",
-  },
-  {
-    accessorKey: "sharpe",
-    header: "Sharpe Ratio",
-  },
-  {
-    accessorKey: "sortino",
-    header: "Sortino Ratio",
-  },
-  {
-    accessorKey: "beta",
-    header: "Beta",
-  },
-  {
-    accessorKey: "annualized_volatility",
-    header: "Annualized Volatility",
-  },
-];
+export function getColumns(onTickerClick?: (ticker: string) => void): ColumnDef<TradingData>[] {
+  return [
+    {
+      accessorKey: "timestamp",
+      header: "Timestamp",
+    },
+    {
+      accessorKey: "ticker",
+      header: "Ticker",
+      cell: ({ row }) => {
+        const handleClick = onTickerClick || (() => {});
+        return (
+          <span
+            className="text-blue-400 cursor-pointer hover:underline"
+            onClick={() => handleClick(row.original.ticker)}
+          >
+            {row.original.ticker}
+          </span>
+        );
+      },
+    },
+    {
+      accessorKey: "close",
+      header: "Close Price",
+    },
+    {
+      accessorKey: "volume",
+      header: "Volume",
+    },
+    {
+      accessorKey: "log_return",
+      header: "Log Return",
+    },
+    {
+      accessorKey: "cum_return",
+      header: "Cumulative Return",
+    },
+    {
+      accessorKey: "sharpe",
+      header: "Sharpe Ratio",
+    },
+    {
+      accessorKey: "sortino",
+      header: "Sortino Ratio",
+    },
+    {
+      accessorKey: "beta",
+      header: "Beta",
+    },
+    {
+      accessorKey: "annualized_volatility",
+      header: "Annualized Volatility",
+    },
+  ];
+}

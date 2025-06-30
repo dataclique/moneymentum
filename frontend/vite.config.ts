@@ -11,4 +11,8 @@ export default defineConfig({
       "@": path.resolve(__dirname, "./src"),
     },
   },
+  // server: {
+  //   historyApiFallback: true, // Не поддерживается напрямую в Vite
+  // },
+  // Для SPA fallback используйте npm пакет 'connect-history-api-fallback' или настройте сервер (nginx, etc)
 });

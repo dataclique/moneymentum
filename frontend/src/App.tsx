@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
-import { columns, type TradingData } from "./components/ui/columns";
+import { getColumns, type TradingData } from "./components/ui/columns";
 import { DataTable } from "./components/ui/data-table";
 import DatePicker from "react-datepicker";
 import "react-datepicker/dist/react-datepicker.css";
+import { Routes, Route, useNavigate } from "react-router-dom";
+import TokenPage from "./components/TokenPage";
 
 async function getDateRange(): Promise<
   { min_date: string; max_date: string; last_timestamp: string | null }
@@ -63,6 +65,7 @@ function App() {
   });
   const [lastTimestamp, setLastTimestamp] = useState<Date | null>(null);
   const [firstTimestamp, setFirstTimestamp] = useState<Date | null>(null);
+  const navigate = useNavigate();
 
   // Fetch date range and set initial dates
   useEffect(() => {
@@ -188,41 +191,8 @@ function App() {
     }
   };
 
-  if (loading) {
-    return (
-      <>
-        <div className="mt-4 max-h-96 overflow-y-auto whitespace-pre-wrap rounded bg-black/30 p-4 text-sm text-green-200">
-          <div className="flex items-center gap-1">
-            <span>Загрузка данных</span>
-            <span className="inline-flex">
-              <span className="animate-bounce [animation-delay:-0.3s]">.</span>
-              <span className="animate-bounce [animation-delay:-0.15s]">.</span>
-              <span className="animate-bounce">.</span>
-            </span>
-          </div>
-        </div>
-
-        {isReloading && (
-          <button
-            onClick={handleStopReload}
-            className="rounded-md border border-red-700 bg-red-800 px-3 py-2 text-gray-100 hover:bg-red-700 focus:border-red-500 focus:outline-none focus:ring-1 focus:ring-red-500 cursor-pointer"
-          >
-            Stop reloading
-          </button>
-        )}
-      </>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="container mx-auto py-10 text-center text-red-400">
-        Ошибка: {error}
-      </div>
-    );
-  }
-
-  return (
+  // Вынесем таблицу в отдельный компонент для главной страницы
+  const MainPage = () => (
     <div className="min-h-screen bg-gray-900 text-gray-100">
       <div className="container mx-auto py-10">
         <div className="mb-4 flex items-center gap-4">
@@ -272,12 +242,53 @@ function App() {
         )}
         <div className="rounded-lg border border-gray-700 bg-gray-800 shadow-lg">
           <DataTable
-            columns={columns}
+            columns={getColumns((ticker) => navigate(`/token/${ticker}`))}
             data={data}
           />
         </div>
       </div>
     </div>
+  );
+
+  if (loading) {
+    return (
+      <>
+        <div className="mt-4 max-h-96 overflow-y-auto whitespace-pre-wrap rounded bg-black/30 p-4 text-sm text-green-200">
+          <div className="flex items-center gap-1">
+            <span>Загрузка данных</span>
+            <span className="inline-flex">
+              <span className="animate-bounce [animation-delay:-0.3s]">.</span>
+              <span className="animate-bounce [animation-delay:-0.15s]">.</span>
+              <span className="animate-bounce">.</span>
+            </span>
+          </div>
+        </div>
+
+        {isReloading && (
+          <button
+            onClick={handleStopReload}
+            className="rounded-md border border-red-700 bg-red-800 px-3 py-2 text-gray-100 hover:bg-red-700 focus:border-red-500 focus:outline-none focus:ring-1 focus:ring-red-500 cursor-pointer"
+          >
+            Stop reloading
+          </button>
+        )}
+      </>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="container mx-auto py-10 text-center text-red-400">
+        Ошибка: {error}
+      </div>
+    );
+  }
+
+  return (
+    <Routes>
+      <Route path="/" element={<MainPage />} />
+      <Route path="/token/:ticker" element={<TokenPage />} />
+    </Routes>
   );
 }
 

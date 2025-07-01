@@ -157,8 +157,12 @@ async def get_date_range() -> dict[str, Any]:
 async def get_data(date_range: DateRange) -> dict[str, Any]:
     """Get data for the specified date range"""
     try:
-        start_date = datetime.fromisoformat(date_range.start_date)
-        end_date = datetime.fromisoformat(date_range.end_date)
+        logger.info(date_range.start_date, date_range.end_date)
+        # Accept both Z and non-Z ISO formats
+        start_str = date_range.start_date.replace("Z", "+00:00")
+        end_str = date_range.end_date.replace("Z", "+00:00")
+        start_date = datetime.fromisoformat(start_str)
+        end_date = datetime.fromisoformat(end_str)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid date format") from None
 
@@ -216,6 +220,22 @@ async def get_data(date_range: DateRange) -> dict[str, Any]:
         return {"data": data_frame.to_dict(orient="records"), "message": None}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@app.get("/api/token/{ticker}")
+async def get_token_data(ticker: str) -> dict[str, Any]:
+    """Get all data for a specific ticker"""
+    if not cache.initialized or cache.df is None:
+        raise HTTPException(status_code=500, detail="Data not initialized")
+    df = cache.df
+    if df.empty:
+        return {"data": [], "message": "No data available in the system"}
+    filtered = df[df["ticker"] == ticker]
+    if filtered.empty:
+        return {"data": [], "message": f"No data found for ticker: {ticker}"}
+    # Replace both numpy NaN and pandas NA with None
+    filtered = filtered.replace({np.nan: None, pd.NA: None})
+    return {"data": filtered.to_dict(orient="records"), "message": None}
 
 
 @app.post("/api/reload_data/stream")

@@ -100,6 +100,8 @@ function App() {
   useEffect(() => {
     if (!dateRange.startDate || !dateRange.endDate) return;
 
+    console.log(dateRange.startDate.toISOString().split("T")[0], dateRange.endDate.toISOString().split("T")[0]);
+
     const fetchData = async () => {
       try {
         setLoading(true);

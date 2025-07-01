@@ -227,10 +227,10 @@ async def get_token_data(ticker: str) -> dict[str, Any]:
     """Get all data for a specific ticker"""
     if not cache.initialized or cache.df is None:
         raise HTTPException(status_code=500, detail="Data not initialized")
-    df = cache.df
-    if df.empty:
+    cached_data = cache.df
+    if cached_data.empty:
         return {"data": [], "message": "No data available in the system"}
-    filtered = df[df["ticker"] == ticker]
+    filtered = cached_data[cached_data["ticker"] == ticker]
     if filtered.empty:
         return {"data": [], "message": f"No data found for ticker: {ticker}"}
     # Replace both numpy NaN and pandas NA with None

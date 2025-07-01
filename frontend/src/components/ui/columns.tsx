@@ -28,7 +28,9 @@ export type TradingData = {
   sortino: number | null;
 };
 
-export function getColumns(onTickerClick?: (ticker: string) => void): ColumnDef<TradingData>[] {
+export function getColumns(
+  onTickerClick?: (ticker: string) => void,
+): ColumnDef<TradingData>[] {
   return [
     {
       accessorKey: "timestamp",

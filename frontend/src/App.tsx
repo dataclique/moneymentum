@@ -3,7 +3,7 @@ import { getColumns, type TradingData } from "./components/ui/columns";
 import { DataTable } from "./components/ui/data-table";
 import DatePicker from "react-datepicker";
 import "react-datepicker/dist/react-datepicker.css";
-import { Routes, Route, useNavigate } from "react-router-dom";
+import { Route, Routes, useNavigate } from "react-router-dom";
 import TokenPage from "./components/TokenPage";
 
 async function getDateRange(): Promise<
@@ -100,7 +100,10 @@ function App() {
   useEffect(() => {
     if (!dateRange.startDate || !dateRange.endDate) return;
 
-    console.log(dateRange.startDate.toISOString().split("T")[0], dateRange.endDate.toISOString().split("T")[0]);
+    console.log(
+      dateRange.startDate.toISOString().split("T")[0],
+      dateRange.endDate.toISOString().split("T")[0],
+    );
 
     const fetchData = async () => {
       try {

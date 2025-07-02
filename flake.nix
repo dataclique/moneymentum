@@ -1,12 +1,12 @@
 {
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-24.11";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-24.05";
     flake-utils.url = "github:numtide/flake-utils";
 
     git-hooks.url = "github:cachix/git-hooks.nix";
     git-hooks.inputs.nixpkgs.follows = "nixpkgs";
 
-    devenv.url = "github:cachix/devenv";
+    devenv.url = "github:cachix/devenv/v1.0.5";
     devenv.inputs = {
       nixpkgs.follows = "nixpkgs";
       git-hooks.follows = "git-hooks";
@@ -31,12 +31,13 @@
           denofmt.enable = true;
         };
 
-        deps = with pkgs; [ cacert clang jdk17 zlib ];
+        deps = with pkgs; [ cacert clang jdk17 zlib libffi gcc-unwrapped stdenv.cc.cc.lib ];
         # jdbcPath = "${pkgs.postgresql_jdbc}/share/java/postgresql-jdbc.jar";
         # injectJdbc = " --driver-class-path ${jdbcPath} --jars ${jdbcPath}";
         env = {
           # JDBC_PATH = jdbcPath;
           JAVA_HOME = pkgs.jdk17;
+          LD_LIBRARY_PATH = "${pkgs.lib.makeLibraryPath [ pkgs.zlib pkgs.libffi pkgs.stdenv.cc.cc.lib ]}";
         };
         src = ./.;
 
@@ -45,7 +46,7 @@
           inherit inputs pkgs;
           modules = [{
             # https://devenv.sh/reference/options/
-            packages = with pkgs; deps ++ [ ruff-lsp mypy git-lfs ];
+            packages = with pkgs; deps ++ [ ruff-lsp mypy git-lfs nodejs ];
             # deps ++ [ ruff-lsp mypy git-lfs timescaledb-tune ];
 
             languages = {
@@ -55,12 +56,12 @@
                 package = pkgs.python310;
                 venv.enable = true;
                 venv.requirements = builtins.readFile ./requirements.txt;
-                libraries = deps ++ [ pkgs.zlib ];
+                libraries = deps ++ [ pkgs.zlib pkgs.libffi pkgs.stdenv.cc.cc.lib ];
               };
             };
 
             inherit env;
-            git-hooks = { inherit hooks; };
+            # git-hooks = { inherit hooks; };
             difftastic.enable = true;
             cachix.enable = true;
 

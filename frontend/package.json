@@ -17,10 +17,13 @@
     "@types/react-datepicker": "^7.0.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "install": "^0.13.0",
     "lightweight-charts": "^5.0.8",
+    "npm": "^11.4.2",
     "react": "^19.1.0",
     "react-datepicker": "^8.4.0",
     "react-dom": "^19.1.0",
+    "react-router-dom": "^7.6.3",
     "serve": "^14.2.4",
     "tailwind-merge": "^3.3.0"
   },

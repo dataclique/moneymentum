@@ -4,10 +4,10 @@ from dataclasses import dataclass
 from typing import Literal
 
 import ccxt  # type: ignore[import-untyped]
-from pyspark.sql import DataFrame, SparkSession
-from pyspark.sql import functions as F
-from pyspark.sql import types as T
-from tenacity import retry, stop_after_attempt, wait_exponential
+from pyspark.sql import DataFrame, SparkSession  # type: ignore[import-not-found]
+from pyspark.sql import functions as F  # type: ignore[import-not-found]
+from pyspark.sql import types as T  # type: ignore[import-not-found]
+from tenacity import retry, stop_after_attempt, wait_exponential  # type: ignore[import-not-found]
 
 from yang import util
 
@@ -18,7 +18,7 @@ logger.setLevel(util.LOG_LEVEL)
 def _get_hyperliquid(
     vault_address: str = "0xb796084efac92e2785fcc3bd7eef71e79f065ec6",
 ) -> tuple[ccxt.Exchange, dict]:
-    from dotenv import load_dotenv
+    from dotenv import load_dotenv  # type: ignore[import-not-found]
 
     load_dotenv()
     secret = os.getenv("HYPERLIQUID_API_SECRET")
@@ -58,6 +58,22 @@ SchemaPerpPosition = T.StructType(
         T.StructField("percentage", T.DoubleType()),
     ]
 )
+
+
+@dataclass
+class TradeOrder:
+    """Specification of a single trade order.
+
+    By wrapping the individual parameters in a dataclass we reduce the number
+    of positional arguments that :py:meth:`ExecutionEngine.place_trade` needs
+    to accept, eliminating Ruff's PLR0913 lint error.
+    """
+
+    symbol: str
+    order_type: Literal["market", "limit"]
+    side: Literal["buy", "sell"]
+    amount: float
+    price: float
 
 
 @dataclass
@@ -108,53 +124,48 @@ class ExecutionEngine:
         wait=wait_exponential(multiplier=1.1, min=0.25, max=10),
         reraise=True,
     )
-    def place_trade(
-        self,
-        symbol: str,
-        order_type: Literal["market", "limit"],
-        side: Literal["buy", "sell"],
-        amount: float,
-        price: float,
-    ) -> None:
+    def place_trade(self, order: TradeOrder) -> None:
         try:
             logger.info("Setting leverage to %d", self.leverage)
-            self.exchange.set_leverage(symbol=symbol, leverage=self.leverage, params=self.params)
+            self.exchange.set_leverage(
+                symbol=order.symbol, leverage=self.leverage, params=self.params
+            )
 
             # Quantize amount to 3 significant figures
-            quantized_amount = float(f"{amount:.3g}")
+            quantized_amount = float(f"{order.amount:.3g}")
 
             logger.debug(
-                "Placing %s %s order for %s of %s at %s...",
-                order_type,
-                side,
+                "Placing %s %s order: %s units of %s at %s",
+                order.order_type,
+                order.side,
                 quantized_amount,
-                symbol,
-                price,
+                order.symbol,
+                order.price,
             )
             self.exchange.create_order(
-                symbol,
-                type=order_type,
-                side=side,
+                order.symbol,
+                type=order.order_type,
+                side=order.side,
                 amount=quantized_amount,
-                price=price,
+                price=order.price,
                 params=self.params,
             )
             logger.info(
                 "Placed %s %s order for %s of %s at %s",
-                order_type,
-                side,
+                order.order_type,
+                order.side,
                 quantized_amount,
-                symbol,
-                price,
+                order.symbol,
+                order.price,
             )
         except Exception:
             logger.exception(
                 "Error placing a %s %s order for %s of %s at %s",
-                order_type,
-                side,
+                order.order_type,
+                order.side,
                 quantized_amount,
-                symbol,
-                price,
+                order.symbol,
+                order.price,
             )
 
     def _handle_position_changes(self, portfolio_updates: DataFrame) -> None:
@@ -167,11 +178,13 @@ class ExecutionEngine:
                 close_price = ticker["last"] if ticker["last"] else ticker["close"]
 
                 self.place_trade(
-                    symbol=row.symbol,
-                    side="sell" if row.direction == "long" else "buy",
-                    order_type="market",
-                    amount=row.current_size / close_price,
-                    price=close_price,
+                    TradeOrder(
+                        symbol=row.symbol,
+                        order_type="market",
+                        side="sell" if row.direction == "long" else "buy",
+                        amount=row.current_size / close_price,
+                        price=close_price,
+                    )
                 )
             except Exception:
                 logger.exception(
@@ -192,11 +205,13 @@ class ExecutionEngine:
                     row.direction == "short" and diff < 0
                 )
                 self.place_trade(
-                    symbol=row.symbol,
-                    order_type="market",
-                    side="buy" if is_buy else "sell",
-                    amount=abs(diff_position_size),
-                    price=row.close,
+                    TradeOrder(
+                        symbol=row.symbol,
+                        order_type="market",
+                        side="buy" if is_buy else "sell",
+                        amount=abs(diff_position_size),
+                        price=row.close,
+                    )
                 )
 
         # Handle openings
@@ -204,11 +219,13 @@ class ExecutionEngine:
         for row in openings.collect():
             logger.info("Opening %s %s...", row.symbol, row.direction.upper())
             self.place_trade(
-                symbol=row.symbol,
-                order_type="market",
-                side="buy" if row.direction == "long" else "sell",
-                amount=row.target_size / row.close,
-                price=row.close,
+                TradeOrder(
+                    symbol=row.symbol,
+                    order_type="market",
+                    side="buy" if row.direction == "long" else "sell",
+                    amount=row.target_size / row.close,
+                    price=row.close,
+                )
             )
 
     def rebalance(self, target_portfolio: DataFrame) -> None:

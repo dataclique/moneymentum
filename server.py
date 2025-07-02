@@ -252,37 +252,31 @@ def reload_data_stream() -> StreamingResponse:
             return
 
         logger.info("Attempting to run backtest.py using: %s", python_path)
-        # Use shell=False and pass arguments as list to avoid shell injection
-        process_holder["current"] = subprocess.Popen(  # noqa: S603
+
+        result = subprocess.run(  # noqa: S603
             [python_path, "backtest.py"],
             env=env,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
+            check=False,  # We handle non-zero exit codes below.
         )
+
+        for line in result.stdout.splitlines():
+            logger.info("%s", line)
+            yield line + "\n"
+
+        if result.returncode != 0:
+            yield f"\nError: backtest.py exited with code {result.returncode}\n"
+        else:
+            yield "\n✅ backtest.py finished successfully.\n"
+
+        # Reload cache after script execution
         try:
-            proc = process_holder["current"]
-            if proc is None or proc.stdout is None:
-                yield "Error: No stdout available\n"
-                return
-            for line in iter(proc.stdout.readline, ""):
-                if not line:
-                    break
-                logger.info("%s", line.rstrip())
-                yield line
-            proc.wait()
-            if proc.returncode != 0:
-                yield f"\nError: backtest.py exited with code {proc.returncode}\n"
-            else:
-                yield "\n✅ backtest.py finished successfully.\n"
-            try:
-                # Убедитесь, что 'cache' и 'pd' импортированы и доступны
-                cache.initialize("data/analysis_df.csv", force=True)
-                yield "✅ Cache reloaded.\n"
-            except (ValueError, FileNotFoundError, pd.errors.EmptyDataError) as e:
-                yield f"❌ Error reloading cache: {e}\n"
-        finally:
-            process_holder["current"] = None
+            cache.initialize("data/analysis_df.csv", force=True)
+            yield "✅ Cache reloaded.\n"
+        except (ValueError, FileNotFoundError, pd.errors.EmptyDataError) as e:
+            yield f"❌ Error reloading cache: {e}\n"
 
     return StreamingResponse(run_script(), media_type="text/plain")
 

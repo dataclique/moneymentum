@@ -8,7 +8,8 @@ import matplotlib.pyplot as plt
 import pandas as pd
 from pyspark.sql import DataFrame, DataFrameReader, SparkSession
 from pyspark.sql import functions as F
-from statsmodels.tsa.stattools import adfuller, coint  # type: ignore[import-untyped]
+from statsmodels.tsa.stattools import adfuller, coint
+from py4j.protocol import Py4JNetworkError
 
 DEBUG = True
 LOG_LEVEL = logging.DEBUG if DEBUG else logging.INFO
@@ -199,27 +200,41 @@ DATA_DIR = "data"
 
 
 def save_csv(name: str, df: DataFrame) -> None:
-    # Ensure data directory exists
+    """Save a Spark DataFrame to a single CSV file inside the ``data`` directory.
+
+    The implementation first tries an efficient Spark write with
+    ``repartition(1)``.  On some machines a very large shuffle or a driver
+    memory-starved environment can make the JVM disappear, which surfaces as
+    ``Py4JNetworkError: Answer from Java side is empty``.  In that case we fall
+    back to collecting the frame on the driver and letting pandas write the
+    CSV so that the rest of the pipeline can continue.
+    """
     Path(DATA_DIR).mkdir(exist_ok=True)
+    output_path = Path(DATA_DIR) / name
 
-    # Save as a single CSV file with UTC timestamp format
-    output_path = f"{DATA_DIR}/{name}"
+    try:
+        # Using ``repartition(1)`` avoids the huge shuffle that ``coalesce``
+        # sometimes triggers while still giving us a single-file output.
+        df.repartition(1).write.mode("overwrite").option("header", "true").option(
+            "timestampFormat",
+            "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'",
+        ).csv(str(output_path))
 
-    df.coalesce(1).write.mode("overwrite").option("header", "true").option(
-        "timestampFormat", "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'"
-    ).csv(output_path)
-
-    # Get the CSV file from the directory and move it
-    dir_path = Path(output_path)
-    csv_file = next(dir_path.glob("*.csv"))
-    target_path = dir_path.parent / f"{name}.csv"
-    csv_file.rename(target_path)
-
-    # Clean up the directory
-    for file in dir_path.iterdir():
-        file.unlink()
-    dir_path.rmdir()
-    logger.info("Saved to %s", target_path)
+        # Grab the produced part-file and move/rename it next to the directory.
+        part_file = next(output_path.glob("part-*.csv"))
+        target_path = output_path.with_suffix(".csv")
+        part_file.replace(target_path)
+        # Clean up Spark's metadata files / temporary dir.
+        for extra in output_path.iterdir():
+            extra.unlink()
+        output_path.rmdir()
+        logger.info("Saved to %s", target_path)
+    except (Py4JNetworkError, Exception) as exc:  # broad fallback but we log.
+        logger.warning("Spark writer failed (%s). Falling back to pandas CSV writer.", exc)
+        target_path = Path(DATA_DIR) / f"{name}.csv"
+        _pd_df = df.toPandas()
+        _pd_df.to_csv(target_path, index=False)
+        logger.info("Saved (pandas) to %s", target_path)
 
 
 def test_stationarity(timeseries: pd.Series, cutoff: float = 0.01) -> bool:

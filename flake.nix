@@ -53,7 +53,7 @@
               nix.enable = true;
               python = {
                 enable = true;
-                package = pkgs.python310;
+                package = pkgs.python311;
                 venv.enable = true;
                 venv.requirements = builtins.readFile ./requirements.txt;
                 libraries = deps ++ [ pkgs.zlib pkgs.libffi pkgs.stdenv.cc.cc.lib ];

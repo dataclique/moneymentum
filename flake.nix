@@ -1,12 +1,12 @@
 {
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-24.11";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-24.05";
     flake-utils.url = "github:numtide/flake-utils";
 
     git-hooks.url = "github:cachix/git-hooks.nix";
     git-hooks.inputs.nixpkgs.follows = "nixpkgs";
 
-    devenv.url = "github:cachix/devenv";
+    devenv.url = "github:cachix/devenv/v1.0.5";
     devenv.inputs = {
       nixpkgs.follows = "nixpkgs";
       git-hooks.follows = "git-hooks";
@@ -60,7 +60,7 @@
             };
 
             inherit env;
-            git-hooks = { inherit hooks; };
+            # git-hooks = { inherit hooks; };
             difftastic.enable = true;
             cachix.enable = true;
 

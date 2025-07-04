@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
-import { getColumns, type TradingData } from "./components/ui/columns";
+import { columns, type TradingData } from "./components/ui/columns";
 import { DataTable } from "./components/ui/data-table";
-import DatePicker from "react-datepicker";
-import "react-datepicker/dist/react-datepicker.css";
+import { Calendar22 as DatePicker } from "./components/ui/date-picker";
 import { Route, Routes, useNavigate } from "react-router-dom";
 import TokenPage from "./components/TokenPage";
+import { ModeToggle } from "./components/ui/mode-toggle";
+import { cn } from "@/lib/utils";
 
 async function getDateRange(): Promise<
   { min_date: string; max_date: string; last_timestamp: string | null }
@@ -76,10 +77,9 @@ function App() {
           const lastDate = new Date(range.last_timestamp);
           const firstDate = new Date(range.min_date);
           setLastTimestamp(lastDate);
-          setFirstTimestamp(firstDate);
           setDateRange({
-            startDate: lastDate,
-            endDate: lastDate,
+            startDate: firstDate, // Set start date to min_date
+            endDate: lastDate, // Set end date to last_timestamp
           });
         } else {
           setLoading(false);
@@ -198,67 +198,64 @@ function App() {
 
   // Вынесем таблицу в отдельный компонент для главной страницы
   const MainPage = () => (
-    <div className="min-h-screen bg-gray-900 text-gray-100">
-      <div className="container mx-auto py-10">
-        <div className="mb-4 flex items-center gap-4">
-          <div className="flex items-center gap-2">
-            <label className="text-sm font-medium text-gray-300">
-              Start Date
-            </label>
-            <DatePicker
-              selected={dateRange.startDate}
-              onChange={(date) =>
-                setDateRange((prev) => ({ ...prev, startDate: date }))}
-              className="rounded-md border border-gray-700 bg-gray-800 px-3 py-2 text-gray-100 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-              dateFormat="yyyy-MM-dd"
-              wrapperClassName="w-auto"
-              minDate={firstTimestamp || undefined}
-              maxDate={dateRange.endDate || undefined}
-              popperClassName="!bg-gray-800 !border !border-gray-700 !text-gray-100 [&_.react-datepicker__header]:!bg-gray-800 [&_.react-datepicker__header]:!border-gray-700 [&_.react-datepicker__current-month]:!text-gray-100 [&_.react-datepicker__day-name]:!text-gray-300 [&_.react-datepicker__day]:!text-gray-100 [&_.react-datepicker__day:hover]:!bg-gray-700 [&_.react-datepicker__day--selected]:!bg-blue-500 [&_.react-datepicker__day--keyboard-selected]:!bg-blue-500 [&_.react-datepicker__day--outside-month]:!text-gray-600 [&_.react-datepicker__navigation-icon]:!before:!border-gray-300 [&_.react-datepicker__navigation:hover]:!bg-gray-700 [&_.react-datepicker__navigation]:!top-2 [&_.react-datepicker__day--disabled]:!text-gray-600 [&_.react-datepicker__day--disabled]:!bg-transparent [&_.react-datepicker__day--disabled]:!cursor-not-allowed"
-            />
-          </div>
-          <div className="flex items-center gap-2">
-            <label className="text-sm font-medium text-gray-300">
-              End Date
-            </label>
-            <DatePicker
-              selected={dateRange.endDate}
-              onChange={(date) =>
-                setDateRange((prev) => ({ ...prev, endDate: date }))}
-              className="rounded-md border border-gray-700 bg-gray-800 px-3 py-2 text-gray-100 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-              dateFormat="yyyy-MM-dd"
-              wrapperClassName="w-auto"
-              minDate={dateRange.startDate || undefined}
-              maxDate={lastTimestamp || undefined}
-              popperClassName="!bg-gray-800 !border !border-gray-700 !text-gray-100 [&_.react-datepicker__header]:!bg-gray-800 [&_.react-datepicker__header]:!border-gray-700 [&_.react-datepicker__current-month]:!text-gray-100 [&_.react-datepicker__day-name]:!text-gray-300 [&_.react-datepicker__day]:!text-gray-100 [&_.react-datepicker__day:hover]:!bg-gray-700 [&_.react-datepicker__day--selected]:!bg-blue-500 [&_.react-datepicker__day--keyboard-selected]:!bg-blue-500 [&_.react-datepicker__day--outside-month]:!text-gray-600 [&_.react-datepicker__navigation-icon]:!before:!border-gray-300 [&_.react-datepicker__navigation:hover]:!bg-gray-700 [&_.react-datepicker__navigation]:!top-2 [&_.react-datepicker__day--disabled]:!text-gray-600 [&_.react-datepicker__day--disabled]:!bg-transparent [&_.react-datepicker__day--disabled]:!cursor-not-allowed"
-            />
-          </div>
-          <button
-            onClick={handleReload}
-            className="rounded-md border border-gray-700 bg-gray-800 px-3 py-2 text-gray-100 hover:bg-gray-700 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 cursor-pointer"
-          >
-            Reload data
-          </button>
-        </div>
-        {message && (
-          <div className="mb-4 text-center text-yellow-400">
-            {message}
-          </div>
-        )}
-        <div className="rounded-lg border border-gray-700 bg-gray-800 shadow-lg">
-          <DataTable
-            columns={getColumns((ticker) => navigate(`/token/${ticker}`))}
-            data={data}
-          />
-        </div>
+    <div className="container mx-auto py-10 bg-primary text-primary-foreground">
+      <div className="mb-4 flex items-center gap-4">
+        <DatePicker
+          label="Start Date"
+          selected={dateRange.startDate}
+          onChange={(date) =>
+            setDateRange((prev) => ({ ...prev, startDate: date }))
+          }
+        // Pass minDate and maxDate for date selection constraints
+        // minDate={firstTimestamp || undefined}
+        // maxDate={dateRange.endDate || undefined}
+        />
+        <DatePicker
+          label="End Date"
+          selected={dateRange.endDate}
+          onChange={(date) =>
+            setDateRange((prev) => ({ ...prev, endDate: date }))
+          }
+        // Pass minDate and maxDate for date selection constraints
+        // minDate={dateRange.startDate || undefined}
+        // maxDate={lastTimestamp || undefined}
+        />
+
+        <button
+          onClick={handleReload}
+          className="rounded-md border px-3 py-2" // Tailwind classes for button styling
+        >
+          Reload data
+        </button>
+        <ModeToggle /> {/* Added ModeToggle here for easy access */}
       </div>
+      {message && (
+        <div className="mb-4 text-center">
+          {message}
+        </div>
+      )}
+      <DataTable
+        columns={columns}
+        data={data}
+      />
     </div>
   );
 
+  // Define a common wrapper for all states (loading, error, main content)
+  const AppWrapper = ({ children }: { children: React.ReactNode }) => (
+    <div className={cn(
+      "min-h-screen flex flex-col bg-background text-foreground", // Apply theme classes here
+      // You can add other global styles here if needed
+    )}>
+      {children}
+    </div>
+  );
+
+
   if (loading) {
     return (
-      <>
-        <div className="mt-4 max-h-96 overflow-y-auto whitespace-pre-wrap rounded bg-black/30 p-4 text-sm text-green-200">
+      <AppWrapper>
+        <div className="mt-4 max-h-96 overflow-y-auto whitespace-pre-wrap rounded p-4 text-sm">
           <div className="flex items-center gap-1">
             <span>Загрузка данных</span>
             <span className="inline-flex">
@@ -272,28 +269,32 @@ function App() {
         {isReloading && (
           <button
             onClick={handleStopReload}
-            className="rounded-md border border-red-700 bg-red-800 px-3 py-2 text-gray-100 hover:bg-red-700 focus:border-red-500 focus:outline-none focus:ring-1 focus:ring-red-500 cursor-pointer"
+            className="rounded-md border px-3 py-2"
           >
             Stop reloading
           </button>
         )}
-      </>
+      </AppWrapper>
     );
   }
 
   if (error) {
     return (
-      <div className="container mx-auto py-10 text-center text-red-400">
-        Ошибка: {error}
-      </div>
+      <AppWrapper>
+        <div className="container mx-auto py-10 text-center">
+          Ошибка: {error}
+        </div>
+      </AppWrapper>
     );
   }
 
   return (
-    <Routes>
-      <Route path="/" element={<MainPage />} />
-      <Route path="/token/:ticker" element={<TokenPage />} />
-    </Routes>
+    <AppWrapper>
+      <Routes>
+        <Route path="/" element={<MainPage />} />
+        <Route path="/token/:ticker" element={<TokenPage />} />
+      </Routes>
+    </AppWrapper>
   );
 }
 

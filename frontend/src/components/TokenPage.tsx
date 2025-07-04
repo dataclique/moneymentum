@@ -10,6 +10,14 @@ import {
   LineStyle,
 } from "lightweight-charts";
 import type { IChartApi, ISeriesApi } from "lightweight-charts";
+import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
+import {
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectContent,
+  SelectItem,
+} from "@/components/ui/select";
 
 export interface IOHLCData {
   readonly close: number;
@@ -513,35 +521,34 @@ const TokenPage: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-gray-900 flex flex-col">
-      {/* Header */}
-      <div className="bg-gray-800 border-b border-gray-700 px-6 py-4 flex-shrink-0">
-        <div className="flex items-center justify-between">
+      {/* Header with Card */}
+      <Card className="bg-gray-800 border-b border-gray-700">
+        <CardHeader className="flex flex-row items-center justify-between px-6 py-4">
           <div className="flex items-center space-x-4">
             <Link
               to="/"
               className="text-blue-400 hover:text-blue-300 transition-colors"
             >
-              ← Back
+              ←&nbsp;Back
             </Link>
-            <h1 className="text-2xl font-bold text-white">
+            <CardTitle className="text-2xl font-bold text-white">
               {ticker} - {selectedMetricLabel}
-            </h1>
+            </CardTitle>
           </div>
-          <select
-            id="metric-select"
-            value={selectedMetric}
-            onChange={handleMetricChange}
-            className="bg-gray-700 border border-gray-600 text-white text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block p-2.5 min-w-48"
-          >
-            {AVAILABLE_METRICS.map((metric) => (
-              <option key={metric.value} value={metric.value}>
-                {metric.label}
-              </option>
-            ))}
-          </select>
-        </div>
-      </div>
-
+          <Select value={selectedMetric} onValueChange={setSelectedMetric}>
+            <SelectTrigger className="min-w-48 bg-gray-700 border border-gray-600 text-white text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {AVAILABLE_METRICS.map((metric) => (
+                <SelectItem key={metric.value} value={metric.value}>
+                  {metric.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </CardHeader>
+      </Card>
       {/* Chart Container */}
       <div className="flex-1 p-6 overflow-hidden">
         {data.length === 0

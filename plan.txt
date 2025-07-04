@@ -1,0 +1,4 @@
+Transparent DatePicker + Select (default snadcn)
+Add blocking to DatePicker, to disable user to pick date where we don't have data
+Darkmode not working. Made everything by instruction, but... Maybe same issue as first string
+Continue refactoring to snadcn components...

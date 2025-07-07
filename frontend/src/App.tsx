@@ -1,3 +1,4 @@
+// WHOLE APP WORKING IN UTC TIMEZONE, NO LOCAL TIME
 import { useEffect, useState } from "react";
 import { columns, type TradingData } from "./components/ui/columns";
 import { DataTable } from "./components/ui/data-table";
@@ -64,8 +65,8 @@ function App() {
     startDate: null as Date | null,
     endDate: null as Date | null,
   });
-  const [lastTimestamp, setLastTimestamp] = useState<Date | null>(null);
-  const [firstTimestamp, setFirstTimestamp] = useState<Date | null>(null);
+  const [maxAvailableDate, setMaxAvailableDate] = useState<Date | null>(null);
+  const [minAvailableDate, setMinAvailableDate] = useState<Date | null>(null);
   const navigate = useNavigate();
 
   // Fetch date range and set initial dates
@@ -73,17 +74,15 @@ function App() {
     const initializeDates = async () => {
       try {
         const range = await getDateRange();
-        if (range.last_timestamp) {
-          const lastDate = new Date(range.last_timestamp);
-          const firstDate = new Date(range.min_date);
-          setLastTimestamp(lastDate);
+        const maxDate = new Date(`${range.max_date.split('T')[0]}T00:00:00Z`);
+        const minDate = new Date(`${range.min_date.split('T')[0]}T00:00:00Z`);
+          setMaxAvailableDate(maxDate);
+          setMinAvailableDate(minDate);
+          // After first load show only last day data
           setDateRange({
-            startDate: firstDate, // Set start date to min_date
-            endDate: lastDate, // Set end date to last_timestamp
+            startDate: maxDate,
+            endDate: maxDate,
           });
-        } else {
-          setLoading(false);
-        }
       } catch (err) {
         console.error("Error fetching date range:", err);
         setError(
@@ -98,32 +97,32 @@ function App() {
 
   // Fetch data when date range changes
   useEffect(() => {
-    if (!dateRange.startDate || !dateRange.endDate) return;
+    if (dateRange.startDate && dateRange.endDate) {
+      console.log(
+        dateRange.startDate.toISOString().split("T")[0],
+        dateRange.endDate.toISOString().split("T")[0],
+      );
 
-    console.log(
-      dateRange.startDate.toISOString().split("T")[0],
-      dateRange.endDate.toISOString().split("T")[0],
-    );
+      const fetchData = async () => {
+        try {
+          setLoading(true);
+          setMessage(null);
+          const result = await getData(
+            dateRange.startDate!.toISOString().split("T")[0],
+            dateRange.endDate!.toISOString().split("T")[0],
+          );
+          setData(result.data);
+          setMessage(result.message);
+        } catch (err) {
+          console.error("Error fetching data:", err);
+          setError(err instanceof Error ? err.message : "Failed to load data.");
+        } finally {
+          setLoading(false);
+        }
+      };
 
-    const fetchData = async () => {
-      try {
-        setLoading(true);
-        setMessage(null);
-        const result = await getData(
-          dateRange.startDate!.toISOString().split("T")[0],
-          dateRange.endDate!.toISOString().split("T")[0],
-        );
-        setData(result.data);
-        setMessage(result.message);
-      } catch (err) {
-        console.error("Error fetching data:", err);
-        setError(err instanceof Error ? err.message : "Failed to load data.");
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchData();
+      fetchData();
+    }
   }, [dateRange]);
 
   const handleReload = async () => {
@@ -206,9 +205,8 @@ function App() {
           onChange={(date) =>
             setDateRange((prev) => ({ ...prev, startDate: date }))
           }
-        // Pass minDate and maxDate for date selection constraints
-        // minDate={firstTimestamp || undefined}
-        // maxDate={dateRange.endDate || undefined}
+        minDate={minAvailableDate || undefined}
+        maxDate={maxAvailableDate || undefined}
         />
         <DatePicker
           label="End Date"
@@ -216,9 +214,8 @@ function App() {
           onChange={(date) =>
             setDateRange((prev) => ({ ...prev, endDate: date }))
           }
-        // Pass minDate and maxDate for date selection constraints
-        // minDate={dateRange.startDate || undefined}
-        // maxDate={lastTimestamp || undefined}
+        minDate={minAvailableDate || undefined}
+        maxDate={maxAvailableDate || undefined}
         />
 
         <button

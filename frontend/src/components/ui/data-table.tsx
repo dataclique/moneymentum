@@ -1,6 +1,6 @@
 "use client"
 
-import React from "react"
+import React, { useEffect } from "react"
 
 import {
   type ColumnDef,
@@ -43,6 +43,11 @@ export function DataTable<TData, TValue>({
       sorting,
     },
   })
+
+  useEffect(() => {
+    console.log(data)
+    console.log(table.getRowModel().rows)
+  }, [data])
 
   return (
     <div className="rounded-md border">

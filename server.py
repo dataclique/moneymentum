@@ -144,13 +144,10 @@ async def get_date_range() -> dict[str, Any]:
         date_range = cache.get_date_range()
         logger.info("%s", date_range)
 
-        last_timestamp = None
-        if cache.df is not None and not cache.df.empty:
-            last_timestamp = cache.df["timestamp"].max().isoformat()
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 
-    return {**date_range, "last_timestamp": last_timestamp}
+    return {"min_date": date_range["min_date"], "max_date": date_range["max_date"]}
 
 
 @app.post("/api/data")

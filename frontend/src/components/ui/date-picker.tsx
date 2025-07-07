@@ -12,10 +12,20 @@ interface Calendar22Props {
     label: string;
     selected?: Date | null;
     onChange?: (date: Date | null) => void;
+    minDate?: Date;
+    maxDate?: Date;
   }
 
-export function Calendar22({ label, selected, onChange }: Calendar22Props) {
+export function Calendar22({ label, selected, onChange, minDate, maxDate }: Calendar22Props) {
   const [open, setOpen] = React.useState(false)
+
+  const disabledDays: ({ before: Date } | { after: Date })[] = [];
+  if (minDate) {
+    disabledDays.push({ before: minDate });
+  }
+  if (maxDate) {
+    disabledDays.push({ after: maxDate });
+  }
 
   return (
     <div className="flex flex-col gap-3">
@@ -29,7 +39,9 @@ export function Calendar22({ label, selected, onChange }: Calendar22Props) {
             id="date"
             className="w-48 justify-between font-normal"
           >
-            {selected ? selected.toLocaleDateString() : "Select date"}
+            {selected
+              ? selected.toLocaleDateString("ru-RU", { timeZone: "UTC" })
+              : "Select date"}
             <ChevronDownIcon />
           </Button>
         </PopoverTrigger>
@@ -38,10 +50,18 @@ export function Calendar22({ label, selected, onChange }: Calendar22Props) {
             mode="single"
             selected={selected || undefined}
             captionLayout="dropdown"
+            startMonth={minDate}
+            endMonth={maxDate}
             onSelect={(date) => {
-              onChange?.(date || null)
+              if (date) {
+                const utcDate = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+                onChange?.(utcDate);
+              } else {
+                onChange?.(null);
+              }
               setOpen(false)
             }}
+            disabled={disabledDays}
           />
         </PopoverContent>
       </Popover>

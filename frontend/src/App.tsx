@@ -198,7 +198,7 @@ function App() {
 
   // Вынесем таблицу в отдельный компонент для главной страницы
   const MainPage = () => (
-    <div className="container mx-auto py-10 bg-primary text-primary-foreground">
+    <div className="container mx-auto py-10">
       <div className="mb-4 flex items-center gap-4">
         <DatePicker
           label="Start Date"

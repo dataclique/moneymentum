@@ -147,7 +147,7 @@ class BacktestPipeline:
 
 async def main() -> None:
     spark = util.get_spark()
-    timeframe: Timeframe = "15m"
+    timeframe: Timeframe = "1h"
 
     config = TIMEFRAME_CONFIGS[timeframe]
 

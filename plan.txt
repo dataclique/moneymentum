@@ -1,4 +1,3 @@
-Refactor chart page to snacn
 Update avaible dates to pick to miss from > to
 Need to fix: after choosing data whole app reloading. Need to put loading inside app to not rerender everything, only table need to be rerendered
-fix reload button
+Make DockerImage!

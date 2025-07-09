@@ -132,11 +132,6 @@ class DateRange(BaseModel):
     end_date: str
 
 
-# Global variable to track the current process
-# Use a mutable container to avoid global statement
-process_holder: dict[str, subprocess.Popen[str] | None] = {"current": None}
-
-
 @app.get("/api/date-range")
 async def get_date_range() -> dict[str, Any]:
     """Get the available date range from the data"""
@@ -154,7 +149,7 @@ async def get_date_range() -> dict[str, Any]:
 async def get_data(date_range: DateRange) -> dict[str, Any]:
     """Get data for the specified date range"""
     try:
-        logger.info(date_range.start_date, date_range.end_date)
+        logger.info("Fetching data for start: %s, end: %s", date_range.start_date, date_range.end_date)
         # Accept both Z and non-Z ISO formats
         start_str = date_range.start_date.replace("Z", "+00:00")
         end_str = date_range.end_date.replace("Z", "+00:00")
@@ -241,62 +236,60 @@ def reload_data_stream() -> StreamingResponse:
 
     def run_script() -> Iterator[str]:
         env = os.environ.copy()
-        yield "Running backtest.py...\n"
+        if "JAVA_HOME" not in env:
+            yield "Warning: JAVA_HOME not set. Spark might fail.\n"
+        if "LD_LIBRARY_PATH" not in env:
+            yield "Warning: LD_LIBRARY_PATH not set. Spark might fail.\n"
+
         python_path = sys.executable
 
         if not Path(python_path).exists():
             yield f"Error: Python executable not found at {python_path}\n"
             return
 
+        command = [python_path, "backtest.py"]
+        yield f"Running command: {' '.join(command)}\n"
         logger.info("Attempting to run backtest.py using: %s", python_path)
+        logger.info("Subprocess environment includes JAVA_HOME: %s", env.get("JAVA_HOME"))
+        logger.info("Subprocess environment includes LD_LIBRARY_PATH: %s", env.get("LD_LIBRARY_PATH"))
 
-        result = subprocess.run(  # noqa: S603
-            [python_path, "backtest.py"],
-            env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            check=False,  # We handle non-zero exit codes below.
-        )
-
-        for line in result.stdout.splitlines():
-            logger.info("%s", line)
-            yield line + "\n"
-
-        if result.returncode != 0:
-            yield f"\nError: backtest.py exited with code {result.returncode}\n"
-        else:
-            yield "\n✅ backtest.py finished successfully.\n"
-
-        # Reload cache after script execution
         try:
-            cache.initialize("data/analysis_df.csv", force=True)
-            yield "✅ Cache reloaded.\n"
-        except (ValueError, FileNotFoundError, pd.errors.EmptyDataError) as e:
-            yield f"❌ Error reloading cache: {e}\n"
+            process = subprocess.Popen(  # noqa: S603
+                command,
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,  # Line-buffered
+                universal_newlines=True,  # Ensures text mode
+            )
+
+            # Stream output
+            if process.stdout:
+                for line in iter(process.stdout.readline, ""):
+                    logger.info(line.strip())
+                    yield line
+                process.stdout.close()
+
+            # Wait for the process to complete
+            return_code = process.wait()
+
+            if return_code != 0:
+                yield f"\nError: backtest.py exited with code {return_code}\n"
+            else:
+                yield "\n✅ backtest.py finished successfully.\n"
+
+            # Reload cache after script execution
+            try:
+                cache.initialize("data/analysis_df.csv", force=True)
+                yield "✅ Cache reloaded.\n"
+            except (ValueError, FileNotFoundError, pd.errors.EmptyDataError) as e:
+                yield f"❌ Error reloading cache: {e}\n"
+
+        except Exception as e:
+            yield f"An unexpected error occurred: {e}\n"
 
     return StreamingResponse(run_script(), media_type="text/plain")
-
-
-@app.post("/api/stop_reload")
-async def stop_reload() -> dict[str, str]:
-    """Stop the current reload process"""
-    proc = process_holder["current"]
-    if proc is None:
-        raise HTTPException(status_code=400, detail="No process is currently running")
-    try:
-        proc.terminate()
-        proc.wait(timeout=5)
-        process_holder["current"] = None
-    except subprocess.TimeoutExpired:
-        if process_holder["current"] is not None:
-            process_holder["current"].kill()
-        process_holder["current"] = None
-        return {"message": "Process force stopped"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error stopping process: {str(e)}") from e
-    else:
-        return {"message": "Process stopped successfully"}
 
 
 if __name__ == "__main__":

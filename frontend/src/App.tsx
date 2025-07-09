@@ -7,6 +7,7 @@ import { Route, Routes, useNavigate } from "react-router-dom";
 import TokenPage from "./components/TokenPage";
 import { ModeToggle } from "./components/ui/mode-toggle";
 import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
 
 async function getDateRange(): Promise<
   { min_date: string; max_date: string; last_timestamp: string | null }
@@ -76,13 +77,13 @@ function App() {
         const range = await getDateRange();
         const maxDate = new Date(`${range.max_date.split('T')[0]}T00:00:00Z`);
         const minDate = new Date(`${range.min_date.split('T')[0]}T00:00:00Z`);
-          setMaxAvailableDate(maxDate);
-          setMinAvailableDate(minDate);
-          // After first load show only last day data
-          setDateRange({
-            startDate: maxDate,
-            endDate: maxDate,
-          });
+        setMaxAvailableDate(maxDate);
+        setMinAvailableDate(minDate);
+        // After first load show only last day data
+        setDateRange({
+          startDate: maxDate,
+          endDate: maxDate,
+        });
       } catch (err) {
         console.error("Error fetching date range:", err);
         setError(
@@ -198,15 +199,15 @@ function App() {
   // Вынесем таблицу в отдельный компонент для главной страницы
   const MainPage = () => (
     <div className="container mx-auto py-10">
-      <div className="mb-4 flex items-center gap-4">
+      <div className="mb-4 flex items-end justify-start gap-4">
         <DatePicker
           label="Start Date"
           selected={dateRange.startDate}
           onChange={(date) =>
             setDateRange((prev) => ({ ...prev, startDate: date }))
           }
-        minDate={minAvailableDate || undefined}
-        maxDate={maxAvailableDate || undefined}
+          minDate={minAvailableDate || undefined}
+          maxDate={maxAvailableDate || undefined}
         />
         <DatePicker
           label="End Date"
@@ -214,16 +215,16 @@ function App() {
           onChange={(date) =>
             setDateRange((prev) => ({ ...prev, endDate: date }))
           }
-        minDate={minAvailableDate || undefined}
-        maxDate={maxAvailableDate || undefined}
+          minDate={minAvailableDate || undefined}
+          maxDate={maxAvailableDate || undefined}
         />
 
-        <button
+        <Button
+          variant="outline"
           onClick={handleReload}
-          className="rounded-md border px-3 py-2" // Tailwind classes for button styling
+          className="cursor-pointer"
         >
-          Reload data
-        </button>
+          Reload data</Button>
         <ModeToggle /> {/* Added ModeToggle here for easy access */}
       </div>
       {message && (

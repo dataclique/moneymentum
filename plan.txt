@@ -1,6 +1,4 @@
-Fix that table showing only 20 (?) strings
-Add links to Table again
-Continue refactoring to snadcn components...
+Refactor chart page to snacn
 Update avaible dates to pick to miss from > to
-Fix selected date is ok, but data shows for whole range
 Need to fix: after choosing data whole app reloading. Need to put loading inside app to not rerender everything, only table need to be rerendered
+fix reload button

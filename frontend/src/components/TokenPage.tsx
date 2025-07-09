@@ -18,6 +18,7 @@ import {
   SelectContent,
   SelectItem,
 } from "@/components/ui/select";
+import { Button } from "@/components/ui/button";
 
 export interface IOHLCData {
   readonly close: number;
@@ -131,11 +132,10 @@ const transformToLineData = (
 interface ChartComponentProps {
   data: TradingData[];
   selectedMetric: string;
-  height?: number;
 }
 
 const ChartComponent: React.FC<ChartComponentProps> = (
-  { data, selectedMetric, height = 600 },
+  { data, selectedMetric },
 ) => {
   const chartContainerRef = React.useRef<HTMLDivElement>(null);
   const chartRef = React.useRef<IChartApi | null>(null);
@@ -168,26 +168,24 @@ const ChartComponent: React.FC<ChartComponentProps> = (
           secondsVisible: false,
         },
         width: chartContainerRef.current.clientWidth,
-        height: height,
+        height: chartContainerRef.current.clientHeight,
       });
 
       chartRef.current = chart;
 
       // Handle resize
-      const handleResize = () => {
-        if (chartContainerRef.current && chartRef.current) {
-          const newHeight = window.innerHeight - 80; // Account for header
-          chartRef.current.applyOptions({
-            width: chartContainerRef.current.clientWidth,
-            height: newHeight,
-          });
+      const resizeObserver = new ResizeObserver(entries => {
+        for (const entry of entries) {
+          const { width, height } = entry.contentRect;
+          chart.applyOptions({ width, height });
         }
-      };
+      });
 
-      window.addEventListener("resize", handleResize);
+      resizeObserver.observe(chartContainerRef.current);
+
 
       return () => {
-        window.removeEventListener("resize", handleResize);
+        resizeObserver.disconnect();
 
         // Clean up series references first
         if (seriesRef.current) {
@@ -206,7 +204,7 @@ const ChartComponent: React.FC<ChartComponentProps> = (
     } catch (error) {
       console.error("Error creating chart:", error);
     }
-  }, [height]);
+  }, []);
 
   React.useEffect(() => {
     if (!chartRef.current || !data.length) return;
@@ -421,7 +419,6 @@ const ChartComponent: React.FC<ChartComponentProps> = (
       style={{
         width: "100%",
         height: "100%",
-        minHeight: `${height}px`,
       }}
     />
   );
@@ -434,19 +431,6 @@ const TokenPage: React.FC = () => {
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const [selectedMetric, setSelectedMetric] = React.useState("price");
-  const [windowHeight, setWindowHeight] = React.useState(
-    typeof window !== "undefined" ? window.innerHeight : 600,
-  );
-
-  // Handle window resize
-  React.useEffect(() => {
-    const handleResize = () => {
-      setWindowHeight(window.innerHeight);
-    };
-
-    window.addEventListener("resize", handleResize);
-    return () => window.removeEventListener("resize", handleResize);
-  }, []);
 
   React.useEffect(() => {
     if (!ticker) return;
@@ -485,89 +469,81 @@ const TokenPage: React.FC = () => {
       selectedMetric;
   }, [selectedMetric]);
 
-  const handleMetricChange = React.useCallback(
-    (e: React.ChangeEvent<HTMLSelectElement>) => {
-      setSelectedMetric(e.target.value);
-    },
-    [],
-  );
-
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-900">
-        <div className="text-lg text-white">Loading data for {ticker}...</div>
+      <div className="flex items-center justify-center flex-1">
+        <Card className="w-full max-w-sm">
+          <CardHeader>
+            <CardTitle>Loading...</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p>Loading data for {ticker}...</p>
+          </CardContent>
+        </Card>
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-900">
-        <div className="text-center">
-          <div className="text-red-400 mb-4">Error: {error}</div>
-          <Link
-            to="/"
-            className="text-blue-400 hover:text-blue-300 underline"
-          >
-            ← Back to Main Page
-          </Link>
-        </div>
+      <div className="flex items-center justify-center flex-1">
+        <Card className="w-full max-w-sm border-destructive">
+          <CardHeader>
+            <CardTitle className="text-destructive">Error</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p>{error}</p>
+            <Button asChild variant="link" className="p-0 mt-4 h-auto">
+              <Link to="/">
+                ← Back to Main Page
+              </Link>
+            </Button>
+          </CardContent>
+        </Card>
       </div>
     );
   }
 
-  // Calculate chart height (full viewport minus header and padding)
-  const chartHeight = Math.max(windowHeight - 140, 400); // Minimum 400px height
-
   return (
-    <div className="min-h-screen bg-gray-900 flex flex-col">
-      {/* Header with Card */}
-      <Card className="bg-gray-800 border-b border-gray-700">
-        <CardHeader className="flex flex-row items-center justify-between px-6 py-4">
+    <Card className="w-screen h-screen rounded-none border-none px-[2%] pt-[10px] flex flex-col">
+      <CardHeader>
+        <div className="flex items-center justify-between">
           <div className="flex items-center space-x-4">
-            <Link
-              to="/"
-              className="text-blue-400 hover:text-blue-300 transition-colors"
-            >
-              ←&nbsp;Back
-            </Link>
-            <CardTitle className="text-2xl font-bold text-white">
+            <Button asChild variant="ghost">
+              <Link to="/">
+                ←&nbsp;Back
+              </Link>
+            </Button>
+            <CardTitle className="text-2xl font-bold">
               {ticker} - {selectedMetricLabel}
             </CardTitle>
           </div>
-          <Select value={selectedMetric} onValueChange={setSelectedMetric}>
-            <SelectTrigger className="min-w-48 bg-gray-700 border border-gray-600 text-white text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {AVAILABLE_METRICS.map((metric) => (
-                <SelectItem key={metric.value} value={metric.value}>
-                  {metric.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </CardHeader>
-      </Card>
-      {/* Chart Container */}
-      <div className="flex-1 p-6 overflow-hidden">
-        {data.length === 0
-          ? (
-            <div className="flex items-center justify-center h-full text-gray-400">
-              No data available for {selectedMetricLabel}
-            </div>
-          )
-          : (
-            <div className="w-full h-full bg-gray-800 rounded-lg overflow-hidden">
-              <ChartComponent
-                data={data}
-                selectedMetric={selectedMetric}
-                height={chartHeight}
-              />
-            </div>
-          )}
-      </div>
-    </div>
+          <div className="w-48">
+            <Select value={selectedMetric} onValueChange={setSelectedMetric}>
+              <SelectTrigger>
+                <SelectValue placeholder="Select a metric" />
+              </SelectTrigger>
+              <SelectContent>
+                {AVAILABLE_METRICS.map((metric) => (
+                  <SelectItem key={metric.value} value={metric.value}>
+                    {metric.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="flex-1 p-1">
+        {data.length === 0 ? (
+          <div className="flex items-center justify-center h-full text-gray-400">
+            No data available for {selectedMetricLabel}
+          </div>
+        ) : (
+          <ChartComponent data={data} selectedMetric={selectedMetric} />
+        )}
+      </CardContent>
+    </Card>
   );
 };
 

@@ -147,14 +147,14 @@ class BacktestPipeline:
 
 async def main() -> None:
     spark = util.get_spark()
-    timeframe: Timeframe = "1h"
+    timeframe: Timeframe = "15m"
 
     config = TIMEFRAME_CONFIGS[timeframe]
 
     leverage: int = 5
     starting_equity = 100
     min_position_size_usd = 11
-    start_date = datetime(2025, 1, 1, tzinfo=timezone.utc).replace(
+    start_date = datetime(2022, 1, 1, tzinfo=timezone.utc).replace(
         hour=0,
         minute=0,
         second=0,

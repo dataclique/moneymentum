@@ -7,7 +7,6 @@ import {
   type SortingState,
   flexRender,
   getCoreRowModel,
-  getPaginationRowModel,
   getSortedRowModel,
   useReactTable,
 } from "@tanstack/react-table"
@@ -36,18 +35,12 @@ export function DataTable<TData, TValue>({
     data,
     columns,
     getCoreRowModel: getCoreRowModel(),
-    getPaginationRowModel: getPaginationRowModel(),
     onSortingChange: setSorting,
     getSortedRowModel: getSortedRowModel(),
     state: {
       sorting,
     },
   })
-
-  useEffect(() => {
-    console.log(data)
-    console.log(table.getRowModel().rows)
-  }, [data])
 
   return (
     <div className="rounded-md border">

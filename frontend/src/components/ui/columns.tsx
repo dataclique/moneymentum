@@ -1,6 +1,7 @@
 import type { ColumnDef } from "@tanstack/react-table"
 import { ArrowUpDown } from "lucide-react"
 import { Button } from "./button";
+import { Link } from "react-router-dom";
 
 export type TradingData = {
   timestamp: string;
@@ -82,6 +83,10 @@ export const columns: ColumnDef<TradingData>[] = [
         </Button>
       )
     },
+    cell: ({ row }) => {
+      const ticker = row.getValue("ticker") as string
+      return <Link to={`/token/${ticker}`} className="underline text-blue-400 hover:text-blue-300">{ticker}</Link>
+    }
   },
   {
     accessorKey: "log_return",

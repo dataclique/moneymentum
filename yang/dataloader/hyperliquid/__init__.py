@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
-from ccxt import async_support as ccxt  # type: ignore[import-untyped]
+from ccxt import async_support as ccxt
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 

@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pandas as pd
-from ccxt import async_support as ccxt  # type: ignore[import-untyped]
+from ccxt import async_support as ccxt
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import types as T
 

@@ -3,11 +3,11 @@ import os
 from dataclasses import dataclass
 from typing import Literal
 
-import ccxt  # type: ignore[import-untyped]
-from pyspark.sql import DataFrame, SparkSession  # type: ignore[import-not-found]
-from pyspark.sql import functions as F  # type: ignore[import-not-found]
-from pyspark.sql import types as T  # type: ignore[import-not-found]
-from tenacity import retry, stop_after_attempt, wait_exponential  # type: ignore[import-not-found]
+import ccxt
+from pyspark.sql import DataFrame, SparkSession
+from pyspark.sql import functions as F
+from pyspark.sql import types as T
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 from yang import util
 
@@ -18,7 +18,7 @@ logger.setLevel(util.LOG_LEVEL)
 def _get_hyperliquid(
     vault_address: str = "0xb796084efac92e2785fcc3bd7eef71e79f065ec6",
 ) -> tuple[ccxt.Exchange, dict]:
-    from dotenv import load_dotenv  # type: ignore[import-not-found]
+    from dotenv import load_dotenv
 
     load_dotenv()
     secret = os.getenv("HYPERLIQUID_API_SECRET")

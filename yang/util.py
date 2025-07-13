@@ -6,10 +6,10 @@ from typing import Literal, TypedDict
 import colorlog
 import matplotlib.pyplot as plt
 import pandas as pd
+from py4j.protocol import Py4JNetworkError
 from pyspark.sql import DataFrame, DataFrameReader, SparkSession
 from pyspark.sql import functions as F
 from statsmodels.tsa.stattools import adfuller, coint
-from py4j.protocol import Py4JNetworkError
 
 DEBUG = True
 LOG_LEVEL = logging.DEBUG if DEBUG else logging.INFO

@@ -149,7 +149,9 @@ async def get_date_range() -> dict[str, Any]:
 async def get_data(date_range: DateRange) -> dict[str, Any]:
     """Get data for the specified date range"""
     try:
-        logger.info("Fetching data for start: %s, end: %s", date_range.start_date, date_range.end_date)
+        logger.info(
+            "Fetching data for start: %s, end: %s", date_range.start_date, date_range.end_date
+        )
         # Accept both Z and non-Z ISO formats
         start_str = date_range.start_date.replace("Z", "+00:00")
         end_str = date_range.end_date.replace("Z", "+00:00")
@@ -251,11 +253,13 @@ def reload_data_stream() -> StreamingResponse:
         yield f"Running command: {' '.join(command)}\n"
         logger.info("Attempting to run backtest.py using: %s", python_path)
         logger.info("Subprocess environment includes JAVA_HOME: %s", env.get("JAVA_HOME"))
-        logger.info("Subprocess environment includes LD_LIBRARY_PATH: %s", env.get("LD_LIBRARY_PATH"))
+        logger.info(
+            "Subprocess environment includes LD_LIBRARY_PATH: %s", env.get("LD_LIBRARY_PATH")
+        )
 
         try:
             process = subprocess.Popen(  # noqa: S603
-                command,
+                command,  # noqa: S603
                 env=env,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
@@ -286,7 +290,7 @@ def reload_data_stream() -> StreamingResponse:
             except (ValueError, FileNotFoundError, pd.errors.EmptyDataError) as e:
                 yield f"❌ Error reloading cache: {e}\n"
 
-        except Exception as e:
+        except (subprocess.SubprocessError, OSError) as e:
             yield f"An unexpected error occurred: {e}\n"
 
     return StreamingResponse(run_script(), media_type="text/plain")

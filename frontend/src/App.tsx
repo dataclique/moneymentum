@@ -196,7 +196,7 @@ function App() {
     }
   };
 
-  // Вынесем таблицу в отдельный компонент для главной страницы
+  // Move table to a separate component for the main page
   const MainPage = () => (
     <div className="container mx-auto py-10">
       <div className="mb-4 flex items-end justify-start gap-4">
@@ -255,7 +255,7 @@ function App() {
       <AppWrapper>
         <div className="mt-4 max-h-96 overflow-y-auto whitespace-pre-wrap rounded p-4 text-sm">
           <div className="flex items-center gap-1">
-            <span>Загрузка данных</span>
+            <span>Loading data</span>
             <span className="inline-flex">
               <span className="animate-bounce [animation-delay:-0.3s]">.</span>
               <span className="animate-bounce [animation-delay:-0.15s]">.</span>
@@ -280,7 +280,7 @@ function App() {
     return (
       <AppWrapper>
         <div className="container mx-auto py-10 text-center">
-          Ошибка: {error}
+          Error: {error}
         </div>
       </AppWrapper>
     );

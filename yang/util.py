@@ -151,8 +151,8 @@ def get_spark() -> SparkSession:
         .config("spark.driver.bindAddress", "127.0.0.1")
         .config(
             "spark.driver.port", "4040"
-        )  # Используем 4040, это стандартный порт для Spark, если не занят
-        .config("spark.ui.port", "4041")  # Порт для Spark UI
+        )  # Use 4040, this is the standard port for Spark, if not taken
+        .config("spark.ui.port", "4041")  # Port for Spark UI
         # ---------------------------------------------------
         # .config("spark.driver.extraClassPath", JDBC_DRIVER_PATH)
         # Memory and Spill Configurations
@@ -175,7 +175,7 @@ def get_spark() -> SparkSession:
         .config("spark.sql.files.maxPartitionBytes", "128m")  # Larger partition size
         .config("spark.sql.inMemoryColumnarStorage.compressed", "true")
         .config("spark.sql.inMemoryColumnarStorage.batchSize", "10000")
-        .master("local[*]")  # Убедитесь, что эта строка есть и она ниже всех .config()
+        .master("local[*]")  # Make sure this line is present and below all .config()
         .getOrCreate()
     )
     spark.sparkContext.setLogLevel("ERROR")

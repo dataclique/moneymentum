@@ -33,8 +33,8 @@ const ChartComponent: React.FC<ChartComponentProps> = (
       // Create chart
       const chart = createChart(chartContainerRef.current, {
         layout: {
-          background: { type: ColorType.Solid, color: "#1f2937" },
-          textColor: "#d1d5db",
+          background: { type: ColorType.Solid, color: "#000" },
+          textColor: "#fff",
         },
         grid: {
           vertLines: { color: "#374151" },

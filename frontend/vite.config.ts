@@ -3,7 +3,6 @@ import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
-// https://vite.dev/config/
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   resolve: {
@@ -11,8 +10,4 @@ export default defineConfig({
       "@": path.resolve(__dirname, "./src"),
     },
   },
-  // server: {
-  //   historyApiFallback: true, // Не поддерживается напрямую в Vite
-  // },
-  // Для SPA fallback используйте npm пакет 'connect-history-api-fallback' или настройте сервер (nginx, etc)
 });

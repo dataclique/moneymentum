@@ -4,7 +4,7 @@ import { columns, type TradingData } from "./components/ui/columns";
 import { DataTable } from "./components/ui/data-table";
 import { Calendar22 as DatePicker } from "./components/ui/date-picker";
 import { Route, Routes, useNavigate } from "react-router-dom";
-import TokenPage from "./components/TokenPage";
+import TokenPage from "./pages/TokenPage";
 import { ModeToggle } from "./components/ui/mode-toggle";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";

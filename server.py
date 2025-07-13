@@ -17,12 +17,6 @@ from pydantic import BaseModel
 
 from yang.util import get_spark
 
-# TODO: clear bullshit of cache
-# TODO: return some logs of reloading data
-# TODO: default show data for last date in df
-# TODO: fix EXPORT_JAVA bullshit
-# TODO: try to deploy
-
 app = FastAPI()
 
 # Enable CORS

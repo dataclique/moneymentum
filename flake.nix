@@ -31,13 +31,25 @@
           denofmt.enable = true;
         };
 
-        deps = with pkgs; [ cacert clang jdk17 zlib libffi gcc-unwrapped stdenv.cc.cc.lib ];
+        deps = with pkgs; [
+          cacert
+          clang
+          jdk17
+          zlib
+          libffi
+          gcc-unwrapped
+          stdenv.cc.cc.lib
+        ];
         # jdbcPath = "${pkgs.postgresql_jdbc}/share/java/postgresql-jdbc.jar";
         # injectJdbc = " --driver-class-path ${jdbcPath} --jars ${jdbcPath}";
         env = {
           # JDBC_PATH = jdbcPath;
           JAVA_HOME = pkgs.jdk17;
-          LD_LIBRARY_PATH = "${pkgs.lib.makeLibraryPath [ pkgs.zlib pkgs.libffi pkgs.stdenv.cc.cc.lib ]}";
+          LD_LIBRARY_PATH = "${pkgs.lib.makeLibraryPath [
+            pkgs.zlib
+            pkgs.libffi
+            pkgs.stdenv.cc.cc.lib
+          ]}";
         };
 
         devShell = devenv.lib.mkShell {
@@ -47,6 +59,8 @@
             packages = with pkgs; deps ++ [ ruff mypy git-lfs nodejs ];
             # deps ++ [ ruff-lsp mypy git-lfs timescaledb-tune ];
 
+            direnv.enable = true;
+
             languages = {
               nix.enable = true;
               python = {
@@ -54,15 +68,16 @@
                 package = pkgs.python311;
                 venv.enable = true;
                 venv.requirements = builtins.readFile ./requirements.txt;
-                libraries = deps ++ [ pkgs.zlib pkgs.libffi pkgs.stdenv.cc.cc.lib ];
+                libraries = deps
+                  ++ [ pkgs.zlib pkgs.libffi pkgs.stdenv.cc.cc.lib ];
               };
             };
 
             inherit env;
-            
+
             # Use pre-commit instead of git-hooks
             git-hooks = { inherit hooks; };
-            
+
             difftastic.enable = true;
             cachix.enable = true;
 
@@ -82,7 +97,10 @@
       in {
         devShells.default = devShell;
 
-        checks.git-hooks = git-hooks.lib.${system}.run { inherit hooks; src = self; };
+        checks.git-hooks = git-hooks.lib.${system}.run {
+          inherit hooks;
+          src = self;
+        };
         packages = {
           devenv-up = devShell.config.procfileScript;
           default = devShell.config.procfileScript;

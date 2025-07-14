@@ -3,14 +3,33 @@
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-24.05";
     flake-utils.url = "github:numtide/flake-utils";
 
+    git-hooks.url = "github:cachix/git-hooks.nix";
+    git-hooks.inputs.nixpkgs.follows = "nixpkgs";
+
     devenv.url = "github:cachix/devenv/v1.0.5";
-    devenv.inputs.nixpkgs.follows = "nixpkgs";
+    devenv.inputs = {
+      nixpkgs.follows = "nixpkgs";
+      git-hooks.follows = "git-hooks";
+    };
   };
 
-  outputs = { self, nixpkgs, flake-utils, devenv, ... }@inputs:
+  outputs = { self, nixpkgs, flake-utils, git-hooks, devenv, ... }@inputs:
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs { inherit system; };
+
+        hooks = {
+          # Nix
+          nil.enable = true;
+          nixfmt-classic.enable = true;
+
+          # Python
+          mypy.enable = false;
+          ruff.enable = true;
+          ruff-format.enable = true;
+          sort-requirements-txt.enable = true;
+          denofmt.enable = true;
+        };
 
         deps = with pkgs; [ cacert clang jdk17 zlib libffi gcc-unwrapped stdenv.cc.cc.lib ];
         # jdbcPath = "${pkgs.postgresql_jdbc}/share/java/postgresql-jdbc.jar";
@@ -43,20 +62,7 @@
             inherit env;
             
             # Use pre-commit instead of git-hooks
-            pre-commit = {
-              hooks = {
-                # Nix
-                nil.enable = true;
-                nixfmt-classic.enable = true;
-
-                # Python
-                mypy.enable = false;
-                ruff.enable = true;
-                ruff-format.enable = true;
-                sort-requirements-txt.enable = true;
-                denofmt.enable = true;
-              };
-            };
+            git-hooks = { inherit hooks; };
             
             difftastic.enable = true;
             cachix.enable = true;
@@ -74,6 +80,7 @@
           }];
         };
 
+        checks.git-hooks = git-hooks.lib.${system}.run { inherit hooks src; };
         packages.devenv-up =
           self.devShells.${system}.default.config.procfileScript;
       });

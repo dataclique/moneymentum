@@ -40,8 +40,7 @@
           LD_LIBRARY_PATH = "${pkgs.lib.makeLibraryPath [ pkgs.zlib pkgs.libffi pkgs.stdenv.cc.cc.lib ]}";
         };
 
-      in {
-        devShells.default = devenv.lib.mkShell {
+        devShell = devenv.lib.mkShell {
           inherit inputs pkgs;
           modules = [{
             # https://devenv.sh/reference/options/
@@ -80,9 +79,14 @@
           }];
         };
 
+      in {
+        devShells.default = devShell;
+
         checks.git-hooks = git-hooks.lib.${system}.run { inherit hooks; src = self; };
-        packages.devenv-up =
-          self.devShells.${system}.default.config.procfileScript;
+        packages = {
+          devenv-up = devShell.config.procfileScript;
+          default = devShell.config.procfileScript;
+        };
       });
 
   nixConfig = {

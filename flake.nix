@@ -59,8 +59,6 @@
             packages = with pkgs; deps ++ [ ruff mypy git-lfs nodejs ];
             # deps ++ [ ruff-lsp mypy git-lfs timescaledb-tune ];
 
-            direnv.enable = true;
-
             languages = {
               nix.enable = true;
               python = {

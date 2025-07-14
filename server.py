@@ -188,8 +188,7 @@ async def get_data(date_range: DateRange) -> dict[str, Any]:
                 return {
                     "data": [],
                     "message": (
-                        f"No records found for date range: {start_date.date()} to "
-                        f"{end_date.date()}"
+                        f"No records found for date range: {start_date.date()} to {end_date.date()}"
                     ),
                 }
             return {"data": [], "message": "No data available in the system"}

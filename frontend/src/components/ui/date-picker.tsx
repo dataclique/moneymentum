@@ -1,23 +1,29 @@
-"use client"
+"use client";
 
-import * as React from "react"
-import { ChevronDownIcon } from "lucide-react"
+import * as React from "react";
+import { ChevronDownIcon } from "lucide-react";
 
-import { Button } from "@/components/ui/button"
-import { Calendar } from "@/components/ui/calendar"
-import { Label } from "@/components/ui/label"
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { Button } from "@/components/ui/button";
+import { Calendar } from "@/components/ui/calendar";
+import { Label } from "@/components/ui/label";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 
 interface Calendar22Props {
-    label: string;
-    selected?: Date | null;
-    onChange?: (date: Date | null) => void;
-    minDate?: Date;
-    maxDate?: Date;
-  }
+  label: string;
+  selected?: Date | null;
+  onChange?: (date: Date | null) => void;
+  minDate?: Date;
+  maxDate?: Date;
+}
 
-export function Calendar22({ label, selected, onChange, minDate, maxDate }: Calendar22Props) {
-  const [open, setOpen] = React.useState(false)
+export function Calendar22(
+  { label, selected, onChange, minDate, maxDate }: Calendar22Props,
+) {
+  const [open, setOpen] = React.useState(false);
 
   const disabledDays: ({ before: Date } | { after: Date })[] = [];
   if (minDate) {
@@ -54,17 +60,19 @@ export function Calendar22({ label, selected, onChange, minDate, maxDate }: Cale
             endMonth={maxDate}
             onSelect={(date) => {
               if (date) {
-                const utcDate = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+                const utcDate = new Date(
+                  Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()),
+                );
                 onChange?.(utcDate);
               } else {
                 onChange?.(null);
               }
-              setOpen(false)
+              setOpen(false);
             }}
             disabled={disabledDays}
           />
         </PopoverContent>
       </Popover>
     </div>
-  )
+  );
 }

@@ -29,4 +29,4 @@ export interface TradingData {
   log_return_above_mar: number | null;
   downside_deviation: number | null;
   sortino: number | null;
-} 
+}

@@ -58,7 +58,7 @@ const ChartComponent: React.FC<ChartComponentProps> = (
       chartRef.current = chart;
 
       // Handle resize
-      const resizeObserver = new ResizeObserver(entries => {
+      const resizeObserver = new ResizeObserver((entries) => {
         for (const entry of entries) {
           const { width, height } = entry.contentRect;
           chart.applyOptions({ width, height });
@@ -66,7 +66,6 @@ const ChartComponent: React.FC<ChartComponentProps> = (
       });
 
       resizeObserver.observe(chartContainerRef.current);
-
 
       return () => {
         resizeObserver.disconnect();
@@ -308,4 +307,4 @@ const ChartComponent: React.FC<ChartComponentProps> = (
   );
 };
 
-export default ChartComponent; 
+export default ChartComponent;

@@ -75,8 +75,8 @@ function App() {
     const initializeDates = async () => {
       try {
         const range = await getDateRange();
-        const maxDate = new Date(`${range.max_date.split('T')[0]}T00:00:00Z`);
-        const minDate = new Date(`${range.min_date.split('T')[0]}T00:00:00Z`);
+        const maxDate = new Date(`${range.max_date.split("T")[0]}T00:00:00Z`);
+        const minDate = new Date(`${range.min_date.split("T")[0]}T00:00:00Z`);
         setMaxAvailableDate(maxDate);
         setMinAvailableDate(minDate);
         // After first load show only last day data
@@ -204,8 +204,7 @@ function App() {
           label="Start Date"
           selected={dateRange.startDate}
           onChange={(date) =>
-            setDateRange((prev) => ({ ...prev, startDate: date }))
-          }
+            setDateRange((prev) => ({ ...prev, startDate: date }))}
           minDate={minAvailableDate || undefined}
           maxDate={maxAvailableDate || undefined}
         />
@@ -213,8 +212,7 @@ function App() {
           label="End Date"
           selected={dateRange.endDate}
           onChange={(date) =>
-            setDateRange((prev) => ({ ...prev, endDate: date }))
-          }
+            setDateRange((prev) => ({ ...prev, endDate: date }))}
           minDate={minAvailableDate || undefined}
           maxDate={maxAvailableDate || undefined}
         />
@@ -224,7 +222,8 @@ function App() {
           onClick={handleReload}
           className="cursor-pointer"
         >
-          Reload data</Button>
+          Reload data
+        </Button>
         <ModeToggle /> {/* Added ModeToggle here for easy access */}
       </div>
       {message && (
@@ -241,14 +240,15 @@ function App() {
 
   // Define a common wrapper for all states (loading, error, main content)
   const AppWrapper = ({ children }: { children: React.ReactNode }) => (
-    <div className={cn(
-      "min-h-screen flex flex-col bg-background text-foreground", // Apply theme classes here
-      // You can add other global styles here if needed
-    )}>
+    <div
+      className={cn(
+        "min-h-screen flex flex-col bg-background text-foreground", // Apply theme classes here
+        // You can add other global styles here if needed
+      )}
+    >
       {children}
     </div>
   );
-
 
   if (loading) {
     return (

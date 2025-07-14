@@ -1,13 +1,13 @@
 import * as React from "react";
 import { Link, useParams } from "react-router-dom";
 
-import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Select,
-  SelectTrigger,
-  SelectValue,
   SelectContent,
   SelectItem,
+  SelectTrigger,
+  SelectValue,
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { AVAILABLE_METRICS } from "./constants";
@@ -125,13 +125,13 @@ const TokenPage: React.FC = () => {
         </div>
       </CardHeader>
       <CardContent className="flex-1 p-1">
-        {data.length === 0 ? (
-          <div className="flex items-center justify-center h-full text-gray-400">
-            No data available for {selectedMetricLabel}
-          </div>
-        ) : (
-          <ChartComponent data={data} selectedMetric={selectedMetric} />
-        )}
+        {data.length === 0
+          ? (
+            <div className="flex items-center justify-center h-full text-gray-400">
+              No data available for {selectedMetricLabel}
+            </div>
+          )
+          : <ChartComponent data={data} selectedMetric={selectedMetric} />}
       </CardContent>
     </Card>
   );

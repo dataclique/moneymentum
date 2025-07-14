@@ -1,5 +1,5 @@
-import type { ColumnDef } from "@tanstack/react-table"
-import { ArrowUpDown } from "lucide-react"
+import type { ColumnDef } from "@tanstack/react-table";
+import { ArrowUpDown } from "lucide-react";
 import { Button } from "./button";
 import { Link } from "react-router-dom";
 
@@ -39,7 +39,7 @@ export const columns: ColumnDef<TradingData>[] = [
           Timestamp
           <ArrowUpDown className="ml-2 h-4 w-4" />
         </Button>
-      )
+      );
     },
   },
   {
@@ -53,7 +53,7 @@ export const columns: ColumnDef<TradingData>[] = [
           Close
           <ArrowUpDown className="ml-2 h-4 w-4" />
         </Button>
-      )
+      );
     },
   },
   {
@@ -67,7 +67,7 @@ export const columns: ColumnDef<TradingData>[] = [
           Volume
           <ArrowUpDown className="ml-2 h-4 w-4" />
         </Button>
-      )
+      );
     },
   },
   {
@@ -81,12 +81,19 @@ export const columns: ColumnDef<TradingData>[] = [
           Ticker
           <ArrowUpDown className="ml-2 h-4 w-4" />
         </Button>
-      )
+      );
     },
     cell: ({ row }) => {
-      const ticker = row.getValue("ticker") as string
-      return <Link to={`/token/${ticker}`} className="underline text-blue-400 hover:text-blue-300">{ticker}</Link>
-    }
+      const ticker = row.getValue("ticker") as string;
+      return (
+        <Link
+          to={`/token/${ticker}`}
+          className="underline text-blue-400 hover:text-blue-300"
+        >
+          {ticker}
+        </Link>
+      );
+    },
   },
   {
     accessorKey: "log_return",
@@ -99,7 +106,7 @@ export const columns: ColumnDef<TradingData>[] = [
           Log Return
           <ArrowUpDown className="ml-2 h-4 w-4" />
         </Button>
-      )
+      );
     },
   },
   {
@@ -113,7 +120,7 @@ export const columns: ColumnDef<TradingData>[] = [
           Cum Return
           <ArrowUpDown className="ml-2 h-4 w-4" />
         </Button>
-      )
+      );
     },
   },
   {
@@ -127,7 +134,7 @@ export const columns: ColumnDef<TradingData>[] = [
           Autocorrelation
           <ArrowUpDown className="ml-2 h-4 w-4" />
         </Button>
-      )
+      );
     },
   },
   {
@@ -141,7 +148,7 @@ export const columns: ColumnDef<TradingData>[] = [
           Stddev
           <ArrowUpDown className="ml-2 h-4 w-4" />
         </Button>
-      )
+      );
     },
   },
   {
@@ -155,7 +162,7 @@ export const columns: ColumnDef<TradingData>[] = [
           Annualized Volatility
           <ArrowUpDown className="ml-2 h-4 w-4" />
         </Button>
-      )
+      );
     },
   },
   {
@@ -169,7 +176,7 @@ export const columns: ColumnDef<TradingData>[] = [
           SMA
           <ArrowUpDown className="ml-2 h-4 w-4" />
         </Button>
-      )
+      );
     },
   },
   {
@@ -183,7 +190,7 @@ export const columns: ColumnDef<TradingData>[] = [
           Mean Return
           <ArrowUpDown className="ml-2 h-4 w-4" />
         </Button>
-      )
+      );
     },
   },
   {
@@ -197,7 +204,7 @@ export const columns: ColumnDef<TradingData>[] = [
           Price Stddev
           <ArrowUpDown className="ml-2 h-4 w-4" />
         </Button>
-      )
+      );
     },
   },
   {
@@ -211,7 +218,7 @@ export const columns: ColumnDef<TradingData>[] = [
           Return Stddev
           <ArrowUpDown className="ml-2 h-4 w-4" />
         </Button>
-      )
+      );
     },
   },
   {
@@ -225,7 +232,7 @@ export const columns: ColumnDef<TradingData>[] = [
           Price Zscore
           <ArrowUpDown className="ml-2 h-4 w-4" />
         </Button>
-      )
+      );
     },
   },
   {
@@ -239,7 +246,7 @@ export const columns: ColumnDef<TradingData>[] = [
           Covariance
           <ArrowUpDown className="ml-2 h-4 w-4" />
         </Button>
-      )
+      );
     },
   },
   {
@@ -253,7 +260,7 @@ export const columns: ColumnDef<TradingData>[] = [
           Beta
           <ArrowUpDown className="ml-2 h-4 w-4" />
         </Button>
-      )
+      );
     },
   },
   {
@@ -267,7 +274,7 @@ export const columns: ColumnDef<TradingData>[] = [
           Information Discreteness
           <ArrowUpDown className="ml-2 h-4 w-4" />
         </Button>
-      )
+      );
     },
   },
   {
@@ -281,7 +288,7 @@ export const columns: ColumnDef<TradingData>[] = [
           Sharpe
           <ArrowUpDown className="ml-2 h-4 w-4" />
         </Button>
-      )
+      );
     },
   },
   {
@@ -295,7 +302,7 @@ export const columns: ColumnDef<TradingData>[] = [
           Log Return Above MAR
           <ArrowUpDown className="ml-2 h-4 w-4" />
         </Button>
-      )
+      );
     },
   },
   {
@@ -309,7 +316,7 @@ export const columns: ColumnDef<TradingData>[] = [
           Downside Deviation
           <ArrowUpDown className="ml-2 h-4 w-4" />
         </Button>
-      )
+      );
     },
   },
   {
@@ -323,7 +330,7 @@ export const columns: ColumnDef<TradingData>[] = [
           Sortino
           <ArrowUpDown className="ml-2 h-4 w-4" />
         </Button>
-      )
+      );
     },
   },
-]
+];

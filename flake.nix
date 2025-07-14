@@ -1,12 +1,12 @@
 {
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-24.05";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.05";
     flake-utils.url = "github:numtide/flake-utils";
 
     git-hooks.url = "github:cachix/git-hooks.nix";
     git-hooks.inputs.nixpkgs.follows = "nixpkgs";
 
-    devenv.url = "github:cachix/devenv/v1.0.5";
+    devenv.url = "github:cachix/devenv/v1.7";
     devenv.inputs = {
       nixpkgs.follows = "nixpkgs";
       git-hooks.follows = "git-hooks";
@@ -45,7 +45,7 @@
           inherit inputs pkgs;
           modules = [{
             # https://devenv.sh/reference/options/
-            packages = with pkgs; deps ++ [ ruff-lsp mypy git-lfs nodejs ];
+            packages = with pkgs; deps ++ [ ruff mypy git-lfs nodejs ];
             # deps ++ [ ruff-lsp mypy git-lfs timescaledb-tune ];
 
             languages = {
@@ -80,7 +80,7 @@
           }];
         };
 
-        checks.git-hooks = git-hooks.lib.${system}.run { inherit hooks src; };
+        checks.git-hooks = git-hooks.lib.${system}.run { inherit hooks; src = self; };
         packages.devenv-up =
           self.devShells.${system}.default.config.procfileScript;
       });

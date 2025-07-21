@@ -61,7 +61,7 @@ SchemaPerpPosition = T.StructType(
 
 
 @dataclass
-class TradeOrder:
+class Order:
     """Specification of a single trade order.
 
     By wrapping the individual parameters in a dataclass we reduce the number
@@ -124,7 +124,7 @@ class ExecutionEngine:
         wait=wait_exponential(multiplier=1.1, min=0.25, max=10),
         reraise=True,
     )
-    def place_trade(self, order: TradeOrder) -> None:
+    def place_trade(self, order: Order) -> None:
         try:
             logger.info("Setting leverage to %d", self.leverage)
             self.exchange.set_leverage(
@@ -178,7 +178,7 @@ class ExecutionEngine:
                 close_price = ticker["last"] if ticker["last"] else ticker["close"]
 
                 self.place_trade(
-                    TradeOrder(
+                    Order(
                         symbol=row.symbol,
                         order_type="market",
                         side="sell" if row.direction == "long" else "buy",
@@ -205,7 +205,7 @@ class ExecutionEngine:
                     row.direction == "short" and diff < 0
                 )
                 self.place_trade(
-                    TradeOrder(
+                    Order(
                         symbol=row.symbol,
                         order_type="market",
                         side="buy" if is_buy else "sell",
@@ -219,7 +219,7 @@ class ExecutionEngine:
         for row in openings.collect():
             logger.info("Opening %s %s...", row.symbol, row.direction.upper())
             self.place_trade(
-                TradeOrder(
+                Order(
                     symbol=row.symbol,
                     order_type="market",
                     side="buy" if row.direction == "long" else "sell",

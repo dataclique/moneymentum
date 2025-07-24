@@ -46,6 +46,9 @@ class BacktestPipeline:
 
         chronos = Chronos(timeframe=self.timeframe, config=self.config)
         analysis_df = self.strategy.generate_analysis(candles_df)
+
+        util.save_csv("analysis_df", analysis_df)
+
         picks_df = self.strategy.generate_picks(analysis_df)
 
         latest_row = candles_df.select(F.max("timestamp")).first()
@@ -144,14 +147,14 @@ class BacktestPipeline:
 
 async def main() -> None:
     spark = util.get_spark()
-    timeframe: Timeframe = "15m"
+    timeframe: Timeframe = "1h"
 
     config = TIMEFRAME_CONFIGS[timeframe]
 
     leverage: int = 5
     starting_equity = 100
     min_position_size_usd = 11
-    start_date = datetime(2023, 6, 1, tzinfo=timezone.utc).replace(
+    start_date = datetime(2022, 1, 1, tzinfo=timezone.utc).replace(
         hour=0,
         minute=0,
         second=0,

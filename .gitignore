@@ -10,5 +10,7 @@ __pycache__
 .env
 /data/
 venv/
+/node_modules
+/public/data/
 /frontend/node_modules/
 /frontend/dist/

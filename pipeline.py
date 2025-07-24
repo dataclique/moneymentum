@@ -58,6 +58,8 @@ class TradingPipeline:
             candles_df.show(truncate=False)
 
         analysis_df = self.strategy.generate_analysis(candles_df)
+
+        util.save_csv("analysis_df", analysis_df)
         picks_df = self.strategy.generate_picks(analysis_df)
         latest_row = candles_df.select(F.max("timestamp")).first()
         if latest_row is None:
@@ -74,7 +76,7 @@ class TradingPipeline:
 
 
 async def main() -> None:
-    timeframe: Timeframe = "15m"
+    timeframe: Timeframe = "1h"
     spark: SparkSession = util.get_spark()
     config: TimeframeConfig = TIMEFRAME_CONFIGS[timeframe]
 

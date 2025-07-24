@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-from ccxt import async_support as ccxt  # type: ignore[import-untyped]
+from ccxt import async_support as ccxt
 from pyspark.sql import types as T
 from tenacity import retry, stop_after_attempt, wait_exponential
 

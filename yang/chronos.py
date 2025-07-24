@@ -74,6 +74,189 @@ class Chronos:
 
         return rolling_cum_df
 
+    def with_all_features(self, df: DataFrame, index_returns: DataFrame | None = None) -> DataFrame:
+        """
+        Calculate all metrics in one chain of Spark DataFrame operations
+        for maximum performance.
+        """
+        logger.info("Starting building working tree of all metrics...")
+
+        # --- 1. Base metrics and "enough samples" ---
+        # Calculate count and log_return at the beginning
+        df_transformed = df.withColumn(
+            "count", F.count("close").over(self.symbol_window)
+        ).withColumn(
+            "log_return",
+            F.log(F.col("close") / F.lag("close").over(self.symbol_window)),
+        )
+
+        has_enough_samples_expr = F.col("count") >= self.config["lookback_periods"]
+
+        if util.DEBUG:
+            initial_count = df.select("close").dropna().count()
+            ticker_count = df.select("ticker").distinct().count()
+            logger.debug("Initial count: %d; Ticker count: %d", initial_count, ticker_count)
+
+        # --- 2. Metrics dependent on log_return and rolling_window ---
+        logger.info("Building cumulative return, volatility, SMA, and standard deviations...")
+        df_transformed = df_transformed.withColumns(
+            {
+                "cum_return": F.when(
+                    has_enough_samples_expr,
+                    F.exp(F.sum("log_return").over(self.rolling_window)) - 1,
+                ),
+                "stddev": F.stddev(F.col("log_return")).over(self.rolling_window),
+                "annualized_volatility": F.col("stddev")
+                * F.sqrt(F.lit(self.config["annualized_factor"])),
+                "sma": F.when(has_enough_samples_expr, F.avg("close").over(self.rolling_window)),
+                "mean_return": F.when(
+                    has_enough_samples_expr, F.avg("log_return").over(self.rolling_window)
+                ),
+                "price_stddev": F.when(
+                    has_enough_samples_expr, F.stddev("close").over(self.rolling_window)
+                ),
+                "return_stddev": F.stddev("log_return").over(self.rolling_window),
+            }
+        )
+
+        # --- 3. Min/Max (depends on has_enough_samples) ---
+        logger.info("Building min/max...")
+        df_transformed = df_transformed.withColumns(
+            {
+                "max": F.when(has_enough_samples_expr, F.max("high").over(self.rolling_window)),
+                "min": F.when(has_enough_samples_expr, F.min("low").over(self.rolling_window)),
+            }
+        )
+
+        # --- 4. Z-score (depends on sma and price_stddev) ---
+        logger.info("Building zscore...")
+        df_transformed = df_transformed.withColumn(
+            "price_zscore", (F.col("close") - F.col("sma")) / F.col("price_stddev")
+        )
+
+        # --- 5. Sharpe (depends on mean_return and annualized_volatility) ---
+        logger.info("Building sharpe...")
+        df_transformed = df_transformed.withColumn(
+            "annualized_return", F.exp(F.col("mean_return") * self.config["annualized_factor"]) - 1
+        ).withColumn(
+            "sharpe",
+            (F.col("annualized_return") - self.config.get("risk_free_rate", 0.0))
+            / F.col("annualized_volatility"),
+        )
+
+        # --- 6. Information Discreteness (depends on cum_return, log_return, num_samples) ---
+        logger.info("Building information discreteness...")
+        df_transformed = (
+            df_transformed.withColumns(
+                {
+                    "return_sign": F.signum(F.col("cum_return")),
+                    "is_positive_return": F.when(F.col("log_return") > 0, 1).otherwise(0),
+                    "is_negative_return": F.when(F.col("log_return") < 0, 1).otherwise(0),
+                    "num_samples": F.count("log_return").over(self.rolling_window),
+                }
+            )
+            .withColumns(
+                {
+                    "pct_positive": F.sum("is_positive_return").over(self.rolling_window)
+                    / F.col("num_samples"),
+                    "pct_negative": F.sum("is_negative_return").over(self.rolling_window)
+                    / F.col("num_samples"),
+                }
+            )
+            .withColumn(
+                "information_discreteness",
+                F.col("return_sign") * (F.col("pct_negative") - F.col("pct_positive")),
+            )
+            .drop(
+                "is_positive_return",
+                "is_negative_return",
+                "num_samples",
+                "pct_positive",
+                "pct_negative",
+                "return_sign",
+            )
+        )
+
+        # --- 7. Sortino (depends on log_return, mean_return, has_enough_samples) ---
+        logger.info("Building sortino...")
+        df_transformed = (
+            df_transformed.withColumn(
+                "log_return_above_mar", F.col("log_return") - self.config["min_acceptable_return"]
+            )
+            .withColumn(
+                "negative_squared",
+                F.when(
+                    F.col("log_return_above_mar") < 0, F.col("log_return_above_mar") ** 2
+                ).otherwise(0),
+            )
+            .withColumn(
+                "sum_negative_squared",
+                F.when(
+                    has_enough_samples_expr, F.sum("negative_squared").over(self.rolling_window)
+                ),
+            )
+            .withColumn(
+                "count_observations",
+                F.when(
+                    has_enough_samples_expr,
+                    F.count("log_return_above_mar").over(self.rolling_window),
+                ),
+            )
+            .withColumn(
+                "downside_variance", F.col("sum_negative_squared") / F.col("count_observations")
+            )
+            .withColumn(
+                "downside_deviation",
+                F.sqrt(F.col("downside_variance")),
+            )
+            .withColumn("sortino", F.col("annualized_return") / F.col("downside_deviation"))
+            .drop(
+                "negative_squared",
+                "sum_negative_squared",
+                "count_observations",
+                "downside_variance",
+                "log_return_above_mar",
+            )
+        )
+
+        # --- 8. Autocorrelation (requires another window) ---
+        logger.info("Building autocorrelation...")
+        lookback_periods_corr = int(self.config["lookback_periods"] / 4)
+        rolling_window_corr = self.symbol_window.rowsBetween(
+            -lookback_periods_corr + 1, W.Window.currentRow
+        )
+        df_transformed = df_transformed.withColumn(
+            "autocorrelation",
+            F.corr("log_return", F.lag("log_return").over(self.symbol_window)).over(
+                rolling_window_corr
+            ),
+        )
+
+        # --- 9. Beta (requires Join) ---
+        logger.info("Building beta...")
+        # Get data for the index
+        index_returns_df = (
+            df_transformed.filter(F.col("ticker") == "BTC").select(
+                F.col("timestamp"), F.col("log_return")
+            )
+            if index_returns is None
+            else index_returns
+        ).withColumnRenamed("log_return", "index_return")
+
+        # Join and calculate beta
+        df_transformed = (
+            df_transformed.join(F.broadcast(index_returns_df), "timestamp", "left")
+            .withColumn(
+                "covariance",
+                F.covar_pop("log_return", "index_return").over(self.rolling_window),
+            )
+            .withColumn("beta", F.col("covariance") / (F.col("stddev") ** 2))
+            .drop("index_return")
+        )
+
+        logger.info("All metrics tree are built. Starting to calculate...")
+        return df_transformed
+
     def with_volatility(self, df: DataFrame) -> DataFrame:
         logger.info("Calculating volatility...")
 

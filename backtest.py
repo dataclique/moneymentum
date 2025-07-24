@@ -19,6 +19,26 @@ if __name__ == "__main__":
 logger = logging.getLogger(__name__)
 logger.setLevel(util.LOG_LEVEL)
 
+columns_order = [
+    "timestamp",
+    "close",
+    "volume",
+    "symbol",
+    "ticker",
+    "log_return",
+    "cum_return",
+    "stddev",
+    "annualized_volatility",
+    "autocorrelation",
+    "sma",
+    "mean_return",
+    "price_stddev",
+    "return_stddev",
+    "price_zscore",
+    "covariance",
+    "beta",
+]
+
 
 @dataclass
 class BacktestPipeline:
@@ -33,6 +53,7 @@ class BacktestPipeline:
 
     dataloader: HyperliquidDataLoader
     strategy: Strategy
+    optimized_calculations: bool = False
 
     async def run(self) -> None:
         logger.info("Starting pipeline...")
@@ -45,9 +66,15 @@ class BacktestPipeline:
         candles_df.show(truncate=False)
 
         chronos = Chronos(timeframe=self.timeframe, config=self.config)
-        analysis_df = self.strategy.generate_analysis(candles_df)
+        analysis_df = (
+            self.strategy.generate_analysis(candles_df)
+            if self.optimized_calculations
+            else self.strategy.generate_analysis_optimized(candles_df)
+        )
 
-        util.save_csv("analysis_df", analysis_df)
+        analysis_df = analysis_df.select(columns_order)
+
+        util.save_csv(f"analysis_df_{self.timeframe}", analysis_df)
 
         picks_df = self.strategy.generate_picks(analysis_df)
 
@@ -148,6 +175,7 @@ class BacktestPipeline:
 async def main() -> None:
     spark = util.get_spark()
     timeframe: Timeframe = "1h"
+    optimized_calculations = True
 
     config = TIMEFRAME_CONFIGS[timeframe]
 
@@ -186,6 +214,7 @@ async def main() -> None:
             start_date=start_date,
             dataloader=dataloader,
             strategy=strategy,
+            optimized_calculations=optimized_calculations,
         )
 
         await pipeline.run()

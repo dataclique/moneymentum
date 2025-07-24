@@ -22,11 +22,19 @@ class Strategy:
     starting_equity: float
     min_position_size: float
 
+    def generate_analysis_optimized(self, candles_df: DataFrame) -> DataFrame:
+        logger.info("Candles DataFrame:")
+        candles_df.show(truncate=False)
+
+        chronos = Chronos(timeframe=self.timeframe, config=self.config)
+        return chronos.with_all_features(candles_df)
+
     def generate_analysis(self, candles_df: DataFrame) -> DataFrame:
         logger.info("Candles DataFrame:")
         candles_df.show(truncate=False)
 
         chronos = Chronos(timeframe=self.timeframe, config=self.config)
+
         return (
             candles_df.transform(chronos.with_returns)
             .transform(chronos.with_autocorrelation)

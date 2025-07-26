@@ -15,12 +15,6 @@ on:
 
 jobs:
   claude-review:
-    # Optional: Filter by PR author
-    # if: |
-    #   github.event.pull_request.user.login == 'external-contributor' ||
-    #   github.event.pull_request.user.login == 'new-developer' ||
-    #   github.event.pull_request.author_association == 'FIRST_TIME_CONTRIBUTOR'
-    
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -53,37 +47,21 @@ jobs:
             4. **Submit the review**: Use `mcp__github__submit_pending_pull_request_review` with event type "COMMENT" (not "REQUEST_CHANGES") to publish all comments as a non-blocking review
 
             Focus your review on:
-            - Code quality and best practices
-            - Potential bugs or security issues
-            - Performance considerations
-            - Maintainability and readability
-            - Architecture and design decisions
+            - For TypeScript files: Type safety and proper interface usage
+            - Performance and correctness for PySpark data processing
+            - For API endpoints: Security, input validation, and error handling
+            - For React components: Performance, accessibility, and best practices
+            - For tests: Coverage, edge cases, and test quality
 
             Provide specific, actionable feedback. Use inline comments for line-specific issues and include an overall summary when submitting the review. **Important**: Submit as "COMMENT" type so the review doesn't block the PR.
 
           # Optional: Use sticky comments to make Claude reuse the same comment on subsequent pushes to the same PR
-          # use_sticky_comment: true
-          
-          # Optional: Customize review based on file types
-          # direct_prompt: |
-          #   Review this PR focusing on:
-          #   - For TypeScript files: Type safety and proper interface usage
-          #   - For API endpoints: Security, input validation, and error handling
-          #   - For React components: Performance, accessibility, and best practices
-          #   - For tests: Coverage, edge cases, and test quality
-          
-          # Optional: Different prompts for different authors
-          # direct_prompt: |
-          #   ${{ github.event.pull_request.author_association == 'FIRST_TIME_CONTRIBUTOR' && 
-          #   'Welcome! Please review this PR from a first-time contributor. Be encouraging and provide detailed explanations for any suggestions.' ||
-          #   'Please provide a thorough code review focusing on our coding standards and best practices.' }}
+          use_sticky_comment: true
           
           # Optional: Add specific tools for running tests or linting
           # allowed_tools: "Bash(npm run test),Bash(npm run lint),Bash(npm run typecheck)"
           allowed_tools: "mcp__github__create_pending_pull_request_review,mcp__github__add_pull_request_review_comment_to_pending_review,mcp__github__submit_pending_pull_request_review,mcp__github__get_pull_request_diff"
           
           # Optional: Skip review for certain conditions
-          # if: |
-          #   !contains(github.event.pull_request.title, '[skip-review]') &&
-          #   !contains(github.event.pull_request.title, '[WIP]')
-
+          if: |
+            !contains(github.event.pull_request.title, '[WIP]')

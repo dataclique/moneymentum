@@ -7,12 +7,11 @@ concurrency:
 on:
   pull_request:
     types: [opened, synchronize]
-    # Optional: Only run on specific file changes
-    # paths:
-    #   - "src/**/*.ts"
-    #   - "src/**/*.tsx"
-    #   - "src/**/*.js"
-    #   - "src/**/*.jsx"
+    # Exclude lock files and generated files from triggering reviews
+    paths-ignore:
+      - "flake.lock"
+      - "frontend/package-lock.json"
+      - "**/*.lock"
 
 jobs:
   claude-review:

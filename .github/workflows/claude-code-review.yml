@@ -1,5 +1,9 @@
 name: Claude Code Review
 
+concurrency:
+  group: claude-code-review
+  cancel-in-progress: true
+
 on:
   pull_request:
     types: [opened, synchronize]

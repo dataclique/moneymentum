@@ -18,4 +18,4 @@ export const AVAILABLE_METRICS = [
   { value: "log_return_above_mar", label: "Log Return Above MAR" },
   { value: "downside_deviation", label: "Downside Deviation" },
   { value: "sortino", label: "Sortino Ratio" },
-];
+]

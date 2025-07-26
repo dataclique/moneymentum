@@ -1,31 +1,31 @@
-import type { ColumnDef } from "@tanstack/react-table";
-import { ArrowUpDown } from "lucide-react";
-import { Button } from "./button";
-import { Link } from "react-router-dom";
+import type { ColumnDef } from "@tanstack/react-table"
+import { ArrowUpDown } from "lucide-react"
+import { Button } from "./button"
+import { Link } from "react-router-dom"
 
 export type TradingData = {
-  timestamp: string;
-  close: number;
-  volume: number;
-  ticker: string;
-  log_return: number | null;
-  cum_return: number | null;
-  autocorrelation: number | null;
-  stddev: number | null;
-  annualized_volatility: number | null;
-  sma: number | null;
-  mean_return: number | null;
-  price_stddev: number | null;
-  return_stddev: number | null;
-  price_zscore: number | null;
-  covariance: number | null;
-  beta: number | null;
-  information_discreteness: number | null;
-  sharpe: number | null;
-  log_return_above_mar: number | null;
-  downside_deviation: number | null;
-  sortino: number | null;
-};
+  timestamp: string
+  close: number
+  volume: number
+  ticker: string
+  log_return: number | null
+  cum_return: number | null
+  autocorrelation: number | null
+  stddev: number | null
+  annualized_volatility: number | null
+  sma: number | null
+  mean_return: number | null
+  price_stddev: number | null
+  return_stddev: number | null
+  price_zscore: number | null
+  covariance: number | null
+  beta: number | null
+  information_discreteness: number | null
+  sharpe: number | null
+  log_return_above_mar: number | null
+  downside_deviation: number | null
+  sortino: number | null
+}
 
 export const columns: ColumnDef<TradingData>[] = [
   {
@@ -39,7 +39,7 @@ export const columns: ColumnDef<TradingData>[] = [
           Timestamp
           <ArrowUpDown className="ml-2 h-4 w-4" />
         </Button>
-      );
+      )
     },
   },
   {
@@ -53,7 +53,7 @@ export const columns: ColumnDef<TradingData>[] = [
           Close
           <ArrowUpDown className="ml-2 h-4 w-4" />
         </Button>
-      );
+      )
     },
   },
   {
@@ -67,7 +67,7 @@ export const columns: ColumnDef<TradingData>[] = [
           Volume
           <ArrowUpDown className="ml-2 h-4 w-4" />
         </Button>
-      );
+      )
     },
   },
   {
@@ -81,10 +81,10 @@ export const columns: ColumnDef<TradingData>[] = [
           Ticker
           <ArrowUpDown className="ml-2 h-4 w-4" />
         </Button>
-      );
+      )
     },
     cell: ({ row }) => {
-      const ticker = row.getValue("ticker") as string;
+      const ticker = row.getValue("ticker") as string
       return (
         <Link
           to={`/token/${ticker}`}
@@ -92,7 +92,7 @@ export const columns: ColumnDef<TradingData>[] = [
         >
           {ticker}
         </Link>
-      );
+      )
     },
   },
   {
@@ -106,7 +106,7 @@ export const columns: ColumnDef<TradingData>[] = [
           Log Return
           <ArrowUpDown className="ml-2 h-4 w-4" />
         </Button>
-      );
+      )
     },
   },
   {
@@ -120,7 +120,7 @@ export const columns: ColumnDef<TradingData>[] = [
           Cum Return
           <ArrowUpDown className="ml-2 h-4 w-4" />
         </Button>
-      );
+      )
     },
   },
   {
@@ -134,7 +134,7 @@ export const columns: ColumnDef<TradingData>[] = [
           Autocorrelation
           <ArrowUpDown className="ml-2 h-4 w-4" />
         </Button>
-      );
+      )
     },
   },
   {
@@ -148,7 +148,7 @@ export const columns: ColumnDef<TradingData>[] = [
           Stddev
           <ArrowUpDown className="ml-2 h-4 w-4" />
         </Button>
-      );
+      )
     },
   },
   {
@@ -162,7 +162,7 @@ export const columns: ColumnDef<TradingData>[] = [
           Annualized Volatility
           <ArrowUpDown className="ml-2 h-4 w-4" />
         </Button>
-      );
+      )
     },
   },
   {
@@ -176,7 +176,7 @@ export const columns: ColumnDef<TradingData>[] = [
           SMA
           <ArrowUpDown className="ml-2 h-4 w-4" />
         </Button>
-      );
+      )
     },
   },
   {
@@ -190,7 +190,7 @@ export const columns: ColumnDef<TradingData>[] = [
           Mean Return
           <ArrowUpDown className="ml-2 h-4 w-4" />
         </Button>
-      );
+      )
     },
   },
   {
@@ -204,7 +204,7 @@ export const columns: ColumnDef<TradingData>[] = [
           Price Stddev
           <ArrowUpDown className="ml-2 h-4 w-4" />
         </Button>
-      );
+      )
     },
   },
   {
@@ -218,7 +218,7 @@ export const columns: ColumnDef<TradingData>[] = [
           Return Stddev
           <ArrowUpDown className="ml-2 h-4 w-4" />
         </Button>
-      );
+      )
     },
   },
   {
@@ -232,7 +232,7 @@ export const columns: ColumnDef<TradingData>[] = [
           Price Zscore
           <ArrowUpDown className="ml-2 h-4 w-4" />
         </Button>
-      );
+      )
     },
   },
   {
@@ -246,7 +246,7 @@ export const columns: ColumnDef<TradingData>[] = [
           Covariance
           <ArrowUpDown className="ml-2 h-4 w-4" />
         </Button>
-      );
+      )
     },
   },
   {
@@ -260,7 +260,7 @@ export const columns: ColumnDef<TradingData>[] = [
           Beta
           <ArrowUpDown className="ml-2 h-4 w-4" />
         </Button>
-      );
+      )
     },
   },
   {
@@ -274,7 +274,7 @@ export const columns: ColumnDef<TradingData>[] = [
           Information Discreteness
           <ArrowUpDown className="ml-2 h-4 w-4" />
         </Button>
-      );
+      )
     },
   },
   {
@@ -288,7 +288,7 @@ export const columns: ColumnDef<TradingData>[] = [
           Sharpe
           <ArrowUpDown className="ml-2 h-4 w-4" />
         </Button>
-      );
+      )
     },
   },
   {
@@ -302,7 +302,7 @@ export const columns: ColumnDef<TradingData>[] = [
           Log Return Above MAR
           <ArrowUpDown className="ml-2 h-4 w-4" />
         </Button>
-      );
+      )
     },
   },
   {
@@ -316,7 +316,7 @@ export const columns: ColumnDef<TradingData>[] = [
           Downside Deviation
           <ArrowUpDown className="ml-2 h-4 w-4" />
         </Button>
-      );
+      )
     },
   },
   {
@@ -330,7 +330,7 @@ export const columns: ColumnDef<TradingData>[] = [
           Sortino
           <ArrowUpDown className="ml-2 h-4 w-4" />
         </Button>
-      );
+      )
     },
   },
-];
+]

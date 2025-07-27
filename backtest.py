@@ -34,7 +34,7 @@ class BacktestPipeline:
     dataloader: HyperliquidDataLoader
     strategy: Strategy
 
-    async def run(self) -> None:
+    async def run(self, analysis_only: bool = False) -> None:
         logger.info("Starting pipeline...")
 
         _funding_rate_df = await self.dataloader.get_funding_rate_df()
@@ -48,6 +48,10 @@ class BacktestPipeline:
         analysis_df = self.strategy.generate_analysis(candles_df)
 
         util.save_csv("analysis_df", analysis_df)
+
+        if analysis_only:
+            logger.info("Analysis complete. Skipping backtest calculations.")
+            return
 
         picks_df = self.strategy.generate_picks(analysis_df)
 

@@ -35,6 +35,13 @@ class BacktestPipeline:
     strategy: Strategy
 
     async def run(self, analysis_only: bool = False) -> None:
+        """Run the backtest pipeline.
+        
+        Args:
+            analysis_only: If True, skip expensive backtest calculations after 
+                          saving analysis_df. Useful for web usage that only 
+                          needs analysis data.
+        """
         logger.info("Starting pipeline...")
 
         _funding_rate_df = await self.dataloader.get_funding_rate_df()

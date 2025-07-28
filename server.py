@@ -30,7 +30,6 @@ app.add_middleware(
 )
 
 
-# Pydantic model for request body
 class BacktestRequest(BaseModel):
     mode: PipelineRunMode = Field(
         default=PipelineRunMode.FULL_BACKTEST,

@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 logger.setLevel(util.LOG_LEVEL)
 
 
-class PipelineRunMode(Enum):
+class PipelineRunMode(str, Enum):
     FULL_BACKTEST = "full_backtest"
     ANALYSIS_ONLY = "analysis_only"
     FETCH_DATA_ONLY = "fetch_data_only"
@@ -57,8 +57,8 @@ class BacktestPipeline:
 
         if mode == PipelineRunMode.FETCH_DATA_ONLY:
             logger.info(
-                """Fetching data complete. Skipping analysis and backtest calculations 
-                as mode is FETCH_DATA_ONLY."""
+                "Fetching data complete. Skipping analysis and backtest calculations "
+                "as mode is FETCH_DATA_ONLY."
             )
             return
 

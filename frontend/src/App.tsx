@@ -223,6 +223,7 @@ function App() {
           maxDate={maxAvailableDate || undefined}
         />
         <div>
+          {/* Calling only fetch + analysis */}
           <Button
             onClick={() => handleReload("analysis_only")}
             disabled={loading}

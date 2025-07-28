@@ -67,9 +67,9 @@ class BacktestPipeline:
 
         chronos = Chronos(timeframe=self.timeframe, config=self.config)
         analysis_df = (
-            self.strategy.generate_analysis(candles_df)
+            self.strategy.generate_analysis_optimized(candles_df)
             if self.optimized_calculations
-            else self.strategy.generate_analysis_optimized(candles_df)
+            else self.strategy.generate_analysis(candles_df)
         )
 
         analysis_df = analysis_df.select(columns_order)

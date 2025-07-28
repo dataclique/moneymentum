@@ -1,7 +1,9 @@
+import argparse
 import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from enum import Enum
 
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
@@ -20,6 +22,12 @@ logger = logging.getLogger(__name__)
 logger.setLevel(util.LOG_LEVEL)
 
 
+class PipelineRunMode(Enum):
+    FULL_BACKTEST = "full_backtest"
+    ANALYSIS_ONLY = "analysis_only"
+    FETCH_DATA_ONLY = "fetch_data_only"
+
+
 @dataclass
 class BacktestPipeline:
     leverage: float
@@ -34,19 +42,25 @@ class BacktestPipeline:
     dataloader: HyperliquidDataLoader
     strategy: Strategy
 
-    async def run(self, analysis_only: bool = False) -> None:
+    async def run(self, mode: PipelineRunMode = PipelineRunMode.FULL_BACKTEST) -> None:
         """Run the backtest pipeline.
-        
+
         Args:
-            analysis_only: If True, skip expensive backtest calculations after 
-                          saving analysis_df. Useful for web usage that only 
-                          needs analysis data.
+            mode: The mode in which to run the pipeline (e.g., FULL_BACKTEST,
+            ANALYSIS_ONLY, FETCH_DATA_ONLY).
         """
-        logger.info("Starting pipeline...")
+        logger.info("Starting pipeline in mode: %s", mode.value)
 
         _funding_rate_df = await self.dataloader.get_funding_rate_df()
 
         candles_df = await self.dataloader.get_candles_df()
+
+        if mode == PipelineRunMode.FETCH_DATA_ONLY:
+            logger.info(
+                """Fetching data complete. Skipping analysis and backtest calculations 
+                as mode is FETCH_DATA_ONLY."""
+            )
+            return
 
         logger.info("Candles DataFrame:")
         candles_df.show(truncate=False)
@@ -56,8 +70,10 @@ class BacktestPipeline:
 
         util.save_csv("analysis_df", analysis_df)
 
-        if analysis_only:
-            logger.info("Analysis complete. Skipping backtest calculations.")
+        if mode == PipelineRunMode.ANALYSIS_ONLY:
+            logger.info(
+                "Analysis complete. Skipping backtest calculations as mode is ANALYSIS_ONLY."
+            )
             return
 
         picks_df = self.strategy.generate_picks(analysis_df)
@@ -157,6 +173,17 @@ class BacktestPipeline:
 
 
 async def main() -> None:
+    parser = argparse.ArgumentParser(description="Run backtest pipeline.")
+    parser.add_argument(
+        "--mode",
+        type=str,
+        choices=[mode.value for mode in PipelineRunMode],
+        default=PipelineRunMode.FULL_BACKTEST.value,
+        help="Pipeline run mode",
+    )
+    args = parser.parse_args()
+    mode = PipelineRunMode(args.mode)
+
     spark = util.get_spark()
     timeframe: Timeframe = "1h"
 
@@ -199,7 +226,7 @@ async def main() -> None:
             strategy=strategy,
         )
 
-        await pipeline.run()
+        await pipeline.run(mode=mode)
 
 
 if __name__ == "__main__":

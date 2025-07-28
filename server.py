@@ -13,8 +13,9 @@ import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
+from backtest import PipelineRunMode
 from yang.util import get_spark
 
 app = FastAPI()
@@ -27,6 +28,15 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# Pydantic model for request body
+class BacktestRequest(BaseModel):
+    mode: PipelineRunMode = Field(
+        default=PipelineRunMode.FULL_BACKTEST,
+        description="The mode to run the backtest in: 'full_backtest' or 'analysis_only'",
+    )
+
 
 # Initialize Spark with proper configuration
 spark = get_spark()
@@ -226,7 +236,7 @@ async def get_token_data(ticker: str) -> dict[str, Any]:
 
 
 @app.post("/api/reload_data/stream")
-def reload_data_stream() -> StreamingResponse:
+def reload_data_stream(params: BacktestRequest) -> StreamingResponse:
     """Stream logs while running backtest.py"""
 
     def run_script() -> Iterator[str]:
@@ -242,7 +252,7 @@ def reload_data_stream() -> StreamingResponse:
             yield f"Error: Python executable not found at {python_path}\n"
             return
 
-        command = [python_path, "backtest.py"]
+        command = [python_path, "backtest.py", "--mode", params.mode.value]
         yield f"Running command: {' '.join(command)}\n"
         logger.info("Attempting to run backtest.py using: %s", python_path)
         logger.info("Subprocess environment includes JAVA_HOME: %s", env.get("JAVA_HOME"))

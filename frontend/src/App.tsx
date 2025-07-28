@@ -128,7 +128,7 @@ function App() {
     }
   }, [dateRange])
 
-  const handleReload = async () => {
+  const handleReload = async (mode = "full_backtest") => {
     setError(null)
     setLoading(true)
     setIsReloading(true)
@@ -141,6 +141,10 @@ function App() {
         {
           method: "POST",
           signal: controller.signal,
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ mode }),
         },
       )
 
@@ -218,13 +222,14 @@ function App() {
           minDate={minAvailableDate || undefined}
           maxDate={maxAvailableDate || undefined}
         />
-        <Button
-          variant="outline"
-          onClick={handleReload}
-          className="cursor-pointer"
-        >
-          Reload data
-        </Button>
+        <div>
+          <Button
+            onClick={() => handleReload("analysis_only")}
+            disabled={loading}
+          >
+            {loading ? "Loading..." : "Reload Data"}
+          </Button>
+        </div>
         <ModeToggle /> {/* Added ModeToggle here for easy access */}
       </div>
       {message && <div className="mb-4 text-center">{message}</div>}

@@ -24,6 +24,9 @@ class Chronos:
         self.rolling_window = self.symbol_window.rowsBetween(
             -self.config["lookback_periods"] + 1, W.Window.currentRow
         )
+        self.market_window = W.Window.orderBy("timestamp").rowsBetween(
+            -self.config["lookback_periods"] + 1, W.Window.currentRow
+        )
         self.has_enough_samples = F.col("count") >= self.config["lookback_periods"]
 
     def with_returns(self, df: DataFrame) -> DataFrame:
@@ -234,7 +237,9 @@ class Chronos:
 
         # --- 9. Beta (requires Join) ---
         logger.info("Building beta...")
-        # Get data for the index
+
+        # Get BTC returns (index returns)
+        # We need log_return from df_transformed, and filter for BTC
         index_returns_df = (
             df_transformed.filter(F.col("ticker") == "BTC").select(
                 F.col("timestamp"), F.col("log_return")
@@ -243,15 +248,24 @@ class Chronos:
             else index_returns
         ).withColumnRenamed("log_return", "index_return")
 
-        # Join and calculate beta
+        # Calculate index_variance using the market_window
+        # This will operate only on the BTC returns stream.
+        index_returns_with_variance = index_returns_df.withColumn(
+            "index_variance", F.variance("index_return").over(self.market_window)
+        )
+
+        # Join the main df_transformed with the BTC index data (including variance)
         df_transformed = (
-            df_transformed.join(F.broadcast(index_returns_df), "timestamp", "left")
+            df_transformed.join(F.broadcast(index_returns_with_variance), "timestamp", "left")
             .withColumn(
                 "covariance",
                 F.covar_pop("log_return", "index_return").over(self.rolling_window),
             )
-            .withColumn("beta", F.col("covariance") / (F.col("stddev") ** 2))
-            .drop("index_return")
+            .withColumn(
+                "beta",
+                F.col("covariance") / F.col("index_variance"),
+            )
+            .drop("index_return", "index_variance")
         )
 
         logger.info("All metrics tree are built. Starting to calculate...")
@@ -364,24 +378,31 @@ class Chronos:
         logger.info("Calculating beta...")
 
         # Get BTC returns
-        index_returns = (
+        index_returns_df = (
             df.filter(F.col("ticker") == "BTC").select(F.col("timestamp"), F.col("log_return"))
             if index_returns is None
             else index_returns
         ).withColumnRenamed("log_return", "index_return")
 
+        index_returns_with_variance = index_returns_df.withColumn(
+            "index_variance", F.variance("index_return").over(self.market_window)
+        )
+
         # Join BTC returns with all symbols
-        joined_df = df.join(index_returns, "timestamp", "left")
+        joined_df = df.join(index_returns_with_variance, "timestamp", "left")
 
         initial_count = joined_df.select(return_col).dropna().count()
 
         beta_df = (
-            joined_df.withColumn("count", F.count(return_col).over(self.rolling_window))
+            joined_df.withColumn("count", F.count(F.col(return_col)).over(self.rolling_window))
             .withColumn(
                 "covariance",
-                F.covar_pop(return_col, "index_return").over(self.rolling_window),
+                F.covar_pop(F.col(return_col), F.col("index_return")).over(self.rolling_window),
             )
-            .withColumn("beta", F.col("covariance") / (F.col("stddev") ** 2))
+            .withColumn(
+                "beta",
+                F.col("covariance") / F.col("index_variance"),
+            )
             .drop("index_return")
         )
 

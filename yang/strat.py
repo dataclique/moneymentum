@@ -37,6 +37,7 @@ class Strategy:
 
         return (
             candles_df.transform(chronos.with_returns)
+            .cache()
             .transform(chronos.with_autocorrelation)
             .transform(chronos.with_volatility)
             .transform(chronos.with_sma)
@@ -48,6 +49,7 @@ class Strategy:
             .drop("count", "symbol", "open", "high", "low", "annualized_return")
             if util.DEBUG
             else candles_df.transform(chronos.with_returns)
+            .cache()
             .transform(chronos.with_volatility)
             .transform(chronos.with_autocorrelation)
             .transform(chronos.with_sma)

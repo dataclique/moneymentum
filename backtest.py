@@ -19,29 +19,28 @@ if __name__ == "__main__":
 logger = logging.getLogger(__name__)
 logger.setLevel(util.LOG_LEVEL)
 
-columns_order = [
-    "timestamp",
-    "close",
-    "volume",
-    "symbol",
-    "ticker",
-    "log_return",
-    "cum_return",
-    "stddev",
-    "annualized_volatility",
-    "autocorrelation",
-    "sma",
-    "mean_return",
-    "price_stddev",
-    "return_stddev",
-    "price_zscore",
-    "covariance",
-    "beta",
-]
-
 
 @dataclass
 class BacktestPipeline:
+    _COLUMNS_ORDER = [
+        "timestamp",
+        "close",
+        "volume",
+        "symbol",
+        "ticker",
+        "log_return",
+        "cum_return",
+        "stddev",
+        "annualized_volatility",
+        "autocorrelation",
+        "sma",
+        "mean_return",
+        "price_stddev",
+        "return_stddev",
+        "price_zscore",
+        "covariance",
+        "beta",
+    ]
     leverage: float
     starting_equity: float
     min_position_size: float
@@ -72,7 +71,7 @@ class BacktestPipeline:
         else:
             analysis_df = self.strategy.generate_analysis(candles_df)
 
-        analysis_df = analysis_df.select(columns_order)
+        analysis_df = analysis_df.select(self._COLUMNS_ORDER)
 
         util.save_csv(f"analysis_df_{self.timeframe}", analysis_df)
 

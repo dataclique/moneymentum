@@ -15,12 +15,15 @@ import ChartComponent from "./ChartComponent";
 import type { TradingData } from "./types";
 
 // Main TokenPage component
-const TokenPage: React.FC = () => {
+const TokenPage: React.FC<{ timeframe: string }> = ({
+  timeframe: initialTimeframe,
+}) => {
   const { ticker } = useParams<{ ticker: string }>();
   const [data, setData] = React.useState<TradingData[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const [selectedMetric, setSelectedMetric] = React.useState("price");
+  const [timeframe, setTimeframe] = React.useState(initialTimeframe);
 
   React.useEffect(() => {
     if (!ticker) return;
@@ -31,7 +34,7 @@ const TokenPage: React.FC = () => {
         setError(null);
 
         const response = await fetch(
-          `http://localhost:8000/api/token/${ticker}`,
+          `http://localhost:8000/api/token/${ticker}?timeframe=${timeframe}`,
         );
         if (!response.ok) {
           throw new Error(`HTTP error! status: ${response.status}`);
@@ -51,7 +54,7 @@ const TokenPage: React.FC = () => {
     };
 
     fetchData();
-  }, [ticker]);
+  }, [ticker, timeframe]);
 
   // Memoize the selected metric label
   const selectedMetricLabel = React.useMemo(() => {
@@ -108,19 +111,32 @@ const TokenPage: React.FC = () => {
               {ticker} - {selectedMetricLabel}
             </CardTitle>
           </div>
-          <div className="w-48">
-            <Select value={selectedMetric} onValueChange={setSelectedMetric}>
-              <SelectTrigger>
-                <SelectValue placeholder="Select a metric" />
-              </SelectTrigger>
-              <SelectContent>
-                {AVAILABLE_METRICS.map((metric) => (
-                  <SelectItem key={metric.value} value={metric.value}>
-                    {metric.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+          <div className="flex items-center gap-4">
+            <div className="w-48">
+              <Select value={timeframe} onValueChange={setTimeframe}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select timeframe" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="1h">1 hour</SelectItem>
+                  <SelectItem value="15m">15 minutes</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="w-48">
+              <Select value={selectedMetric} onValueChange={setSelectedMetric}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select a metric" />
+                </SelectTrigger>
+                <SelectContent>
+                  {AVAILABLE_METRICS.map((metric) => (
+                    <SelectItem key={metric.value} value={metric.value}>
+                      {metric.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
           </div>
         </div>
       </CardHeader>

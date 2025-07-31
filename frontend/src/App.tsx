@@ -6,13 +6,22 @@ import { Calendar22 as DatePicker } from "./components/ui/date-picker";
 import { Route, Routes, useNavigate } from "react-router-dom";
 import TokenPage from "./pages/TokenPage";
 import { ModeToggle } from "./components/ui/mode-toggle";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "./components/ui/select";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 
-async function getDateRange(): Promise<
+async function getDateRange(timeframe: string): Promise<
   { min_date: string; max_date: string; last_timestamp: string | null }
 > {
-  const response = await fetch("http://localhost:8000/api/date-range");
+  const response = await fetch(
+    `http://localhost:8000/api/date-range?timeframe=${timeframe}`,
+  );
   if (!response.ok) {
     const errorData = await response.json();
     throw new Error(
@@ -25,22 +34,26 @@ async function getDateRange(): Promise<
 async function getData(
   startDate: string,
   endDate: string,
+  timeframe: string,
 ): Promise<{ data: TradingData[]; message: string | null }> {
   try {
     // Convert dates to ISO format with time
     const startDateTime = new Date(startDate + "T00:00:00Z").toISOString();
     const endDateTime = new Date(endDate + "T23:59:59Z").toISOString();
 
-    const response = await fetch("http://localhost:8000/api/data", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
+    const response = await fetch(
+      `http://localhost:8000/api/data?timeframe=${timeframe}`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          start_date: startDateTime,
+          end_date: endDateTime,
+        }),
       },
-      body: JSON.stringify({
-        start_date: startDateTime,
-        end_date: endDateTime,
-      }),
-    });
+    );
 
     if (!response.ok) {
       const errorData = await response.json();
@@ -62,6 +75,7 @@ function App() {
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [isReloading, setIsReloading] = useState(false);
+  const [timeframe, setTimeframe] = useState("1h");
   const [dateRange, setDateRange] = useState({
     startDate: null as Date | null,
     endDate: null as Date | null,
@@ -74,7 +88,7 @@ function App() {
   useEffect(() => {
     const initializeDates = async () => {
       try {
-        const range = await getDateRange();
+        const range = await getDateRange(timeframe);
         const maxDate = new Date(`${range.max_date.split("T")[0]}T00:00:00Z`);
         const minDate = new Date(`${range.min_date.split("T")[0]}T00:00:00Z`);
         setMaxAvailableDate(maxDate);
@@ -94,7 +108,7 @@ function App() {
     };
 
     initializeDates();
-  }, []);
+  }, [timeframe]);
 
   // Fetch data when date range changes
   useEffect(() => {
@@ -111,6 +125,7 @@ function App() {
           const result = await getData(
             dateRange.startDate!.toISOString().split("T")[0],
             dateRange.endDate!.toISOString().split("T")[0],
+            timeframe,
           );
           setData(result.data);
           setMessage(result.message);
@@ -124,7 +139,7 @@ function App() {
 
       fetchData();
     }
-  }, [dateRange]);
+  }, [dateRange, timeframe]);
 
   const handleReload = async () => {
     setError(null);
@@ -161,6 +176,7 @@ function App() {
         const result = await getData(
           dateRange.startDate?.toISOString().split("T")[0] || "",
           dateRange.endDate?.toISOString().split("T")[0] || "",
+          timeframe,
         );
         setData(result.data);
         setMessage(result.message);
@@ -200,6 +216,15 @@ function App() {
   const MainPage = () => (
     <div className="container mx-auto py-10">
       <div className="mb-4 flex items-end justify-start gap-4">
+        <Select value={timeframe} onValueChange={setTimeframe}>
+          <SelectTrigger className="w-[180px]">
+            <SelectValue placeholder="Select timeframe" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="1h">1 hour</SelectItem>
+            <SelectItem value="15m">15 minutes</SelectItem>
+          </SelectContent>
+        </Select>
         <DatePicker
           label="Start Date"
           selected={dateRange.startDate}
@@ -290,7 +315,10 @@ function App() {
     <AppWrapper>
       <Routes>
         <Route path="/" element={<MainPage />} />
-        <Route path="/token/:ticker" element={<TokenPage />} />
+        <Route
+          path="/token/:ticker"
+          element={<TokenPage timeframe={timeframe} />}
+        />
       </Routes>
     </AppWrapper>
   );

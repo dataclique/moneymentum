@@ -173,50 +173,52 @@ class BacktestPipeline:
 
 async def main() -> None:
     spark = util.get_spark()
-    timeframe: Timeframe = "1h"
+    timeframes: list[Timeframe] = ["15m", "1h"]
     optimized_calculations = True
 
-    config = TIMEFRAME_CONFIGS[timeframe]
+    for timeframe in timeframes:
+        logger.info("Running backtest for timeframe: %s", timeframe)
+        config = TIMEFRAME_CONFIGS[timeframe]
 
-    leverage: int = 5
-    starting_equity = 100
-    min_position_size_usd = 11
-    start_date = datetime(2022, 1, 1, tzinfo=timezone.utc).replace(
-        hour=0,
-        minute=0,
-        second=0,
-        microsecond=0,
-    )
-
-    async with HyperliquidDataLoader(
-        spark=spark,
-        timeframe=timeframe,
-        start_date=start_date,
-        config=config,
-        min_leverage=leverage,
-    ) as dataloader:
-        strategy = Strategy(
-            timeframe=timeframe,
-            config=config,
-            leverage=float(leverage),
-            starting_equity=starting_equity,
-            min_position_size=min_position_size_usd,
+        leverage: int = 5
+        starting_equity = 100
+        min_position_size_usd = 11
+        start_date = datetime(2022, 1, 1, tzinfo=timezone.utc).replace(
+            hour=0,
+            minute=0,
+            second=0,
+            microsecond=0,
         )
 
-        pipeline = BacktestPipeline(
+        async with HyperliquidDataLoader(
             spark=spark,
             timeframe=timeframe,
-            config=config,
-            leverage=float(leverage),
-            starting_equity=starting_equity,
-            min_position_size=min_position_size_usd,
             start_date=start_date,
-            dataloader=dataloader,
-            strategy=strategy,
-            optimized_calculations=optimized_calculations,
-        )
+            config=config,
+            min_leverage=leverage,
+        ) as dataloader:
+            strategy = Strategy(
+                timeframe=timeframe,
+                config=config,
+                leverage=float(leverage),
+                starting_equity=starting_equity,
+                min_position_size=min_position_size_usd,
+            )
 
-        await pipeline.run()
+            pipeline = BacktestPipeline(
+                spark=spark,
+                timeframe=timeframe,
+                config=config,
+                leverage=float(leverage),
+                starting_equity=starting_equity,
+                min_position_size=min_position_size_usd,
+                start_date=start_date,
+                dataloader=dataloader,
+                strategy=strategy,
+                optimized_calculations=optimized_calculations,
+            )
+
+            await pipeline.run()
 
 
 if __name__ == "__main__":

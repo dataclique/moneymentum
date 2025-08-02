@@ -214,7 +214,7 @@ function App() {
 
   // Move table to a separate component for the main page
   const MainPage = () => (
-    <div className="container mx-auto py-10">
+    <div className="container mx-auto py-2">
       <div className="mb-4 flex items-end justify-start gap-4">
         <Select value={timeframe} onValueChange={setTimeframe}>
           <SelectTrigger className="w-[180px]">

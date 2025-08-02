@@ -147,7 +147,13 @@ const TokenPage: React.FC<{ timeframe: string }> = ({
               No data available for {selectedMetricLabel}
             </div>
           )
-          : <ChartComponent data={data} selectedMetric={selectedMetric} />}
+          : (
+            <ChartComponent
+              data={data}
+              selectedMetric={selectedMetric}
+              timeframe={timeframe}
+            />
+          )}
       </CardContent>
     </Card>
   );

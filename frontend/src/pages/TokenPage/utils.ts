@@ -14,11 +14,9 @@ export const transformToOHLC = (data: TradingData[]): IOHLCData[] => {
     }))
     .sort((a, b) => a.date.getTime() - b.date.getTime())
     .filter((item, index, array) => {
-      // Remove duplicates based on date (keep the last one for each date)
+      // Remove duplicates based on timestamp (keep the last one)
       if (index === array.length - 1) return true;
-      const currentDate = item.date.toISOString().split("T")[0];
-      const nextDate = array[index + 1].date.toISOString().split("T")[0];
-      return currentDate !== nextDate;
+      return item.date.getTime() !== array[index + 1].date.getTime();
     });
 };
 
@@ -33,12 +31,12 @@ export const transformToLineData = (
       return value !== null && value !== undefined && !isNaN(value);
     })
     .map((item) => ({
-      time: item.timestamp.split("T")[0], // Convert to YYYY-MM-DD format
+      time: item.timestamp, // Keep the full timestamp
       value: (item as any)[metric] as number,
     }))
     .sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime());
 
-  // Remove duplicates by keeping the last value for each date
+  // Remove duplicates by keeping the last value for each timestamp
   const uniqueData: { time: string; value: number }[] = [];
   const timeSet = new Set<string>();
 

@@ -202,12 +202,8 @@ async def get_data(
                 }
             return {"data": [], "message": "No data available in the system"}
 
-        # Group by both date and ticker to get the last record for each ticker each day
-        data_frame["date"] = data_frame["timestamp"].dt.date
-        data_frame = (
-            data_frame.sort_values("timestamp").groupby(["date", "ticker"]).last().reset_index()
-        )
-        data_frame = data_frame.drop("date", axis=1)  # Remove the temporary date column
+        # Sort data by ticker and timestamp for consistent order
+        data_frame = data_frame.sort_values(["ticker", "timestamp"])
 
         # Replace both numpy NaN and pandas NA with None
         data_frame = data_frame.replace({np.nan: None, pd.NA: None})

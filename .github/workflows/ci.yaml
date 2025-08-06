@@ -25,8 +25,8 @@ jobs:
       - name: Nix Flake check
         run: nix flake check --impure --accept-flake-config --show-trace
 
-      # - name: Run tests
-      #   run: |
-      #     nix develop \
-      #       --impure --accept-flake-config --show-trace \
-      #       --command /bin/bash -c 'pytest'
+      - name: Run tests
+        run: |
+          nix develop \
+            --impure --accept-flake-config --show-trace \
+            --command /bin/bash -c 'pytest ./tests/test_strategy.py'

@@ -18,6 +18,16 @@ jobs:
       NIXPKGS_ALLOW_UNFREE: 1
     steps:
       - uses: actions/checkout@v4
+
+      - name: Maximize build space
+        uses: easimon/maximize-build-space-action@v10
+        with:
+          root-reserve-mb: 512
+          swap-size-mb: 1024
+          remove-dotnet: "true"
+          remove-android: "true"
+          remove-haskell: "true"
+
       - uses: DeterminateSystems/nix-installer-action@main
       - uses: DeterminateSystems/flakehub-cache-action@main
       - uses: DeterminateSystems/flake-checker-action@main
@@ -29,4 +39,4 @@ jobs:
         run: |
           nix develop \
             --impure --accept-flake-config --show-trace \
-            --command /bin/bash -c 'pytest ./tests/test_strategy.py'
+            --command pytest ./tests/test_strategy.py

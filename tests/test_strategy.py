@@ -1,10 +1,9 @@
-import os
 import pytest
+import pandas as pd
 from pyspark.sql import SparkSession
 from pipeline import SchemaOHLCV
 from yang.strat import Strategy
-from yang.util import TIMEFRAME_CONFIGS, save_csv
-from compare import compare_csv_content
+from yang.util import TIMEFRAME_CONFIGS
 from backtest import BacktestPipeline
 
 
@@ -14,6 +13,27 @@ def spark_session():
     spark = SparkSession.builder.appName("TestStrategy").getOrCreate()
     yield spark
     spark.stop()
+
+
+def _compare_pandas_dfs(df1: pd.DataFrame, df2: pd.DataFrame) -> tuple[bool, str]:
+    """
+    Compares two pandas DataFrames for equality, ignoring row order.
+    Returns a tuple of (bool, str) where bool is True if they are
+    identical, and str contains differences if they are not.
+    """
+    if not df1.columns.equals(df2.columns):
+        return False, "Column names or order differ."
+
+    # Sort by all columns to ensure order-independent comparison
+    df1_sorted = df1.sort_values(by=df1.columns.tolist()).reset_index(drop=True)
+    df2_sorted = df2.sort_values(by=df2.columns.tolist()).reset_index(drop=True)
+
+    if df1_sorted.equals(df2_sorted):
+        return True, ""
+
+    # If not equal, find and return the differences
+    diff = df1_sorted.compare(df2_sorted)
+    return False, diff.to_string()
 
 
 def test_compare_analysis_implementations(spark_session):
@@ -39,24 +59,15 @@ def test_compare_analysis_implementations(spark_session):
     analysis_optimized_df = strategy.generate_analysis_optimized(candles_df)
 
     analysis_df = analysis_df.select(BacktestPipeline._COLUMNS_ORDER)
-    save_csv("analysis", analysis_df)
-
     analysis_optimized_df = analysis_optimized_df.select(BacktestPipeline._COLUMNS_ORDER)
-    save_csv("analysis_optimized", analysis_optimized_df)
 
-    path1 = "data/analysis.csv"
-    path2 = "data/analysis_optimized.csv"
+    # Convert Spark DataFrames to pandas DataFrames for comparison
+    analysis_pd = analysis_df.toPandas()
+    analysis_optimized_pd = analysis_optimized_df.toPandas()
 
-    try:
-        are_identical, diff = compare_csv_content(path1, path2)
+    are_identical, diff = _compare_pandas_dfs(analysis_pd, analysis_optimized_pd)
 
-        if not are_identical:
-            print(f"Differences found:\n{diff}")
+    if not are_identical:
+        print(f"Differences found:\n{diff}")
 
-        assert are_identical, "Optimized and non-optimized analysis outputs are not identical"
-    finally:
-        # Cleanup files
-        if os.path.exists(path1):
-            os.remove(path1)
-        if os.path.exists(path2):
-            os.remove(path2)
+    assert are_identical, "Optimized and non-optimized analysis outputs are not identical"

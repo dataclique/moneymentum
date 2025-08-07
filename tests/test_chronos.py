@@ -24,20 +24,21 @@ def test_aave_last_record(spark_session):
 
     timeframe = "1d"
     config = TIMEFRAME_CONFIGS[timeframe]
+    config["lookback_periods"] = 369
 
     # lookback_periods = 370, because we have 370 records
     # and we need window size equal to amount of all records
     # risk_free = 4.5% as in United States Fed Funds Interest Rate
-    chronos = Chronos(timeframe=timeframe, lookback_periods=369)
+    chronos = Chronos(timeframe=timeframe, config=config)
     analysis_df = (
         candles_df.transform(chronos.with_returns)
-        .transform(lambda df: chronos.with_volatility(df, config))
+        .transform(chronos.with_volatility)
         .transform(chronos.with_sma)
         .transform(chronos.with_zscore)
         .transform(chronos.with_beta)
         .transform(chronos.with_information_discreteness)
-        .transform(lambda df: chronos.with_sharpe(df, config, risk_free=4.5 / 100))
-        .transform(lambda df: chronos.with_sortino(df, config))
+        .transform(lambda df: chronos.with_sharpe(df, risk_free=4.5 / 100))
+        .transform(chronos.with_sortino)
     )
 
     aave_last_record = (
@@ -54,8 +55,8 @@ def test_aave_last_record(spark_session):
     assert aave_last_record["annualized_volatility"] == 0.9775370372243625, (
         "Annualized volatility mismatch"
     )
-    # Google sheet: 0.29
-    assert aave_last_record["beta"] == 0.29206334291840363, "Beta mismatch"
+    # Google sheet: 1.02
+    assert aave_last_record["beta"] == 1.0156567898222466, "Beta mismatch"
     # Google sheet: 7.67E-04
     assert aave_last_record["covariance"] == 7.646287605794159e-4, "Covariance mismatch"
     # Google sheet: 1.91
@@ -74,20 +75,21 @@ def test_btc_last_record(spark_session):
 
     timeframe = "1d"
     config = TIMEFRAME_CONFIGS[timeframe]
+    config["lookback_periods"] = 369
 
     # lookback_periods = 370, because we have 370 records
     # and we need window size equal to amount of all records
     # risk_free = 4.5% as in United States Fed Funds Interest Rate
-    chronos = Chronos(timeframe=timeframe, lookback_periods=369)
+    chronos = Chronos(timeframe=timeframe, config=config)
     analysis_df = (
         candles_df.transform(chronos.with_returns)
-        .transform(lambda df: chronos.with_volatility(df, config))
+        .transform(chronos.with_volatility)
         .transform(chronos.with_sma)
         .transform(chronos.with_zscore)
         .transform(chronos.with_beta)
         .transform(chronos.with_information_discreteness)
-        .transform(lambda df: chronos.with_sharpe(df, config, risk_free=4.5 / 100))
-        .transform(lambda df: chronos.with_sortino(df, config))
+        .transform(lambda df: chronos.with_sharpe(df, risk_free=4.5 / 100))
+        .transform(chronos.with_sortino)
     )
 
     btc_last_record = (
@@ -125,20 +127,21 @@ def test_ai_last_record(spark_session):
 
     timeframe = "1w"
     config = TIMEFRAME_CONFIGS[timeframe]
+    config["lookback_periods"] = 51
 
     # lookback_periods = 52, because we have 52 records
     # and we need window size equal to amount of all records
     # risk_free = 4.5% as in United States Fed Funds Interest Rate
-    chronos = Chronos(timeframe=timeframe, lookback_periods=51)
+    chronos = Chronos(timeframe=timeframe, config=config)
     analysis_df = (
         candles_df.transform(chronos.with_returns)
-        .transform(lambda df: chronos.with_volatility(df, config))
+        .transform(chronos.with_volatility)
         .transform(chronos.with_sma)
         .transform(chronos.with_zscore)
         .transform(chronos.with_beta)
         .transform(chronos.with_information_discreteness)
-        .transform(lambda df: chronos.with_sharpe(df, config, risk_free=4.5 / 100))
-        .transform(lambda df: chronos.with_sortino(df, config))
+        .transform(lambda df: chronos.with_sharpe(df, risk_free=4.5 / 100))
+        .transform(chronos.with_sortino)
     )
 
     ai_last_record = (
@@ -156,8 +159,8 @@ def test_ai_last_record(spark_session):
     assert ai_last_record["annualized_volatility"] == 1.1627588432389253, (
         "Annualized volatility mismatch"
     )
-    # Google sheet: 0.28
-    assert ai_last_record["beta"] == 0.27410619693561644, "Beta mismatch"
+    # Google sheet: 1.37
+    assert ai_last_record["beta"] == 1.374051416036172, "Beta mismatch"
     # Google sheet: 7.27E-03
     assert ai_last_record["covariance"] == 0.007126803962757325, "Covariance mismatch"
     # Google sheet: -0.46

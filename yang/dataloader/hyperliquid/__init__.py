@@ -180,12 +180,20 @@ class HyperliquidDataLoader:
     async def load_funding_rate(
         self, symbols: set, existing_funding_rate_df: pd.DataFrame | None, since: int
     ) -> list[dict[str, Any]]:
+        one_hour_ms = 3600 * 1000
+
         funding_rate_tasks = [
             self.loader_funding_rate.fetch_funding_rate_history(
                 self.exchange,
                 symbol,
                 # POPCAT/USDC:USDC --> POPCAT, because funding_rate return only base
-                self.get_symbol_start_time(symbol.split("/")[0], existing_funding_rate_df, since),
+                # + one_hour_ms to avoid loading duplicates
+                (
+                    self.get_symbol_start_time(
+                        symbol.split("/")[0], existing_funding_rate_df, since
+                    )
+                    + one_hour_ms
+                ),
             )
             for symbol in symbols
         ]
@@ -244,6 +252,55 @@ class HyperliquidDataLoader:
 
         return funding_rate_df_return.orderBy("timestamp")
 
+    def _normalize_timestamps(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Normalize timestamps in a DataFrame."""
+        df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True).dt.tz_localize(None)
+        return df
+
+    def _update_closes(self, df: pd.DataFrame, tokens: set, market_data: dict) -> pd.DataFrame:
+        """Update close prices with market data."""
+        for symbol in tokens:
+            mark_px = market_data.get(symbol, {}).get("info", {}).get("markPx")
+            if mark_px is not None:
+                latest_index = df[df["symbol"] == symbol]["timestamp"].idxmax()
+                df.loc[latest_index, "close"] = float(mark_px)
+        return df
+
+    def _combine_dataframes(self, df1: pd.DataFrame, df2: pd.DataFrame) -> pd.DataFrame:
+        """Combine two DataFrames, removing overlapping timestamps."""
+        # Get the earliest timestamp for each symbol in the new data
+        earliest_timestamps = df2.groupby("symbol")["timestamp"].min()
+
+        # Remove records from existing df that have timestamps >= earliest timestamp in new data
+        for symbol, earliest_ts in earliest_timestamps.items():
+            # Remove all records for this symbol that have timestamp >= earliest timestamp
+            symbol_mask = (df1["symbol"] == symbol) & (df1["timestamp"] >= earliest_ts)
+            df1 = df1[~symbol_mask]
+
+        # Concatenate the cleaned existing df with the new data
+        return pd.concat([df1, df2], ignore_index=True)
+
+    def _prepare_final_dataframe(
+        self,
+        existing_ohlcv_df: pd.DataFrame | None,
+        candles_df: pd.DataFrame | None,
+        tokens_updated_by_market: set | None,
+        market_data: dict,
+    ) -> pd.DataFrame:
+        """Prepare the final DataFrame by combining and updating data."""
+        if existing_ohlcv_df is not None:
+            existing_ohlcv_df = self._normalize_timestamps(existing_ohlcv_df)
+            if tokens_updated_by_market:
+                existing_ohlcv_df = self._update_closes(
+                    existing_ohlcv_df, tokens_updated_by_market, market_data
+                )
+
+        if existing_ohlcv_df is not None and candles_df is not None:
+            return self._combine_dataframes(existing_ohlcv_df, candles_df)
+        if existing_ohlcv_df is not None:
+            return existing_ohlcv_df
+        return candles_df
+
     def construct_ohlcv_dataframe(
         self,
         ohlcv_records: list[dict[str, Any]] | None,
@@ -251,37 +308,13 @@ class HyperliquidDataLoader:
         tokens_updated_by_market: set | None,
         market_data: dict,
     ) -> DataFrame:
-        def normalize_timestamps(df: pd.DataFrame) -> pd.DataFrame:
-            df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True).dt.tz_localize(None)
-            return df
+        """Construct OHLCV DataFrame from records and existing data."""
+        candles_df = (
+            self._normalize_timestamps(pd.DataFrame(ohlcv_records)) if ohlcv_records else None
+        )
 
-        def update_closes(df: pd.DataFrame, tokens: set, market_data: dict) -> pd.DataFrame:
-            for symbol in tokens:
-                mark_px = market_data.get(symbol, {}).get("info", {}).get("markPx")
-                if mark_px is not None:
-                    latest_index = df[df["symbol"] == symbol]["timestamp"].idxmax()
-                    df.loc[latest_index, "close"] = float(mark_px)
-            return df
-
-        def combine_dfs(df1: pd.DataFrame, df2: pd.DataFrame) -> pd.DataFrame:
-            combined_df = pd.concat([df1, df2], ignore_index=True)
-            return combined_df.drop_duplicates(subset=["timestamp", "symbol"], keep="last")
-
-        candles_df = normalize_timestamps(pd.DataFrame(ohlcv_records)) if ohlcv_records else None
-
-        if existing_ohlcv_df is not None:
-            existing_ohlcv_df = normalize_timestamps(existing_ohlcv_df)
-            if tokens_updated_by_market:
-                existing_ohlcv_df = update_closes(
-                    existing_ohlcv_df, tokens_updated_by_market, market_data
-                )
-
-        final_df = (
-            combine_dfs(existing_ohlcv_df, candles_df)
-            if existing_ohlcv_df is not None and candles_df is not None
-            else existing_ohlcv_df
-            if existing_ohlcv_df is not None
-            else candles_df
+        final_df = self._prepare_final_dataframe(
+            existing_ohlcv_df, candles_df, tokens_updated_by_market, market_data
         )
 
         if final_df is not None:

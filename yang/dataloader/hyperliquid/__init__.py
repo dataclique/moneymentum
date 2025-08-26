@@ -18,10 +18,20 @@ from yang.dataloader.hyperliquid.funding_rates import (
 )
 from yang.dataloader.hyperliquid.markets import HyperliquidDataLoaderMarkets
 from yang.dataloader.hyperliquid.ohlcv import HyperliquidDataLoaderOHLCV, SchemaOHLCV
+from yang.supabase import (
+    get_existing_df_supabase,
+    insert_batch_to_supabase,
+)
 from yang.util import Timeframe, TimeframeConfig
 
 logger = logging.getLogger(__name__)
 logger.setLevel(util.LOG_LEVEL)
+
+TABLE_SCHEMA_MAP = {
+    "funding_rate1h": SchemaFundingRate,
+    "ohlcv1h": SchemaOHLCV,
+    "ohlcv15m": SchemaOHLCV,
+}
 
 
 class HyperliquidDataLoaderError(Exception):
@@ -64,40 +74,51 @@ class HyperliquidDataLoader:
         await self.exchange.close()
 
     async def get_funding_rate_df(self) -> DataFrame:
-        funding_rate_file_path = f"{util.DATA_DIR}/funding_rate1h.csv"
+        # TODO: make table_names in constant?
+        table_name = "funding_rate1h"
 
         since = int(self.start_date.timestamp() * 1000)
         tradable_symbols = await self.get_tradable_symbols()
-        existing_funding_rate_df = self.get_existing_df(funding_rate_file_path)
+        existing_funding_rate_df = await self.get_existing_df(table_name)
 
         funding_rate_data = await self.load_funding_rate(
             set(tradable_symbols), existing_funding_rate_df, since
         )
 
+        if not funding_rate_data:
+            logger.info("No new funding rates found")
+            return (
+                self.spark.read.schema(SchemaFundingRate)
+                .csv(self._get_filepath(table_name), header=True)
+                .cache()
+            )
+
+        # upload data to supabase before saving to csv
+        success = insert_batch_to_supabase(data=funding_rate_data, table_name=table_name)
+
+        if not success:
+            logger.error("❌ Funding rate data insertion to supabase failed!")
+            return None
+
+        logger.info("✅ Funding rate data insertion to supabase completed successfully!")
+
         funding_rate_df = self.construct_funding_rate_dataframe(
             funding_rate_data, existing_funding_rate_df
         )
-
-        if funding_rate_data:
-            funding_rate_file_name = "funding_rate1h"
-            util.save_csv(funding_rate_file_name, funding_rate_df)
-        else:
-            logger.info(
-                "No new funding rates found",
-            )
+        util.save_csv(table_name, funding_rate_df)
 
         return (
             self.spark.read.schema(SchemaFundingRate)
-            .csv(funding_rate_file_path, header=True)
+            .csv(self._get_filepath(table_name), header=True)
             .cache()
         )
 
     async def get_candles_df(self) -> DataFrame:
-        ohlcv_file_path = f"{util.DATA_DIR}/ohlcv{self.timeframe}.csv"
+        table_name = f"ohlcv{self.timeframe}"
 
         since = int(self.start_date.timestamp() * 1000)
         tradable_symbols = await self.get_tradable_symbols()
-        existing_ohlcv_df = self.get_existing_df(ohlcv_file_path)
+        existing_ohlcv_df = await self.get_existing_df(table_name)
 
         (symbols_for_ohlcv_updates, symbols_for_market_updates) = (
             (set(tradable_symbols), set())
@@ -119,10 +140,13 @@ class HyperliquidDataLoader:
             ohlcv_data, existing_ohlcv_df, symbols_for_market_updates, market_info
         )
 
-        candles_file_name = f"ohlcv{self.timeframe}"
-        util.save_csv(candles_file_name, candles_df)
+        util.save_csv(table_name, candles_df)
 
-        return self.spark.read.schema(SchemaOHLCV).csv(ohlcv_file_path, header=True).cache()
+        return (
+            self.spark.read.schema(SchemaOHLCV)
+            .csv(self._get_filepath(table_name), header=True)
+            .cache()
+        )
 
     async def get_tradable_symbols(self) -> set:
         markets_df = await self.loader_markets.fetch_markets(exchange=self.exchange)
@@ -132,10 +156,21 @@ class HyperliquidDataLoader:
 
         return set(filtered_df.select("symbol").rdd.flatMap(lambda x: x).collect())
 
-    def get_existing_df(self, file_path: str) -> pd.DataFrame | None:
-        if Path(file_path).exists():
-            return pd.read_csv(file_path, parse_dates=["timestamp"])
-        return None
+    def _get_filepath(self, table_name: str) -> str:
+        """Get the full filepath for a table name."""
+        return f"{util.DATA_DIR}/{table_name}.csv"
+
+    async def get_existing_df(self, table_name: str) -> pd.DataFrame | None:
+        filepath = self._get_filepath(table_name)
+
+        if Path(filepath).exists():
+            return pd.read_csv(filepath, parse_dates=["timestamp"])
+
+        supabase_df = get_existing_df_supabase(table_name)
+        spark_df = self.convert_to_spark_df(table_name, supabase_df)
+        util.save_csv(table_name, spark_df)
+
+        return pd.read_csv(filepath, parse_dates=["timestamp"])
 
     def get_symbol_start_time(
         self, symbol: str, existing_df: pd.DataFrame | None, since: int
@@ -225,16 +260,14 @@ class HyperliquidDataLoader:
     def construct_funding_rate_dataframe(
         self, funding_rate_data: list[dict[str, Any]], existing_funding_rate_df: pd.DataFrame | None
     ) -> DataFrame:
-        def normalize_timestamps(df: pd.DataFrame) -> pd.DataFrame:
-            df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True).dt.tz_localize(None)
-            return df
-
         funding_rate_df = (
-            normalize_timestamps(pd.DataFrame(funding_rate_data)) if funding_rate_data else None
+            self._normalize_timestamps(pd.DataFrame(funding_rate_data))
+            if funding_rate_data
+            else None
         )
 
         if existing_funding_rate_df is not None:
-            existing_funding_rate_df = normalize_timestamps(existing_funding_rate_df)
+            existing_funding_rate_df = self._normalize_timestamps(existing_funding_rate_df)
 
             if funding_rate_df is None:
                 final_df = existing_funding_rate_df
@@ -251,6 +284,26 @@ class HyperliquidDataLoader:
         ).cache()
 
         return funding_rate_df_return.orderBy("timestamp")
+
+    def convert_to_spark_df(self, table_name: str, existing_df: pd.DataFrame | None) -> DataFrame:
+        spark = util.get_spark()
+        schema = TABLE_SCHEMA_MAP.get(table_name)
+
+        if existing_df is None or existing_df.empty:
+            logger.warning("No data received from Supabase")
+            return spark.createDataFrame([], schema=schema)
+
+        # Remove the unnamed index column and the 'id' column
+        if "id" in existing_df.columns:
+            existing_df = existing_df.drop("id", axis=1)
+
+        # Reset index to remove the unnamed index column
+        existing_df = existing_df.reset_index(drop=True)
+        final_df = self._normalize_timestamps(existing_df)
+
+        spark_df = spark.createDataFrame(final_df, schema=schema).cache()
+
+        return spark_df.orderBy("timestamp")
 
     def _normalize_timestamps(self, df: pd.DataFrame) -> pd.DataFrame:
         """Normalize timestamps in a DataFrame."""

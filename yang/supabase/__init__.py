@@ -8,6 +8,7 @@ from .uploader import (
     delete_records_from_supabase_by_timestamp_and_symbol,
     insert_batch_to_supabase,
     insert_from_csv_to_supabase,
+    update_close_prices_batch_in_supabase,
 )
 
 __all__ = [
@@ -16,4 +17,5 @@ __all__ = [
     "insert_from_csv_to_supabase",
     "get_existing_df_supabase",
     "delete_records_from_supabase_by_timestamp_and_symbol",
+    "update_close_prices_batch_in_supabase",
 ]

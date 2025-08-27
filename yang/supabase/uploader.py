@@ -5,8 +5,9 @@ Supabase data upload utilities.
 import logging
 import time
 from datetime import datetime
+from typing import Any
 
-from .client import get_supabase_client
+from .client import Client, get_supabase_client
 
 logger = logging.getLogger(__name__)
 
@@ -185,3 +186,71 @@ def delete_records_from_supabase_by_timestamp_and_symbol(
 
         logger.error("Failed to delete records for symbol '%s'", symbol)
         return False
+
+
+def update_close_prices_batch_in_supabase(table_name: str, updates: list[dict[str, Any]]) -> bool:
+    """
+    Update close prices for multiple symbols in Supabase.
+
+    Args:
+        table_name: Name of the Supabase table
+        updates: List of dictionaries with keys: symbol, close_price, timestamp
+
+    Returns:
+        True if all updates successful, False otherwise
+    """
+    supabase = get_supabase_client()
+    if not supabase:
+        return False
+
+    try:
+        normalized_updates = normalize_data_for_supabase(updates)
+
+        logger.info(
+            "Updating close prices for %s records in table '%s'",
+            len(normalized_updates),
+            table_name,
+        )
+
+        batch_size = 100
+        all_success = True
+
+        for i in range(0, len(normalized_updates), batch_size):
+            batch = normalized_updates[i : i + batch_size]
+            if not _apply_close_updates_batch(supabase, table_name, batch):
+                all_success = False
+
+    except Exception:
+        logger.exception("Error updating close prices in Supabase")
+        return False
+    else:
+        if all_success:
+            logger.info("Successfully updated all close prices")
+        else:
+            logger.error("Some close price updates failed")
+
+        return all_success
+
+
+def _apply_close_updates_batch(
+    supabase_client: Client, table_name: str, batch: list[dict[str, Any]]
+) -> bool:
+    """Apply a batch of close updates; return True if all succeed."""
+    batch_success = True
+    for update in batch:
+        result = (
+            supabase_client.table(table_name)
+            .update({"close": update["close_price"]})
+            .eq("symbol", update["symbol"])
+            .eq("timestamp", update["timestamp"])
+            .execute()
+        )
+        success = hasattr(result, "data") and result.data
+        if not success:
+            logger.error(
+                "Failed to update close price for symbol '%s' at timestamp %s",
+                update["symbol"],
+                update["timestamp"],
+            )
+            batch_success = False
+    return batch_success

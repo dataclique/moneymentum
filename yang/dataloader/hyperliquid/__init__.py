@@ -22,6 +22,7 @@ from yang.supabase import (
     delete_records_from_supabase_by_timestamp_and_symbol,
     get_existing_df_supabase,
     insert_batch_to_supabase,
+    update_close_prices_batch_in_supabase,
 )
 from yang.util import Timeframe, TimeframeConfig
 
@@ -137,27 +138,30 @@ class HyperliquidDataLoader:
             else None
         )
 
-        if not ohlcv_data:
+        if not ohlcv_data and not symbols_for_market_updates:
             return (
                 self.spark.read.schema(SchemaOHLCV)
                 .csv(self._get_filepath(table_name), header=True)
                 .cache()
             )
 
-        success_remove_records = self.remove_outdated_records_from_supabase(table_name, ohlcv_data)
-        if not success_remove_records:
-            return None
+        if ohlcv_data:
+            success_remove_records = self._remove_outdated_records_from_supabase(
+                table_name, ohlcv_data
+            )
+            if not success_remove_records:
+                return None
+            # upload data to supabase before saving to csv
+            success = insert_batch_to_supabase(data=ohlcv_data, table_name=table_name)
+            if not success:
+                return None
 
-        # upload data to supabase before saving to csv
-        success = insert_batch_to_supabase(data=ohlcv_data, table_name=table_name)
-
-        if not success:
-            return None
-
-        # TODO: send info to supabase. But we should make it more intellectual
-        # we need to update info if "market" update and remove last "ohlcv" if we got new
-        # record of it + push all other data to supabase
-        # better to make it in separate function
+        if symbols_for_market_updates:
+            success_update_closes = await self._update_closes_in_supabase(
+                table_name, symbols_for_market_updates, market_info or {}
+            )
+            if not success_update_closes:
+                return None
 
         candles_df = self.construct_ohlcv_dataframe(
             ohlcv_data, existing_ohlcv_df, symbols_for_market_updates, market_info or {}
@@ -171,7 +175,7 @@ class HyperliquidDataLoader:
             .cache()
         )
 
-    def remove_outdated_records_from_supabase(
+    def _remove_outdated_records_from_supabase(
         self, table_name: str, ohlcv_data: list[dict[str, Any]] | None
     ) -> bool:
         if ohlcv_data is None:
@@ -375,6 +379,34 @@ class HyperliquidDataLoader:
                 latest_index = df[df["symbol"] == symbol]["timestamp"].idxmax()
                 df.loc[latest_index, "close"] = float(mark_px)
         return df
+
+    async def _update_closes_in_supabase(
+        self, table_name: str, tokens: set, market_data: dict
+    ) -> bool:
+        """Update close prices in Supabase with market data."""
+        updates = []
+
+        for symbol in tokens:
+            mark_px = market_data.get(symbol, {}).get("info", {}).get("markPx")
+            if mark_px is not None:
+                # Get the latest timestamp for this symbol from existing data
+                existing_df = await self.get_existing_df(table_name)
+                if existing_df is not None:
+                    symbol_df = existing_df[existing_df["symbol"] == symbol]
+                    if not symbol_df.empty:
+                        latest_timestamp = symbol_df["timestamp"].max()
+                        updates.append(
+                            {
+                                "symbol": symbol,
+                                "close_price": float(mark_px),
+                                "timestamp": latest_timestamp,
+                            }
+                        )
+
+        if updates:
+            return update_close_prices_batch_in_supabase(table_name, updates)
+
+        return True  # No updates needed
 
     def _combine_dataframes(self, df1: pd.DataFrame, df2: pd.DataFrame) -> pd.DataFrame:
         """Combine two DataFrames, removing overlapping timestamps."""

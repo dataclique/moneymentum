@@ -127,3 +127,61 @@ def insert_from_csv_to_supabase(
     except Exception:
         logger.exception("Error reading CSV file")
         return False
+
+
+def delete_records_from_supabase_by_timestamp_and_symbol(
+    table_name: str, symbol: str, earliest_timestamp: datetime
+) -> bool:
+    """
+    Delete records from Supabase table for a specific symbol with timestamps >= earliest_timestamp.
+
+    Args:
+        table_name: Name of the Supabase table
+        symbol: Symbol to filter by
+        earliest_timestamp: Delete records with timestamp >= this value
+
+    Returns:
+        True if successful, False otherwise
+    """
+    supabase = get_supabase_client()
+    if not supabase:
+        return False
+
+    try:
+        # Convert datetime to ISO format string for Supabase query
+        if earliest_timestamp.tzinfo is not None:
+            timestamp_str = earliest_timestamp.isoformat()
+        else:
+            timestamp_str = earliest_timestamp.isoformat() + "Z"
+
+        logger.info(
+            "Deleting records from table '%s' for symbol '%s' with timestamp >= %s",
+            table_name,
+            symbol,
+            timestamp_str,
+        )
+
+        # Delete records matching the criteria
+        result = (
+            supabase.table(table_name)
+            .delete()
+            .eq("symbol", symbol)
+            .gte("timestamp", timestamp_str)
+            .execute()
+        )
+
+    except Exception:
+        logger.exception("Error deleting records from Supabase")
+        return False
+    else:
+        success = hasattr(result, "data")
+        if success:
+            logger.info(
+                "Successfully deleted records for symbol '%s' with timestamp >= %s",
+                symbol,
+                timestamp_str,
+            )
+            return True
+
+        logger.error("Failed to delete records for symbol '%s'", symbol)
+        return False

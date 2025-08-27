@@ -19,6 +19,7 @@ from yang.dataloader.hyperliquid.funding_rates import (
 from yang.dataloader.hyperliquid.markets import HyperliquidDataLoaderMarkets
 from yang.dataloader.hyperliquid.ohlcv import HyperliquidDataLoaderOHLCV, SchemaOHLCV
 from yang.supabase import (
+    delete_records_from_supabase_by_timestamp_and_symbol,
     get_existing_df_supabase,
     insert_batch_to_supabase,
 )
@@ -136,8 +137,30 @@ class HyperliquidDataLoader:
             else None
         )
 
+        if not ohlcv_data:
+            return (
+                self.spark.read.schema(SchemaOHLCV)
+                .csv(self._get_filepath(table_name), header=True)
+                .cache()
+            )
+
+        success_remove_records = self.remove_outdated_records_from_supabase(table_name, ohlcv_data)
+        if not success_remove_records:
+            return None
+
+        # upload data to supabase before saving to csv
+        success = insert_batch_to_supabase(data=ohlcv_data, table_name=table_name)
+
+        if not success:
+            return None
+
+        # TODO: send info to supabase. But we should make it more intellectual
+        # we need to update info if "market" update and remove last "ohlcv" if we got new
+        # record of it + push all other data to supabase
+        # better to make it in separate function
+
         candles_df = self.construct_ohlcv_dataframe(
-            ohlcv_data, existing_ohlcv_df, symbols_for_market_updates, market_info
+            ohlcv_data, existing_ohlcv_df, symbols_for_market_updates, market_info or {}
         )
 
         util.save_csv(table_name, candles_df)
@@ -147,6 +170,40 @@ class HyperliquidDataLoader:
             .csv(self._get_filepath(table_name), header=True)
             .cache()
         )
+
+    def remove_outdated_records_from_supabase(
+        self, table_name: str, ohlcv_data: list[dict[str, Any]] | None
+    ) -> bool:
+        if ohlcv_data is None:
+            return False
+
+        ohlcv_df = pd.DataFrame(ohlcv_data)
+        ohlcv_df = self._normalize_timestamps(ohlcv_df)
+
+        earliest_timestamps = ohlcv_df.groupby("symbol")["timestamp"].min()
+
+        all_ok = True
+        for symbol, earliest_ts in earliest_timestamps.items():
+            success = delete_records_from_supabase_by_timestamp_and_symbol(
+                table_name=table_name,
+                symbol=symbol,
+                earliest_timestamp=earliest_ts,
+            )
+            if success:
+                logger.info(
+                    "✅ Successfully deleted records for symbol '%s' with timestamp >= %s",
+                    symbol,
+                    earliest_ts,
+                )
+            else:
+                logger.error(
+                    "❌ Failed to delete records for symbol '%s' with timestamp >= %s",
+                    symbol,
+                    earliest_ts,
+                )
+                all_ok = False
+
+        return all_ok
 
     async def get_tradable_symbols(self) -> set:
         markets_df = await self.loader_markets.fetch_markets(exchange=self.exchange)

@@ -202,26 +202,59 @@ def compare_csv_content(file1_name: str, file2_name: str) -> tuple[bool, str]:
     return identical, diff_str
 
 
+def _get_available_files() -> list[str]:
+    """Get list of available CSV files in the data folder."""
+    project_root = Path(__file__).parent.parent
+    data_folder = project_root / "data"
+
+    if not data_folder.exists():
+        logger.error("%s Data folder not found at: %s", Fore.RED, data_folder)
+        return []
+
+    csv_files = [f.name for f in data_folder.iterdir() if f.is_file() and f.name.endswith(".csv")]
+    return sorted(csv_files)
+
+
+def _select_file_from_list(available_files: list[str], prompt: str) -> str | None:
+    """Let user select a file from the available files list."""
+    if not available_files:
+        logger.error("%s No CSV files found in data folder", Fore.RED)
+        return None
+
+    logger.info("%s %s:", Fore.CYAN, prompt)
+    for i, filename in enumerate(available_files, 1):
+        logger.info("%s) %s", i, filename)
+
+    while True:
+        selection = input(f"{Fore.WHITE}Selection (1-{len(available_files)}): ").strip()
+
+        if selection.isdigit():
+            index = int(selection) - 1
+            if 0 <= index < len(available_files):
+                return available_files[index]
+
+        logger.error("%s Invalid selection! Please choose 1-%s", Fore.RED, len(available_files))
+
+
 def main() -> None:
     """Main function to run the comparison utility."""
     logger.info("%s%s", Fore.BLUE, "=" * 60)
     logger.info("%s CSV File Comparison Utility", Fore.BLUE)
     logger.info("%s%s", Fore.BLUE, "=" * 60)
 
-    # Get file names from user input
-    logger.info("%s Enter the names of two CSV files to compare (from the data folder):", Fore.CYAN)
-    file1 = input(f"{Fore.WHITE}File 1: ").strip()
-    file2 = input(f"{Fore.WHITE}File 2: ").strip()
-
-    if not file1 or not file2:
-        logger.error("%s Please provide both file names!", Fore.RED)
+    # Get available files
+    available_files = _get_available_files()
+    if not available_files:
         return
 
-    # Add .csv extension if not provided
-    if not file1.endswith(".csv"):
-        file1 += ".csv"
-    if not file2.endswith(".csv"):
-        file2 += ".csv"
+    # Let user select files
+    file1 = _select_file_from_list(available_files, "Select first file to compare")
+    if file1 is None:
+        return
+
+    file2 = _select_file_from_list(available_files, "Select second file to compare")
+    if file2 is None:
+        return
 
     # Run comparison
     compare_csv_content(file1, file2)

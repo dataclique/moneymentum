@@ -95,6 +95,22 @@ class HyperliquidDataLoader:
                 .cache()
             )
 
+        if funding_rate_data:
+            # Check for duplicates after combining existing and new data (funding rates)
+            combined_df_to_check = self.construct_funding_rate_dataframe(
+                funding_rate_data, existing_funding_rate_df
+            )
+
+            duplicate_check_result = self._check_timestamp_symbol_duplicates_in_dataframe(
+                combined_df_to_check, table_name
+            )
+            if duplicate_check_result["has_duplicates"]:
+                self._handle_duplicates_found_in_dataframe(
+                    combined_df_to_check, table_name, duplicate_check_result
+                )
+                logger.error("❌ Duplicates found in combined funding rate data. Program stopped.")
+                return None
+
         # upload data to supabase before saving to csv
         success = insert_batch_to_supabase(data=funding_rate_data, table_name=table_name)
 
@@ -146,12 +162,29 @@ class HyperliquidDataLoader:
             )
 
         if ohlcv_data:
+            # First checking for duplicates on a simulated combined dataframe
+            combined_df_for_check = self.construct_ohlcv_dataframe(
+                ohlcv_data, existing_ohlcv_df, symbols_for_market_updates, market_info or {}
+            )
+
+            duplicate_check_result = self._check_timestamp_symbol_duplicates_in_dataframe(
+                combined_df_for_check, table_name
+            )
+
+            if duplicate_check_result["has_duplicates"]:
+                self._handle_duplicates_found_in_dataframe(
+                    combined_df_for_check, table_name, duplicate_check_result
+                )
+                logger.error("❌ Duplicates found in combined OHLCV data. Program stopped.")
+                return None
+
+            # If the data is clean, proceed with database operations.
             success_remove_records = self._remove_outdated_records_from_supabase(
                 table_name, ohlcv_data
             )
             if not success_remove_records:
                 return None
-            # upload data to supabase before saving to csv
+
             success = insert_batch_to_supabase(data=ohlcv_data, table_name=table_name)
             if not success:
                 return None
@@ -341,7 +374,7 @@ class HyperliquidDataLoader:
             raise HyperliquidDataLoaderError(error_message)
 
         funding_rate_df_return = self.spark.createDataFrame(
-            final_df.drop_duplicates(), schema=SchemaFundingRate
+            final_df, schema=SchemaFundingRate
         ).cache()
 
         return funding_rate_df_return.orderBy("timestamp")
@@ -368,7 +401,10 @@ class HyperliquidDataLoader:
 
     def _normalize_timestamps(self, df: pd.DataFrame) -> pd.DataFrame:
         """Normalize timestamps in a DataFrame."""
-        df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True).dt.tz_localize(None)
+        if "timestamp" in df.columns:
+            df["timestamp"] = pd.to_datetime(
+                df["timestamp"], format="mixed", utc=True
+            ).dt.tz_localize(None)
         return df
 
     def _update_closes(self, df: pd.DataFrame, tokens: set, market_data: dict) -> pd.DataFrame:
@@ -471,3 +507,116 @@ class HyperliquidDataLoader:
             ohlcv_df.show()
 
         return ohlcv_df.orderBy("timestamp")
+
+    def _check_timestamp_symbol_duplicates_in_dataframe(
+        self, dataframe: DataFrame, table_name: str
+    ) -> dict[str, Any]:
+        """Check for duplicates in a DataFrame based on timestamp and symbol combination."""
+        dataframe_pd = dataframe.toPandas()
+        results: dict[str, Any] = {
+            "has_duplicates": False,
+            "duplicate_count": 0,
+            "duplicate_details": [],
+            "total_records": len(dataframe_pd),
+        }
+
+        if dataframe_pd.empty:
+            return results
+
+        # Check for timestamp+symbol duplicates
+        if "timestamp" in dataframe_pd.columns and "symbol" in dataframe_pd.columns:
+            duplicates = dataframe_pd.duplicated(subset=["timestamp", "symbol"], keep=False)
+            duplicate_count = duplicates.sum()
+
+            if duplicate_count > 0:
+                results["has_duplicates"] = True
+                results["duplicate_count"] = duplicate_count
+
+                # Get details of duplicates
+                duplicate_records = dataframe_pd[duplicates].sort_values(["symbol", "timestamp"])
+                duplicate_groups = duplicate_records.groupby(["symbol", "timestamp"])
+
+                for (symbol, timestamp), group in duplicate_groups:
+                    if len(group) > 1:
+                        results["duplicate_details"].append(
+                            {
+                                "symbol": symbol,
+                                "timestamp": timestamp,
+                                "count": len(group),
+                                "records": group.to_dict("records"),
+                            }
+                        )
+
+                logger.error(
+                    "Found %s timestamp+symbol duplicates in combined %s data",
+                    duplicate_count,
+                    table_name,
+                )
+            else:
+                logger.info("No timestamp+symbol duplicates found in combined %s data", table_name)
+
+        return results
+
+    def _handle_duplicates_found_in_dataframe(
+        self,
+        dataframe: DataFrame,
+        table_name: str,
+        duplicate_result: dict[str, Any],
+    ) -> None:
+        """Handle duplicates found in a DataFrame by saving it and generating a report."""
+        try:
+            # The dataframe is already a Spark DataFrame, so we can save it directly.
+            duplicate_filename = f"{table_name}_with_duplicates"
+            util.save_csv(duplicate_filename, dataframe)
+            logger.warning("Saved combined data with duplicates to %s", duplicate_filename)
+
+            # Generate and save duplicate report
+            self._generate_duplicate_report(table_name, duplicate_result)
+
+        except Exception:
+            logger.exception("Error handling duplicates in dataframe")
+
+    def _generate_duplicate_report(self, table_name: str, duplicate_result: dict[str, Any]) -> None:
+        """Generate a markdown report of duplicates found."""
+        try:
+            report_content = f"""# Duplicate Report for {table_name}
+
+## Summary
+- **Table**: {table_name}
+- **Total Records**: {duplicate_result["total_records"]}
+- **Duplicate Count**: {duplicate_result["duplicate_count"]}
+- **Has Duplicates**: {duplicate_result["has_duplicates"]}
+
+## Duplicate Details
+
+"""
+
+            if duplicate_result.get("duplicate_details"):
+                for detail in duplicate_result["duplicate_details"]:
+                    report_content += f"""### Symbol: {detail["symbol"]}
+- **Timestamp**: {detail["timestamp"]}
+- **Duplicate Count**: {detail["count"]}
+- **Records**: {len(detail["records"])} duplicate entries
+
+"""
+            else:
+                report_content += "No detailed duplicate information available.\n"
+
+            report_content += f"""
+## Report Generated
+Generated on: {pd.Timestamp.now()}
+
+## Action Required
+Data with duplicates has been saved to `{table_name}_with_duplicates.csv`.
+Please review and clean the data before proceeding.
+"""
+
+            # Save report to data folder
+            report_path = Path(util.DATA_DIR) / f"{table_name}_duplicate_report.md"
+            with report_path.open("w", encoding="utf-8") as f:
+                f.write(report_content)
+
+            logger.info("Duplicate report saved to %s", report_path)
+
+        except OSError:
+            logger.exception("Error generating duplicate report")

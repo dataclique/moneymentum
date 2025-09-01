@@ -280,7 +280,7 @@ class HyperliquidDataLoader:
             raise HyperliquidDataLoaderError(error_message)
 
         funding_rate_df_return = self.spark.createDataFrame(
-            final_df.drop_duplicates(), schema=SchemaFundingRate
+            final_df, schema=SchemaFundingRate
         ).cache()
 
         return funding_rate_df_return.orderBy("timestamp")

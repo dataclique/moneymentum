@@ -228,16 +228,26 @@ function App() {
         <DatePicker
           label="Start Date"
           selected={dateRange.startDate}
-          onChange={(date) =>
-            setDateRange((prev) => ({ ...prev, startDate: date }))}
+          onChange={(date) => {
+            if (date && dateRange.endDate && date > dateRange.endDate) {
+              setDateRange({ startDate: dateRange.endDate, endDate: date });
+            } else {
+              setDateRange((prev) => ({ ...prev, startDate: date }));
+            }
+          }}
           minDate={minAvailableDate || undefined}
           maxDate={maxAvailableDate || undefined}
         />
         <DatePicker
           label="End Date"
           selected={dateRange.endDate}
-          onChange={(date) =>
-            setDateRange((prev) => ({ ...prev, endDate: date }))}
+          onChange={(date) => {
+            if (date && dateRange.startDate && date < dateRange.startDate) {
+              setDateRange({ startDate: date, endDate: dateRange.startDate });
+            } else {
+              setDateRange((prev) => ({ ...prev, endDate: date }));
+            }
+          }}
           minDate={minAvailableDate || undefined}
           maxDate={maxAvailableDate || undefined}
         />

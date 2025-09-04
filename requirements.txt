@@ -1,5 +1,6 @@
 aiohttp
 ccxt
+colorama
 colorlog
 fastapi==0.109.2
 matplotlib

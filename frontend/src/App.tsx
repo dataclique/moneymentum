@@ -266,10 +266,17 @@ function App() {
           {message}
         </div>
       )}
-      <DataTable
-        columns={columns}
-        data={data}
-      />
+      <div
+        className={cn(
+          "transition-opacity duration-300",
+          loading && "opacity-30",
+        )}
+      >
+        <DataTable
+          columns={columns}
+          data={data}
+        />
+      </div>
     </div>
   );
 
@@ -285,12 +292,12 @@ function App() {
     </div>
   );
 
-  if (loading) {
+  if (isReloading) {
     return (
       <AppWrapper>
         <div className="mt-4 max-h-96 overflow-y-auto whitespace-pre-wrap rounded p-4 text-sm">
           <div className="flex items-center gap-1">
-            <span>Loading data</span>
+            <span>Reloading data</span>
             <span className="inline-flex">
               <span className="animate-bounce [animation-delay:-0.3s]">.</span>
               <span className="animate-bounce [animation-delay:-0.15s]">.</span>
@@ -299,14 +306,12 @@ function App() {
           </div>
         </div>
 
-        {isReloading && (
-          <button
-            onClick={handleStopReload}
-            className="rounded-md border px-3 py-2"
-          >
-            Stop reloading
-          </button>
-        )}
+        <button
+          onClick={handleStopReload}
+          className="rounded-md border px-3 py-2"
+        >
+          Stop reloading
+        </button>
       </AppWrapper>
     );
   }

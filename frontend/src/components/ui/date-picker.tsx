@@ -20,10 +20,23 @@ interface Calendar22Props {
   maxDate?: Date;
 }
 
-export function Calendar22(
-  { label, selected, onChange, minDate, maxDate }: Calendar22Props,
-) {
+export function Calendar22({
+  label,
+  selected,
+  onChange,
+  minDate,
+  maxDate,
+}: Calendar22Props) {
   const [open, setOpen] = React.useState(false);
+  const [month, setMonth] = React.useState<Date | undefined>(
+    selected || undefined,
+  );
+
+  React.useEffect(() => {
+    if (open) {
+      setMonth(selected || minDate || undefined);
+    }
+  }, [open, selected, minDate]);
 
   const disabledDays: ({ before: Date } | { after: Date })[] = [];
   if (minDate) {
@@ -55,6 +68,8 @@ export function Calendar22(
           <Calendar
             mode="single"
             selected={selected || undefined}
+            month={month}
+            onMonthChange={setMonth}
             captionLayout="dropdown"
             startMonth={minDate}
             endMonth={maxDate}

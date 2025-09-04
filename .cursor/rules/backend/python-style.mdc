@@ -1,0 +1,5 @@
+---
+globs: ["**/*.py"]
+alwaysApply: false
+---
+When writing or editing Python code, do not use f-strings for string formatting. Always use the `%` operator with `%s` for string interpolation.

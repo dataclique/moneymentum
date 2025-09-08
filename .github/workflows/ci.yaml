@@ -26,8 +26,8 @@ jobs:
       - name: Nix Flake check
         run: nix flake check --impure --accept-flake-config --show-trace
 
-      # - name: Run tests
-      #   run: |
-      #     nix develop \
-      #       --impure --accept-flake-config --show-trace \
-      #       --command pytest
+      - name: Run tests
+        run: |
+          nix develop \
+            --impure --accept-flake-config --show-trace \
+            --command pytest

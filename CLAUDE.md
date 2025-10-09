@@ -7,18 +7,19 @@ code in this repository.
 
 ### Python Backend
 
-- **Run pipeline**: `python pipeline.py`
+- **Run live trading pipeline**: `python pipeline.py`
+- **Run backtest**: `python backtest.py` (generates `data/analysis_df.csv`)
+- **Run API server**: `python server.py` (FastAPI server on port 8000)
 - **Lint Python code**: `ruff check .`
 - **Format Python code**: `ruff format .`
 - **Run tests**: `pytest`
-- **Type checking**: `mypy yang/` (if enabled in flake.nix)
-- **Pre-commit checks**: Before completing a task `pre-commit run -a` command
-  has to be run and pass. For formatting failures, just run it twice and on the
-  second run formatters should pass unless the syntax is malformed
+- **Type checking**: `mypy yang/` (disabled by default in flake.nix)
+- **Pre-commit checks**: `pre-commit run -a` (must pass before completing tasks;
+  run twice for formatting issues)
 
 ### Frontend (React + Vite)
 
-- **Development server**: `cd frontend && npm run dev`
+- **Development server**: `cd frontend && npm run dev` (port 5173)
 - **Build frontend**: `cd frontend && npm run build`
 - **Lint frontend**: `cd frontend && npm run lint`
 - **Preview build**: `cd frontend && npm run preview`
@@ -27,74 +28,124 @@ code in this repository.
 ### Environment Setup
 
 - **Nix + Direnv**: Run `direnv allow` to activate the development environment
-- **Install Python dependencies**: Dependencies are managed through Nix and
-  requirements.txt
-- **Install frontend dependencies**: `cd frontend && npm install`
+- **Python dependencies**: Managed through Nix and `requirements.txt`
+- **Frontend dependencies**: `cd frontend && npm install`
 
 ## Architecture Overview
 
-### Core Components
+### Core Trading System Components
 
-**Yang Trading System**: The main Python package (`yang/`) containing:
+The system implements a momentum-based trading strategy for cryptocurrency
+perpetual futures on Hyperliquid exchange:
 
-- `chronos.py`: Time series analysis engine using PySpark for calculating
-  returns, volatility, autocorrelation, SMA, z-scores, beta, Sharpe ratios, and
-  other financial metrics
-- `strat.py`: Trading strategy implementation that orchestrates the Chronos
-  analysis pipeline
-- `exe.py`: Execution engine for trade execution and portfolio management
-- `util.py`: Utilities for Spark session management, logging, and timeframe
-  configurations
+**Chronos Engine** (`yang/chronos.py`): Time series analysis engine using
+PySpark that calculates:
 
-**Data Loading**: Hyperliquid exchange data integration
-(`yang/dataloader/hyperliquid/`)
+- Log returns and cumulative returns over rolling windows
+- Volatility (standard deviation and annualized volatility)
+- Autocorrelation for momentum detection
+- Simple Moving Averages (SMA) and z-scores
+- Beta coefficient relative to market
+- Sharpe and Sortino ratios
+- Information discreteness metrics
 
-- OHLCV data fetching
-- Funding rates data
-- Market information
+**Strategy** (`yang/strat.py`): Trading signal generation orchestrating Chronos
+analysis pipeline
 
-**Frontend**: React + TypeScript application with:
+- `generate_analysis()`: Applies all Chronos transformations to OHLCV data
+- `generate_picks()`: Generates long/short positions based on predicted returns
+  combining autocorrelation and SMA signals
+- Position sizing based on beta-adjusted weights and leverage constraints
 
-- Token analysis page with interactive charts using LightweightCharts
-- Data tables with sorting and filtering
-- Dark/light theme support
-- Responsive design with Tailwind CSS and Radix UI components
+**Execution Engine** (`yang/exe.py`): Trade execution and portfolio management
+via CCXT
+
+- Fetches current positions and balance from Hyperliquid
+- `rebalance()`: Reconciles target portfolio with current positions
+- Handles order placement with retry logic and rate limiting
+
+**Pipeline Orchestration**:
+
+- `pipeline.py`: Live trading loop that continuously runs analysis and
+  rebalances
+- `backtest.py`: Historical backtesting that saves analysis results to CSV
+- `server.py`: FastAPI server exposing analysis data to frontend with
+  streaming backtest execution
+
+### Data Loading
+
+**HyperliquidDataLoader** (`yang/dataloader/hyperliquid/`):
+
+- `ohlcv.py`: Fetches OHLCV candle data for multiple timeframes
+- `funding_rates.py`: Retrieves funding rate data
+- `markets.py`: Gets market information and filters tradeable assets
+- Async context manager pattern for resource management
+
+### Frontend Architecture
+
+React + TypeScript SPA with:
+
+- **TokenPage** (`frontend/src/pages/TokenPage/`): Main analysis dashboard
+- **ChartComponent**: Interactive price charts using LightweightCharts library
+- **Data tables**: Sortable/filterable tables with TanStack React Table
+- **Theme**: Dark/light mode support with next-themes and Radix UI
+- **Styling**: TailwindCSS 4 with Radix UI primitives
 
 ### Key Data Flow
 
-1. `pipeline.py` orchestrates the entire trading pipeline
-2. Data is loaded from Hyperliquid via the dataloader
-3. Chronos engine performs time series analysis using PySpark
-4. Strategy generates trading signals based on analysis
-5. Execution engine manages portfolio and trades
-6. Frontend displays analysis results and charts
+1. `pipeline.py` or `backtest.py` orchestrates the trading pipeline
+2. `HyperliquidDataLoader` fetches OHLCV and market data asynchronously
+3. `Chronos` engine transforms raw candles into analysis DataFrame using
+   PySpark
+4. `Strategy.generate_picks()` produces position targets with weights
+5. `ExecutionEngine.rebalance()` executes trades (pipeline.py only)
+6. `backtest.py` saves analysis to `data/analysis_df.csv`
+7. Frontend fetches data from FastAPI server and displays interactive charts
 
 ### Technology Stack
 
-- **Backend**: Python 3.11, PySpark, FastAPI, Pandas, CCXT
-- **Frontend**: React 19, TypeScript, Vite, TailwindCSS, Radix UI,
-  LightweightCharts
-- **Development**: Nix + Direnv for reproducible environments
-- **Code Quality**: Ruff for Python linting/formatting, ESLint for TypeScript
+- **Backend**: Python 3.11, PySpark, FastAPI, Pandas, CCXT, asyncio
+- **Frontend**: React 19, TypeScript, Vite, TailwindCSS 4, Radix UI,
+  LightweightCharts, TanStack Table
+- **Development**: Nix flakes with devenv for reproducible environment
+- **Code Quality**: Ruff (extensive ruleset in ruff.toml), Prettier
+  (frontend), pre-commit hooks
 
 ## Development Environment
 
-This project uses Nix flakes with devenv for a reproducible development
-environment. The flake.nix configures:
+Uses Nix flakes with devenv configured in `flake.nix`:
 
-- Python 3.11 with virtual environment
+- Python 3.11 with venv and automatic dependency installation from
+  requirements.txt
 - Node.js for frontend development
-- Required system libraries (zlib, libffi, etc.)
-- Pre-commit hooks for code quality (ruff, nixfmt)
+- Java 17 and native libraries for PySpark (zlib, libffi, gcc)
+- Pre-commit hooks: ruff, ruff-format, prettier, nixfmt-classic
+- Environment variables: `JAVA_HOME`, `LD_LIBRARY_PATH` set automatically
+
+## Configuration
+
+**Timeframes** (`yang/util.py`): Configured in `TIMEFRAME_CONFIGS` dict with:
+
+- Lookback periods for rolling windows
+- Number of tokens to trade
+- Annualization factors for volatility/Sharpe calculations
+
+**Ruff**: Comprehensive linting with ~40 rule categories enabled in
+`ruff.toml`, line length 100
+
+**Prettier**: Configured in `frontend/package.json` with tabWidth 2, no
+semicolons
 
 ## Testing
 
-- Python tests are located in `tests/` directory
+- Python tests in `tests/` directory
 - Run with `pytest` command
 - Test data available in `test_data/` directory
+- Main test file: `tests/test_chronos.py`
 
 ## Data Files
 
-- `data/`: Production data files (funding_rate1h.csv, ohlcv15m.csv)
-- `test_data/`: Test datasets for development and testing
-- Pipeline logs are written to `pipeline.log`
+- `data/`: Production data files (`analysis_df.csv`, `funding_rate1h.csv`,
+  `ohlcv15m.csv`)
+- `test_data/`: Test datasets for development
+- Pipeline logs written to `pipeline.log`

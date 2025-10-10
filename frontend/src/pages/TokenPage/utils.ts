@@ -1,10 +1,10 @@
-import type { IOHLCData, TradingData } from "./types";
+import type { IOHLCData, TradingData } from "./types"
 
 // Transform trading data to OHLC format for price chart
 export const transformToOHLC = (data: TradingData[]): IOHLCData[] => {
   return data
-    .filter((item) => item.close !== null && item.close !== undefined)
-    .map((item) => ({
+    .filter(item => item.close !== null && item.close !== undefined)
+    .map(item => ({
       date: new Date(item.timestamp),
       close: item.close,
       open: item.close, // Using close as open since we don't have separate OHLC data
@@ -15,10 +15,10 @@ export const transformToOHLC = (data: TradingData[]): IOHLCData[] => {
     .sort((a, b) => a.date.getTime() - b.date.getTime())
     .filter((item, index, array) => {
       // Remove duplicates based on timestamp (keep the last one)
-      if (index === array.length - 1) return true;
-      return item.date.getTime() !== array[index + 1].date.getTime();
-    });
-};
+      if (index === array.length - 1) return true
+      return item.date.getTime() !== array[index + 1].date.getTime()
+    })
+}
 
 // Transform trading data to line chart format for metrics
 export const transformToLineData = (
@@ -26,27 +26,27 @@ export const transformToLineData = (
   metric: string,
 ): { time: string; value: number }[] => {
   const processedData = data
-    .filter((item) => {
-      const value = (item as any)[metric];
-      return value !== null && value !== undefined && !isNaN(value);
+    .filter(item => {
+      const value = (item as any)[metric]
+      return value !== null && value !== undefined && !isNaN(value)
     })
-    .map((item) => ({
+    .map(item => ({
       time: item.timestamp, // Keep the full timestamp
       value: (item as any)[metric] as number,
     }))
-    .sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime());
+    .sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime())
 
   // Remove duplicates by keeping the last value for each timestamp
-  const uniqueData: { time: string; value: number }[] = [];
-  const timeSet = new Set<string>();
+  const uniqueData: { time: string; value: number }[] = []
+  const timeSet = new Set<string>()
 
   for (let i = processedData.length - 1; i >= 0; i--) {
-    const item = processedData[i];
+    const item = processedData[i]
     if (!timeSet.has(item.time)) {
-      timeSet.add(item.time);
-      uniqueData.unshift(item);
+      timeSet.add(item.time)
+      uniqueData.unshift(item)
     }
   }
 
-  return uniqueData;
-};
+  return uniqueData
+}

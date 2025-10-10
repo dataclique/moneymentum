@@ -28,7 +28,10 @@
           ruff.enable = true;
           ruff-format.enable = true;
           sort-requirements-txt.enable = true;
-          denofmt.enable = true;
+
+          # TypeScript
+          # eslint.enable = true;
+          prettier.enable = true;
         };
 
         deps = with pkgs; [

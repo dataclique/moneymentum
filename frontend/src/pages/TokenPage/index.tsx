@@ -1,66 +1,68 @@
-import * as React from "react";
-import { Link, useParams } from "react-router-dom";
+import * as React from "react"
+import { Link, useParams } from "react-router-dom"
 
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
-import { Button } from "@/components/ui/button";
-import { AVAILABLE_METRICS } from "./constants";
-import ChartComponent from "./ChartComponent";
-import type { TradingData } from "./types";
+} from "@/components/ui/select"
+import { Button } from "@/components/ui/button"
+import { AVAILABLE_METRICS } from "./constants"
+import ChartComponent from "./ChartComponent"
+import type { TradingData } from "./types"
 
 // Main TokenPage component
 const TokenPage: React.FC<{ timeframe: string }> = ({
   timeframe: initialTimeframe,
 }) => {
-  const { ticker } = useParams<{ ticker: string }>();
-  const [data, setData] = React.useState<TradingData[]>([]);
-  const [loading, setLoading] = React.useState(true);
-  const [error, setError] = React.useState<string | null>(null);
-  const [selectedMetric, setSelectedMetric] = React.useState("price");
-  const [timeframe, setTimeframe] = React.useState(initialTimeframe);
+  const { ticker } = useParams<{ ticker: string }>()
+  const [data, setData] = React.useState<TradingData[]>([])
+  const [loading, setLoading] = React.useState(true)
+  const [error, setError] = React.useState<string | null>(null)
+  const [selectedMetric, setSelectedMetric] = React.useState("price")
+  const [timeframe, setTimeframe] = React.useState(initialTimeframe)
 
   React.useEffect(() => {
-    if (!ticker) return;
+    if (!ticker) return
 
     const fetchData = async () => {
       try {
-        setLoading(true);
-        setError(null);
+        setLoading(true)
+        setError(null)
 
         const response = await fetch(
           `http://localhost:8000/api/token/${ticker}?timeframe=${timeframe}`,
-        );
+        )
         if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`);
+          throw new Error(`HTTP error! status: ${response.status}`)
         }
 
-        const result = await response.json();
+        const result = await response.json()
         if (result.message) {
-          setError(result.message);
+          setError(result.message)
         } else {
-          setData(result.data);
+          setData(result.data)
         }
       } catch (err) {
-        setError(err instanceof Error ? err.message : "An error occurred");
+        setError(err instanceof Error ? err.message : "An error occurred")
       } finally {
-        setLoading(false);
+        setLoading(false)
       }
-    };
+    }
 
-    fetchData();
-  }, [ticker, timeframe]);
+    fetchData()
+  }, [ticker, timeframe])
 
   // Memoize the selected metric label
   const selectedMetricLabel = React.useMemo(() => {
-    return AVAILABLE_METRICS.find((m) => m.value === selectedMetric)?.label ||
-      selectedMetric;
-  }, [selectedMetric]);
+    return (
+      AVAILABLE_METRICS.find(m => m.value === selectedMetric)?.label ||
+      selectedMetric
+    )
+  }, [selectedMetric])
 
   if (loading) {
     return (
@@ -74,7 +76,7 @@ const TokenPage: React.FC<{ timeframe: string }> = ({
           </CardContent>
         </Card>
       </div>
-    );
+    )
   }
 
   if (error) {
@@ -87,14 +89,12 @@ const TokenPage: React.FC<{ timeframe: string }> = ({
           <CardContent>
             <p>{error}</p>
             <Button asChild variant="link" className="p-0 mt-4 h-auto">
-              <Link to="/">
-                ← Back to Main Page
-              </Link>
+              <Link to="/">← Back to Main Page</Link>
             </Button>
           </CardContent>
         </Card>
       </div>
-    );
+    )
   }
 
   return (
@@ -103,9 +103,7 @@ const TokenPage: React.FC<{ timeframe: string }> = ({
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-4">
             <Button asChild variant="ghost">
-              <Link to="/">
-                ←&nbsp;Back
-              </Link>
+              <Link to="/">←&nbsp;Back</Link>
             </Button>
             <CardTitle className="text-2xl font-bold">
               {ticker} - {selectedMetricLabel}
@@ -129,7 +127,7 @@ const TokenPage: React.FC<{ timeframe: string }> = ({
                   <SelectValue placeholder="Select a metric" />
                 </SelectTrigger>
                 <SelectContent>
-                  {AVAILABLE_METRICS.map((metric) => (
+                  {AVAILABLE_METRICS.map(metric => (
                     <SelectItem key={metric.value} value={metric.value}>
                       {metric.label}
                     </SelectItem>
@@ -141,22 +139,20 @@ const TokenPage: React.FC<{ timeframe: string }> = ({
         </div>
       </CardHeader>
       <CardContent className="flex-1 p-1">
-        {data.length === 0
-          ? (
-            <div className="flex items-center justify-center h-full text-gray-400">
-              No data available for {selectedMetricLabel}
-            </div>
-          )
-          : (
-            <ChartComponent
-              data={data}
-              selectedMetric={selectedMetric}
-              timeframe={timeframe}
-            />
-          )}
+        {data.length === 0 ? (
+          <div className="flex items-center justify-center h-full text-gray-400">
+            No data available for {selectedMetricLabel}
+          </div>
+        ) : (
+          <ChartComponent
+            data={data}
+            selectedMetric={selectedMetric}
+            timeframe={timeframe}
+          />
+        )}
       </CardContent>
     </Card>
-  );
-};
+  )
+}
 
-export default TokenPage;
+export default TokenPage

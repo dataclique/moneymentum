@@ -38,18 +38,7 @@ class Strategy:
     min_position_size: float
 
     def generate_analysis_optimized(self, candles_df: DataFrame) -> DataFrame:
-        """
-        Generate comprehensive analysis using optimized single-pass calculation.
-
-        This method uses the optimized `with_all_features` pipeline for maximum performance.
-
-        Args:
-            candles_df: DataFrame with OHLCV data (timestamp, ticker, open, high, low, close,
-                volume)
-
-        Returns:
-            DataFrame with all calculated technical indicators and risk metrics
-        """
+        """Generate analysis using optimized single-pass calculation (with_all_features)."""
         logger.info("Candles DataFrame:")
         candles_df.show(truncate=False)
 
@@ -57,22 +46,7 @@ class Strategy:
         return chronos.with_all_features(candles_df)
 
     def generate_analysis(self, candles_df: DataFrame) -> DataFrame:
-        """
-        Generate analysis using sequential transformation pipeline.
-
-        This method chains individual Chronos transformations. In DEBUG mode, it calculates
-        all metrics. In production mode, it calculates only essential metrics for performance.
-
-        Args:
-            candles_df: DataFrame with OHLCV data (timestamp, ticker, open, high, low, close,
-                volume)
-
-        Returns:
-            DataFrame with calculated metrics:
-                - DEBUG mode: All metrics (returns, volatility, Sharpe, Sortino, beta, etc.)
-                - Production mode: Essential metrics (returns, volatility, autocorrelation, SMA,
-                    beta)
-        """
+        """Generate analysis via sequential transformations (DEBUG: all metrics, prod: essential only)."""
         logger.info("Candles DataFrame:")
         candles_df.show(truncate=False)
 

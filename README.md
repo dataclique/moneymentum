@@ -31,19 +31,20 @@ A momentum-based cryptocurrency trading system for Hyperliquid perpetual futures
 
 ```mermaid
 graph TD
-    A[pipeline.py<br/>Live trading orchestration] --> B[yang/ Core Trading System]
-    C[backtest.py<br/>Historical backtesting] --> B
-    D[server.py<br/>FastAPI data server] --> B
+    A[pipeline.py<br/>Live trading orchestration] -->|Orchestrates| B[yang/ Core Trading System]
+    C[backtest.py<br/>Historical backtesting] -->|Orchestrates| B
+    D[server.py<br/>FastAPI data server] <-->|Analysis data| B
 
-    B --> E[chronos.py<br/>Time series analysis]
-    B --> F[strat.py<br/>Signal generation]
-    B --> G[exe.py<br/>Trade execution CCXT]
-    B --> H[dataloader/<br/>Hyperliquid data fetch]
+    B -->|OHLCV data| E[chronos.py<br/>Time series analysis]
+    E -->|Technical indicators| F[strat.py<br/>Signal generation]
+    F -->|Position targets| G[exe.py<br/>Trade execution CCXT]
 
-    G --> I[Hyperliquid<br/>Perpetual futures exchange]
-    H --> I
+    H[dataloader/<br/>Hyperliquid data fetch] -->|Market data| B
+    H <-->|Price/market info| I[Hyperliquid<br/>Perpetual futures exchange]
+    G -->|Orders| I
+    I -->|Positions/balance| G
 
-    D --> J[frontend/<br/>React + TypeScript SPA<br/>Port 5173]
+    D -->|REST API| J[frontend/<br/>React + TypeScript SPA<br/>Port 5173]
 
     style B fill:#e1f5ff
     style I fill:#ffe1e1

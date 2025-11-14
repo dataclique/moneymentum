@@ -108,12 +108,7 @@ class ExecutionEngine:
     exchange, params = _get_hyperliquid()
 
     def get_balance(self) -> float:
-        """
-        Fetch current USDC balance from Hyperliquid.
-
-        Returns:
-            Total USDC balance in account
-        """
+        """Fetch current USDC balance from Hyperliquid."""
         return self.exchange.fetch_balance()["total"]["USDC"]
 
     @retry(

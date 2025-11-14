@@ -336,17 +336,7 @@ class Chronos:
         return df_transformed
 
     def with_volatility(self, df: DataFrame) -> DataFrame:
-        """
-        Calculate standard deviation and annualized volatility of returns.
-
-        Args:
-            df: DataFrame with 'log_return' column
-
-        Returns:
-            DataFrame with added columns:
-                - stddev: Standard deviation of log returns over rolling window
-                - annualized_volatility: Volatility scaled to annual basis
-        """
+        """Calculate standard deviation and annualized volatility of returns."""
         logger.info("Calculating volatility...")
 
         return df.withColumn(
@@ -358,17 +348,7 @@ class Chronos:
         )
 
     def with_min_max(self, df: DataFrame) -> DataFrame:
-        """
-        Calculate minimum and maximum prices over rolling window.
-
-        Args:
-            df: DataFrame with 'high' and 'low' columns
-
-        Returns:
-            DataFrame with added columns:
-                - max: Maximum high price over lookback period
-                - min: Minimum low price over lookback period
-        """
+        """Calculate minimum and maximum prices over rolling window."""
         logger.info("Calculating min/max...")
 
         max_min_df = df.withColumn(
@@ -396,19 +376,7 @@ class Chronos:
         return max_min_df
 
     def with_sma(self, df: DataFrame) -> DataFrame:
-        """
-        Calculate Simple Moving Average and related statistics.
-
-        Args:
-            df: DataFrame with 'close' and 'log_return' columns
-
-        Returns:
-            DataFrame with added columns:
-                - sma: Simple moving average of close prices
-                - mean_return: Average log return over rolling window
-                - price_stddev: Standard deviation of close prices
-                - return_stddev: Standard deviation of log returns
-        """
+        """Calculate Simple Moving Average and standard deviations."""
         logger.info("Calculating SMA...")
 
         initial_count = df.select("close").dropna().count()
@@ -451,17 +419,7 @@ class Chronos:
         return stddev_df
 
     def with_zscore(self, df: DataFrame) -> DataFrame:
-        """
-        Calculate z-score normalization of current price relative to SMA.
-
-        Args:
-            df: DataFrame with 'close', 'sma', and 'price_stddev' columns
-
-        Returns:
-            DataFrame with added column:
-                - price_zscore: Standardized price deviation from moving average
-                  Formula: (close - sma) / price_stddev
-        """
+        """Calculate z-score normalization: (close - sma) / price_stddev."""
         logger.info("Calculating zscore...")
         price_zscore = (F.col("close") - F.col("sma")) / F.col("price_stddev")
         zscore_df = df.withColumn("price_zscore", price_zscore)
@@ -601,21 +559,7 @@ class Chronos:
         return id_df
 
     def with_sharpe(self, df: DataFrame, risk_free: float = 0.0) -> DataFrame:
-        """
-        Calculate Sharpe ratio for risk-adjusted returns.
-
-        Sharpe ratio measures excess return per unit of total risk (volatility).
-        Higher values indicate better risk-adjusted performance.
-
-        Args:
-            df: DataFrame with 'mean_return' and 'annualized_volatility' columns
-            risk_free: Risk-free rate for excess return calculation (default: 0.0)
-
-        Returns:
-            DataFrame with added columns:
-                - annualized_return: Annualized return from mean log returns
-                - sharpe: Sharpe ratio ((annualized_return - risk_free) / annualized_volatility)
-        """
+        """Calculate Sharpe ratio: (annualized_return - risk_free) / volatility."""
         logger.info("Calculating sharpe...")
 
         df_annualized_return = df.withColumn(
@@ -687,21 +631,7 @@ class Chronos:
         )
 
     def with_autocorrelation(self, df: DataFrame) -> DataFrame:
-        """
-        Calculate autocorrelation of returns for momentum persistence.
-
-        Autocorrelation measures the correlation between current and lagged returns.
-        Positive values indicate momentum (trend continuation), negative values
-        indicate mean reversion.
-
-        Args:
-            df: DataFrame with 'log_return' column
-
-        Returns:
-            DataFrame with added column:
-                - autocorrelation: Correlation between returns and 1-period lagged returns
-                  Uses lookback_periods/4 for the rolling correlation window
-        """
+        """Calculate autocorrelation: correlation between returns and lagged returns."""
         logger.info("Calculating autocorrelation...")
 
         lookback_periods = int(self.config["lookback_periods"] / 4)

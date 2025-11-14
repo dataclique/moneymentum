@@ -222,6 +222,7 @@ Edit `yang/exe.py`:
 ### FastAPI Endpoints
 
 **GET /api/data**
+
 ```json
 {
   "data": [...],           // Analysis rows
@@ -268,6 +269,7 @@ picks = strategy.generate_picks(analysis_df)
 ### Common Commands
 
 **Python:**
+
 ```bash
 ruff check .           # Lint code
 ruff format .          # Format code
@@ -276,6 +278,7 @@ pre-commit run -a      # Run all pre-commit hooks (must pass before completing t
 ```
 
 **Frontend:**
+
 ```bash
 cd frontend
 npm run dev            # Development server

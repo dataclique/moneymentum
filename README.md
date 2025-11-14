@@ -170,6 +170,7 @@ python server.py
 ```
 
 Endpoints:
+
 - `GET /api/data` - Latest analysis data
 - `POST /api/data` - Trigger backtest execution
 - `GET /api/date-range` - Available date range
@@ -183,6 +184,7 @@ npm run dev
 ```
 
 Navigate to http://localhost:5173 to view:
+
 - Interactive price charts with technical indicators
 - Sortable/filterable token analysis tables
 - Historical performance metrics
@@ -207,6 +209,7 @@ TIMEFRAME_CONFIGS = {
 ### Strategy Parameters
 
 Modify `yang/strat.py`:
+
 - `autocorr_threshold`: Momentum signal threshold (default: 0.5)
 - `sma_weight`: Moving average vs autocorrelation weight
 - `max_leverage`: Maximum position leverage (default: 3x)
@@ -214,6 +217,7 @@ Modify `yang/strat.py`:
 ### Risk Controls
 
 Edit `yang/exe.py`:
+
 - `MAX_POSITION_SIZE`: Maximum USD per position
 - `REBALANCE_THRESHOLD`: Minimum change to trigger rebalancing
 

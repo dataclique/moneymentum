@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 import ccxt
+from dotenv import load_dotenv
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql import types as T
@@ -18,8 +19,18 @@ logger.setLevel(util.LOG_LEVEL)
 def _get_hyperliquid(
     vault_address: str = "0xb796084efac92e2785fcc3bd7eef71e79f065ec6",
 ) -> tuple[ccxt.Exchange, dict]:
-    from dotenv import load_dotenv
+    """
+    Initialize Hyperliquid exchange connection via CCXT.
 
+    Args:
+        vault_address: Hyperliquid vault address for trading (default: specified vault)
+
+    Returns:
+        Tuple of (exchange instance, params dict for vault trading)
+
+    Note:
+        Requires HYPERLIQUID_API_SECRET environment variable to be set
+    """
     load_dotenv()
     secret = os.getenv("HYPERLIQUID_API_SECRET")
 
@@ -46,8 +57,6 @@ SchemaPerpPosition = T.StructType(
         T.StructField("symbol", T.StringType()),
         T.StructField("isolated", T.BooleanType()),
         T.StructField("side", T.StringType()),
-        # T.StructField("contracts", T.DoubleType()),
-        # T.StructField("contractSize", T.DoubleType()),
         T.StructField("entryPrice", T.DoubleType()),
         T.StructField("notional", T.DoubleType()),
         T.StructField("leverage", T.DoubleType()),
@@ -78,12 +87,33 @@ class Order:
 
 @dataclass
 class ExecutionEngine:
+    """
+    Trade execution engine for Hyperliquid perpetual futures exchange.
+
+    Manages portfolio rebalancing by comparing target positions from strategy signals
+    with current positions, then executing trades via CCXT to reconcile differences.
+    Includes retry logic and rate limiting for reliable order placement.
+
+    Attributes:
+        spark: PySpark session for DataFrame operations
+        min_position_size_usd: Minimum position size in USD (positions below this are filtered)
+        leverage: Leverage multiplier for all positions (e.g., 3 for 3x leverage)
+        exchange: CCXT Hyperliquid exchange instance
+        params: Additional parameters for vault trading
+    """
+
     spark: SparkSession
     min_position_size_usd: float
     leverage: int
     exchange, params = _get_hyperliquid()
 
     def get_balance(self) -> float:
+        """
+        Fetch current USDC balance from Hyperliquid.
+
+        Returns:
+            Total USDC balance in account
+        """
         return self.exchange.fetch_balance()["total"]["USDC"]
 
     @retry(
@@ -92,14 +122,33 @@ class ExecutionEngine:
         reraise=True,
     )
     def get_positions(self) -> DataFrame:
+        """
+        Fetch current perpetual positions from Hyperliquid exchange.
+
+        Retrieves all open positions with details including entry price, notional value,
+        leverage, collateral, unrealized PnL, and liquidation price. Retries up to 10
+        times with exponential backoff on failure.
+
+        Returns:
+            PySpark DataFrame with columns:
+                - symbol: Trading pair (e.g., "BTC/USDC:USDC")
+                - isolated: Whether position uses isolated margin
+                - side: Position direction ("long" or "short")
+                - entryPrice: Average entry price
+                - notional: Position size in USD
+                - leverage: Current leverage multiplier
+                - collateral: Margin collateral amount
+                - initialMargin: Initial margin requirement
+                - unrealizedPnl: Unrealized profit/loss
+                - liquidationPrice: Price at which position liquidates
+                - percentage: PnL percentage
+        """
         fetched_positions = self.exchange.fetch_positions()
         positions = [
             {
                 "symbol": position["symbol"],
                 "isolated": position["isolated"],
                 "side": position["side"],
-                # "contracts": float(position["contracts"]),
-                # "contractSize": float(position["contractSize"]),
                 "entryPrice": float(position["entryPrice"]),
                 "notional": float(position["notional"]),
                 "leverage": float(position["leverage"]),
@@ -125,6 +174,18 @@ class ExecutionEngine:
         reraise=True,
     )
     def place_trade(self, order: Order) -> None:
+        """
+        Execute a single trade order on Hyperliquid exchange.
+
+        Sets leverage, quantizes the order amount to 3 significant figures, and submits
+        the order via CCXT. Retries up to 10 times with exponential backoff on failure.
+
+        Args:
+            order: Order specification containing symbol, type, side, amount, and price
+
+        Raises:
+            Exception: Logs and re-raises any exception encountered during order placement
+        """
         try:
             logger.info("Setting leverage to %d", self.leverage)
             self.exchange.set_leverage(
@@ -169,6 +230,18 @@ class ExecutionEngine:
             )
 
     def _handle_position_changes(self, portfolio_updates: DataFrame) -> None:
+        """
+        Execute trades to reconcile current positions with target portfolio.
+
+        Processes three types of actions:
+        1. Close: Fully close positions that are not in target portfolio
+        2. Update: Adjust size of existing positions (if diff > min_position_size_usd)
+        3. Open: Create new positions for assets in target but not current portfolio
+
+        Args:
+            portfolio_updates: DataFrame with columns:
+                - symbol, direction, current_size, target_size, close, action
+        """
         closings = portfolio_updates.filter(F.col("action") == "close")
         for row in closings.collect():
             logger.info("Closing %s %s...", row.symbol, row.direction.upper())
@@ -229,6 +302,22 @@ class ExecutionEngine:
             )
 
     def rebalance(self, target_portfolio: DataFrame) -> None:
+        """
+        Rebalance portfolio to match target positions from strategy.
+
+        Workflow:
+        1. Fetch current positions from exchange
+        2. Compare with target portfolio from strategy signals
+        3. Determine required actions (open/close/update) via full outer join
+        4. Execute trades to reconcile differences
+
+        Args:
+            target_portfolio: DataFrame with columns:
+                - symbol: Trading pair
+                - direction: "long" or "short"
+                - position_size: Target position size in USD
+                - close: Current market price
+        """
         current_portfolio = self.get_positions()
         current_positions = current_portfolio.select(
             "symbol",

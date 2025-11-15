@@ -118,22 +118,26 @@ graph TD
 ### Quick Start
 
 **Run backtest** (generates analysis without trading):
+
 ```bash
 python backtest.py
 ```
 
 **Start API server**:
+
 ```bash
 python server.py  # Runs on http://localhost:8000
 ```
 
 **Launch frontend**:
+
 ```bash
 cd frontend
 npm run dev  # Runs on http://localhost:5173
 ```
 
 **Run live trading** (requires API credentials):
+
 ```bash
 python pipeline.py
 ```

@@ -15,6 +15,21 @@ logger.setLevel(util.LOG_LEVEL)
 
 @dataclass
 class Strategy:
+    """
+    Trading strategy that generates signals based on momentum and mean reversion.
+
+    This strategy combines autocorrelation (momentum) and SMA deviation (mean reversion)
+    to predict future returns. It ranks assets and creates long/short portfolios with
+    beta-adjusted position sizing.
+
+    Attributes:
+        timeframe: Trading timeframe (e.g., "15m", "1h", "4h", "1d")
+        config: Timeframe-specific configuration with lookback periods and token count
+        leverage: Maximum portfolio leverage (e.g., 3.0 for 3x leverage)
+        starting_equity: Base equity for position sizing in USD
+        min_position_size: Minimum position size in USD (smaller positions filtered out)
+    """
+
     timeframe: Timeframe
     config: TimeframeConfig
 
@@ -23,6 +38,7 @@ class Strategy:
     min_position_size: float
 
     def generate_analysis_optimized(self, candles_df: DataFrame) -> DataFrame:
+        """Generate analysis using optimized single-pass calculation (with_all_features)."""
         logger.info("Candles DataFrame:")
         candles_df.show(truncate=False)
 
@@ -30,6 +46,11 @@ class Strategy:
         return chronos.with_all_features(candles_df)
 
     def generate_analysis(self, candles_df: DataFrame) -> DataFrame:
+        """
+        Generate analysis via sequential transformations.
+
+        DEBUG mode: all metrics, production: essential only.
+        """
         logger.info("Candles DataFrame:")
         candles_df.show(truncate=False)
 
@@ -59,6 +80,36 @@ class Strategy:
         )
 
     def generate_picks(self, analysis_df: DataFrame) -> DataFrame:
+        """
+        Generate trading positions from analysis data with beta-adjusted sizing.
+
+        This method implements a hybrid momentum/mean-reversion strategy:
+        1. Predicted return = autocorr_weight * mean_return + (1-autocorr_weight) * sma_deviation
+        2. Rank assets by predicted return
+        3. Long top N assets, short bottom N assets (N = config.n_tokens)
+        4. Adjust position sizes by 1/beta to normalize market exposure
+        5. Apply leverage constraint and filter positions below minimum size
+
+        Position sizing formula:
+            - Raw weight = predicted_return / beta
+            - Normalized weight = (raw_weight * leverage) / sum(abs(raw_weights))
+            - Position size = normalized_weight * starting_equity
+            - Filtered if abs(position_size) < min_position_size
+
+        Args:
+            analysis_df: DataFrame from generate_analysis with calculated metrics
+
+        Returns:
+            DataFrame with trading positions containing:
+                - timestamp: Time of signal
+                - ticker: Asset symbol
+                - direction: "long" or "short"
+                - close: Current price
+                - predicted_return: Expected return
+                - position_size: Dollar amount to trade
+                - position_weight: Portfolio weight (sums to leverage)
+                - beta: Asset beta coefficient
+        """
         predicted_return = (((1 + F.col("autocorrelation")) / 2) * (F.col("mean_return"))) + (
             ((1 - F.col("autocorrelation")) / 2) * (F.col("sma") - F.col("close")) / F.col("close")
         )

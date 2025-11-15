@@ -34,7 +34,7 @@ const TokenPage: React.FC<{ timeframe: string }> = ({
         setError(null)
 
         const response = await fetch(
-          `http://localhost:8000/api/token/${ticker}?timeframe=${timeframe}`,
+          `/api/token/${ticker}?timeframe=${timeframe}`,
         )
         if (!response.ok) {
           throw new Error(`HTTP error! status: ${response.status}`)

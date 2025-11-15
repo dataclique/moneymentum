@@ -30,6 +30,32 @@ class HyperliquidDataLoaderError(Exception):
 
 @dataclass
 class HyperliquidDataLoader:
+    """
+    Asynchronous data loader for Hyperliquid exchange OHLCV and funding rate data.
+
+    Fetches historical and real-time market data using CCXT async support. Implements
+    caching to CSV files and incremental updates to minimize API calls. Uses async
+    context manager pattern for proper resource cleanup.
+
+    Attributes:
+        start_date: Beginning of historical data range to fetch
+        timeframe: Trading timeframe (e.g., "15m", "1h", "4h", "1d")
+        config: Timeframe-specific configuration with lookback periods
+        spark: PySpark session for DataFrame operations
+        min_leverage: Minimum leverage required to trade a market (filters tradeable symbols)
+        loader_markets: Market metadata loader
+        loader_ohlcv: OHLCV candle data loader
+        loader_funding_rate: Funding rate data loader
+        exchange: CCXT Hyperliquid exchange instance with async support
+
+    Usage:
+        async with HyperliquidDataLoader(
+            start_date, timeframe, config, spark, min_leverage
+        ) as loader:
+            candles_df = await loader.get_candles_df()
+            funding_df = await loader.get_funding_rate_df()
+    """
+
     start_date: datetime
     timeframe: Timeframe
     config: TimeframeConfig
@@ -37,9 +63,11 @@ class HyperliquidDataLoader:
     min_leverage: int
 
     async def __aenter__(self):  # noqa: ANN204
+        """Enter async context manager, returning self for data loading."""
         return self
 
     def __post_init__(self) -> None:
+        """Initialize sub-loaders and async exchange connection."""
         self.loader_markets: HyperliquidDataLoaderMarkets = HyperliquidDataLoaderMarkets(
             spark=self.spark
         )
@@ -61,9 +89,22 @@ class HyperliquidDataLoader:
         logger.info("Exchange initialized: %s", self.exchange)
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):  # noqa: ANN001, ANN204
+        """Exit async context manager, closing exchange connection."""
         await self.exchange.close()
 
     async def get_funding_rate_df(self) -> DataFrame:
+        """
+        Fetch funding rate data for all tradeable symbols with caching.
+
+        Loads historical funding rates from cache, fetches new data since last timestamp,
+        combines and saves to CSV, then returns as PySpark DataFrame.
+
+        Returns:
+            PySpark DataFrame with funding rate data (columns: timestamp, symbol, fundingRate)
+
+        Raises:
+            HyperliquidDataLoaderError: If no data available and no existing cache
+        """
         funding_rate_file_path = f"{util.DATA_DIR}/funding_rate1h.csv"
 
         since = int(self.start_date.timestamp() * 1000)
@@ -93,6 +134,23 @@ class HyperliquidDataLoader:
         )
 
     async def get_candles_df(self) -> DataFrame:
+        """
+        Fetch OHLCV candle data for all tradeable symbols with intelligent caching.
+
+        Implements two update strategies:
+        1. OHLCV fetch: For symbols with stale data (time gap > config.time_in_ms)
+        2. Market update: For recent symbols, just update latest close price
+
+        Loads from cache, fetches incremental updates, combines and saves to CSV,
+        then returns as PySpark DataFrame.
+
+        Returns:
+            PySpark DataFrame with OHLCV data (columns: timestamp, symbol, open, high, low,
+                close, volume)
+
+        Raises:
+            HyperliquidDataLoaderError: If no data available and no existing cache
+        """
         ohlcv_file_path = f"{util.DATA_DIR}/ohlcv{self.timeframe}.csv"
 
         since = int(self.start_date.timestamp() * 1000)
@@ -125,6 +183,16 @@ class HyperliquidDataLoader:
         return self.spark.read.schema(SchemaOHLCV).csv(ohlcv_file_path, header=True).cache()
 
     async def get_tradable_symbols(self) -> set:
+        """
+        Fetch set of symbols that meet trading criteria.
+
+        Filters markets by:
+        - Not disabled
+        - Max leverage >= min_leverage threshold
+
+        Returns:
+            Set of tradeable symbol strings (e.g., {"BTC/USDC:USDC", "ETH/USDC:USDC"})
+        """
         markets_df = await self.loader_markets.fetch_markets(exchange=self.exchange)
         filtered_df = markets_df.filter(~F.col("disable")).filter(
             F.col("maxLeverage") >= F.lit(self.min_leverage)

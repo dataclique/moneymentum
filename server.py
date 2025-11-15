@@ -13,8 +13,9 @@ import uvicorn
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
+from backtest import PipelineRunMode
 from yang.util import Timeframe, get_spark
 
 app = FastAPI()
@@ -27,6 +28,14 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+class BacktestRequest(BaseModel):
+    mode: PipelineRunMode = Field(
+        default=PipelineRunMode.FULL_BACKTEST,
+        description="The mode to run the backtest in: 'full_backtest' or 'analysis_only'",
+    )
+
 
 # Initialize Spark with proper configuration
 spark = get_spark()
@@ -234,7 +243,7 @@ async def get_token_data(
     return {"data": filtered.to_dict(orient="records"), "message": None}
 
 
-def _run_backtest_script() -> Iterator[str]:
+def _run_backtest_script(mode: PipelineRunMode) -> Iterator[str]:
     """Helper function to run backtest.py and stream logs."""
     env = os.environ.copy()
     if "JAVA_HOME" not in env:
@@ -248,7 +257,7 @@ def _run_backtest_script() -> Iterator[str]:
         yield f"Error: Python executable not found at {python_path}\n"
         return
 
-    command = [python_path, "backtest.py"]
+    command = [python_path, "backtest.py", "--mode", mode.value]
     yield f"Running command: {' '.join(command)}\n"
     logger.info("Attempting to run backtest.py using: %s", python_path)
     logger.info("Subprocess environment includes JAVA_HOME: %s", env.get("JAVA_HOME"))
@@ -293,10 +302,10 @@ def _run_backtest_script() -> Iterator[str]:
 
 
 @app.post("/api/reload_data/stream")
-def reload_data_stream() -> StreamingResponse:
+def reload_data_stream(params: BacktestRequest) -> StreamingResponse:
     """Stream logs while running backtest.py"""
-    return StreamingResponse(_run_backtest_script(), media_type="text/plain")
+    return StreamingResponse(_run_backtest_script(params.mode), media_type="text/plain")
 
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8000)

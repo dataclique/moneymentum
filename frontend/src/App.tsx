@@ -21,9 +21,7 @@ async function getDateRange(timeframe: string): Promise<{
   max_date: string
   last_timestamp: string | null
 }> {
-  const response = await fetch(
-    `http://localhost:8000/api/date-range?timeframe=${timeframe}`,
-  )
+  const response = await fetch(`/api/date-range?timeframe=${timeframe}`)
   if (!response.ok) {
     const errorData = await response.json()
     throw new Error(
@@ -43,19 +41,16 @@ async function getData(
     const startDateTime = new Date(startDate + "T00:00:00Z").toISOString()
     const endDateTime = new Date(endDate + "T23:59:59Z").toISOString()
 
-    const response = await fetch(
-      `http://localhost:8000/api/data?timeframe=${timeframe}`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          start_date: startDateTime,
-          end_date: endDateTime,
-        }),
+    const response = await fetch(`/api/data?timeframe=${timeframe}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
       },
-    )
+      body: JSON.stringify({
+        start_date: startDateTime,
+        end_date: endDateTime,
+      }),
+    })
 
     if (!response.ok) {
       const errorData = await response.json()
@@ -143,7 +138,7 @@ function App() {
     }
   }, [dateRange, timeframe])
 
-  const handleReload = async () => {
+  const handleReload = async (mode = "full_backtest") => {
     setError(null)
     setLoading(true)
     setIsReloading(true)
@@ -151,13 +146,14 @@ function App() {
     const controller = new AbortController()
 
     try {
-      const response = await fetch(
-        "http://localhost:8000/api/reload_data/stream",
-        {
-          method: "POST",
-          signal: controller.signal,
+      const response = await fetch("/api/reload_data/stream", {
+        method: "POST",
+        signal: controller.signal,
+        headers: {
+          "Content-Type": "application/json",
         },
-      )
+        body: JSON.stringify({ mode }),
+      })
 
       if (!response.body) {
         throw new Error("No response body received")
@@ -195,7 +191,7 @@ function App() {
 
   const handleStopReload = async () => {
     try {
-      const response = await fetch("http://localhost:8000/api/stop_reload", {
+      const response = await fetch("/api/stop_reload", {
         method: "POST",
       })
 
@@ -243,13 +239,15 @@ function App() {
           minDate={minAvailableDate || undefined}
           maxDate={maxAvailableDate || undefined}
         />
-        <Button
-          variant="outline"
-          onClick={handleReload}
-          className="cursor-pointer"
-        >
-          Reload data
-        </Button>
+        <div>
+          {/* Calling only fetch + analysis */}
+          <Button
+            onClick={() => handleReload("analysis_only")}
+            disabled={loading}
+          >
+            {loading ? "Loading..." : "Reload Data"}
+          </Button>
+        </div>
         <ModeToggle /> {/* Added ModeToggle here for easy access */}
       </div>
       {message && <div className="mb-4 text-center">{message}</div>}

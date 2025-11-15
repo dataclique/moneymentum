@@ -63,17 +63,20 @@ graph TD
 ### Technology Stack
 
 **Backend:**
+
 - Python 3.11, PySpark, FastAPI, Pandas, CCXT
 - Async I/O for efficient data fetching
 - Dataclass-based architecture
 
 **Frontend:**
+
 - React 19, TypeScript, Vite
 - TailwindCSS 4, Radix UI components
 - LightweightCharts for price visualization
 - TanStack Table for data grids
 
 **Development:**
+
 - Nix flakes with devenv for reproducible environments
 - Ruff for linting and formatting
 - Pre-commit hooks for code quality

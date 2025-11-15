@@ -26,6 +26,12 @@ jobs:
       - name: Nix Flake check
         run: nix flake check --impure --accept-flake-config --show-trace
 
+      - name: Run frontend tests
+        run: |
+          nix develop \
+            --impure --accept-flake-config --show-trace \
+            --command bash -c "cd frontend && npm install && npm test -- --run"
+
       # - name: Run tests
       #   run: |
       #     nix develop \

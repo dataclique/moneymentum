@@ -13,50 +13,19 @@ import { Button } from "@/components/ui/button"
 import { AVAILABLE_METRICS } from "./constants"
 import ChartComponent from "./ChartComponent"
 import type { TradingData } from "./types"
+import { useTokenData } from "@/hooks/useApi"
 
-// Main TokenPage component
 const TokenPage: React.FC<{ timeframe: string }> = ({
   timeframe: initialTimeframe,
 }) => {
   const { ticker } = useParams<{ ticker: string }>()
-  const [data, setData] = React.useState<TradingData[]>([])
-  const [loading, setLoading] = React.useState(true)
-  const [error, setError] = React.useState<string | null>(null)
   const [selectedMetric, setSelectedMetric] = React.useState("price")
   const [timeframe, setTimeframe] = React.useState(initialTimeframe)
 
-  React.useEffect(() => {
-    if (!ticker) return
+  const { data: tokenData, error, isLoading } = useTokenData(ticker, timeframe)
 
-    const fetchData = async () => {
-      try {
-        setLoading(true)
-        setError(null)
+  const data = tokenData?.data || []
 
-        const response = await fetch(
-          `/api/token/${ticker}?timeframe=${timeframe}`,
-        )
-        if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`)
-        }
-
-        const result = await response.json()
-        if (result.message) {
-          setError(result.message)
-        } else {
-          setData(result.data)
-        }
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "An error occurred")
-      } finally {
-        setLoading(false)
-      }
-    }
-
-    fetchData()
-  }, [ticker, timeframe])
-
-  // Memoize the selected metric label
   const selectedMetricLabel = React.useMemo(() => {
     return (
       AVAILABLE_METRICS.find(m => m.value === selectedMetric)?.label ||
@@ -64,7 +33,7 @@ const TokenPage: React.FC<{ timeframe: string }> = ({
     )
   }, [selectedMetric])
 
-  if (loading) {
+  if (isLoading) {
     return (
       <div className="flex items-center justify-center flex-1">
         <Card className="w-full max-w-sm">
@@ -87,7 +56,7 @@ const TokenPage: React.FC<{ timeframe: string }> = ({
             <CardTitle className="text-destructive">Error</CardTitle>
           </CardHeader>
           <CardContent>
-            <p>{error}</p>
+            <p>{error.message}</p>
             <Button asChild variant="link" className="p-0 mt-4 h-auto">
               <Link to="/">← Back to Main Page</Link>
             </Button>

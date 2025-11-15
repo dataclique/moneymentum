@@ -3,209 +3,90 @@ import { useEffect, useState } from "react"
 import { columns, type TradingData } from "./components/ui/columns"
 import { DataTable } from "./components/ui/data-table"
 import { Calendar22 as DatePicker } from "./components/ui/date-picker"
-import { Route, Routes, useNavigate } from "react-router-dom"
+import { Route, Routes } from "react-router-dom"
 import TokenPage from "./pages/TokenPage"
 import { ModeToggle } from "./components/ui/mode-toggle"
+import {
+  TimeframeSelect,
+  type Timeframe,
+} from "./components/ui/timeframe-select"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
-
-async function getDateRange(): Promise<{
-  min_date: string
-  max_date: string
-  last_timestamp: string | null
-}> {
-  const response = await fetch("/api/date-range")
-  if (!response.ok) {
-    const errorData = await response.json()
-    throw new Error(
-      errorData.detail || `HTTP error! status: ${response.status}`,
-    )
-  }
-  return response.json()
-}
-
-async function getData(
-  startDate: string,
-  endDate: string,
-): Promise<{ data: TradingData[]; message: string | null }> {
-  try {
-    // Convert dates to ISO format with time
-    const startDateTime = new Date(startDate + "T00:00:00Z").toISOString()
-    const endDateTime = new Date(endDate + "T23:59:59Z").toISOString()
-
-    const response = await fetch("/api/data", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        start_date: startDateTime,
-        end_date: endDateTime,
-      }),
-    })
-
-    if (!response.ok) {
-      const errorData = await response.json()
-      throw new Error(
-        errorData.detail || `HTTP error! status: ${response.status}`,
-      )
-    }
-
-    return response.json()
-  } catch (error) {
-    console.error("Error fetching data:", error)
-    throw error
-  }
-}
+import {
+  useDateRange,
+  useAnalysisData,
+  useReloadData,
+  useStopReload,
+} from "@/hooks/useApi"
 
 function App() {
-  const [data, setData] = useState<TradingData[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [message, setMessage] = useState<string | null>(null)
-  const [isReloading, setIsReloading] = useState(false)
+  const [timeframe, setTimeframe] = useState<Timeframe>("1h")
   const [dateRange, setDateRange] = useState({
     startDate: null as Date | null,
     endDate: null as Date | null,
   })
   const [maxAvailableDate, setMaxAvailableDate] = useState<Date | null>(null)
   const [minAvailableDate, setMinAvailableDate] = useState<Date | null>(null)
-  const navigate = useNavigate()
 
-  // Fetch date range and set initial dates
+  const {
+    data: dateRangeData,
+    error: dateRangeError,
+    isLoading: isDateRangeLoading,
+  } = useDateRange(timeframe)
+
   useEffect(() => {
-    const initializeDates = async () => {
-      try {
-        const range = await getDateRange()
-        const maxDate = new Date(`${range.max_date.split("T")[0]}T00:00:00Z`)
-        const minDate = new Date(`${range.min_date.split("T")[0]}T00:00:00Z`)
-        setMaxAvailableDate(maxDate)
-        setMinAvailableDate(minDate)
-        // After first load show only last day data
-        setDateRange({
-          startDate: maxDate,
-          endDate: maxDate,
-        })
-      } catch (err) {
-        console.error("Error fetching date range:", err)
-        setError(
-          err instanceof Error ? err.message : "Failed to load date range.",
-        )
-        setLoading(false)
-      }
-    }
-
-    initializeDates()
-  }, [])
-
-  // Fetch data when date range changes
-  useEffect(() => {
-    if (dateRange.startDate && dateRange.endDate) {
-      console.log(
-        dateRange.startDate.toISOString().split("T")[0],
-        dateRange.endDate.toISOString().split("T")[0],
+    if (dateRangeData) {
+      const maxDate = new Date(
+        `${dateRangeData.max_date.split("T")[0]}T00:00:00Z`,
       )
-
-      const fetchData = async () => {
-        try {
-          setLoading(true)
-          setMessage(null)
-          const result = await getData(
-            dateRange.startDate!.toISOString().split("T")[0],
-            dateRange.endDate!.toISOString().split("T")[0],
-          )
-          setData(result.data)
-          setMessage(result.message)
-        } catch (err) {
-          console.error("Error fetching data:", err)
-          setError(err instanceof Error ? err.message : "Failed to load data.")
-        } finally {
-          setLoading(false)
-        }
-      }
-
-      fetchData()
-    }
-  }, [dateRange])
-
-  const handleReload = async (mode = "full_backtest") => {
-    setError(null)
-    setLoading(true)
-    setIsReloading(true)
-
-    const controller = new AbortController()
-
-    try {
-      const response = await fetch(
-        "http://localhost:8000/api/reload_data/stream",
-        {
-          method: "POST",
-          signal: controller.signal,
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ mode }),
-        },
+      const minDate = new Date(
+        `${dateRangeData.min_date.split("T")[0]}T00:00:00Z`,
       )
-
-      if (!response.body) {
-        throw new Error("No response body received")
-      }
-
-      const reader = response.body.getReader()
-      const decoder = new TextDecoder("utf-8")
-
-      const read = async () => {
-        while (true) {
-          const { value, done } = await reader.read()
-          if (done) break
-          console.log(decoder.decode(value, { stream: true }))
-        }
-        setLoading(false)
-        setIsReloading(false)
-        // refresh data after reload
-        const result = await getData(
-          dateRange.startDate?.toISOString().split("T")[0] || "",
-          dateRange.endDate?.toISOString().split("T")[0] || "",
-        )
-        setData(result.data)
-        setMessage(result.message)
-      }
-
-      read()
-    } catch (err) {
-      console.error("Error reloading data:", err)
-      setError(err instanceof Error ? err.message : "Failed to reload data.")
-      setLoading(false)
-      setIsReloading(false)
-    }
-  }
-
-  const handleStopReload = async () => {
-    try {
-      const response = await fetch("/api/stop_reload", {
-        method: "POST",
+      setMaxAvailableDate(maxDate)
+      setMinAvailableDate(minDate)
+      // After first load show only last day data
+      setDateRange({
+        startDate: maxDate,
+        endDate: maxDate,
       })
-
-      if (!response.ok) {
-        const errorData = await response.json()
-        throw new Error(
-          errorData.detail || `HTTP error! status: ${response.status}`,
-        )
-      }
-
-      setIsReloading(false)
-      setLoading(false)
-    } catch (err) {
-      console.error("Error stopping reload:", err)
-      setError(err instanceof Error ? err.message : "Failed to stop reload.")
     }
+  }, [dateRangeData])
+
+  const {
+    data: analysisData,
+    error: analysisError,
+    isLoading: isAnalysisLoading,
+  } = useAnalysisData({
+    startDate: dateRange.startDate?.toISOString().split("T")[0] || "",
+    endDate: dateRange.endDate?.toISOString().split("T")[0] || "",
+    timeframe,
+  })
+
+  const reloadMutation = useReloadData()
+  const stopReloadMutation = useStopReload()
+
+  const handleReload = (mode = "analysis_only") => {
+    reloadMutation.mutate({ mode })
   }
 
-  // Move table to a separate component for the main page
+  const handleStopReload = () => {
+    stopReloadMutation.mutate()
+  }
+
+  const loading =
+    isDateRangeLoading || isAnalysisLoading || reloadMutation.isPending
+  const error = dateRangeError?.message || analysisError?.message || null
+  const data = analysisData?.data || []
+  const message = analysisData?.message || null
+
   const MainPage = () => (
-    <div className="container mx-auto py-10">
+    <div className="container mx-auto py-2">
       <div className="mb-4 flex items-end justify-start gap-4">
+        <TimeframeSelect
+          value={timeframe}
+          onValueChange={setTimeframe}
+          className="w-[180px]"
+        />
         <DatePicker
           label="Start Date"
           selected={dateRange.startDate}
@@ -264,7 +145,7 @@ function App() {
           </div>
         </div>
 
-        {isReloading && (
+        {reloadMutation.isPending && (
           <button
             onClick={handleStopReload}
             className="rounded-md border px-3 py-2"
@@ -290,7 +171,10 @@ function App() {
     <AppWrapper>
       <Routes>
         <Route path="/" element={<MainPage />} />
-        <Route path="/token/:ticker" element={<TokenPage />} />
+        <Route
+          path="/token/:ticker"
+          element={<TokenPage timeframe={timeframe} />}
+        />
       </Routes>
     </AppWrapper>
   )

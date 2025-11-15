@@ -16,11 +16,13 @@ import { transformToLineData, transformToOHLC } from "./utils"
 interface ChartComponentProps {
   data: TradingData[]
   selectedMetric: string
+  timeframe: string
 }
 
 const ChartComponent: React.FC<ChartComponentProps> = ({
   data,
   selectedMetric,
+  timeframe,
 }) => {
   const chartContainerRef = React.useRef<HTMLDivElement>(null)
   const chartRef = React.useRef<IChartApi | null>(null)
@@ -50,7 +52,7 @@ const ChartComponent: React.FC<ChartComponentProps> = ({
         timeScale: {
           borderColor: "#485563",
           timeVisible: true,
-          secondsVisible: false,
+          secondsVisible: timeframe === "15m",
         },
         width: chartContainerRef.current.clientWidth,
         height: chartContainerRef.current.clientHeight,
@@ -127,7 +129,7 @@ const ChartComponent: React.FC<ChartComponentProps> = ({
 
         const ohlcData = transformToOHLC(data)
         const chartData = ohlcData.map(item => ({
-          time: item.date.toISOString().split("T")[0], // Convert to YYYY-MM-DD
+          time: (item.date.getTime() / 1000) as any, // Convert to UNIX timestamp
           open: item.open,
           high: item.high,
           low: item.low,
@@ -164,7 +166,7 @@ const ChartComponent: React.FC<ChartComponentProps> = ({
           })
 
           const volumeData = ohlcData.map(item => ({
-            time: item.date.toISOString().split("T")[0],
+            time: (item.date.getTime() / 1000) as any,
             value: item.volume,
             color: item.close >= item.open ? "#26a69a80" : "#ef535080", // Semi-transparent
           }))
@@ -280,7 +282,12 @@ const ChartComponent: React.FC<ChartComponentProps> = ({
           console.warn("Duplicate timestamps detected in line data")
         }
 
-        lineSeries.setData(lineData)
+        const chartData = lineData.map(d => ({
+          time: (new Date(d.time).getTime() / 1000) as any,
+          value: d.value,
+        }))
+
+        lineSeries.setData(chartData)
         seriesRef.current = lineSeries
 
         // Set visible range to show data properly
@@ -296,7 +303,7 @@ const ChartComponent: React.FC<ChartComponentProps> = ({
     } catch (error) {
       console.error("Error updating chart data:", error)
     }
-  }, [data, selectedMetric])
+  }, [data, selectedMetric, timeframe])
 
   return (
     <div

@@ -9,49 +9,27 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import {
+  TimeframeSelect,
+  type Timeframe,
+} from "@/components/ui/timeframe-select"
 import { Button } from "@/components/ui/button"
 import { AVAILABLE_METRICS } from "./constants"
 import ChartComponent from "./ChartComponent"
 import type { TradingData } from "./types"
+import { useTokenData } from "@/hooks/useApi"
 
-// Main TokenPage component
-const TokenPage: React.FC = () => {
+const TokenPage: React.FC<{ timeframe: Timeframe }> = ({
+  timeframe: initialTimeframe,
+}) => {
   const { ticker } = useParams<{ ticker: string }>()
-  const [data, setData] = React.useState<TradingData[]>([])
-  const [loading, setLoading] = React.useState(true)
-  const [error, setError] = React.useState<string | null>(null)
   const [selectedMetric, setSelectedMetric] = React.useState("price")
+  const [timeframe, setTimeframe] = React.useState<Timeframe>(initialTimeframe)
 
-  React.useEffect(() => {
-    if (!ticker) return
+  const { data: tokenData, error, isLoading } = useTokenData(ticker, timeframe)
 
-    const fetchData = async () => {
-      try {
-        setLoading(true)
-        setError(null)
+  const data = tokenData?.data || []
 
-        const response = await fetch(`/api/token/${ticker}`)
-        if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`)
-        }
-
-        const result = await response.json()
-        if (result.message) {
-          setError(result.message)
-        } else {
-          setData(result.data)
-        }
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "An error occurred")
-      } finally {
-        setLoading(false)
-      }
-    }
-
-    fetchData()
-  }, [ticker])
-
-  // Memoize the selected metric label
   const selectedMetricLabel = React.useMemo(() => {
     return (
       AVAILABLE_METRICS.find(m => m.value === selectedMetric)?.label ||
@@ -59,7 +37,7 @@ const TokenPage: React.FC = () => {
     )
   }, [selectedMetric])
 
-  if (loading) {
+  if (isLoading) {
     return (
       <div className="flex items-center justify-center flex-1">
         <Card className="w-full max-w-sm">
@@ -82,7 +60,7 @@ const TokenPage: React.FC = () => {
             <CardTitle className="text-destructive">Error</CardTitle>
           </CardHeader>
           <CardContent>
-            <p>{error}</p>
+            <p>{error.message}</p>
             <Button asChild variant="link" className="p-0 mt-4 h-auto">
               <Link to="/">← Back to Main Page</Link>
             </Button>
@@ -104,19 +82,26 @@ const TokenPage: React.FC = () => {
               {ticker} - {selectedMetricLabel}
             </CardTitle>
           </div>
-          <div className="w-48">
-            <Select value={selectedMetric} onValueChange={setSelectedMetric}>
-              <SelectTrigger>
-                <SelectValue placeholder="Select a metric" />
-              </SelectTrigger>
-              <SelectContent>
-                {AVAILABLE_METRICS.map(metric => (
-                  <SelectItem key={metric.value} value={metric.value}>
-                    {metric.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+          <div className="flex items-center gap-4">
+            <TimeframeSelect
+              value={timeframe}
+              onValueChange={setTimeframe}
+              className="w-48"
+            />
+            <div className="w-48">
+              <Select value={selectedMetric} onValueChange={setSelectedMetric}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select a metric" />
+                </SelectTrigger>
+                <SelectContent>
+                  {AVAILABLE_METRICS.map(metric => (
+                    <SelectItem key={metric.value} value={metric.value}>
+                      {metric.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
           </div>
         </div>
       </CardHeader>
@@ -126,7 +111,11 @@ const TokenPage: React.FC = () => {
             No data available for {selectedMetricLabel}
           </div>
         ) : (
-          <ChartComponent data={data} selectedMetric={selectedMetric} />
+          <ChartComponent
+            data={data}
+            selectedMetric={selectedMetric}
+            timeframe={timeframe}
+          />
         )}
       </CardContent>
     </Card>

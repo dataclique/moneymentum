@@ -5,18 +5,18 @@ import sys
 from collections.abc import Iterator
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
 import numpy as np
 import pandas as pd
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from backtest import PipelineRunMode
-from yang.util import get_spark
+from yang.util import Timeframe, get_spark
 
 app = FastAPI()
 
@@ -125,9 +125,11 @@ class DataCache:
         return self.df[mask]
 
 
-# Initialize cache
-cache = DataCache()
-cache.initialize("data/analysis_df.csv")
+# Initialize cache for each timeframe
+TIME_FRAMES: list[Timeframe] = ["1h", "15m"]
+caches: dict[Timeframe, DataCache] = {tf: DataCache() for tf in TIME_FRAMES}
+for tf in TIME_FRAMES:
+    caches[tf].initialize(f"data/analysis_df_{tf}.csv")
 
 
 class DateRange(BaseModel):
@@ -136,9 +138,12 @@ class DateRange(BaseModel):
 
 
 @app.get("/api/date-range")
-async def get_date_range() -> dict[str, Any]:
+async def get_date_range(
+    timeframe: Annotated[Timeframe, Query(enum=TIME_FRAMES)] = "1h",
+) -> dict[str, Any]:
     """Get the available date range from the data"""
     try:
+        cache = caches[timeframe]
         date_range = cache.get_date_range()
         logger.info("%s", date_range)
 
@@ -149,7 +154,10 @@ async def get_date_range() -> dict[str, Any]:
 
 
 @app.post("/api/data")
-async def get_data(date_range: DateRange) -> dict[str, Any]:
+async def get_data(
+    date_range: DateRange,
+    timeframe: Annotated[Timeframe, Query(enum=TIME_FRAMES)] = "1h",
+) -> dict[str, Any]:
     """Get data for the specified date range"""
     try:
         logger.info(
@@ -167,6 +175,7 @@ async def get_data(date_range: DateRange) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail="Start date must be before end date")
 
     try:
+        cache = caches[timeframe]
         data_frame = cache.get_data(start_date, end_date)
 
         # If DataFrame is empty, check if it's because of date range
@@ -202,12 +211,8 @@ async def get_data(date_range: DateRange) -> dict[str, Any]:
                 }
             return {"data": [], "message": "No data available in the system"}
 
-        # Group by both date and ticker to get the last record for each ticker each day
-        data_frame["date"] = data_frame["timestamp"].dt.date
-        data_frame = (
-            data_frame.sort_values("timestamp").groupby(["date", "ticker"]).last().reset_index()
-        )
-        data_frame = data_frame.drop("date", axis=1)  # Remove the temporary date column
+        # Sort data by ticker and timestamp for consistent order
+        data_frame = data_frame.sort_values(["ticker", "timestamp"])
 
         # Replace both numpy NaN and pandas NA with None
         data_frame = data_frame.replace({np.nan: None, pd.NA: None})
@@ -219,8 +224,12 @@ async def get_data(date_range: DateRange) -> dict[str, Any]:
 
 
 @app.get("/api/token/{ticker}")
-async def get_token_data(ticker: str) -> dict[str, Any]:
+async def get_token_data(
+    ticker: str,
+    timeframe: Annotated[Timeframe, Query(enum=TIME_FRAMES)] = "1h",
+) -> dict[str, Any]:
     """Get all data for a specific ticker"""
+    cache = caches[timeframe]
     if not cache.initialized or cache.df is None:
         raise HTTPException(status_code=500, detail="Data not initialized")
     cached_data = cache.df
@@ -234,68 +243,68 @@ async def get_token_data(ticker: str) -> dict[str, Any]:
     return {"data": filtered.to_dict(orient="records"), "message": None}
 
 
+def _run_backtest_script(mode: PipelineRunMode) -> Iterator[str]:
+    """Helper function to run backtest.py and stream logs."""
+    env = os.environ.copy()
+    if "JAVA_HOME" not in env:
+        yield "Warning: JAVA_HOME not set. Spark might fail.\n"
+    if "LD_LIBRARY_PATH" not in env:
+        yield "Warning: LD_LIBRARY_PATH not set. Spark might fail.\n"
+
+    python_path = sys.executable
+
+    if not Path(python_path).exists():
+        yield f"Error: Python executable not found at {python_path}\n"
+        return
+
+    command = [python_path, "backtest.py", "--mode", mode.value]
+    yield f"Running command: {' '.join(command)}\n"
+    logger.info("Attempting to run backtest.py using: %s", python_path)
+    logger.info("Subprocess environment includes JAVA_HOME: %s", env.get("JAVA_HOME"))
+    logger.info("Subprocess environment includes LD_LIBRARY_PATH: %s", env.get("LD_LIBRARY_PATH"))
+
+    try:
+        process = subprocess.Popen(  # noqa: S603
+            command,  # noqa: S603
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,  # Line-buffered
+            universal_newlines=True,  # Ensures text mode
+        )
+
+        # Stream output
+        if process.stdout:
+            for line in iter(process.stdout.readline, ""):
+                logger.info(line.strip())
+                yield line
+            process.stdout.close()
+
+        # Wait for the process to complete
+        return_code = process.wait()
+
+        if return_code != 0:
+            yield f"\nError: backtest.py exited with code {return_code}\n"
+        else:
+            yield "\n✅ backtest.py finished successfully.\n"
+
+        # Reload cache after script execution
+        try:
+            for tf in TIME_FRAMES:
+                caches[tf].initialize(f"data/analysis_df_{tf}.csv", force=True)
+            yield "✅ Caches reloaded.\n"
+        except (ValueError, FileNotFoundError, pd.errors.EmptyDataError) as e:
+            yield f"❌ Error reloading caches: {e}\n"
+
+    except (subprocess.SubprocessError, OSError) as e:
+        yield f"An unexpected error occurred: {e}\n"
+
+
 @app.post("/api/reload_data/stream")
 def reload_data_stream(params: BacktestRequest) -> StreamingResponse:
     """Stream logs while running backtest.py"""
-
-    def run_script() -> Iterator[str]:
-        env = os.environ.copy()
-        if "JAVA_HOME" not in env:
-            yield "Warning: JAVA_HOME not set. Spark might fail.\n"
-        if "LD_LIBRARY_PATH" not in env:
-            yield "Warning: LD_LIBRARY_PATH not set. Spark might fail.\n"
-
-        python_path = sys.executable
-
-        if not Path(python_path).exists():
-            yield f"Error: Python executable not found at {python_path}\n"
-            return
-
-        command = [python_path, "backtest.py", "--mode", params.mode.value]
-        yield f"Running command: {' '.join(command)}\n"
-        logger.info("Attempting to run backtest.py using: %s", python_path)
-        logger.info("Subprocess environment includes JAVA_HOME: %s", env.get("JAVA_HOME"))
-        logger.info(
-            "Subprocess environment includes LD_LIBRARY_PATH: %s", env.get("LD_LIBRARY_PATH")
-        )
-
-        try:
-            process = subprocess.Popen(  # noqa: S603
-                command,  # noqa: S603
-                env=env,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1,  # Line-buffered
-                universal_newlines=True,  # Ensures text mode
-            )
-
-            # Stream output
-            if process.stdout:
-                for line in iter(process.stdout.readline, ""):
-                    logger.info(line.strip())
-                    yield line
-                process.stdout.close()
-
-            # Wait for the process to complete
-            return_code = process.wait()
-
-            if return_code != 0:
-                yield f"\nError: backtest.py exited with code {return_code}\n"
-            else:
-                yield "\n✅ backtest.py finished successfully.\n"
-
-            # Reload cache after script execution
-            try:
-                cache.initialize("data/analysis_df.csv", force=True)
-                yield "✅ Cache reloaded.\n"
-            except (ValueError, FileNotFoundError, pd.errors.EmptyDataError) as e:
-                yield f"❌ Error reloading cache: {e}\n"
-
-        except (subprocess.SubprocessError, OSError) as e:
-            yield f"An unexpected error occurred: {e}\n"
-
-    return StreamingResponse(run_script(), media_type="text/plain")
+    return StreamingResponse(_run_backtest_script(params.mode), media_type="text/plain")
 
 
 if __name__ == "__main__":

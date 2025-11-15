@@ -55,7 +55,7 @@ select = [
     "F",     # Pyflakes
     "FA",    # flake8-future-annotations
     "FBT",   # flake8-boolean-trap
-    # "FIX",   # flake8-fixme
+    # "FIX",   # flake8-fixme - Disabled: Allow TODO/FIXME comments during development
     "FLY",   # flynt
     "G",     # flake8-logging-format
     "I",     # isort
@@ -83,19 +83,28 @@ select = [
     "T10",   # flake8-debugger
     "T20",   # flake8-print
     "TCH",   # flake8-type-checking
-    # "TD",    # flake8-todos
+    # "TD",    # flake8-todos - Disabled: Allow TODO comments without issue tracking
     "TID",   # flake8-tidy-imports
     "TRY",   # tryceratops
     "UP",    # pyupgrade
     "YTT",   # flake8-2020
-    # "AIR",  # Airflow
-    # "D",  # pydocstyle
-    # "ERA",  # eradicate
-    # "FURB",  # refurb
-    # "N",  # pep8-naming
-    # "RUF",  # Ruff-specific rules
+    # "AIR",  # Airflow - Not applicable (not using Airflow)
+    # "D",  # pydocstyle - Disabled: Docstring style checks handled manually
+    # "ERA",  # eradicate - Disabled: Allow some commented code for reference
+    # "FURB",  # refurb - Disabled: Refactoring suggestions can be overly aggressive
+    # "N",  # pep8-naming - Disabled: Using project-specific naming conventions
+    # "RUF",  # Ruff-specific rules - Disabled: May conflict with other linters
 ]
-ignore = ["ANN101", "C408", "COM812", "D202", "D203", "D212", "E703", "ISC001", "S101", "TD002", "TD003"]
+# Specific rules to ignore:
+# C408: Unnecessary dict call - prefer dict() over {}
+# COM812: Trailing comma missing - handled by formatter
+# D202, D203, D212: Docstring formatting conflicts
+# E703: Statement ends with unnecessary semicolon
+# ISC001: Implicit string concatenation - handled by formatter
+# S101: Use of assert - needed for debug checks
+# S104: Binding to all interfaces - acceptable for development server
+# TD002, TD003: TODO formatting requirements
+ignore = ["C408", "COM812", "D202", "D203", "D212", "E703", "ISC001", "S101", "S104", "TD002", "TD003"]
 exclude = ["tests/*"]
 
 # Allow fix for all enabled rules (when `--fix`) is provided.

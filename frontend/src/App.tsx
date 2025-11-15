@@ -14,7 +14,7 @@ async function getDateRange(): Promise<{
   max_date: string
   last_timestamp: string | null
 }> {
-  const response = await fetch("http://localhost:8000/api/date-range")
+  const response = await fetch("/api/date-range")
   if (!response.ok) {
     const errorData = await response.json()
     throw new Error(
@@ -33,7 +33,7 @@ async function getData(
     const startDateTime = new Date(startDate + "T00:00:00Z").toISOString()
     const endDateTime = new Date(endDate + "T23:59:59Z").toISOString()
 
-    const response = await fetch("http://localhost:8000/api/data", {
+    const response = await fetch("/api/data", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -183,7 +183,7 @@ function App() {
 
   const handleStopReload = async () => {
     try {
-      const response = await fetch("http://localhost:8000/api/stop_reload", {
+      const response = await fetch("/api/stop_reload", {
         method: "POST",
       })
 

@@ -21,6 +21,11 @@ import {
   TableRow,
 } from "@/components/ui/table"
 
+// Virtual scrolling constants
+const ESTIMATED_ROW_HEIGHT_PX = 34
+const OVERSCAN_ROW_COUNT = 10
+const TABLE_CONTAINER_HEIGHT_PX = 500
+
 interface DataTableProps<TData, TValue> {
   columns: ColumnDef<TData, TValue>[]
   data: TData[]
@@ -48,8 +53,8 @@ export function DataTable<TData, TValue>({
   const rowVirtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => tableContainerRef.current,
-    estimateSize: () => 34,
-    overscan: 10,
+    estimateSize: () => ESTIMATED_ROW_HEIGHT_PX,
+    overscan: OVERSCAN_ROW_COUNT,
   })
 
   const virtualRows = rowVirtualizer.getVirtualItems()
@@ -63,7 +68,8 @@ export function DataTable<TData, TValue>({
 
   return (
     <div
-      className="h-[500px] w-full overflow-auto rounded-md border"
+      className="w-full overflow-auto rounded-md border"
+      style={{ height: `${TABLE_CONTAINER_HEIGHT_PX}px` }}
       ref={tableContainerRef}
     >
       <Table>

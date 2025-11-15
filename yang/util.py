@@ -143,8 +143,6 @@ def get_spark() -> SparkSession:
     ram_gigs = 12
     cores = 12
 
-    # JDBC_DRIVER_PATH = os.getenv("JDBC_PATH")
-
     spark = (
         SparkSession.builder.appName("moneymentum")
         .config("spark.driver.host", "127.0.0.1")
@@ -153,8 +151,6 @@ def get_spark() -> SparkSession:
             "spark.driver.port", "4040"
         )  # Use 4040, this is the standard port for Spark, if not taken
         .config("spark.ui.port", "4041")  # Port for Spark UI
-        # ---------------------------------------------------
-        # .config("spark.driver.extraClassPath", JDBC_DRIVER_PATH)
         # Memory and Spill Configurations
         .config("spark.memory.fraction", "0.8")
         .config("spark.memory.storageFraction", "0.3")
@@ -229,7 +225,7 @@ def save_csv(name: str, df: DataFrame) -> None:
             extra.unlink()
         output_path.rmdir()
         logger.info("Saved to %s", target_path)
-    except (Py4JNetworkError, Exception) as exc:  # broad fallback but we log.
+    except (Py4JNetworkError, Exception) as exc:  # noqa: BLE001 - broad fallback with logging
         logger.warning("Spark writer failed (%s). Falling back to pandas CSV writer.", exc)
         target_path = Path(DATA_DIR) / f"{name}.csv"
         _pd_df = df.toPandas()
@@ -237,7 +233,7 @@ def save_csv(name: str, df: DataFrame) -> None:
         logger.info("Saved (pandas) to %s", target_path)
 
 
-def test_stationarity(timeseries: pd.Series, cutoff: float = 0.01) -> bool:
+def test_stationarity(timeseries: pd.Series, cutoff: float = 0.01) -> bool:  # noqa: PT028
     pvalue = adfuller(timeseries)[1]
     if pvalue < cutoff:
         logger.info("%s is likely stationary", timeseries.name)
@@ -247,7 +243,7 @@ def test_stationarity(timeseries: pd.Series, cutoff: float = 0.01) -> bool:
     return False
 
 
-def test_cointegration(X: pd.Series, Y: pd.Series, cutoff: float = 0.01) -> bool:
+def test_cointegration(X: pd.Series, Y: pd.Series, cutoff: float = 0.01) -> bool:  # noqa: PT028
     res = coint(X, Y)
     _, pvalue, _ = res
     if pvalue < cutoff:

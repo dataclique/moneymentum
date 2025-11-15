@@ -9,18 +9,22 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import {
+  TimeframeSelect,
+  type Timeframe,
+} from "@/components/ui/timeframe-select"
 import { Button } from "@/components/ui/button"
 import { AVAILABLE_METRICS } from "./constants"
 import ChartComponent from "./ChartComponent"
 import type { TradingData } from "./types"
 import { useTokenData } from "@/hooks/useApi"
 
-const TokenPage: React.FC<{ timeframe: string }> = ({
+const TokenPage: React.FC<{ timeframe: Timeframe }> = ({
   timeframe: initialTimeframe,
 }) => {
   const { ticker } = useParams<{ ticker: string }>()
   const [selectedMetric, setSelectedMetric] = React.useState("price")
-  const [timeframe, setTimeframe] = React.useState(initialTimeframe)
+  const [timeframe, setTimeframe] = React.useState<Timeframe>(initialTimeframe)
 
   const { data: tokenData, error, isLoading } = useTokenData(ticker, timeframe)
 
@@ -79,17 +83,11 @@ const TokenPage: React.FC<{ timeframe: string }> = ({
             </CardTitle>
           </div>
           <div className="flex items-center gap-4">
-            <div className="w-48">
-              <Select value={timeframe} onValueChange={setTimeframe}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select timeframe" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="1h">1 hour</SelectItem>
-                  <SelectItem value="15m">15 minutes</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+            <TimeframeSelect
+              value={timeframe}
+              onValueChange={setTimeframe}
+              className="w-48"
+            />
             <div className="w-48">
               <Select value={selectedMetric} onValueChange={setSelectedMetric}>
                 <SelectTrigger>

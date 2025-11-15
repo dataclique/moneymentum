@@ -7,12 +7,9 @@ import { Route, Routes } from "react-router-dom"
 import TokenPage from "./pages/TokenPage"
 import { ModeToggle } from "./components/ui/mode-toggle"
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "./components/ui/select"
+  TimeframeSelect,
+  type Timeframe,
+} from "./components/ui/timeframe-select"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import {
@@ -23,7 +20,7 @@ import {
 } from "@/hooks/useApi"
 
 function App() {
-  const [timeframe, setTimeframe] = useState("1h")
+  const [timeframe, setTimeframe] = useState<Timeframe>("1h")
   const [dateRange, setDateRange] = useState({
     startDate: null as Date | null,
     endDate: null as Date | null,
@@ -85,15 +82,11 @@ function App() {
   const MainPage = () => (
     <div className="container mx-auto py-2">
       <div className="mb-4 flex items-end justify-start gap-4">
-        <Select value={timeframe} onValueChange={setTimeframe}>
-          <SelectTrigger className="w-[180px]">
-            <SelectValue placeholder="Select timeframe" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="1h">1 hour</SelectItem>
-            <SelectItem value="15m">15 minutes</SelectItem>
-          </SelectContent>
-        </Select>
+        <TimeframeSelect
+          value={timeframe}
+          onValueChange={setTimeframe}
+          className="w-[180px]"
+        />
         <DatePicker
           label="Start Date"
           selected={dateRange.startDate}

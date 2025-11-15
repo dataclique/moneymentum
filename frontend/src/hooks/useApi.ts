@@ -1,4 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
+import type { Timeframe } from "@/components/ui/timeframe-select"
 
 export interface TradingData {
   timestamp: string
@@ -25,11 +26,10 @@ export interface DateRange {
 export interface AnalysisDataParams {
   startDate: string
   endDate: string
-  timeframe: string
+  timeframe: Timeframe
 }
 
-// Fetch date range for a specific timeframe
-export function useDateRange(timeframe: string) {
+export function useDateRange(timeframe: Timeframe) {
   return useQuery<DateRange>({
     queryKey: ["dateRange", timeframe],
     queryFn: async () => {
@@ -45,7 +45,6 @@ export function useDateRange(timeframe: string) {
   })
 }
 
-// Fetch analysis data for a date range and timeframe
 export function useAnalysisData({
   startDate,
   endDate,
@@ -77,12 +76,11 @@ export function useAnalysisData({
 
       return response.json()
     },
-    enabled: !!startDate && !!endDate, // Only run query if dates are provided
+    enabled: !!startDate && !!endDate,
   })
 }
 
-// Fetch data for a specific token
-export function useTokenData(ticker: string | undefined, timeframe: string) {
+export function useTokenData(ticker: string | undefined, timeframe: Timeframe) {
   return useQuery<{ data: TradingData[]; message?: string }>({
     queryKey: ["tokenData", ticker, timeframe],
     queryFn: async () => {
@@ -106,11 +104,10 @@ export function useTokenData(ticker: string | undefined, timeframe: string) {
 
       return result
     },
-    enabled: !!ticker, // Only run query if ticker is provided
+    enabled: !!ticker,
   })
 }
 
-// Mutation for reloading data with streaming
 export function useReloadData() {
   const queryClient = useQueryClient()
 
@@ -149,7 +146,6 @@ export function useReloadData() {
       }
     },
     onSuccess: () => {
-      // Invalidate all queries to refetch fresh data after reload
       queryClient.invalidateQueries({ queryKey: ["analysisData"] })
       queryClient.invalidateQueries({ queryKey: ["tokenData"] })
       queryClient.invalidateQueries({ queryKey: ["dateRange"] })
@@ -157,7 +153,6 @@ export function useReloadData() {
   })
 }
 
-// Mutation for stopping reload
 export function useStopReload() {
   return useMutation<void, Error>({
     mutationFn: async () => {

@@ -46,7 +46,11 @@ class Strategy:
         return chronos.with_all_features(candles_df)
 
     def generate_analysis(self, candles_df: DataFrame) -> DataFrame:
-        """Generate analysis via sequential transformations (DEBUG: all metrics, prod: essential only)."""
+        """
+        Generate analysis via sequential transformations.
+
+        DEBUG mode: all metrics, production: essential only.
+        """
         logger.info("Candles DataFrame:")
         candles_df.show(truncate=False)
 

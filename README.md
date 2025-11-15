@@ -89,12 +89,14 @@ graph TD
 ### Installation
 
 1. **Clone the repository**
+
    ```bash
    git clone <repository-url>
    cd moneymentum
    ```
 
 2. **Activate development environment**
+
    ```bash
    direnv allow  # With direnv
    # OR
@@ -102,6 +104,7 @@ graph TD
    ```
 
 3. **Install frontend dependencies**
+
    ```bash
    cd frontend
    npm install
@@ -110,6 +113,7 @@ graph TD
 4. **Configure environment variables**
 
    Create a `.env` file (see `.env.example` for required variables):
+
    ```bash
    HYPERLIQUID_PRIVATE_KEY=your_private_key_here
    HYPERLIQUID_ACCOUNT_ADDRESS=your_account_address

@@ -128,7 +128,7 @@ function App() {
     }
   }, [dateRange])
 
-  const handleReload = async () => {
+  const handleReload = async (mode = "full_backtest") => {
     setError(null)
     setLoading(true)
     setIsReloading(true)
@@ -136,10 +136,17 @@ function App() {
     const controller = new AbortController()
 
     try {
-      const response = await fetch("/api/reload_data/stream", {
-        method: "POST",
-        signal: controller.signal,
-      })
+      const response = await fetch(
+        "http://localhost:8000/api/reload_data/stream",
+        {
+          method: "POST",
+          signal: controller.signal,
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ mode }),
+        },
+      )
 
       if (!response.body) {
         throw new Error("No response body received")
@@ -215,13 +222,15 @@ function App() {
           minDate={minAvailableDate || undefined}
           maxDate={maxAvailableDate || undefined}
         />
-        <Button
-          variant="outline"
-          onClick={handleReload}
-          className="cursor-pointer"
-        >
-          Reload data
-        </Button>
+        <div>
+          {/* Calling only fetch + analysis */}
+          <Button
+            onClick={() => handleReload("analysis_only")}
+            disabled={loading}
+          >
+            {loading ? "Loading..." : "Reload Data"}
+          </Button>
+        </div>
         <ModeToggle /> {/* Added ModeToggle here for easy access */}
       </div>
       {message && <div className="mb-4 text-center">{message}</div>}

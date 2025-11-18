@@ -292,11 +292,36 @@ class Chronos:
         rolling_window_corr = self.symbol_window.rowsBetween(
             -lookback_periods_corr + 1, W.Window.currentRow
         )
-        df_transformed = df_transformed.withColumn(
-            "autocorrelation",
-            F.corr("log_return", F.lag("log_return").over(self.symbol_window)).over(
-                rolling_window_corr
-            ),
+        df_transformed = (
+            df_transformed.withColumn(
+                "lag_log_return", F.lag("log_return").over(self.symbol_window)
+            )
+            .withColumns(
+                {
+                    "autocorr_covariance": F.covar_pop("log_return", "lag_log_return").over(
+                        rolling_window_corr
+                    ),
+                    "autocorr_std_log_return": F.stddev("log_return").over(rolling_window_corr),
+                    "autocorr_std_lag_log_return": F.stddev("lag_log_return").over(
+                        rolling_window_corr
+                    ),
+                }
+            )
+            .withColumn(
+                "autocorrelation",
+                F.when(
+                    (F.col("autocorr_std_log_return") > 0)
+                    & (F.col("autocorr_std_lag_log_return") > 0),
+                    F.col("autocorr_covariance")
+                    / (F.col("autocorr_std_log_return") * F.col("autocorr_std_lag_log_return")),
+                ),
+            )
+            .drop(
+                "lag_log_return",
+                "autocorr_covariance",
+                "autocorr_std_log_return",
+                "autocorr_std_lag_log_return",
+            )
         )
 
         # --- 9. Beta (requires Join) ---
@@ -637,7 +662,30 @@ class Chronos:
         lookback_periods = int(self.config["lookback_periods"] / 4)
         rolling_window = self.symbol_window.rowsBetween(-lookback_periods + 1, W.Window.currentRow)
 
-        return df.withColumn(
-            "autocorrelation",
-            F.corr("log_return", F.lag("log_return").over(self.symbol_window)).over(rolling_window),
+        return (
+            df.withColumn("lag_log_return", F.lag("log_return").over(self.symbol_window))
+            .withColumns(
+                {
+                    "autocorr_covariance": F.covar_pop("log_return", "lag_log_return").over(
+                        rolling_window
+                    ),
+                    "autocorr_std_log_return": F.stddev("log_return").over(rolling_window),
+                    "autocorr_std_lag_log_return": F.stddev("lag_log_return").over(rolling_window),
+                }
+            )
+            .withColumn(
+                "autocorrelation",
+                F.when(
+                    (F.col("autocorr_std_log_return") > 0)
+                    & (F.col("autocorr_std_lag_log_return") > 0),
+                    F.col("autocorr_covariance")
+                    / (F.col("autocorr_std_log_return") * F.col("autocorr_std_lag_log_return")),
+                ),
+            )
+            .drop(
+                "lag_log_return",
+                "autocorr_covariance",
+                "autocorr_std_log_return",
+                "autocorr_std_lag_log_return",
+            )
         )

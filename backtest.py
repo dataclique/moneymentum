@@ -60,7 +60,7 @@ class BacktestPipeline:
 
     dataloader: HyperliquidDataLoader
     strategy: Strategy
-    optimized_calculations: bool = False
+    optimized_calculations: bool = True
 
     async def run(self, mode: PipelineRunMode = PipelineRunMode.FULL_BACKTEST) -> None:
         """Run the backtest pipeline.

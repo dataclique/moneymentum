@@ -211,7 +211,7 @@ async def main() -> None:
     mode = PipelineRunMode(args.mode)
 
     spark = util.get_spark()
-    timeframe: Timeframe = "1h"
+    timeframe: Timeframe = "15m"
     optimized_calculations = True
 
     config = TIMEFRAME_CONFIGS[timeframe]

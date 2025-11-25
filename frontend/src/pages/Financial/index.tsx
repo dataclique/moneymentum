@@ -21,12 +21,21 @@ interface TokenAllocation {
 }
 
 const STORAGE_KEY = "financial-allocation-state"
-const MIN_USD = 10
+const MIN_USD = 11
+
+const getSymbolColor = (symbol: string) => {
+  let hash = 0
+  for (let index = 0; index < symbol.length; index += 1) {
+    hash = symbol.charCodeAt(index) + ((hash << 5) - hash)
+  }
+  const hue = Math.abs(hash) % 360
+  return `hsl(${hue} 65% 55%)`
+}
 
 function FinancialPage() {
   const [searchTerm, setSearchTerm] = useState("")
   const [budget, setBudget] = useState(0)
-  const [hasCustomBudget, setHasCustomBudget] = useState(false)
+  const [isBudgetInitialized, setIsBudgetInitialized] = useState(false)
   const [selectedTokens, setSelectedTokens] = useState<TokenAllocation[]>([])
 
   const {
@@ -48,7 +57,7 @@ function FinancialPage() {
         const parsed = JSON.parse(stored)
         if (typeof parsed?.budget === "number") {
           setBudget(parsed.budget)
-          setHasCustomBudget(true)
+          setIsBudgetInitialized(true)
         }
         if (Array.isArray(parsed?.tokens)) {
           setSelectedTokens(
@@ -66,13 +75,14 @@ function FinancialPage() {
   }, [])
 
   useEffect(() => {
-    if (
-      typeof balanceData?.perp_usdc_balance === "number" &&
-      !hasCustomBudget
-    ) {
-      setBudget(balanceData.perp_usdc_balance)
+    if (isBudgetInitialized) {
+      return
     }
-  }, [balanceData, hasCustomBudget])
+    if (typeof balanceData?.perp_usdc_balance === "number") {
+      setBudget(balanceData.perp_usdc_balance)
+      setIsBudgetInitialized(true)
+    }
+  }, [balanceData, isBudgetInitialized])
 
   useEffect(() => {
     const payload = {
@@ -103,6 +113,56 @@ function FinancialPage() {
   const remainingPercent = Math.max(0, 100 - totalPercent)
   const minPercentOfBudget =
     budget > 0 ? Math.min(100, (MIN_USD / budget) * 100) : 0
+  const minPercentFloor = budget >= MIN_USD ? minPercentOfBudget : 0
+  const requiredBudgetForTokens = selectedTokens.length * MIN_USD
+  const budgetIsPositive = budget > 0
+  const budgetBelowMinimum =
+    selectedTokens.length > 0 && budgetIsPositive && budget < MIN_USD
+  const insufficientBudgetForTokens =
+    selectedTokens.length > 0 &&
+    budgetIsPositive &&
+    requiredBudgetForTokens > budget
+  const hasBlockingBudgetIssue =
+    budgetBelowMinimum || insufficientBudgetForTokens
+  const blockingReasons: string[] = []
+  if (budgetBelowMinimum) {
+    blockingReasons.push(
+      "Minimum portfolio budget is $11. Increase the amount to allocate capital.",
+    )
+  }
+  if (insufficientBudgetForTokens) {
+    blockingReasons.push(
+      `You need at least $${requiredBudgetForTokens} for ${selectedTokens.length} token(s). Increase the budget or remove some positions.`,
+    )
+  }
+
+  useEffect(() => {
+    setSelectedTokens(prevTokens => {
+      if (!prevTokens.length || budget <= 0) {
+        return prevTokens
+      }
+      const minPercent = minPercentFloor
+      if (minPercent === 0) {
+        return prevTokens
+      }
+
+      let changed = false
+      const adjustedTokens = prevTokens.map(token => {
+        if (token.percentage >= minPercent) {
+          return token
+        }
+        changed = true
+        return {
+          ...token,
+          percentage: parseFloat(Math.min(100, minPercent).toFixed(2)),
+          status: "idle",
+          message: null,
+        } as TokenAllocation
+      })
+
+      return changed ? adjustedTokens : prevTokens
+    })
+  }, [budget, minPercentFloor])
 
   const handleAddToken = (symbol: string) => {
     if (selectedTokens.some(token => token.symbol === symbol)) {
@@ -112,8 +172,8 @@ function FinancialPage() {
       return
     }
     const initialPercent = Math.min(
-      remainingPercent || minPercentOfBudget || 100,
-      Math.max(minPercentOfBudget, 5),
+      remainingPercent || minPercentFloor || 100,
+      Math.max(minPercentFloor, 5),
     )
     setSelectedTokens(prev => [
       ...prev,
@@ -141,12 +201,13 @@ function FinancialPage() {
           if (item.symbol === symbol) return sum
           return sum + item.percentage
         }, 0)
-        const maxForToken = Math.max(0, Math.min(100, 100 - totalWithoutCurrent))
+        const maxForToken = Math.max(
+          0,
+          Math.min(100, 100 - totalWithoutCurrent),
+        )
         let nextValue = Math.min(targetPercent, maxForToken)
 
-        if (budget >= MIN_USD) {
-          nextValue = Math.max(nextValue, minPercentOfBudget)
-        }
+        nextValue = Math.max(nextValue, minPercentFloor)
 
         return {
           ...token,
@@ -160,19 +221,24 @@ function FinancialPage() {
 
   const handleSideChange = (symbol: string, side: OrderSide) => {
     setSelectedTokens(prev =>
-      prev.map(token =>
-        token.symbol === symbol ? { ...token, side } : token,
-      ),
+      prev.map(token => (token.symbol === symbol ? { ...token, side } : token)),
     )
   }
 
   const handleBudgetChange = (value: number) => {
-    setHasCustomBudget(true)
+    setIsBudgetInitialized(true)
     setBudget(Math.max(0, value))
   }
 
   const handleOpenPositions = () => {
-    if (!selectedTokens.length || budget <= 0) return
+    if (
+      !selectedTokens.length ||
+      budget <= 0 ||
+      hasBlockingBudgetIssue ||
+      totalPercent <= 0
+    ) {
+      return
+    }
 
     setSelectedTokens(prev =>
       prev.map(token => ({ ...token, status: "working", message: null })),
@@ -224,10 +290,10 @@ function FinancialPage() {
       failed: "bg-rose-500/20 text-rose-400 border border-rose-500/40",
     }
     const labelMap: Record<AllocationStatus, string> = {
-      idle: "ожидание",
-      working: "работает",
-      filled: "выполнена",
-      failed: "не сработала",
+      idle: "idle",
+      working: "processing",
+      filled: "filled",
+      failed: "failed",
     }
     return (
       <span
@@ -250,10 +316,7 @@ function FinancialPage() {
     )
     const usdAmount = ((token.percentage / 100) * budget).toFixed(2)
     const availableExtra = Math.max(0, sliderMax - token.percentage)
-    const displayGradientStop = Math.min(
-      100,
-      token.percentage + availableExtra,
-    )
+    const displayGradientStop = Math.min(100, token.percentage + availableExtra)
     const gradient = `linear-gradient(90deg, rgba(59,130,246,0.9) 0% ${token.percentage}%, rgba(250,204,21,0.6) ${token.percentage}% ${displayGradientStop}%, rgba(107,114,128,0.3) ${displayGradientStop}% 100%)`
 
     return (
@@ -284,14 +347,12 @@ function FinancialPage() {
               size="sm"
               onClick={() => handleRemoveToken(token.symbol)}
             >
-              Удалить
+              Remove
             </Button>
           </div>
           <div className="space-y-2">
             <div className="relative w-full">
-              <div
-                className="pointer-events-none absolute left-0 right-0 top-1/2 -translate-y-1/2 px-2"
-              >
+              <div className="pointer-events-none absolute left-0 right-0 top-1/2 -translate-y-1/2 px-2">
                 <div
                   className="h-2 rounded-full"
                   style={{ background: gradient }}
@@ -299,7 +360,7 @@ function FinancialPage() {
               </div>
               <input
                 type="range"
-                min={budget >= MIN_USD ? minPercentOfBudget : 0}
+                min={0}
                 max={sliderMax || 100}
                 step={0.5}
                 value={token.percentage}
@@ -310,7 +371,8 @@ function FinancialPage() {
               />
             </div>
             <div className="text-xs text-muted-foreground">
-              Доступно ещё для этого токена: {availableExtra.toFixed(2)}%
+              Additional allocation available for this token:{" "}
+              {availableExtra.toFixed(2)}%
             </div>
           </div>
           {token.message && (
@@ -325,14 +387,15 @@ function FinancialPage() {
     !selectedTokens.length ||
     budget <= 0 ||
     openPositionsMutation.isPending ||
-    totalPercent <= 0
+    totalPercent <= 0 ||
+    hasBlockingBudgetIssue
 
   return (
     <div className="container mx-auto flex max-w-5xl flex-col gap-6 py-8">
       <div>
-        <h1 className="text-3xl font-bold">Формирование портфеля</h1>
+        <h1 className="text-3xl font-bold">Portfolio builder</h1>
         <p className="text-muted-foreground">
-          Выберите perp токены, распределите проценты и отправьте заявки на
+          Select perp tokens, distribute percentages, and submit orders to
           Hyperliquid.
         </p>
       </div>
@@ -340,12 +403,12 @@ function FinancialPage() {
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[2fr_3fr]">
         <Card>
           <CardHeader>
-            <CardTitle>Список токенов</CardTitle>
+            <CardTitle>Token list</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             <input
               type="text"
-              placeholder="Поиск по тикеру"
+              placeholder="Search by ticker"
               value={searchTerm}
               onChange={event => setSearchTerm(event.target.value)}
               className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
@@ -356,7 +419,7 @@ function FinancialPage() {
             <div className="max-h-80 overflow-y-auto rounded-lg border border-border">
               {isTickersLoading ? (
                 <div className="p-4 text-sm text-muted-foreground">
-                  Загрузка тикеров...
+                  Loading tickers...
                 </div>
               ) : filteredTickers.length ? (
                 filteredTickers.map(symbol => {
@@ -377,7 +440,7 @@ function FinancialPage() {
                       {symbol}
                       {alreadySelected && (
                         <span className="text-xs text-muted-foreground">
-                          добавлен
+                          added
                         </span>
                       )}
                     </button>
@@ -385,7 +448,7 @@ function FinancialPage() {
                 })
               ) : (
                 <div className="p-4 text-sm text-muted-foreground">
-                  Ничего не найдено
+                  Nothing found
                 </div>
               )}
             </div>
@@ -395,7 +458,7 @@ function FinancialPage() {
         <div className="space-y-4">
           <Card>
             <CardHeader>
-              <CardTitle>Общий бюджет</CardTitle>
+              <CardTitle>Total budget</CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
               {balanceError && (
@@ -403,9 +466,9 @@ function FinancialPage() {
               )}
               <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
                 <span>
-                  Баланс перп-счёта:{" "}
+                  Perp account balance:{" "}
                   {isBalanceLoading
-                    ? "загрузка..."
+                    ? "loading..."
                     : `${
                         typeof balanceData?.perp_usdc_balance === "number"
                           ? balanceData.perp_usdc_balance.toFixed(2)
@@ -414,16 +477,15 @@ function FinancialPage() {
                 </span>
                 {typeof balanceData?.perp_usdc_balance === "number" &&
                   budget > balanceData.perp_usdc_balance && (
-                  <span className="text-rose-400">
-                    Превышает доступный баланс
-                  </span>
+                    <span className="text-rose-400">
+                      Exceeds available balance
+                    </span>
                   )}
               </div>
               <div className="flex items-center gap-2">
                 <input
                   type="number"
                   min={MIN_USD}
-                  max={balanceData?.perp_usdc_balance ?? undefined}
                   step={10}
                   value={Number.isNaN(budget) ? "" : budget}
                   onChange={event =>
@@ -438,7 +500,7 @@ function FinancialPage() {
                 <span className="text-sm text-muted-foreground">USDC</span>
               </div>
               <div className="text-sm text-muted-foreground">
-                Распределено: {totalPercent.toFixed(2)}% — свободно:{" "}
+                Allocated: {totalPercent.toFixed(2)}% — free:{" "}
                 {remainingPercent.toFixed(2)}%
               </div>
             </CardContent>
@@ -447,13 +509,80 @@ function FinancialPage() {
           {selectedTokens.length === 0 ? (
             <Card>
               <CardContent className="py-10 text-center text-sm text-muted-foreground">
-                Добавьте токены из списка слева, чтобы настроить распределение.
+                Add tokens from the list on the left to configure allocations.
               </CardContent>
             </Card>
           ) : (
-            <div className="space-y-4">
-              {selectedTokens.map(allocationCard)}
-            </div>
+            <>
+              <Card>
+                <CardHeader>
+                  <CardTitle>Allocation block</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-muted-foreground">
+                    <span>Total allocated</span>
+                    <span>
+                      {totalPercent.toFixed(2)}% · $
+                      {((totalPercent / 100) * budget).toFixed(2)}
+                    </span>
+                  </div>
+                  <div className="flex h-12 overflow-hidden rounded-lg border border-border text-xs font-medium text-background">
+                    {selectedTokens.map(token => (
+                      <div
+                        key={token.symbol}
+                        className="flex items-center justify-center px-2 text-center"
+                        style={{
+                          flexGrow: Math.max(token.percentage, 0.1),
+                          flexBasis: 0,
+                          backgroundColor: getSymbolColor(token.symbol),
+                        }}
+                      >
+                        {token.symbol} · {token.percentage.toFixed(1)}%
+                      </div>
+                    ))}
+                    {remainingPercent > 0 && (
+                      <div
+                        className="flex items-center justify-center bg-muted px-2 text-center text-foreground"
+                        style={{
+                          flexGrow: remainingPercent,
+                          flexBasis: 0,
+                        }}
+                      >
+                        Free {remainingPercent.toFixed(1)}%
+                      </div>
+                    )}
+                  </div>
+                  <div className="space-y-1 text-xs text-muted-foreground">
+                    {selectedTokens.map(token => (
+                      <div
+                        key={`${token.symbol}-summary`}
+                        className="flex items-center justify-between"
+                      >
+                        <span className="font-medium text-foreground">
+                          {token.symbol}
+                        </span>
+                        <span>
+                          {token.percentage.toFixed(2)}% · $
+                          {((token.percentage / 100) * budget).toFixed(2)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+              <div className="space-y-4">
+                {selectedTokens.map(allocationCard)}
+              </div>
+            </>
+          )}
+          {blockingReasons.length > 0 && (
+            <Card>
+              <CardContent className="space-y-2 text-sm text-rose-400">
+                {blockingReasons.map(reason => (
+                  <p key={reason}>{reason}</p>
+                ))}
+              </CardContent>
+            </Card>
           )}
         </div>
       </div>
@@ -461,16 +590,11 @@ function FinancialPage() {
       <div className="sticky bottom-0 bg-background/80 py-4 backdrop-blur">
         <div className="flex flex-wrap items-center justify-between gap-4 border-t border-border pt-4">
           <div className="text-sm text-muted-foreground">
-            Каждый токен должен получать не менее ${MIN_USD}. Удалите лишние
-            позиции, если не хватает бюджета.
+            Each token must receive at least ${MIN_USD}. Remove extra positions
+            if you run out of budget.
           </div>
-          <Button
-            onClick={handleOpenPositions}
-            disabled={disableSubmit}
-          >
-            {openPositionsMutation.isPending
-              ? "Отправляем..."
-              : "Open positions"}
+          <Button onClick={handleOpenPositions} disabled={disableSubmit}>
+            {openPositionsMutation.isPending ? "Sending..." : "Open positions"}
           </Button>
         </div>
       </div>
@@ -479,4 +603,3 @@ function FinancialPage() {
 }
 
 export default FinancialPage
-

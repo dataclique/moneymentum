@@ -1,6 +1,8 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import type { Timeframe } from "@/components/ui/timeframe-select"
 
+export type OrderSide = "buy" | "sell"
+
 export interface TradingData {
   timestamp: string
   token: string
@@ -27,6 +29,14 @@ export interface AnalysisDataParams {
   startDate: string
   endDate: string
   timeframe: Timeframe
+}
+
+export interface OrderStatus {
+  symbol: string
+  side: OrderSide
+  percentage: number
+  status: "working" | "filled" | "failed"
+  message?: string | null
 }
 
 export function useDateRange(timeframe: Timeframe) {
@@ -163,6 +173,64 @@ export function useStopReload() {
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`)
       }
+    },
+  })
+}
+
+export function useHyperliquidTickers() {
+  return useQuery<{ data: string[] }>({
+    queryKey: ["hyperliquid", "tickers"],
+    queryFn: async () => {
+      const response = await fetch("/api/hyperliquid/tickers")
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}))
+        throw new Error(errorData.detail || "Unable to fetch tickers")
+      }
+      return response.json()
+    },
+  })
+}
+
+export function useHyperliquidBalance() {
+  return useQuery<{ perp_usdc_balance: number }>({
+    queryKey: ["hyperliquid", "balance"],
+    queryFn: async () => {
+      const response = await fetch("/api/hyperliquid/balance")
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}))
+        throw new Error(errorData.detail || "Unable to fetch balance")
+      }
+      return response.json()
+    },
+  })
+}
+
+export interface OpenPositionsParams {
+  budget: number
+  positions: Array<{
+    symbol: string
+    percentage: number
+    side: OrderSide
+  }>
+}
+
+export function useOpenHyperliquidPositions() {
+  return useMutation<{ orders: OrderStatus[] }, Error, OpenPositionsParams>({
+    mutationFn: async payload => {
+      const response = await fetch("/api/hyperliquid/open_positions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}))
+        throw new Error(errorData.detail || "Unable to open positions")
+      }
+
+      return response.json()
     },
   })
 }

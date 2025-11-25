@@ -142,3 +142,47 @@
     @apply bg-background text-foreground;
   }
 }
+
+.financial-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 2rem;
+  background: transparent;
+  cursor: pointer;
+}
+
+.financial-slider:focus-visible {
+  outline: none;
+}
+
+.financial-slider::-webkit-slider-runnable-track {
+  height: 8px;
+  background: transparent;
+}
+
+.financial-slider::-moz-range-track {
+  height: 8px;
+  background: transparent;
+}
+
+.financial-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 9999px;
+  background: color-mix(in srgb, var(--primary) 80%, white);
+  border: 2px solid color-mix(in srgb, var(--background) 70%, white);
+  box-shadow: 0 0 8px rgba(0, 0, 0, 0.25);
+  margin-top: -5px;
+}
+
+.financial-slider::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  border-radius: 9999px;
+  background: color-mix(in srgb, var(--primary) 80%, white);
+  border: 2px solid color-mix(in srgb, var(--background) 70%, white);
+  box-shadow: 0 0 8px rgba(0, 0, 0, 0.25);
+}

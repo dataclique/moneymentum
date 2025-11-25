@@ -5,7 +5,8 @@ import sys
 from collections.abc import Iterator
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
+from threading import Lock
 
 import numpy as np
 import pandas as pd
@@ -17,6 +18,8 @@ from pydantic import BaseModel, Field
 
 from backtest import PipelineRunMode
 from yang.util import Timeframe, get_spark
+from hyperliquid.main import Position, Trader
+from hyperliquid.settings import UserSettings
 
 app = FastAPI()
 
@@ -137,6 +140,38 @@ class DateRange(BaseModel):
     end_date: str
 
 
+class PositionPayload(BaseModel):
+    symbol: str
+    percentage: float
+    side: Literal["buy", "sell"]
+
+
+class OpenPositionsPayload(BaseModel):
+    budget: float
+    positions: list[PositionPayload]
+
+
+class OrderStatusResponse(BaseModel):
+    symbol: str
+    side: str
+    percentage: float
+    status: str
+    message: str | None = None
+
+
+_trader_lock = Lock()
+_trader_instance: Trader | None = None
+
+
+def get_trader() -> Trader:
+    global _trader_instance
+    with _trader_lock:
+        if _trader_instance is None:
+            settings = UserSettings()
+            _trader_instance = Trader(settings)
+        return _trader_instance
+
+
 @app.get("/api/date-range")
 async def get_date_range(
     timeframe: Annotated[Timeframe, Query(enum=TIME_FRAMES)] = "1h",
@@ -151,6 +186,50 @@ async def get_date_range(
         raise HTTPException(status_code=500, detail=str(e)) from e
 
     return {"min_date": date_range["min_date"], "max_date": date_range["max_date"]}
+
+
+@app.get("/api/hyperliquid/tickers")
+async def get_perp_tickers() -> dict[str, Any]:
+    try:
+        trader = get_trader()
+        return {"data": trader.list_perp_tickers()}
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/api/hyperliquid/balance")
+async def get_hyperliquid_balance() -> dict[str, Any]:
+    try:
+        trader = get_trader()
+        return {"perp_usdc_balance": trader.get_available_budget()}
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/api/hyperliquid/open_positions")
+async def open_hyperliquid_positions(payload: OpenPositionsPayload) -> dict[str, Any]:
+    if payload.budget <= 0:
+        raise HTTPException(status_code=400, detail="Budget must be positive")
+    if not payload.positions:
+        raise HTTPException(status_code=400, detail="At least one position is required")
+
+    try:
+        trader = get_trader()
+        parsed_positions = [
+            Position(symbol=item.symbol, percentage=item.percentage, side=item.side)
+            for item in payload.positions
+        ]
+        order_results = trader.open_positions(parsed_positions, payload.budget)
+        allowed_fields = {"symbol", "side", "percentage", "status", "message"}
+        response = [
+            OrderStatusResponse(
+                **{field: result.get(field) for field in allowed_fields}  # type: ignore[arg-type]
+            )
+            for result in order_results
+        ]
+        return {"orders": [resp.model_dump() for resp in response]}
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.post("/api/data")

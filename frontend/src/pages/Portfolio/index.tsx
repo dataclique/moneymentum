@@ -320,14 +320,14 @@ function PortfolioPage() {
     const gradient = `linear-gradient(90deg, rgba(59,130,246,0.9) 0% ${token.percentage}%, rgba(250,204,21,0.6) ${token.percentage}% ${displayGradientStop}%, rgba(107,114,128,0.3) ${displayGradientStop}% 100%)`
 
     return (
-      <Card key={token.symbol}>
+      <Card key={token.symbol} className="gap-3 py-3">
         <CardHeader className="flex flex-row items-center justify-between space-y-0">
           <CardTitle className="text-lg font-semibold">
             {token.symbol}
           </CardTitle>
           {renderStatusBadge(token.status)}
         </CardHeader>
-        <CardContent className="space-y-4">
+        <CardContent className="space-y-3">
           <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
             <span>
               {token.percentage.toFixed(2)}% (~${usdAmount})
@@ -391,7 +391,7 @@ function PortfolioPage() {
     hasBlockingBudgetIssue
 
   return (
-    <div className="container mx-auto flex max-w-5xl flex-col gap-6 py-8">
+    <div className="container mx-auto flex max-w-5xl flex-col gap-4 py-4">
       <div>
         <h1 className="text-3xl font-bold">Portfolio builder</h1>
         <p className="text-muted-foreground">
@@ -400,12 +400,12 @@ function PortfolioPage() {
         </p>
       </div>
 
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[2fr_3fr]">
-        <Card>
-          <CardHeader>
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[2fr_3fr] lg:items-stretch">
+        <Card className="flex min-h-0 flex-col gap-3 py-3">
+          <CardHeader className="flex-shrink-0">
             <CardTitle>Token list</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-4">
+          <CardContent className="flex min-h-0 flex-1 flex-col space-y-3">
             <input
               type="text"
               placeholder="Search by ticker"
@@ -416,7 +416,7 @@ function PortfolioPage() {
             {tickersError && (
               <p className="text-sm text-rose-400">{tickersError.message}</p>
             )}
-            <div className="max-h-80 overflow-y-auto rounded-lg border border-border">
+            <div className="min-h-0 flex-1 overflow-y-auto rounded-lg border border-border">
               {isTickersLoading ? (
                 <div className="p-4 text-sm text-muted-foreground">
                   Loading tickers...
@@ -455,8 +455,8 @@ function PortfolioPage() {
           </CardContent>
         </Card>
 
-        <div className="space-y-4">
-          <Card>
+        <div className="flex min-h-0 flex-col space-y-4">
+          <Card className="gap-3 py-3">
             <CardHeader>
               <CardTitle>Total budget</CardTitle>
             </CardHeader>
@@ -507,18 +507,18 @@ function PortfolioPage() {
           </Card>
 
           {selectedTokens.length === 0 ? (
-            <Card>
-              <CardContent className="py-10 text-center text-sm text-muted-foreground">
+            <Card className="gap-3 py-3">
+              <CardContent className="py-6 text-center text-sm text-muted-foreground">
                 Add tokens from the list on the left to configure allocations.
               </CardContent>
             </Card>
           ) : (
             <>
-              <Card>
+              <Card className="gap-3 py-3">
                 <CardHeader>
                   <CardTitle>Allocation block</CardTitle>
                 </CardHeader>
-                <CardContent className="space-y-4">
+                <CardContent className="space-y-3">
                   <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-muted-foreground">
                     <span>Total allocated</span>
                     <span>
@@ -576,7 +576,7 @@ function PortfolioPage() {
             </>
           )}
           {blockingReasons.length > 0 && (
-            <Card>
+            <Card className="gap-3 py-3">
               <CardContent className="space-y-2 text-sm text-rose-400">
                 {blockingReasons.map(reason => (
                   <p key={reason}>{reason}</p>
@@ -587,8 +587,8 @@ function PortfolioPage() {
         </div>
       </div>
 
-      <div className="sticky bottom-0 bg-background/80 py-4 backdrop-blur">
-        <div className="flex flex-wrap items-center justify-between gap-4 border-t border-border pt-4">
+      <div className="sticky bottom-0 bg-background/80 py-3 backdrop-blur">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-3">
           <div className="text-sm text-muted-foreground">
             Each token must receive at least ${MIN_USD}. Remove extra positions
             if you run out of budget.

@@ -1,16 +1,20 @@
-from typing import Any, Literal
+import logging
 import os
 import sys
-from pathlib import Path
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Literal
 
 # Add parent directory to path to allow imports when running from hyperliquid folder
 parent_dir = Path(__file__).parent.parent
 if str(parent_dir) not in sys.path:
     sys.path.insert(0, str(parent_dir))
 
-from hyperliquid.settings import UserSettings
-import ccxt # type: ignore[import]
+import ccxt  # type: ignore[import] # noqa: E402
+
+from hyperliquid.settings import UserSettings  # noqa: E402
+
+logger = logging.getLogger(__name__)
 
 DEBUG: bool = os.getenv("PROD", "").lower() != "true"
 OrderSide = Literal["buy", "sell"]
@@ -26,7 +30,8 @@ class Position:
     percentage: float
     side: OrderSide
 
-class Trader():
+
+class Trader:
     public_key: str
     secret_key: str
     leverage: int
@@ -38,11 +43,13 @@ class Trader():
         # self.leverage = settings.trade.leverage TODO: Add leverage
 
         if DEBUG:
-            print(f"Using wallet address: {self.public_key[:10]}...{self.public_key[-10:]}")
+            logger.debug(
+                "Using wallet address: %s...%s", self.public_key[:10], self.public_key[-10:]
+            )
 
         self._initialize_exchange()
 
-        print("Initialized Trader")
+        logger.info("Initialized Trader")
 
     def _initialize_exchange(self) -> None:
         """Initialize the ccxt exchange instance."""
@@ -55,7 +62,7 @@ class Trader():
         self.exchange = ccxt.hyperliquid(ccxt_config)
         if DEBUG:
             self.exchange.set_sandbox_mode(True)
-            print("Running in DEBUG mode, using testnet URLs.")
+            logger.debug("Running in DEBUG mode, using testnet URLs.")
             ccxt_config["urls"] = {
                 "api": {
                     "public": "https://api.hyperliquid-testnet.xyz",
@@ -73,7 +80,7 @@ class Trader():
         """Get the current balance of the account."""
         balance = self.exchange.fetch_balance()
         return float(balance["total"]["USDC"])
-    
+
     def get_available_budget(self) -> float:
         """Return available perpetual USDC balance."""
         return self.get_balance()
@@ -81,8 +88,25 @@ class Trader():
     def list_perp_tickers(self) -> list[str]:
         """Return all perpetual symbols supported by Hyperliquid."""
         markets = self.exchange.load_markets()
-        perp_symbols = [symbol for symbol, data in markets.items() if ":" in symbol and data.get("swap")]
+        perp_symbols = [
+            symbol for symbol, data in markets.items() if ":" in symbol and data.get("swap")
+        ]
         return sorted(perp_symbols)
+
+    def get_current_positions(self) -> list[dict[str, Any]]:
+        """Fetch current open positions from Hyperliquid."""
+        positions = self.exchange.fetch_positions()
+        return [
+            {
+                "symbol": pos["symbol"],
+                "side": "buy" if pos["side"] == "long" else "sell",
+                "notional": float(pos["notional"]),
+                "entryPrice": float(pos["entryPrice"]) if pos["entryPrice"] else 0.0,
+                "unrealizedPnl": float(pos["unrealizedPnl"]) if pos.get("unrealizedPnl") else 0.0,
+            }
+            for pos in positions
+            if float(pos.get("notional", 0)) > 0
+        ]
 
     def open_positions(self, positions: list[Position], budget: float) -> list[dict[str, Any]]:
         """Open positions based on the given positions and budget."""
@@ -90,17 +114,17 @@ class Trader():
             return []
 
         symbols = [pos.symbol for pos in positions]
-        print(f"Fetching tickers for {len(symbols)} symbols...")
+        logger.info("Fetching tickers for %d symbols...", len(symbols))
 
         tickers: dict[str, float] = {}
         for symbol in symbols:
             # TODO: we can do fetch_tickers(symbols) instead
             ticker = self.exchange.fetch_ticker(symbol)
             tickers[symbol] = float(ticker["last"])
-            print(f"  {symbol}: {tickers[symbol]}")
+            logger.debug("  %s: %s", symbol, tickers[symbol])
 
         order_results: list[dict[str, Any]] = []
-        print(f"\nCreating {len(positions)} orders...")
+        logger.info("Creating %d orders...", len(positions))
         for position in positions:
             current_price = tickers[position.symbol]
             amount = position.percentage * budget / current_price
@@ -111,7 +135,7 @@ class Trader():
                     f"Skipped {position.symbol}: allocation "
                     f"{position.percentage * budget:.2f} < ${min_order_value}"
                 )
-                print(msg)
+                logger.warning(msg)
                 order_results.append(
                     {
                         "symbol": position.symbol,
@@ -123,7 +147,9 @@ class Trader():
                 )
                 continue
 
-            print(f"  {position.side} {amount} of {position.symbol} at {current_price}")
+            logger.info(
+                "  %s %s of %s at %s", position.side, amount, position.symbol, current_price
+            )
 
             try:
                 response = self.exchange.create_order(
@@ -145,7 +171,7 @@ class Trader():
                 )
             except Exception as exc:  # noqa: BLE001
                 error_msg = f"Order for {position.symbol} failed: {exc}"
-                print(error_msg)
+                logger.exception(error_msg)
                 order_results.append(
                     {
                         "symbol": position.symbol,
@@ -174,6 +200,7 @@ class Trader():
             return "working"
         return "working"
 
+
 def main() -> None:
     """Main function to get and print balance."""
     settings = UserSettings()
@@ -186,7 +213,7 @@ def main() -> None:
     ]
 
     trader.open_positions(open_positions, 50)
-    print(f"Current balance: {trader.get_balance()} USDC")
+    logger.info("Current balance: %s USDC", trader.get_balance())
 
 
 if __name__ == "__main__":

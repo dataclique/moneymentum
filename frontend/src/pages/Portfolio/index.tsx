@@ -4,6 +4,9 @@ import {
   useHyperliquidBalance,
   useHyperliquidTickers,
   useOpenHyperliquidPositions,
+  useHyperliquidPositions,
+  useBudgetPreference,
+  useSaveBudgetPreference,
   type OrderSide,
   type OrderStatus,
 } from "@/hooks/useApi"
@@ -18,25 +21,27 @@ interface TokenAllocation {
   side: OrderSide
   status: AllocationStatus
   message?: string | null
+  notional?: number // Actual position value in USD (from exchange)
 }
 
 const STORAGE_KEY = "portfolio-allocation-state"
 const MIN_USD = 11
 
-const getSymbolColor = (symbol: string) => {
-  let hash = 0
-  for (let index = 0; index < symbol.length; index += 1) {
-    hash = symbol.charCodeAt(index) + ((hash << 5) - hash)
-  }
-  const hue = Math.abs(hash) % 360
-  return `hsl(${hue} 65% 55%)`
+const getSideColor = (side: OrderSide) => {
+  return side === "buy"
+    ? "rgba(34, 197, 94, 0.8)" // green-500 for long
+    : "rgba(239, 68, 68, 0.8)" // red-500 for short
 }
 
 function PortfolioPage() {
   const [searchTerm, setSearchTerm] = useState("")
   const [budget, setBudget] = useState(0)
+  const [budgetInput, setBudgetInput] = useState<string>("")
+  const [budgetError, setBudgetError] = useState<string | null>(null)
   const [isBudgetInitialized, setIsBudgetInitialized] = useState(false)
   const [selectedTokens, setSelectedTokens] = useState<TokenAllocation[]>([])
+  const [positionsLoadedFromExchange, setPositionsLoadedFromExchange] =
+    useState(false)
 
   const {
     data: tickersData,
@@ -48,6 +53,11 @@ function PortfolioPage() {
     isLoading: isBalanceLoading,
     error: balanceError,
   } = useHyperliquidBalance()
+  const { data: positionsData, isLoading: isPositionsLoading } =
+    useHyperliquidPositions()
+  const { data: budgetPreferenceData, isLoading: isBudgetPreferenceLoading } =
+    useBudgetPreference()
+  const saveBudgetPreferenceMutation = useSaveBudgetPreference()
   const openPositionsMutation = useOpenHyperliquidPositions()
 
   useEffect(() => {
@@ -57,6 +67,7 @@ function PortfolioPage() {
         const parsed = JSON.parse(stored)
         if (typeof parsed?.budget === "number") {
           setBudget(parsed.budget)
+          setBudgetInput(parsed.budget.toString())
           setIsBudgetInitialized(true)
         }
         if (Array.isArray(parsed?.tokens)) {
@@ -75,14 +86,85 @@ function PortfolioPage() {
   }, [])
 
   useEffect(() => {
-    if (isBudgetInitialized) {
+    if (isBudgetInitialized || positionsLoadedFromExchange) {
       return
     }
-    if (typeof balanceData?.perp_usdc_balance === "number") {
+    // Priority: budget preference > balance
+    if (
+      !isBudgetPreferenceLoading &&
+      typeof budgetPreferenceData?.budget === "number" &&
+      budgetPreferenceData.budget > 0
+    ) {
+      setBudget(budgetPreferenceData.budget)
+      setBudgetInput(budgetPreferenceData.budget.toString())
+      setIsBudgetInitialized(true)
+    } else if (typeof balanceData?.perp_usdc_balance === "number") {
       setBudget(balanceData.perp_usdc_balance)
+      setBudgetInput(balanceData.perp_usdc_balance.toString())
       setIsBudgetInitialized(true)
     }
-  }, [balanceData, isBudgetInitialized])
+  }, [
+    balanceData,
+    budgetPreferenceData,
+    isBudgetInitialized,
+    isBudgetPreferenceLoading,
+    positionsLoadedFromExchange,
+  ])
+
+  // Load current positions from exchange (only once on initial load)
+  useEffect(() => {
+    if (
+      isPositionsLoading ||
+      !positionsData?.positions ||
+      positionsLoadedFromExchange
+    ) {
+      return
+    }
+    // Only load positions if we don't have any in local storage
+    const stored = localStorage.getItem(STORAGE_KEY)
+    if (stored) {
+      try {
+        const parsed = JSON.parse(stored)
+        if (Array.isArray(parsed?.tokens) && parsed.tokens.length > 0) {
+          setPositionsLoadedFromExchange(true)
+          return // Don't override if user already has positions configured
+        }
+      } catch {
+        // Continue to load from exchange
+      }
+    }
+
+    // Load positions from exchange
+    const loadedTokens: TokenAllocation[] = positionsData.positions.map(
+      pos => ({
+        symbol: pos.symbol,
+        percentage: parseFloat(pos.percentage.toFixed(2)),
+        side: pos.side,
+        status: "idle",
+        message: null,
+        notional: pos.notional, // Store actual notional value
+      }),
+    )
+
+    if (loadedTokens.length > 0) {
+      setSelectedTokens(loadedTokens)
+      // Update budget to total spent (sum of position notional values)
+      const totalSpent = positionsData.total_notional
+      if (totalSpent > 0) {
+        setBudget(totalSpent)
+        setBudgetInput(totalSpent.toString())
+        setIsBudgetInitialized(true)
+        // Save this as budget preference
+        saveBudgetPreferenceMutation.mutate({ budget: totalSpent })
+      }
+      setPositionsLoadedFromExchange(true)
+    }
+  }, [
+    positionsData,
+    isPositionsLoading,
+    saveBudgetPreferenceMutation,
+    positionsLoadedFromExchange,
+  ])
 
   useEffect(() => {
     const payload = {
@@ -111,6 +193,22 @@ function PortfolioPage() {
     0,
   )
   const remainingPercent = Math.max(0, 100 - totalPercent)
+  // Calculate total spent budget from actual position notional values
+  const totalSpentBudget = selectedTokens.reduce(
+    (acc, token) => acc + (token.notional || 0),
+    0,
+  )
+  // Use spent budget for display if all positions have notional values and budget matches
+  // Otherwise use budget (user might have changed it)
+  const hasAllNotionalValues =
+    selectedTokens.length > 0 &&
+    selectedTokens.every(
+      token => token.notional !== undefined && token.notional > 0,
+    )
+  const displayBudget =
+    hasAllNotionalValues && Math.abs(totalSpentBudget - budget) < 0.01 // Budget matches total spent (within 1 cent)
+      ? totalSpentBudget
+      : budget
   const minPercentOfBudget =
     budget > 0 ? Math.min(100, (MIN_USD / budget) * 100) : 0
   const minPercentFloor = budget >= MIN_USD ? minPercentOfBudget : 0
@@ -136,6 +234,41 @@ function PortfolioPage() {
     )
   }
 
+  // Recalculate percentages when budget changes (for tokens with notional values)
+  useEffect(() => {
+    if (!isBudgetInitialized || budget <= 0) {
+      return
+    }
+
+    setSelectedTokens(prevTokens => {
+      // Check if any token has a notional value
+      const hasTokensWithNotional = prevTokens.some(
+        token => token.notional !== undefined && token.notional > 0,
+      )
+
+      if (!hasTokensWithNotional) {
+        // No tokens with notional, keep percentages as-is
+        return prevTokens
+      }
+
+      // Recalculate percentages based on notional / budget
+      const updatedTokens = prevTokens.map(token => {
+        if (token.notional !== undefined && token.notional > 0) {
+          const newPercentage = (token.notional / budget) * 100
+          return {
+            ...token,
+            percentage: parseFloat(newPercentage.toFixed(2)),
+          }
+        }
+        // Tokens without notional keep their percentages
+        return token
+      })
+
+      return updatedTokens
+    })
+  }, [budget, isBudgetInitialized])
+
+  // Enforce minimum percentage constraints
   useEffect(() => {
     setSelectedTokens(prevTokens => {
       if (!prevTokens.length || budget <= 0) {
@@ -148,6 +281,10 @@ function PortfolioPage() {
 
       let changed = false
       const adjustedTokens = prevTokens.map(token => {
+        // Only enforce minimum for tokens without notional (user-added tokens)
+        if (token.notional !== undefined && token.notional > 0) {
+          return token // Keep tokens with notional as-is (they represent actual positions)
+        }
         if (token.percentage >= minPercent) {
           return token
         }
@@ -168,21 +305,35 @@ function PortfolioPage() {
     if (selectedTokens.some(token => token.symbol === symbol)) {
       return
     }
-    if (remainingPercent <= 0) {
+    // Calculate available percentage based on current tokens
+    const currentTotal = selectedTokens.reduce(
+      (sum, token) => sum + token.percentage,
+      0,
+    )
+    const availablePercent = Math.max(0, 100 - currentTotal)
+
+    if (availablePercent <= 0) {
       return
     }
+
+    // If adding to positions with notional values, clear notional to allow recalculation
     const initialPercent = Math.min(
-      remainingPercent || minPercentFloor || 100,
+      availablePercent,
       Math.max(minPercentFloor, 5),
     )
     setSelectedTokens(prev => [
-      ...prev,
+      ...prev.map(token => ({
+        ...token,
+        // Clear notional when user adds new token, as it will be recalculated
+        notional: undefined,
+      })),
       {
         symbol,
         percentage: parseFloat(initialPercent.toFixed(2)),
         side: "buy",
         status: "idle",
         message: null,
+        notional: undefined, // New tokens don't have notional yet
       },
     ])
   }
@@ -209,9 +360,11 @@ function PortfolioPage() {
 
         nextValue = Math.max(nextValue, minPercentFloor)
 
+        // When user adjusts percentage, clear notional so it recalculates from percentage
         return {
           ...token,
           percentage: parseFloat(Math.min(nextValue, 100).toFixed(2)),
+          notional: undefined, // Clear notional so USD amount recalculates from percentage
           status: "idle",
           message: null,
         }
@@ -225,9 +378,56 @@ function PortfolioPage() {
     )
   }
 
-  const handleBudgetChange = (value: number) => {
+  // Debounced budget save effect
+  useEffect(() => {
+    if (budget <= 0 || !isBudgetInitialized) {
+      return
+    }
+    const timeoutId = setTimeout(() => {
+      saveBudgetPreferenceMutation.mutate({ budget })
+    }, 3000)
+    return () => clearTimeout(timeoutId)
+  }, [budget, isBudgetInitialized, saveBudgetPreferenceMutation])
+
+  const handleBudgetInputChange = (value: string) => {
+    console.log("handleBudgetInputChange", value)
+    setBudgetInput(value)
+    setBudgetError(null)
+
+    // Allow empty string for deletion
+    if (value === "") {
+      return
+    }
+
+    const numValue = Number(value)
+    if (Number.isNaN(numValue) || numValue < 0) {
+      setBudgetError("Budget must be a positive number")
+      return
+    }
+
+    // Update budget immediately for calculations, but save will be debounced
+    setBudget(numValue)
     setIsBudgetInitialized(true)
-    setBudget(Math.max(0, value))
+  }
+
+  const handleBudgetInputBlur = () => {
+    // Validate on blur
+    if (budgetInput === "") {
+      setBudgetError("Budget is required")
+      setBudgetInput(budget.toString())
+    } else {
+      const numValue = Number(budgetInput)
+      if (Number.isNaN(numValue) || numValue < 0) {
+        setBudgetError("Budget must be a positive number")
+        setBudgetInput(budget.toString())
+      } else if (numValue < MIN_USD && selectedTokens.length > 0) {
+        setBudgetError(`Budget must be at least $${MIN_USD}`)
+      } else {
+        setBudget(numValue)
+        setIsBudgetInitialized(true)
+        setBudgetError(null)
+      }
+    }
   }
 
   const handleOpenPositions = () => {
@@ -314,17 +514,40 @@ function PortfolioPage() {
       token.percentage,
       Math.min(100, maxForToken || token.percentage),
     )
-    const usdAmount = ((token.percentage / 100) * budget).toFixed(2)
+    // Calculate expected percentage from notional if it exists
+    const expectedPercentFromNotional =
+      token.notional && budget > 0 ? (token.notional / budget) * 100 : null
+    // If percentage matches expected from notional, use notional; otherwise recalculate from percentage
+    const useNotional =
+      expectedPercentFromNotional !== null &&
+      Math.abs(token.percentage - expectedPercentFromNotional) < 0.01
+    const usdAmount =
+      useNotional && token.notional
+        ? token.notional.toFixed(2)
+        : ((token.percentage / 100) * budget).toFixed(2)
     const availableExtra = Math.max(0, sliderMax - token.percentage)
     const displayGradientStop = Math.min(100, token.percentage + availableExtra)
-    const gradient = `linear-gradient(90deg, rgba(59,130,246,0.9) 0% ${token.percentage}%, rgba(250,204,21,0.6) ${token.percentage}% ${displayGradientStop}%, rgba(107,114,128,0.3) ${displayGradientStop}% 100%)`
+    const sideColor = getSideColor(token.side)
+    const isLong = token.side === "buy"
+    // Use green/red for allocated portion based on side, yellow for available, gray for remaining
+    const gradient = `linear-gradient(90deg, ${sideColor} 0% ${token.percentage}%, rgba(250,204,21,0.6) ${token.percentage}% ${displayGradientStop}%, rgba(107,114,128,0.3) ${displayGradientStop}% 100%)`
 
     return (
-      <Card key={token.symbol} className="gap-3 py-3">
+      <Card
+        key={token.symbol}
+        className="gap-3 py-3 border-l-4"
+        style={{ borderLeftColor: sideColor }}
+      >
         <CardHeader className="flex flex-row items-center justify-between space-y-0">
-          <CardTitle className="text-lg font-semibold">
-            {token.symbol}
-          </CardTitle>
+          <div className="flex items-center gap-2">
+            <div
+              className="h-3 w-3 rounded-full"
+              style={{ backgroundColor: sideColor }}
+            />
+            <CardTitle className="text-lg font-semibold">
+              {token.symbol}
+            </CardTitle>
+          </div>
           {renderStatusBadge(token.status)}
         </CardHeader>
         <CardContent className="space-y-3">
@@ -337,7 +560,12 @@ function PortfolioPage() {
               onChange={event =>
                 handleSideChange(token.symbol, event.target.value as OrderSide)
               }
-              className="rounded-md border border-border bg-transparent px-2 py-1 text-sm"
+              className={cn(
+                "rounded-md border bg-transparent px-2 py-1 text-sm font-medium",
+                isLong
+                  ? "border-green-500/50 bg-green-500/10 text-green-600 dark:text-green-400"
+                  : "border-red-500/50 bg-red-500/10 text-red-600 dark:text-red-400",
+              )}
             >
               <option value="buy">Long</option>
               <option value="sell">Short</option>
@@ -483,20 +711,25 @@ function PortfolioPage() {
                   )}
               </div>
               <div className="flex items-center gap-2">
-                <input
-                  type="number"
-                  min={MIN_USD}
-                  step={10}
-                  value={Number.isNaN(budget) ? "" : budget}
-                  onChange={event =>
-                    handleBudgetChange(
-                      Number.isNaN(Number(event.target.value))
-                        ? 0
-                        : Number(event.target.value),
-                    )
-                  }
-                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
-                />
+                <div className="flex-1">
+                  <input
+                    type="number"
+                    min={MIN_USD}
+                    step={10}
+                    value={budgetInput}
+                    onChange={event =>
+                      handleBudgetInputChange(event.target.value)
+                    }
+                    onBlur={handleBudgetInputBlur}
+                    className={cn(
+                      "w-full rounded-md border border-border bg-background px-3 py-2 text-sm",
+                      budgetError && "border-rose-500",
+                    )}
+                  />
+                  {budgetError && (
+                    <p className="mt-1 text-xs text-rose-400">{budgetError}</p>
+                  )}
+                </div>
                 <span className="text-sm text-muted-foreground">USDC</span>
               </div>
               <div className="text-sm text-muted-foreground">
@@ -522,24 +755,26 @@ function PortfolioPage() {
                   <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-muted-foreground">
                     <span>Total allocated</span>
                     <span>
-                      {totalPercent.toFixed(2)}% · $
-                      {((totalPercent / 100) * budget).toFixed(2)}
+                      {totalPercent.toFixed(2)}% · ${displayBudget.toFixed(2)}
                     </span>
                   </div>
                   <div className="flex h-12 overflow-hidden rounded-lg border border-border text-xs font-medium text-background">
-                    {selectedTokens.map(token => (
-                      <div
-                        key={token.symbol}
-                        className="flex items-center justify-center px-2 text-center"
-                        style={{
-                          flexGrow: Math.max(token.percentage, 0.1),
-                          flexBasis: 0,
-                          backgroundColor: getSymbolColor(token.symbol),
-                        }}
-                      >
-                        {token.symbol} · {token.percentage.toFixed(1)}%
-                      </div>
-                    ))}
+                    {selectedTokens.map(token => {
+                      const sideColor = getSideColor(token.side)
+                      return (
+                        <div
+                          key={token.symbol}
+                          className="flex items-center justify-center px-2 text-center"
+                          style={{
+                            flexGrow: Math.max(token.percentage, 0.1),
+                            flexBasis: 0,
+                            backgroundColor: sideColor,
+                          }}
+                        >
+                          {token.symbol} · {token.percentage.toFixed(1)}%
+                        </div>
+                      )
+                    })}
                     {remainingPercent > 0 && (
                       <div
                         className="flex items-center justify-center bg-muted px-2 text-center text-foreground"
@@ -553,20 +788,40 @@ function PortfolioPage() {
                     )}
                   </div>
                   <div className="space-y-1 text-xs text-muted-foreground">
-                    {selectedTokens.map(token => (
-                      <div
-                        key={`${token.symbol}-summary`}
-                        className="flex items-center justify-between"
-                      >
-                        <span className="font-medium text-foreground">
-                          {token.symbol}
-                        </span>
-                        <span>
-                          {token.percentage.toFixed(2)}% · $
-                          {((token.percentage / 100) * budget).toFixed(2)}
-                        </span>
-                      </div>
-                    ))}
+                    {selectedTokens.map(token => {
+                      const sideColor = getSideColor(token.side)
+                      const isLong = token.side === "buy"
+                      return (
+                        <div
+                          key={`${token.symbol}-summary`}
+                          className="flex items-center justify-between"
+                        >
+                          <div className="flex items-center gap-2">
+                            <div
+                              className="h-2 w-2 rounded-full"
+                              style={{ backgroundColor: sideColor }}
+                            />
+                            <span className="font-medium text-foreground">
+                              {token.symbol}
+                            </span>
+                            <span
+                              className={cn(
+                                "text-xs px-1.5 py-0.5 rounded font-medium",
+                                isLong
+                                  ? "bg-green-500/20 text-green-600 dark:text-green-400"
+                                  : "bg-red-500/20 text-red-600 dark:text-red-400",
+                              )}
+                            >
+                              {isLong ? "LONG" : "SHORT"}
+                            </span>
+                          </div>
+                          <span>
+                            {token.percentage.toFixed(2)}% · $
+                            {((token.percentage / 100) * budget).toFixed(2)}
+                          </span>
+                        </div>
+                      )
+                    })}
                   </div>
                 </CardContent>
               </Card>
@@ -594,7 +849,7 @@ function PortfolioPage() {
             if you run out of budget.
           </div>
           <Button onClick={handleOpenPositions} disabled={disableSubmit}>
-            {openPositionsMutation.isPending ? "Sending..." : "Open positions"}
+            {openPositionsMutation.isPending ? "Sending..." : "Rebalance"}
           </Button>
         </div>
       </div>

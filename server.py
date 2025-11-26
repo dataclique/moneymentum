@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 import subprocess
@@ -5,8 +6,8 @@ import sys
 from collections.abc import Iterator
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Annotated, Any, Literal
 from threading import Lock
+from typing import Annotated, Any, Literal
 
 import numpy as np
 import pandas as pd
@@ -17,9 +18,9 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from backtest import PipelineRunMode
-from yang.util import Timeframe, get_spark
 from hyperliquid.main import Position, Trader
 from hyperliquid.settings import UserSettings
+from yang.util import Timeframe, get_spark
 
 app = FastAPI()
 
@@ -164,7 +165,7 @@ _trader_instance: Trader | None = None
 
 
 def get_trader() -> Trader:
-    global _trader_instance
+    global _trader_instance  # noqa: PLW0603
     with _trader_lock:
         if _trader_instance is None:
             settings = UserSettings()
@@ -204,6 +205,61 @@ async def get_hyperliquid_balance() -> dict[str, Any]:
         return {"perp_usdc_balance": trader.get_available_budget()}
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/api/hyperliquid/positions")
+async def get_hyperliquid_positions() -> dict[str, Any]:
+    try:
+        trader = get_trader()
+        positions = trader.get_current_positions()
+        # Calculate total notional value
+        total_notional = sum(pos["notional"] for pos in positions)
+        # Add percentage for each position
+        for pos in positions:
+            pos["percentage"] = (
+                (pos["notional"] / total_notional * 100) if total_notional > 0 else 0.0
+            )
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    else:
+        return {"positions": positions, "total_notional": total_notional}
+
+
+BUDGET_PREFERENCE_FILE = Path("data/budget_preference.json")
+
+
+class BudgetPreferencePayload(BaseModel):
+    budget: float
+
+
+@app.get("/api/hyperliquid/budget-preference")
+async def get_budget_preference() -> dict[str, Any]:
+    """Get saved budget preference from server."""
+    try:
+        if BUDGET_PREFERENCE_FILE.exists():
+            with BUDGET_PREFERENCE_FILE.open() as f:  # noqa: ASYNC230, PTH123
+                data = json.load(f)
+        else:
+            data = {}
+    except Exception:  # noqa: BLE001
+        logger.exception("Error reading budget preference")
+        data = {}
+    return {"budget": data.get("budget", 0.0)}
+
+
+@app.post("/api/hyperliquid/budget-preference")
+async def save_budget_preference(payload: BudgetPreferencePayload) -> dict[str, Any]:
+    """Save budget preference to server file."""
+    try:
+        # Ensure data directory exists
+        BUDGET_PREFERENCE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with BUDGET_PREFERENCE_FILE.open("w") as f:  # noqa: ASYNC230, PTH123
+            json.dump({"budget": payload.budget}, f)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Error saving budget preference")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    else:
+        return {"success": True}
 
 
 @app.post("/api/hyperliquid/open_positions")

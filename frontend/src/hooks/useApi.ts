@@ -234,3 +234,59 @@ export function useOpenHyperliquidPositions() {
     },
   })
 }
+
+export interface CurrentPosition {
+  symbol: string
+  side: OrderSide
+  notional: number
+  entryPrice: number
+  unrealizedPnl: number
+  percentage: number
+}
+
+export function useHyperliquidPositions() {
+  return useQuery<{ positions: CurrentPosition[]; total_notional: number }>({
+    queryKey: ["hyperliquid", "positions"],
+    queryFn: async () => {
+      const response = await fetch("/api/hyperliquid/positions")
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}))
+        throw new Error(errorData.detail || "Unable to fetch positions")
+      }
+      return response.json()
+    },
+  })
+}
+
+export function useBudgetPreference() {
+  return useQuery<{ budget: number }>({
+    queryKey: ["hyperliquid", "budget-preference"],
+    queryFn: async () => {
+      const response = await fetch("/api/hyperliquid/budget-preference")
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}))
+        throw new Error(errorData.detail || "Unable to fetch budget preference")
+      }
+      return response.json()
+    },
+  })
+}
+
+export function useSaveBudgetPreference() {
+  return useMutation<void, Error, { budget: number }>({
+    mutationFn: async payload => {
+      const response = await fetch("/api/hyperliquid/budget-preference", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}))
+        throw new Error(errorData.detail || "Unable to save budget preference")
+      }
+    },
+  })
+}

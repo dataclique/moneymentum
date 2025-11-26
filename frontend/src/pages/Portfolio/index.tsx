@@ -20,7 +20,7 @@ interface TokenAllocation {
   message?: string | null
 }
 
-const STORAGE_KEY = "financial-allocation-state"
+const STORAGE_KEY = "portfolio-allocation-state"
 const MIN_USD = 11
 
 const getSymbolColor = (symbol: string) => {
@@ -32,7 +32,7 @@ const getSymbolColor = (symbol: string) => {
   return `hsl(${hue} 65% 55%)`
 }
 
-function FinancialPage() {
+function PortfolioPage() {
   const [searchTerm, setSearchTerm] = useState("")
   const [budget, setBudget] = useState(0)
   const [isBudgetInitialized, setIsBudgetInitialized] = useState(false)
@@ -364,7 +364,7 @@ function FinancialPage() {
                 max={sliderMax || 100}
                 step={0.5}
                 value={token.percentage}
-                className="financial-slider relative z-10"
+                className="portfolio-slider relative z-10"
                 onChange={event =>
                   enforceLimits(token.symbol, Number(event.target.value))
                 }
@@ -602,4 +602,4 @@ function FinancialPage() {
   )
 }
 
-export default FinancialPage
+export default PortfolioPage

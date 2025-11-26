@@ -5,7 +5,7 @@ import { DataTable } from "./components/ui/data-table"
 import { Calendar22 as DatePicker } from "./components/ui/date-picker"
 import { Route, Routes } from "react-router-dom"
 import TokenPage from "./pages/TokenPage"
-import FinancialPage from "./pages/Financial"
+import PortfolioPage from "./pages/Portfolio"
 import { ModeToggle } from "./components/ui/mode-toggle"
 import {
   TimeframeSelect,
@@ -176,7 +176,7 @@ function App() {
           path="/token/:ticker"
           element={<TokenPage timeframe={timeframe} />}
         />
-        <Route path="/financial" element={<FinancialPage />} />
+        <Route path="/portfolio" element={<PortfolioPage />} />
       </Routes>
     </AppWrapper>
   )

@@ -288,6 +288,35 @@ async def open_hyperliquid_positions(payload: OpenPositionsPayload) -> dict[str,
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
+@app.post("/api/hyperliquid/rebalance_positions")
+async def rebalance_hyperliquid_positions(payload: OpenPositionsPayload) -> dict[str, Any]:
+    if payload.budget <= 0:
+        raise HTTPException(status_code=400, detail="Budget must be positive")
+
+    try:
+        trader = get_trader()
+        parsed_positions = [
+            Position(symbol=item.symbol, percentage=item.percentage, side=item.side)
+            for item in payload.positions
+        ]
+        order_results = trader.rebalance_positions(parsed_positions, payload.budget)
+        response = [
+            OrderStatusResponse(
+                symbol=result.get("symbol", ""),
+                side=result.get("side", "buy"),
+                percentage=float(result.get("percentage", 0.0)),
+                status=result.get("status", "working"),
+                message=result.get("message"),
+            )
+            for result in order_results
+        ]
+        return {"orders": [resp.model_dump() for resp in response]}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
 @app.post("/api/data")
 async def get_data(
     date_range: DateRange,

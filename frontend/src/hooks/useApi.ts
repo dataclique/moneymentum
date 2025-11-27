@@ -235,6 +235,27 @@ export function useOpenHyperliquidPositions() {
   })
 }
 
+export function useRebalanceHyperliquidPositions() {
+  return useMutation<{ orders: OrderStatus[] }, Error, OpenPositionsParams>({
+    mutationFn: async payload => {
+      const response = await fetch("/api/hyperliquid/rebalance_positions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}))
+        throw new Error(errorData.detail || "Unable to rebalance positions")
+      }
+
+      return response.json()
+    },
+  })
+}
+
 export interface CurrentPosition {
   symbol: string
   side: OrderSide

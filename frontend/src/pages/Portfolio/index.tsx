@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import {
   useHyperliquidBalance,
   useHyperliquidTickers,
-  useOpenHyperliquidPositions,
+  useRebalanceHyperliquidPositions,
   useHyperliquidPositions,
   useBudgetPreference,
   useSaveBudgetPreference,
@@ -22,6 +22,7 @@ interface TokenAllocation {
   status: AllocationStatus
   message?: string | null
   notional?: number // Actual position value in USD (from exchange)
+  lockedUsd?: number // User-defined USD allocation that persists across budget edits
 }
 
 const STORAGE_KEY = "portfolio-allocation-state"
@@ -33,6 +34,57 @@ const getSideColor = (side: OrderSide) => {
     : "rgba(239, 68, 68, 0.8)" // red-500 for short
 }
 
+const getTokenUsdAllocation = (
+  token: TokenAllocation,
+  currentBudget: number,
+) => {
+  if (token.notional !== undefined && token.notional > 0) {
+    return token.notional
+  }
+  if (token.lockedUsd !== undefined) {
+    return token.lockedUsd
+  }
+  if (currentBudget > 0) {
+    return (token.percentage / 100) * currentBudget
+  }
+  return 0
+}
+
+const recalcPercentagesFromLockedValues = (
+  tokens: TokenAllocation[],
+  currentBudget: number,
+) => {
+  if (!tokens.length || currentBudget <= 0) {
+    return tokens
+  }
+
+  let changed = false
+  const updatedTokens = tokens.map(token => {
+    const referenceUsd =
+      token.notional !== undefined && token.notional > 0
+        ? token.notional
+        : token.lockedUsd
+    if (referenceUsd !== undefined && referenceUsd >= 0) {
+      const nextPercent = parseFloat(
+        ((referenceUsd / currentBudget) * 100).toFixed(2),
+      )
+      if (
+        Number.isFinite(nextPercent) &&
+        Math.abs(nextPercent - token.percentage) > 0.01
+      ) {
+        changed = true
+        return {
+          ...token,
+          percentage: nextPercent,
+        }
+      }
+    }
+    return token
+  })
+
+  return changed ? updatedTokens : tokens
+}
+
 function PortfolioPage() {
   const [searchTerm, setSearchTerm] = useState("")
   const [budget, setBudget] = useState(0)
@@ -42,6 +94,7 @@ function PortfolioPage() {
   const [selectedTokens, setSelectedTokens] = useState<TokenAllocation[]>([])
   const [positionsLoadedFromExchange, setPositionsLoadedFromExchange] =
     useState(false)
+  const lastSufficientBudgetRef = useRef(0)
 
   const {
     data: tickersData,
@@ -58,7 +111,7 @@ function PortfolioPage() {
   const { data: budgetPreferenceData, isLoading: isBudgetPreferenceLoading } =
     useBudgetPreference()
   const saveBudgetPreferenceMutation = useSaveBudgetPreference()
-  const openPositionsMutation = useOpenHyperliquidPositions()
+  const rebalancePositionsMutation = useRebalanceHyperliquidPositions()
 
   useEffect(() => {
     const stored = localStorage.getItem(STORAGE_KEY)
@@ -169,10 +222,11 @@ function PortfolioPage() {
   useEffect(() => {
     const payload = {
       budget,
-      tokens: selectedTokens.map(({ symbol, percentage, side }) => ({
+      tokens: selectedTokens.map(({ symbol, percentage, side, lockedUsd }) => ({
         symbol,
         percentage,
         side,
+        lockedUsd,
       })),
     }
     localStorage.setItem(STORAGE_KEY, JSON.stringify(payload))
@@ -209,9 +263,6 @@ function PortfolioPage() {
     hasAllNotionalValues && Math.abs(totalSpentBudget - budget) < 0.01 // Budget matches total spent (within 1 cent)
       ? totalSpentBudget
       : budget
-  const minPercentOfBudget =
-    budget > 0 ? Math.min(100, (MIN_USD / budget) * 100) : 0
-  const minPercentFloor = budget >= MIN_USD ? minPercentOfBudget : 0
   const requiredBudgetForTokens = selectedTokens.length * MIN_USD
   const budgetIsPositive = budget > 0
   const budgetBelowMinimum =
@@ -220,6 +271,29 @@ function PortfolioPage() {
     selectedTokens.length > 0 &&
     budgetIsPositive &&
     requiredBudgetForTokens > budget
+  useEffect(() => {
+    if (budget > 0 && budget >= requiredBudgetForTokens) {
+      lastSufficientBudgetRef.current = budget
+    }
+  }, [budget, requiredBudgetForTokens])
+  const budgetForUi = useMemo(() => {
+    if (selectedTokens.length === 0) {
+      return budget > 0 ? budget : lastSufficientBudgetRef.current || 0
+    }
+    if (budget > 0 && budget >= requiredBudgetForTokens) {
+      return budget
+    }
+    if (lastSufficientBudgetRef.current > 0) {
+      return lastSufficientBudgetRef.current
+    }
+    if (budget > 0) {
+      return budget
+    }
+    return Math.max(requiredBudgetForTokens, MIN_USD)
+  }, [budget, requiredBudgetForTokens, selectedTokens.length])
+  const minPercentOfBudget =
+    budgetForUi > 0 ? Math.min(100, (MIN_USD / budgetForUi) * 100) : 0
+  const minPercentFloor = budgetForUi >= MIN_USD ? minPercentOfBudget : 0
   const hasBlockingBudgetIssue =
     budgetBelowMinimum || insufficientBudgetForTokens
   const blockingReasons: string[] = []
@@ -230,48 +304,24 @@ function PortfolioPage() {
   }
   if (insufficientBudgetForTokens) {
     blockingReasons.push(
-      `You need at least $${requiredBudgetForTokens} for ${selectedTokens.length} token(s). Increase the budget or remove some positions.`,
+      `Delete some tokens or make bigger budget (need at least $${requiredBudgetForTokens}).`,
     )
   }
 
-  // Recalculate percentages when budget changes (for tokens with notional values)
+  // Recalculate percentages when budget changes (for tokens with locked USD or notional values)
   useEffect(() => {
-    if (!isBudgetInitialized || budget <= 0) {
+    if (budgetForUi <= 0) {
       return
     }
-
-    setSelectedTokens(prevTokens => {
-      // Check if any token has a notional value
-      const hasTokensWithNotional = prevTokens.some(
-        token => token.notional !== undefined && token.notional > 0,
-      )
-
-      if (!hasTokensWithNotional) {
-        // No tokens with notional, keep percentages as-is
-        return prevTokens
-      }
-
-      // Recalculate percentages based on notional / budget
-      const updatedTokens = prevTokens.map(token => {
-        if (token.notional !== undefined && token.notional > 0) {
-          const newPercentage = (token.notional / budget) * 100
-          return {
-            ...token,
-            percentage: parseFloat(newPercentage.toFixed(2)),
-          }
-        }
-        // Tokens without notional keep their percentages
-        return token
-      })
-
-      return updatedTokens
-    })
-  }, [budget, isBudgetInitialized])
+    setSelectedTokens(prevTokens =>
+      recalcPercentagesFromLockedValues(prevTokens, budgetForUi),
+    )
+  }, [budgetForUi])
 
   // Enforce minimum percentage constraints
   useEffect(() => {
     setSelectedTokens(prevTokens => {
-      if (!prevTokens.length || budget <= 0) {
+      if (!prevTokens.length || budgetForUi <= 0) {
         return prevTokens
       }
       const minPercent = minPercentFloor
@@ -289,9 +339,11 @@ function PortfolioPage() {
           return token
         }
         changed = true
+        const nextPercent = parseFloat(Math.min(100, minPercent).toFixed(2))
         return {
           ...token,
-          percentage: parseFloat(Math.min(100, minPercent).toFixed(2)),
+          percentage: nextPercent,
+          lockedUsd: Math.max(token.lockedUsd ?? MIN_USD, MIN_USD),
           status: "idle",
           message: null,
         } as TokenAllocation
@@ -299,41 +351,33 @@ function PortfolioPage() {
 
       return changed ? adjustedTokens : prevTokens
     })
-  }, [budget, minPercentFloor])
+  }, [budgetForUi, minPercentFloor])
 
   const handleAddToken = (symbol: string) => {
     if (selectedTokens.some(token => token.symbol === symbol)) {
       return
     }
-    // Calculate available percentage based on current tokens
-    const currentTotal = selectedTokens.reduce(
-      (sum, token) => sum + token.percentage,
-      0,
-    )
-    const availablePercent = Math.max(0, 100 - currentTotal)
 
-    if (availablePercent <= 0) {
-      return
-    }
+    const baseBudget =
+      budgetForUi > 0
+        ? budgetForUi
+        : Math.max((selectedTokens.length + 1) * MIN_USD, MIN_USD)
+    const initialUsd = MIN_USD
+    const initialPercent =
+      baseBudget > 0
+        ? parseFloat(((initialUsd / baseBudget) * 100).toFixed(2))
+        : 0
 
-    // If adding to positions with notional values, clear notional to allow recalculation
-    const initialPercent = Math.min(
-      availablePercent,
-      Math.max(minPercentFloor, 5),
-    )
     setSelectedTokens(prev => [
-      ...prev.map(token => ({
-        ...token,
-        // Clear notional when user adds new token, as it will be recalculated
-        notional: undefined,
-      })),
+      ...prev,
       {
         symbol,
-        percentage: parseFloat(initialPercent.toFixed(2)),
+        percentage: initialPercent,
         side: "buy",
         status: "idle",
         message: null,
         notional: undefined, // New tokens don't have notional yet
+        lockedUsd: initialUsd,
       },
     ])
   }
@@ -342,7 +386,11 @@ function PortfolioPage() {
     setSelectedTokens(prev => prev.filter(token => token.symbol !== symbol))
   }
 
-  const enforceLimits = (symbol: string, targetPercent: number) => {
+  const enforceLimits = (
+    symbol: string,
+    targetPercent: number,
+    getOverrides?: (finalPercent: number) => Partial<TokenAllocation>,
+  ) => {
     setSelectedTokens(prev =>
       prev.map(token => {
         if (token.symbol !== symbol) {
@@ -359,17 +407,54 @@ function PortfolioPage() {
         let nextValue = Math.min(targetPercent, maxForToken)
 
         nextValue = Math.max(nextValue, minPercentFloor)
+        const finalPercent = parseFloat(Math.min(nextValue, 100).toFixed(2))
+        const overrides = getOverrides ? getOverrides(finalPercent) : {}
+        const hasNotionalOverride = Object.prototype.hasOwnProperty.call(
+          overrides,
+          "notional",
+        )
 
-        // When user adjusts percentage, clear notional so it recalculates from percentage
         return {
           ...token,
-          percentage: parseFloat(Math.min(nextValue, 100).toFixed(2)),
-          notional: undefined, // Clear notional so USD amount recalculates from percentage
+          ...overrides,
+          percentage: finalPercent,
+          notional: hasNotionalOverride ? overrides.notional : token.notional,
           status: "idle",
           message: null,
         }
       }),
     )
+  }
+
+  const handleSliderChange = (symbol: string, usdValue: number) => {
+    if (Number.isNaN(usdValue) || usdValue < 0) {
+      return
+    }
+    const sliderBudget = budgetForUi > 0 ? budgetForUi : MIN_USD
+    if (sliderBudget <= 0) {
+      return
+    }
+    const targetToken = selectedTokens.find(token => token.symbol === symbol)
+    if (!targetToken) {
+      return
+    }
+    const tokenUsdValue = getTokenUsdAllocation(targetToken, sliderBudget)
+    const totalLockedUsd = selectedTokens.reduce(
+      (sum, token) => sum + getTokenUsdAllocation(token, sliderBudget),
+      0,
+    )
+    const freeUsd = Math.max(sliderBudget - totalLockedUsd, 0)
+    const maxUsdForToken = Math.min(sliderBudget, tokenUsdValue + freeUsd)
+    const minAllowedUsd = Math.min(MIN_USD, sliderBudget)
+    const clampedUsd = Math.max(
+      minAllowedUsd,
+      Math.min(usdValue, maxUsdForToken),
+    )
+    const targetPercent = (clampedUsd / sliderBudget) * 100
+    enforceLimits(symbol, targetPercent, () => ({
+      notional: undefined,
+      lockedUsd: parseFloat(clampedUsd.toFixed(2)),
+    }))
   }
 
   const handleSideChange = (symbol: string, side: OrderSide) => {
@@ -444,7 +529,7 @@ function PortfolioPage() {
       prev.map(token => ({ ...token, status: "working", message: null })),
     )
 
-    openPositionsMutation.mutate(
+    rebalancePositionsMutation.mutate(
       {
         budget,
         positions: selectedTokens.map(token => ({
@@ -508,29 +593,33 @@ function PortfolioPage() {
   }
 
   const allocationCard = (token: TokenAllocation) => {
+    const tokenUsdValue = getTokenUsdAllocation(token, budgetForUi)
+    const effectivePercent =
+      budgetForUi > 0 ? (tokenUsdValue / budgetForUi) * 100 : token.percentage
     const otherPercent = totalPercent - token.percentage
     const maxForToken = Math.max(0, Math.min(100, 100 - otherPercent))
     const sliderMax = Math.max(
-      token.percentage,
-      Math.min(100, maxForToken || token.percentage),
+      effectivePercent,
+      Math.min(100, maxForToken || effectivePercent),
     )
-    // Calculate expected percentage from notional if it exists
-    const expectedPercentFromNotional =
-      token.notional && budget > 0 ? (token.notional / budget) * 100 : null
-    // If percentage matches expected from notional, use notional; otherwise recalculate from percentage
-    const useNotional =
-      expectedPercentFromNotional !== null &&
-      Math.abs(token.percentage - expectedPercentFromNotional) < 0.01
-    const usdAmount =
-      useNotional && token.notional
-        ? token.notional.toFixed(2)
-        : ((token.percentage / 100) * budget).toFixed(2)
-    const availableExtra = Math.max(0, sliderMax - token.percentage)
-    const displayGradientStop = Math.min(100, token.percentage + availableExtra)
+    const usdAmount = Number.isFinite(tokenUsdValue)
+      ? tokenUsdValue.toFixed(2)
+      : "0.00"
+    const availableExtra = Math.max(0, sliderMax - effectivePercent)
+    const displayGradientStop = Math.min(
+      100,
+      effectivePercent + Math.max(0, sliderMax - effectivePercent),
+    )
     const sideColor = getSideColor(token.side)
     const isLong = token.side === "buy"
-    // Use green/red for allocated portion based on side, yellow for available, gray for remaining
-    const gradient = `linear-gradient(90deg, ${sideColor} 0% ${token.percentage}%, rgba(250,204,21,0.6) ${token.percentage}% ${displayGradientStop}%, rgba(107,114,128,0.3) ${displayGradientStop}% 100%)`
+    const gradient = `linear-gradient(90deg, ${sideColor} 0% ${effectivePercent}%, rgba(250,204,21,0.6) ${effectivePercent}% ${displayGradientStop}%, rgba(107,114,128,0.3) ${displayGradientStop}% 100%)`
+    const sliderMaxValue =
+      budgetForUi > 0 ? budgetForUi : Math.max(tokenUsdValue, MIN_USD)
+    const sliderMinValue = Math.min(MIN_USD, sliderMaxValue)
+    const sliderValue = Math.min(
+      sliderMaxValue,
+      Math.max(tokenUsdValue, sliderMinValue),
+    )
 
     return (
       <Card
@@ -553,7 +642,7 @@ function PortfolioPage() {
         <CardContent className="space-y-3">
           <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
             <span>
-              {token.percentage.toFixed(2)}% (~${usdAmount})
+              {effectivePercent.toFixed(2)}% (~${usdAmount})
             </span>
             <select
               value={token.side}
@@ -589,12 +678,12 @@ function PortfolioPage() {
               <input
                 type="range"
                 min={0}
-                max={sliderMax || 100}
-                step={0.5}
-                value={token.percentage}
+                max={sliderMaxValue}
+                step={0.01}
+                value={sliderValue}
                 className="portfolio-slider relative z-10"
                 onChange={event =>
-                  enforceLimits(token.symbol, Number(event.target.value))
+                  handleSliderChange(token.symbol, Number(event.target.value))
                 }
               />
             </div>
@@ -614,7 +703,7 @@ function PortfolioPage() {
   const disableSubmit =
     !selectedTokens.length ||
     budget <= 0 ||
-    openPositionsMutation.isPending ||
+    rebalancePositionsMutation.isPending ||
     totalPercent <= 0 ||
     hasBlockingBudgetIssue
 
@@ -729,6 +818,12 @@ function PortfolioPage() {
                   {budgetError && (
                     <p className="mt-1 text-xs text-rose-400">{budgetError}</p>
                   )}
+                  {insufficientBudgetForTokens && (
+                    <p className="mt-1 text-xs text-rose-400">
+                      Delete some tokens or make bigger budget (need at least $
+                      {requiredBudgetForTokens}).
+                    </p>
+                  )}
                 </div>
                 <span className="text-sm text-muted-foreground">USDC</span>
               </div>
@@ -791,6 +886,14 @@ function PortfolioPage() {
                     {selectedTokens.map(token => {
                       const sideColor = getSideColor(token.side)
                       const isLong = token.side === "buy"
+                      const tokenUsdValue = getTokenUsdAllocation(
+                        token,
+                        budgetForUi,
+                      )
+                      const percentDisplay =
+                        budgetForUi > 0
+                          ? (tokenUsdValue / budgetForUi) * 100
+                          : token.percentage
                       return (
                         <div
                           key={`${token.symbol}-summary`}
@@ -816,8 +919,8 @@ function PortfolioPage() {
                             </span>
                           </div>
                           <span>
-                            {token.percentage.toFixed(2)}% · $
-                            {((token.percentage / 100) * budget).toFixed(2)}
+                            {percentDisplay.toFixed(2)}% · $
+                            {tokenUsdValue.toFixed(2)}
                           </span>
                         </div>
                       )
@@ -849,7 +952,7 @@ function PortfolioPage() {
             if you run out of budget.
           </div>
           <Button onClick={handleOpenPositions} disabled={disableSubmit}>
-            {openPositionsMutation.isPending ? "Sending..." : "Rebalance"}
+            {rebalancePositionsMutation.isPending ? "Sending..." : "Rebalance"}
           </Button>
         </div>
       </div>

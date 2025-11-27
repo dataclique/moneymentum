@@ -1,6 +1,7 @@
 import logging
 import os
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -18,6 +19,7 @@ logger = logging.getLogger(__name__)
 
 DEBUG: bool = os.getenv("PROD", "").lower() != "true"
 OrderSide = Literal["buy", "sell"]
+MIN_ORDER_VALUE = 10.0
 
 
 @dataclass
@@ -75,6 +77,56 @@ class Trader:
         self.exchange.options["approvedBuilderFee"] = False
         self.exchange.options["defaultSlippage"] = 0.05  # 5% slippage as number
         self.exchange.load_markets()
+
+    def _fetch_symbol_prices(self, symbols: set[str]) -> dict[str, float]:
+        prices: dict[str, float] = {}
+        for symbol in symbols:
+            ticker = self.exchange.fetch_ticker(symbol)
+            last_price = float(ticker["last"])
+            if last_price <= 0:
+                msg = f"Invalid price for {symbol}"
+                raise ValueError(msg)
+            prices[symbol] = last_price
+        return prices
+
+    def _signed_notional(self, *, side: OrderSide, notional: float) -> float:
+        return notional if side == "buy" else -notional
+
+    def _place_market_order(
+        self,
+        *,
+        symbol: str,
+        side: OrderSide,
+        usd_value: float,
+        price: float,
+        reduce_only: bool,
+    ) -> tuple[str, str | None]:
+        if usd_value <= 0 or price <= 0:
+            return "failed", "Invalid order parameters"
+        if usd_value < MIN_ORDER_VALUE:
+            return (
+                "failed",
+                f"Requested notional ${usd_value:.2f} is below minimum ${MIN_ORDER_VALUE}",
+            )
+
+        amount = usd_value / price
+        params = {"reduceOnly": True} if reduce_only else {}
+
+        try:
+            response = self.exchange.create_order(
+                symbol,
+                "market",
+                side,
+                amount,
+                price=price,
+                params=params,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Order for %s failed", symbol)
+            return "failed", str(exc)
+
+        status = self._normalize_order_status(response)
+        return status, None
 
     def get_balance(self) -> float:
         """Get the current balance of the account."""
@@ -183,6 +235,187 @@ class Trader:
                 )
 
         return order_results
+
+    def rebalance_positions(self, positions: list[Position], budget: float) -> list[dict[str, Any]]:
+        """Adjust live positions to match the requested allocation."""
+        if budget <= 0:
+            msg = "Budget must be positive"
+            raise ValueError(msg)
+
+        target_notional = self._build_target_notional(positions, budget)
+        current_notional = self._fetch_current_notional()
+        symbols = set(current_notional.keys()) | set(target_notional.keys())
+        if not symbols:
+            return []
+
+        prices = self._fetch_symbol_prices(symbols)
+        summaries = self._initialize_summaries(positions, target_notional)
+
+        results: list[dict[str, Any]] = []
+        for symbol in symbols:
+            price = prices.get(symbol)
+            if price is None:
+                logger.error("Missing price for %s, skipping rebalance", symbol)
+                continue
+            summary = summaries.get(symbol)
+            result = self._rebalance_symbol(
+                symbol=symbol,
+                price=price,
+                target_value=target_notional.get(symbol, 0.0),
+                current_value=current_notional.get(symbol, 0.0),
+                summary_entry=summary,
+            )
+            if result is not None:
+                results.append(result)
+        return results
+
+    def _build_target_notional(
+        self,
+        positions: list[Position],
+        budget: float,
+    ) -> dict[str, float]:
+        return {
+            pos.symbol: self._signed_notional(side=pos.side, notional=pos.percentage * budget)
+            for pos in positions
+        }
+
+    def _fetch_current_notional(self) -> dict[str, float]:
+        current_positions = self.get_current_positions()
+        return {
+            pos["symbol"]: self._signed_notional(
+                side=pos["side"], notional=float(pos.get("notional", 0.0))
+            )
+            for pos in current_positions
+        }
+
+    def _initialize_summaries(
+        self,
+        positions: list[Position],
+        target_notional: dict[str, float],
+    ) -> dict[str, dict[str, Any]]:
+        percentage_lookup = {pos.symbol: pos.percentage for pos in positions}
+        return {
+            symbol: {
+                "symbol": symbol,
+                "side": "buy" if target_notional[symbol] >= 0 else "sell",
+                "percentage": percentage_lookup.get(symbol, 0.0),
+                "status": "filled",
+                "message": None,
+            }
+            for symbol in target_notional
+        }
+
+    def _rebalance_symbol(
+        self,
+        *,
+        symbol: str,
+        price: float,
+        target_value: float,
+        current_value: float,
+        summary_entry: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        summary = summary_entry or {
+            "symbol": symbol,
+            "side": "buy" if target_value >= 0 else "sell",
+            "percentage": 0.0,
+            "status": "filled",
+            "message": None,
+        }
+        status_rank = {"failed": 3, "working": 2, "filled": 1}
+
+        def update_summary(status: str, message: str | None) -> None:
+            normalized = status if status in status_rank else "working"
+            if status_rank[normalized] >= status_rank[summary["status"]]:
+                summary["status"] = normalized
+                summary["message"] = message
+
+        def apply_order(
+            *,
+            side: OrderSide,
+            usd_value: float,
+            reduce_only: bool,
+        ) -> bool:
+            order_status, message = self._place_market_order(
+                symbol=symbol,
+                side=side,
+                usd_value=usd_value,
+                price=price,
+                reduce_only=reduce_only,
+            )
+            update_summary(order_status, message)
+            return order_status != "failed"
+
+        reduce_success, adjusted_value = self._reduce_position_if_needed(
+            symbol=symbol,
+            current_value=current_value,
+            target_value=target_value,
+            apply_order=apply_order,
+        )
+        if not reduce_success:
+            return summary
+
+        self._increase_position_if_needed(
+            symbol=symbol,
+            current_value=adjusted_value,
+            target_value=target_value,
+            apply_order=apply_order,
+        )
+        return summary
+
+    def _reduce_position_if_needed(
+        self,
+        *,
+        current_value: float,
+        target_value: float,
+        apply_order: Callable[..., bool],
+    ) -> tuple[bool, float]:
+        if current_value == 0:
+            return True, current_value
+
+        same_direction = target_value != 0 and (
+            (target_value > 0 and current_value > 0) or (target_value < 0 and current_value < 0)
+        )
+        reduce_to: float | None
+        if target_value == 0:
+            reduce_to = 0.0
+        elif same_direction and abs(target_value) < abs(current_value):
+            reduce_to = target_value
+        elif not same_direction:
+            reduce_to = 0.0
+        else:
+            reduce_to = None
+
+        if reduce_to is None:
+            return True, current_value
+
+        reduce_usd = abs(current_value) - abs(reduce_to)
+        if reduce_usd <= 0:
+            return True, current_value
+
+        reduce_side: OrderSide = "sell" if current_value > 0 else "buy"
+        success = apply_order(side=reduce_side, usd_value=reduce_usd, reduce_only=True)
+        return success, reduce_to if success else current_value
+
+    def _increase_position_if_needed(
+        self,
+        *,
+        symbol: str,
+        current_value: float,
+        target_value: float,
+        apply_order: Callable[..., bool],
+    ) -> None:
+        if target_value == current_value:
+            return
+
+        delta = target_value - current_value
+        usd_needed = abs(delta)
+        if usd_needed <= 0:
+            return
+
+        side: OrderSide = "buy" if delta > 0 else "sell"
+        success = apply_order(side=side, usd_value=usd_needed, reduce_only=False)
+        if not success:
+            logger.error("Rebalance order for %s failed", symbol)
 
     def _normalize_order_status(self, response: dict[str, Any]) -> str:
         """Translate ccxt order status into simplified frontend-friendly value."""

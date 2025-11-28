@@ -2,6 +2,8 @@ import * as React from "react"
 import { Link, useParams } from "react-router-dom"
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { useNetwork } from "@/contexts/NetworkContext"
+import { cn } from "@/lib/utils"
 import {
   Select,
   SelectContent,
@@ -70,8 +72,15 @@ const TokenPage: React.FC<{ timeframe: Timeframe }> = ({
     )
   }
 
+  const { isNetworkSwitching } = useNetwork()
+
   return (
-    <Card className="w-screen h-screen rounded-none border-none px-[2%] pt-[10px] flex flex-col">
+    <Card
+      className={cn(
+        "w-screen h-screen rounded-none border-none px-[2%] pt-[10px] flex flex-col",
+        isNetworkSwitching && "pointer-events-none opacity-50",
+      )}
+    >
       <CardHeader>
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-4">

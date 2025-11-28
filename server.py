@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import re
 import subprocess
 import sys
 from collections.abc import Iterator
@@ -173,6 +174,17 @@ def get_trader() -> Trader:
         return _trader_instance
 
 
+def reload_trader() -> None:
+    """Reload trader instance with new settings."""
+    global _trader_instance  # noqa: PLW0603
+    with _trader_lock:
+        _trader_instance = None
+        # Reload dotenv
+        from dotenv import load_dotenv  # type: ignore[import]
+
+        load_dotenv(override=True)
+
+
 @app.get("/api/date-range")
 async def get_date_range(
     timeframe: Annotated[Timeframe, Query(enum=TIME_FRAMES)] = "1h",
@@ -230,6 +242,12 @@ BUDGET_PREFERENCE_FILE = Path("data/budget_preference.json")
 
 class BudgetPreferencePayload(BaseModel):
     budget: float
+
+
+class WalletSettingsPayload(BaseModel):
+    public_key: str | None = None
+    secret_key: str | None = None
+    is_testnet: bool
 
 
 @app.get("/api/hyperliquid/budget-preference")
@@ -469,6 +487,152 @@ def _run_backtest_script(mode: PipelineRunMode) -> Iterator[str]:
 def reload_data_stream(params: BacktestRequest) -> StreamingResponse:
     """Stream logs while running backtest.py"""
     return StreamingResponse(_run_backtest_script(params.mode), media_type="text/plain")
+
+
+@app.get("/api/hyperliquid/wallet-settings")
+async def get_wallet_settings() -> dict[str, Any]:
+    """Get current wallet settings (public key and testnet/mainnet status)."""
+    try:
+        settings = UserSettings()
+        is_testnet = os.getenv("PROD", "").lower() != "true"
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    else:
+        return {
+            "public_key": settings.public_key,
+            "is_testnet": is_testnet,
+        }
+
+
+def read_env_value(key: str) -> str | None:
+    """Read a value from .env file."""
+    env_path = Path(".env")
+    if not env_path.exists():
+        return None
+    content = env_path.read_text()
+    match = re.search(rf"^{re.escape(key)}=(.*)$", content, re.MULTILINE)
+    if match:
+        return match.group(1).strip().strip('"').strip("'")
+    return None
+
+
+def update_env_file(
+    public_key: str | None = None,
+    secret_key: str | None = None,
+    is_testnet: bool | None = None,
+) -> None:
+    """Update .env file with new wallet settings."""
+    env_path = Path(".env")
+    if not env_path.exists():
+        if not public_key or not secret_key:
+            error_msg = "Cannot create .env file without public_key and secret_key"
+            raise ValueError(error_msg)
+        # Create new .env file
+        env_path.write_text(
+            f"WALLET_PUBLIC_KEY={public_key}\n"
+            f"WALLET_SECRET_KEY={secret_key}\n"
+            f"PROD={'true' if is_testnet is False else 'false'}\n"
+        )
+        return
+
+    # Read existing .env file
+    content = env_path.read_text()
+
+    # Update or add WALLET_PUBLIC_KEY
+    if public_key is not None:
+        if re.search(r"^WALLET_PUBLIC_KEY=", content, re.MULTILINE):
+            content = re.sub(
+                r"^WALLET_PUBLIC_KEY=.*$",
+                f"WALLET_PUBLIC_KEY={public_key}",
+                content,
+                flags=re.MULTILINE,
+            )
+        else:
+            content += f"\nWALLET_PUBLIC_KEY={public_key}"
+
+    # Update or add WALLET_SECRET_KEY
+    if secret_key is not None:
+        if re.search(r"^WALLET_SECRET_KEY=", content, re.MULTILINE):
+            content = re.sub(
+                r"^WALLET_SECRET_KEY=.*$",
+                f"WALLET_SECRET_KEY={secret_key}",
+                content,
+                flags=re.MULTILINE,
+            )
+        else:
+            content += f"\nWALLET_SECRET_KEY={secret_key}"
+
+    # Update or add PROD
+    if is_testnet is not None:
+        if re.search(r"^PROD=", content, re.MULTILINE):
+            content = re.sub(
+                r"^PROD=.*$",
+                f"PROD={'true' if not is_testnet else 'false'}",
+                content,
+                flags=re.MULTILINE,
+            )
+        else:
+            content += f"\nPROD={'true' if not is_testnet else 'false'}"
+
+    # Write back to file
+    env_path.write_text(content)
+
+
+@app.post("/api/hyperliquid/wallet-settings")
+async def save_wallet_settings(payload: WalletSettingsPayload) -> dict[str, Any]:
+    """Save wallet settings to .env file and reload trader."""
+
+    def _bad_request(detail: str) -> None:
+        raise HTTPException(status_code=400, detail=detail)
+
+    try:
+        # Validate inputs
+        if payload.public_key and not payload.public_key.startswith("0x"):
+            _bad_request("Public key must start with 0x")
+
+        # If secret_key is not provided, read it from existing .env
+        secret_key = payload.secret_key
+        if not secret_key:
+            secret_key = read_env_value("WALLET_SECRET_KEY")
+            if not secret_key:
+                _bad_request("Secret key is required (not found in existing .env)")
+
+        # If public_key is not provided, read it from existing .env
+        public_key = payload.public_key
+        if not public_key:
+            public_key = read_env_value("WALLET_PUBLIC_KEY")
+            if not public_key:
+                _bad_request("Public key is required (not found in existing .env)")
+
+        # Update .env file
+        update_env_file(
+            public_key=public_key if payload.public_key else None,
+            secret_key=secret_key if payload.secret_key else None,
+            is_testnet=payload.is_testnet,
+        )
+
+        # Reload environment variables
+        from dotenv import load_dotenv  # type: ignore[import]
+
+        load_dotenv(override=True)
+
+        # Reload trader instance
+        reload_trader()
+
+        # Log the network state for debugging
+        is_testnet_after = os.getenv("PROD", "").lower() != "true"
+        logger.info(
+            "Network switched. is_testnet=%s, PROD=%s",
+            is_testnet_after,
+            os.getenv("PROD", "not set"),
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Error saving wallet settings")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    else:
+        return {"success": True, "is_testnet": is_testnet_after}
 
 
 if __name__ == "__main__":

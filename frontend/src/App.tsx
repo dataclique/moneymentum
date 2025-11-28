@@ -1,6 +1,9 @@
 // WHOLE APP WORKING IN UTC TIMEZONE, NO LOCAL TIME
 import { useEffect, useState } from "react"
-import { columns, type TradingData } from "./components/ui/columns"
+import {
+  columns,
+  type TradingData as TableTradingData,
+} from "./components/ui/columns"
 import { DataTable } from "./components/ui/data-table"
 import { Calendar22 as DatePicker } from "./components/ui/date-picker"
 import { Route, Routes } from "react-router-dom"
@@ -13,14 +16,17 @@ import {
 } from "./components/ui/timeframe-select"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
+import { WalletHeader } from "./components/wallet-header"
 import {
   useDateRange,
   useAnalysisData,
   useReloadData,
   useStopReload,
 } from "@/hooks/useApi"
+import { useNetwork } from "@/contexts/NetworkContext"
 
 function App() {
+  const { isNetworkSwitching } = useNetwork()
   const [timeframe, setTimeframe] = useState<Timeframe>("1h")
   const [dateRange, setDateRange] = useState({
     startDate: null as Date | null,
@@ -78,10 +84,16 @@ function App() {
     isDateRangeLoading || isAnalysisLoading || reloadMutation.isPending
   const error = dateRangeError?.message || analysisError?.message || null
   const data = analysisData?.data || []
+  const tableData = data as unknown as TableTradingData[]
   const message = analysisData?.message || null
 
   const MainPage = () => (
-    <div className="container mx-auto py-2">
+    <div
+      className={cn(
+        "container mx-auto py-2",
+        isNetworkSwitching && "pointer-events-none opacity-80",
+      )}
+    >
       <div className="mb-4 flex items-end justify-start gap-4">
         <TimeframeSelect
           value={timeframe}
@@ -108,15 +120,20 @@ function App() {
           {/* Calling only fetch + analysis */}
           <Button
             onClick={() => handleReload("analysis_only")}
-            disabled={loading}
+            disabled={loading || isNetworkSwitching}
           >
             {loading ? "Loading..." : "Reload Data"}
           </Button>
         </div>
         <ModeToggle /> {/* Added ModeToggle here for easy access */}
       </div>
+      {isNetworkSwitching && (
+        <div className="mb-4 text-center text-sm text-muted-foreground">
+          Switching network... Please wait
+        </div>
+      )}
       {message && <div className="mb-4 text-center">{message}</div>}
-      <DataTable columns={columns} data={data} />
+      <DataTable columns={columns} data={tableData} />
     </div>
   )
 
@@ -125,9 +142,24 @@ function App() {
     <div
       className={cn(
         "min-h-screen flex flex-col bg-background text-foreground", // Apply theme classes here
+        isNetworkSwitching && "pointer-events-none opacity-80", // Disable whole app during network switch
         // You can add other global styles here if needed
       )}
     >
+      <header className="border-b border-border px-4 py-2">
+        <div className="container mx-auto flex items-center justify-between">
+          <h1 className="text-lg font-semibold">MoneyMomentum</h1>
+          <div className="flex items-center gap-4">
+            <WalletHeader />
+            <ModeToggle />
+          </div>
+        </div>
+        {isNetworkSwitching && (
+          <div className="container mx-auto mt-2 text-center text-sm text-muted-foreground">
+            Switching network... All data will reload automatically
+          </div>
+        )}
+      </header>
       {children}
     </div>
   )

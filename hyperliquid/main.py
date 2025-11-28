@@ -17,9 +17,13 @@ from hyperliquid.settings import UserSettings  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
-DEBUG: bool = os.getenv("PROD", "").lower() != "true"
 OrderSide = Literal["buy", "sell"]
 MIN_ORDER_VALUE = 10.0
+
+
+def _is_testnet() -> bool:
+    """Check if we should use testnet based on PROD environment variable."""
+    return os.getenv("PROD", "").lower() != "true"
 
 
 @dataclass
@@ -44,7 +48,8 @@ class Trader:
 
         # self.leverage = settings.trade.leverage TODO: Add leverage
 
-        if DEBUG:
+        is_testnet = _is_testnet()
+        if is_testnet:
             logger.debug(
                 "Using wallet address: %s...%s", self.public_key[:10], self.public_key[-10:]
             )
@@ -55,6 +60,8 @@ class Trader:
 
     def _initialize_exchange(self) -> None:
         """Initialize the ccxt exchange instance."""
+        is_testnet = _is_testnet()
+
         ccxt_config = {
             "walletAddress": self.public_key,
             "privateKey": self.secret_key,
@@ -62,15 +69,17 @@ class Trader:
         }
 
         self.exchange = ccxt.hyperliquid(ccxt_config)
-        if DEBUG:
+        if is_testnet:
             self.exchange.set_sandbox_mode(True)
-            logger.debug("Running in DEBUG mode, using testnet URLs.")
+            logger.debug("Running in testnet mode, using testnet URLs.")
             ccxt_config["urls"] = {
                 "api": {
                     "public": "https://api.hyperliquid-testnet.xyz",
                     "private": "https://api.hyperliquid-testnet.xyz",
                 }
             }
+        else:
+            logger.debug("Running in mainnet mode, using production URLs.")
 
         self.exchange.verbose = False
         self.exchange.options["builderFee"] = False

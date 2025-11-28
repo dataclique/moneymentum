@@ -1,5 +1,54 @@
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
+import {
+  QueryClient,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query"
 import type { Timeframe } from "@/components/ui/timeframe-select"
+
+/**
+ * Refresh all data in the application.
+ * Invalidates and refetches all queries to ensure UI is up-to-date.
+ */
+export async function refreshAllData(queryClient: QueryClient) {
+  console.log("Refreshing all data...")
+
+  // First, invalidate and refetch wallet settings
+  await queryClient.invalidateQueries({
+    queryKey: ["hyperliquid", "wallet-settings"],
+  })
+  await queryClient.refetchQueries({
+    queryKey: ["hyperliquid", "wallet-settings"],
+  })
+
+  // Force refetch critical queries
+  await Promise.all([
+    queryClient.refetchQueries({
+      queryKey: ["hyperliquid", "positions"],
+      exact: false,
+    }),
+    queryClient.refetchQueries({
+      queryKey: ["hyperliquid", "balance"],
+      exact: false,
+    }),
+    queryClient.refetchQueries({
+      queryKey: ["hyperliquid", "tickers"],
+      exact: false,
+    }),
+    queryClient.refetchQueries({
+      queryKey: ["hyperliquid", "budget-preference"],
+      exact: false,
+    }),
+  ])
+
+  // Invalidate other queries (they'll refetch when components need them)
+  queryClient.invalidateQueries({ queryKey: ["analysisData"] })
+  queryClient.invalidateQueries({ queryKey: ["tokenData"] })
+  queryClient.invalidateQueries({ queryKey: ["dateRange"] })
+  queryClient.invalidateQueries({ queryKey: ["hyperliquid"] })
+
+  console.log("All data refreshed")
+}
 
 export type OrderSide = "buy" | "sell"
 
@@ -307,6 +356,50 @@ export function useSaveBudgetPreference() {
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}))
         throw new Error(errorData.detail || "Unable to save budget preference")
+      }
+    },
+  })
+}
+
+export interface WalletSettings {
+  public_key: string
+  is_testnet: boolean
+}
+
+export function useWalletSettings() {
+  return useQuery<WalletSettings>({
+    queryKey: ["hyperliquid", "wallet-settings"],
+    queryFn: async () => {
+      const response = await fetch("/api/hyperliquid/wallet-settings")
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}))
+        throw new Error(errorData.detail || "Unable to fetch wallet settings")
+      }
+      return response.json()
+    },
+  })
+}
+
+export interface SaveWalletSettingsParams {
+  public_key?: string
+  secret_key?: string
+  is_testnet: boolean
+}
+
+export function useSaveWalletSettings() {
+  return useMutation<void, Error, SaveWalletSettingsParams>({
+    mutationFn: async payload => {
+      const response = await fetch("/api/hyperliquid/wallet-settings", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}))
+        throw new Error(errorData.detail || "Unable to save wallet settings")
       }
     },
   })

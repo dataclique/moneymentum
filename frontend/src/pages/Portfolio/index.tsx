@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react"
+import { useQueryClient } from "@tanstack/react-query"
 import { Button } from "@/components/ui/button"
 import {
+  refreshAllData,
   useHyperliquidBalance,
   useHyperliquidTickers,
   useRebalanceHyperliquidPositions,
@@ -12,6 +14,7 @@ import {
 } from "@/hooks/useApi"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { cn } from "@/lib/utils"
+import { useNetwork } from "@/contexts/NetworkContext"
 
 type AllocationStatus = OrderStatus["status"] | "idle"
 
@@ -86,6 +89,8 @@ const recalcPercentagesFromLockedValues = (
 }
 
 function PortfolioPage() {
+  const { isNetworkSwitching, setIsNetworkSwitching } = useNetwork()
+  const queryClient = useQueryClient()
   const [searchTerm, setSearchTerm] = useState("")
   const [budget, setBudget] = useState(0)
   const [budgetInput, setBudgetInput] = useState<string>("")
@@ -539,7 +544,7 @@ function PortfolioPage() {
         })),
       },
       {
-        onSuccess: data => {
+        onSuccess: async data => {
           setSelectedTokens(prev =>
             prev.map(token => {
               const status = data.orders.find(
@@ -553,6 +558,19 @@ function PortfolioPage() {
               }
             }),
           )
+          const allFilled = data.orders.every(
+            order => order.status === "filled",
+          )
+          if (allFilled) {
+            setIsNetworkSwitching(true)
+            try {
+              await refreshAllData(queryClient)
+            } catch (error) {
+              console.error("Failed to refresh after positions filled:", error)
+            } finally {
+              setIsNetworkSwitching(false)
+            }
+          }
         },
         onError: error => {
           setSelectedTokens(prev =>
@@ -708,7 +726,12 @@ function PortfolioPage() {
     hasBlockingBudgetIssue
 
   return (
-    <div className="container mx-auto flex max-w-5xl flex-col gap-4 py-4">
+    <div
+      className={cn(
+        "container mx-auto flex max-w-5xl flex-col gap-4 py-4",
+        isNetworkSwitching && "pointer-events-none opacity-50",
+      )}
+    >
       <div>
         <h1 className="text-3xl font-bold">Portfolio builder</h1>
         <p className="text-muted-foreground">

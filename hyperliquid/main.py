@@ -365,6 +365,7 @@ class Trader:
     def _reduce_position_if_needed(
         self,
         *,
+        symbol: str,
         current_value: float,
         target_value: float,
         apply_order: Callable[..., bool],
@@ -394,6 +395,8 @@ class Trader:
 
         reduce_side: OrderSide = "sell" if current_value > 0 else "buy"
         success = apply_order(side=reduce_side, usd_value=reduce_usd, reduce_only=True)
+        if not success:
+            logger.error("Reduce position order for %s failed", symbol)
         return success, reduce_to if success else current_value
 
     def _increase_position_if_needed(
@@ -415,7 +418,7 @@ class Trader:
         side: OrderSide = "buy" if delta > 0 else "sell"
         success = apply_order(side=side, usd_value=usd_needed, reduce_only=False)
         if not success:
-            logger.error("Rebalance order for %s failed", symbol)
+            logger.error("Increase position order for %s failed", symbol)
 
     def _normalize_order_status(self, response: dict[str, Any]) -> str:
         """Translate ccxt order status into simplified frontend-friendly value."""

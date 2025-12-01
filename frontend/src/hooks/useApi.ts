@@ -314,6 +314,11 @@ export interface CurrentPosition {
   percentage: number
 }
 
+export interface LeverageLimit {
+  symbol: string
+  max_leverage: number
+}
+
 export function useHyperliquidPositions() {
   return useQuery<{ positions: CurrentPosition[]; total_notional: number }>({
     queryKey: ["hyperliquid", "positions"],
@@ -322,6 +327,20 @@ export function useHyperliquidPositions() {
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}))
         throw new Error(errorData.detail || "Unable to fetch positions")
+      }
+      return response.json()
+    },
+  })
+}
+
+export function useHyperliquidLeverageLimits() {
+  return useQuery<{ data: LeverageLimit[] }>({
+    queryKey: ["hyperliquid", "leverage-limits"],
+    queryFn: async () => {
+      const response = await fetch("/api/hyperliquid/leverage-limits")
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}))
+        throw new Error(errorData.detail || "Unable to fetch leverage limits")
       }
       return response.json()
     },

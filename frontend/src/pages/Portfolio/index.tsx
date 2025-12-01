@@ -9,6 +9,7 @@ import {
   useHyperliquidPositions,
   useBudgetPreference,
   useSaveBudgetPreference,
+  useHyperliquidLeverageLimits,
   type OrderSide,
   type OrderStatus,
 } from "@/hooks/useApi"
@@ -113,6 +114,7 @@ function PortfolioPage() {
   } = useHyperliquidBalance()
   const { data: positionsData, isLoading: isPositionsLoading } =
     useHyperliquidPositions()
+  const { data: leverageLimitsData } = useHyperliquidLeverageLimits()
   const { data: budgetPreferenceData, isLoading: isBudgetPreferenceLoading } =
     useBudgetPreference()
   const saveBudgetPreferenceMutation = useSaveBudgetPreference()
@@ -301,6 +303,16 @@ function PortfolioPage() {
   const minPercentFloor = budgetForUi >= MIN_USD ? minPercentOfBudget : 0
   const hasBlockingBudgetIssue =
     budgetBelowMinimum || insufficientBudgetForTokens
+  const leverageLimitsMap = useMemo(() => {
+    const map: Record<string, number> = {}
+    if (!leverageLimitsData?.data) {
+      return map
+    }
+    for (const item of leverageLimitsData.data) {
+      map[item.symbol] = item.max_leverage
+    }
+    return map
+  }, [leverageLimitsData])
   const blockingReasons: string[] = []
   if (budgetBelowMinimum) {
     blockingReasons.push(
@@ -638,6 +650,7 @@ function PortfolioPage() {
       sliderMaxValue,
       Math.max(tokenUsdValue, sliderMinValue),
     )
+    const maxLeverage = leverageLimitsMap[token.symbol]
 
     return (
       <Card
@@ -651,8 +664,13 @@ function PortfolioPage() {
               className="h-3 w-3 rounded-full"
               style={{ backgroundColor: sideColor }}
             />
-            <CardTitle className="text-lg font-semibold">
-              {token.symbol}
+            <CardTitle className="text-lg font-semibold flex items-center gap-2">
+              <span>{token.symbol}</span>
+              {typeof maxLeverage === "number" && (
+                <span className="text-xs font-normal text-muted-foreground">
+                  max {maxLeverage.toFixed(1)}x
+                </span>
+              )}
             </CardTitle>
           </div>
           {renderStatusBadge(token.status)}
@@ -724,6 +742,10 @@ function PortfolioPage() {
     rebalancePositionsMutation.isPending ||
     totalPercent <= 0 ||
     hasBlockingBudgetIssue
+  const netExposure = selectedTokens.reduce((acc, token) => {
+    const usdValue = getTokenUsdAllocation(token, budgetForUi)
+    return acc + (token.side === "buy" ? usdValue : -usdValue)
+  }, 0)
 
   return (
     <div
@@ -874,6 +896,16 @@ function PortfolioPage() {
                     <span>Total allocated</span>
                     <span>
                       {totalPercent.toFixed(2)}% · ${displayBudget.toFixed(2)}
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-muted-foreground">
+                    <span>Net long/short</span>
+                    <span>
+                      {netExposure === 0
+                        ? "$0.00"
+                        : `${netExposure > 0 ? "Long" : "Short"} $${Math.abs(
+                            netExposure,
+                          ).toFixed(2)}`}
                     </span>
                   </div>
                   <div className="flex h-12 overflow-hidden rounded-lg border border-border text-xs font-medium text-background">

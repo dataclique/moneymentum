@@ -154,6 +154,31 @@ class Trader:
         ]
         return sorted(perp_symbols)
 
+    def get_perp_max_leverage(self) -> list[dict[str, Any]]:
+        """
+        Return max leverage for each perpetual symbol.
+
+        Uses `fetch_tickers()` so structure matches what we see in all_tickers.json.
+        Falls back to 1x when leverage is missing or malformed.
+        """
+        tickers = self.exchange.fetch_tickers()
+        results: list[dict[str, Any]] = []
+        for symbol, ticker in tickers.items():
+            # Perps are the symbols with ":" (e.g. "BTC/USDC:USDC")
+            if ":" not in symbol:
+                continue
+            info = ticker.get("info") or {}
+            raw_max_lev = info.get("maxLeverage")
+            try:
+                max_leverage = float(raw_max_lev) if raw_max_lev is not None else 1.0
+            except (TypeError, ValueError):
+                max_leverage = 1.0
+            results.append({"symbol": symbol, "max_leverage": max_leverage})
+
+        # Keep ordering deterministic for frontend
+        results.sort(key=lambda item: item["symbol"])
+        return results
+
     def get_current_positions(self) -> list[dict[str, Any]]:
         """Fetch current open positions from Hyperliquid."""
         positions = self.exchange.fetch_positions()
@@ -451,13 +476,12 @@ def main() -> None:
     settings = UserSettings()
     trader = Trader(settings)
 
-    open_positions = [
-        Position(symbol="BTC/USDC:USDC", percentage=0.5, side="buy"),
-        Position(symbol="ETH/USDC:USDC", percentage=0.3, side="buy"),
-        Position(symbol="SOL/USDC:USDC", percentage=0.2, side="buy"),
-    ]
+    # all_tickers = trader.exchange.fetch_tickers()
+    # import json
 
-    trader.open_positions(open_positions, 50)
+    # with open("all_tickers.json", "w") as f:
+    #     json.dump(all_tickers, f)
+
     logger.info("Current balance: %s USDC", trader.get_balance())
 
 

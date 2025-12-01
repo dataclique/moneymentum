@@ -153,6 +153,11 @@ class OpenPositionsPayload(BaseModel):
     positions: list[PositionPayload]
 
 
+class LeverageInfo(BaseModel):
+    symbol: str
+    max_leverage: float
+
+
 class OrderStatusResponse(BaseModel):
     symbol: str
     side: str
@@ -235,6 +240,18 @@ async def get_hyperliquid_positions() -> dict[str, Any]:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     else:
         return {"positions": positions, "total_notional": total_notional}
+
+
+@app.get("/api/hyperliquid/leverage-limits")
+async def get_hyperliquid_leverage_limits() -> dict[str, Any]:
+    """Return max leverage limits for all perpetual symbols."""
+    try:
+        trader = get_trader()
+        data = [LeverageInfo(**item).model_dump() for item in trader.get_perp_max_leverage()]
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    else:
+        return {"data": data}
 
 
 BUDGET_PREFERENCE_FILE = Path("data/budget_preference.json")

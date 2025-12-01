@@ -146,6 +146,7 @@ class PositionPayload(BaseModel):
     symbol: str
     percentage: float
     side: Literal["buy", "sell"]
+    leverage: int
 
 
 class OpenPositionsPayload(BaseModel):
@@ -307,7 +308,12 @@ async def open_hyperliquid_positions(payload: OpenPositionsPayload) -> dict[str,
     try:
         trader = get_trader()
         parsed_positions = [
-            Position(symbol=item.symbol, percentage=item.percentage, side=item.side)
+            Position(
+                symbol=item.symbol,
+                percentage=item.percentage,
+                side=item.side,
+                leverage=item.leverage,
+            )
             for item in payload.positions
         ]
         order_results = trader.open_positions(parsed_positions, payload.budget)
@@ -331,7 +337,12 @@ async def rebalance_hyperliquid_positions(payload: OpenPositionsPayload) -> dict
     try:
         trader = get_trader()
         parsed_positions = [
-            Position(symbol=item.symbol, percentage=item.percentage, side=item.side)
+            Position(
+                symbol=item.symbol,
+                percentage=item.percentage,
+                side=item.side,
+                leverage=item.leverage,
+            )
             for item in payload.positions
         ]
         order_results = trader.rebalance_positions(parsed_positions, payload.budget)

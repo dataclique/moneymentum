@@ -260,6 +260,7 @@ export interface OpenPositionsParams {
     symbol: string
     percentage: number
     side: OrderSide
+    leverage: number
   }>
 }
 
@@ -312,6 +313,7 @@ export interface CurrentPosition {
   entryPrice: number
   unrealizedPnl: number
   percentage: number
+  leverage: number
 }
 
 export interface LeverageLimit {

@@ -16,6 +16,15 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { cn } from "@/lib/utils"
 import { useNetwork } from "@/contexts/NetworkContext"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog"
+import { Slider } from "@/components/ui/slider"
 
 type AllocationStatus = OrderStatus["status"] | "idle"
 
@@ -23,6 +32,7 @@ interface TokenAllocation {
   symbol: string
   percentage: number
   side: OrderSide
+  leverage: number
   status: AllocationStatus
   message?: string | null
   notional?: number // Actual position value in USD (from exchange)
@@ -134,6 +144,7 @@ function PortfolioPage() {
           setSelectedTokens(
             parsed.tokens.map((token: TokenAllocation) => ({
               ...token,
+              leverage: token.leverage || 1,
               status: "idle",
               message: null,
             })),
@@ -200,6 +211,7 @@ function PortfolioPage() {
         symbol: pos.symbol,
         percentage: parseFloat(pos.percentage.toFixed(2)),
         side: pos.side,
+        leverage: pos.leverage || 1,
         status: "idle",
         message: null,
         notional: pos.notional, // Store actual notional value
@@ -229,12 +241,15 @@ function PortfolioPage() {
   useEffect(() => {
     const payload = {
       budget,
-      tokens: selectedTokens.map(({ symbol, percentage, side, lockedUsd }) => ({
-        symbol,
-        percentage,
-        side,
-        lockedUsd,
-      })),
+      tokens: selectedTokens.map(
+        ({ symbol, percentage, side, lockedUsd, leverage }) => ({
+          symbol,
+          percentage,
+          side,
+          lockedUsd,
+          leverage,
+        }),
+      ),
     }
     localStorage.setItem(STORAGE_KEY, JSON.stringify(payload))
   }, [budget, selectedTokens])
@@ -391,6 +406,7 @@ function PortfolioPage() {
         symbol,
         percentage: initialPercent,
         side: "buy",
+        leverage: 1,
         status: "idle",
         message: null,
         notional: undefined, // New tokens don't have notional yet
@@ -480,6 +496,16 @@ function PortfolioPage() {
     )
   }
 
+  const handleLeverageChange = (symbol: string, leverage: number) => {
+    const maxLeverage = leverageLimitsMap[symbol] || 1
+    const newLeverage = Math.max(1, Math.min(leverage, maxLeverage))
+    setSelectedTokens(prev =>
+      prev.map(token =>
+        token.symbol === symbol ? { ...token, leverage: newLeverage } : token,
+      ),
+    )
+  }
+
   // Debounced budget save effect
   useEffect(() => {
     if (budget <= 0 || !isBudgetInitialized) {
@@ -553,6 +579,7 @@ function PortfolioPage() {
           symbol: token.symbol,
           side: token.side,
           percentage: token.percentage / 100,
+          leverage: token.leverage,
         })),
       },
       {
@@ -695,6 +722,37 @@ function PortfolioPage() {
               <option value="buy">Long</option>
               <option value="sell">Short</option>
             </select>
+            <Dialog>
+              <DialogTrigger asChild>
+                <Button variant="outline" size="sm" className="text-xs">
+                  {token.leverage}x
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="sm:max-w-[425px]">
+                <DialogHeader>
+                  <DialogTitle>Set Leverage for {token.symbol}</DialogTitle>
+                  <DialogDescription>
+                    Max leverage is {maxLeverage?.toFixed(1)}x. High leverage
+                    increases risk.
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="grid gap-4 py-4">
+                  <div className="flex items-center justify-between">
+                    <span>{token.leverage}x</span>
+                    <Slider
+                      value={[token.leverage]}
+                      onValueChange={([value]: number[]) =>
+                        handleLeverageChange(token.symbol, value)
+                      }
+                      min={1}
+                      max={maxLeverage}
+                      step={1}
+                      className="w-[80%]"
+                    />
+                  </div>
+                </div>
+              </DialogContent>
+            </Dialog>
             <Button
               variant="ghost"
               size="sm"

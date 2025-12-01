@@ -35,6 +35,7 @@ class Position:
     symbol: str
     percentage: float
     side: OrderSide
+    leverage: int
 
 
 class Trader:
@@ -86,6 +87,17 @@ class Trader:
         self.exchange.options["approvedBuilderFee"] = False
         self.exchange.options["defaultSlippage"] = 0.05  # 5% slippage as number
         self.exchange.load_markets()
+
+    def _set_leverage(self, symbol: str, leverage: int) -> tuple[str, str | None]:
+        """Set leverage for a symbol."""
+        try:
+            self.exchange.set_leverage(leverage, symbol)
+            logger.info("Set leverage for %s to %sx", symbol, leverage)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Failed to set leverage for %s", symbol)
+            return "failed", str(exc)
+        else:
+            return "success", None
 
     def _fetch_symbol_prices(self, symbols: set[str]) -> dict[str, float]:
         prices: dict[str, float] = {}
@@ -189,6 +201,7 @@ class Trader:
                 "notional": float(pos["notional"]),
                 "entryPrice": float(pos["entryPrice"]) if pos["entryPrice"] else 0.0,
                 "unrealizedPnl": float(pos["unrealizedPnl"]) if pos.get("unrealizedPnl") else 0.0,
+                "leverage": int(pos["leverage"]) if pos.get("leverage") else 1,
             }
             for pos in positions
             if float(pos.get("notional", 0)) > 0
@@ -212,6 +225,9 @@ class Trader:
         order_results: list[dict[str, Any]] = []
         logger.info("Creating %d orders...", len(positions))
         for position in positions:
+            # Set leverage before opening position
+            self._set_leverage(position.symbol, position.leverage)
+
             current_price = tickers[position.symbol]
             amount = position.percentage * budget / current_price
 
@@ -275,6 +291,9 @@ class Trader:
         if budget <= 0:
             msg = "Budget must be positive"
             raise ValueError(msg)
+
+        for position in positions:
+            self._set_leverage(position.symbol, position.leverage)
 
         target_notional = self._build_target_notional(positions, budget)
         current_notional = self._fetch_current_notional()
@@ -481,6 +500,13 @@ def main() -> None:
 
     # with open("all_tickers.json", "w") as f:
     #     json.dump(all_tickers, f)
+
+    positions = [
+        Position(symbol="BTC/USDC:USDC", percentage=0.1, side="buy", leverage=1),
+        Position(symbol="ETH/USDC:USDC", percentage=0.7, side="buy", leverage=2),
+        Position(symbol="SOL/USDC:USDC", percentage=0.2, side="buy", leverage=3),
+    ]
+    trader.rebalance_positions(positions, 100)
 
     logger.info("Current balance: %s USDC", trader.get_balance())
 

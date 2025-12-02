@@ -48,33 +48,66 @@ const getSideColor = (side: OrderSide) => {
     : "rgba(239, 68, 68, 0.8)" // red-500 for short
 }
 
+const AllocationBarToken = ({
+  token,
+  budget,
+  isHovered,
+}: {
+  token: TokenAllocation
+  budget: number
+  isHovered: boolean
+}) => {
+  const isSmall = token.percentage < 4
+  const usdAmount = (token.percentage / 100) * budget
+
+  return (
+    <div
+      key={token.symbol}
+      className="flex items-center justify-center overflow-hidden border-b border-background p-1 text-center text-white"
+      style={{
+        height: `${token.percentage}%`,
+        backgroundColor: getSideColor(token.side),
+      }}
+    >
+      <div className={cn("flex", isSmall ? "flex-row gap-1" : "flex-col")}>
+        <span className="font-bold">{token.symbol.split("/")[0]}</span>
+        <span>
+          {isHovered
+            ? `$${usdAmount.toFixed(2)}`
+            : `${token.percentage.toFixed(1)}%`}
+        </span>
+      </div>
+    </div>
+  )
+}
+
 const AllocationBar = ({
   tokens,
   remainingPercent,
+  budget,
 }: {
   tokens: TokenAllocation[]
   remainingPercent: number
+  budget: number
 }) => {
+  const [isHovered, setIsHovered] = useState(false)
   const longs = tokens.filter(t => t.side === "buy")
   const shorts = tokens.filter(t => t.side === "sell")
 
   return (
-    <div className="fixed left-0 top-0 z-20 flex h-screen w-16 flex-col border-r border-border bg-background/50 text-xs backdrop-blur-sm">
+    <div
+      className="fixed left-0 top-0 z-20 flex h-screen w-16 flex-col border-r border-border bg-background/50 text-xs backdrop-blur-sm"
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+    >
       {/* Longs */}
       {longs.map(token => (
-        <div
+        <AllocationBarToken
           key={token.symbol}
-          className="flex items-center justify-center overflow-hidden border-b border-background p-1 text-center text-white"
-          style={{
-            height: `${token.percentage}%`,
-            backgroundColor: getSideColor(token.side),
-          }}
-        >
-          <div className="flex flex-col">
-            <span className="font-bold">{token.symbol.split("/")[0]}</span>
-            <span>{token.percentage.toFixed(1)}%</span>
-          </div>
-        </div>
+          token={token}
+          budget={budget}
+          isHovered={isHovered}
+        />
       ))}
 
       {/* Free space */}
@@ -89,19 +122,12 @@ const AllocationBar = ({
 
       {/* Shorts */}
       {shorts.map(token => (
-        <div
+        <AllocationBarToken
           key={token.symbol}
-          className="flex items-center justify-center overflow-hidden border-b border-background p-1 text-center text-white"
-          style={{
-            height: `${token.percentage}%`,
-            backgroundColor: getSideColor(token.side),
-          }}
-        >
-          <div className="flex flex-col">
-            <span className="font-bold">{token.symbol.split("/")[0]}</span>
-            <span>{token.percentage.toFixed(1)}%</span>
-          </div>
-        </div>
+          token={token}
+          budget={budget}
+          isHovered={isHovered}
+        />
       ))}
     </div>
   )
@@ -1128,6 +1154,7 @@ function PortfolioPage() {
       <AllocationBar
         tokens={selectedTokens}
         remainingPercent={remainingPercent}
+        budget={budgetForUi}
       />
     </>
   )

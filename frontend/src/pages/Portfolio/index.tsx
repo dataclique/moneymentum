@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { useQueryClient } from "@tanstack/react-query"
+import { Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   refreshAllData,
@@ -13,7 +14,7 @@ import {
   type OrderSide,
   type OrderStatus,
 } from "@/hooks/useApi"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent } from "@/components/ui/card"
 import { cn } from "@/lib/utils"
 import { useNetwork } from "@/contexts/NetworkContext"
 import {
@@ -25,6 +26,12 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog"
 import { Slider } from "@/components/ui/slider"
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
 
 type AllocationStatus = OrderStatus["status"] | "idle"
 
@@ -96,7 +103,7 @@ const AllocationBar = ({
 
   return (
     <div
-      className="fixed left-0 top-0 z-20 flex h-screen w-16 flex-col border-r border-border bg-background/50 text-xs backdrop-blur-sm"
+      className="fixed left-0 top-0 z-20 flex h-screen w-20 flex-col border-r border-border bg-background/50 text-xs backdrop-blur-sm"
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
     >
@@ -202,11 +209,7 @@ function PortfolioPage() {
     isLoading: isTickersLoading,
     error: tickersError,
   } = useHyperliquidTickers()
-  const {
-    data: balanceData,
-    isLoading: isBalanceLoading,
-    error: balanceError,
-  } = useHyperliquidBalance()
+  const { data: balanceData } = useHyperliquidBalance()
   const { data: positionsData, isLoading: isPositionsLoading } =
     useHyperliquidPositions()
   const { data: leverageLimitsData } = useHyperliquidLeverageLimits()
@@ -354,22 +357,6 @@ function PortfolioPage() {
     0,
   )
   const remainingPercent = Math.max(0, 100 - totalPercent)
-  // Calculate total spent budget from actual position notional values
-  const totalSpentBudget = selectedTokens.reduce(
-    (acc, token) => acc + (token.notional || 0),
-    0,
-  )
-  // Use spent budget for display if all positions have notional values and budget matches
-  // Otherwise use budget (user might have changed it)
-  const hasAllNotionalValues =
-    selectedTokens.length > 0 &&
-    selectedTokens.every(
-      token => token.notional !== undefined && token.notional > 0,
-    )
-  const displayBudget =
-    hasAllNotionalValues && Math.abs(totalSpentBudget - budget) < 0.01 // Budget matches total spent (within 1 cent)
-      ? totalSpentBudget
-      : budget
   const requiredBudgetForTokens = selectedTokens.length * MIN_USD
   const budgetIsPositive = budget > 0
   const budgetBelowMinimum =
@@ -425,48 +412,50 @@ function PortfolioPage() {
     )
   }
 
-  // Recalculate percentages when budget changes (for tokens with locked USD or notional values)
+  // Combines logic for recalculating percentages and enforcing minimums to prevent re-render loops.
   useEffect(() => {
     if (budgetForUi <= 0) {
       return
     }
-    setSelectedTokens(prevTokens =>
-      recalcPercentagesFromLockedValues(prevTokens, budgetForUi),
-    )
-  }, [budgetForUi])
 
-  // Enforce minimum percentage constraints
-  useEffect(() => {
     setSelectedTokens(prevTokens => {
-      if (!prevTokens.length || budgetForUi <= 0) {
-        return prevTokens
-      }
+      // First, recalculate percentages based on any locked values
+      const recalculatedTokens = recalcPercentagesFromLockedValues(
+        prevTokens,
+        budgetForUi,
+      )
+
+      // Then, enforce minimum percentage constraints on the result
       const minPercent = minPercentFloor
-      if (minPercent === 0) {
-        return prevTokens
+      if (minPercent > 0) {
+        const adjustedTokens = recalculatedTokens.map(token => {
+          if (
+            (token.notional !== undefined && token.notional > 0) ||
+            token.percentage >= minPercent
+          ) {
+            return token
+          }
+          const nextPercent = parseFloat(Math.min(100, minPercent).toFixed(2))
+          return {
+            ...token,
+            percentage: nextPercent,
+            lockedUsd: Math.max(token.lockedUsd ?? MIN_USD, MIN_USD),
+            status: "idle",
+            message: null,
+          } as TokenAllocation
+        })
+
+        // Only update state if the array has actually changed
+        if (JSON.stringify(adjustedTokens) !== JSON.stringify(prevTokens)) {
+          return adjustedTokens
+        }
+      } else if (
+        JSON.stringify(recalculatedTokens) !== JSON.stringify(prevTokens)
+      ) {
+        return recalculatedTokens
       }
 
-      let changed = false
-      const adjustedTokens = prevTokens.map(token => {
-        // Only enforce minimum for tokens without notional (user-added tokens)
-        if (token.notional !== undefined && token.notional > 0) {
-          return token // Keep tokens with notional as-is (they represent actual positions)
-        }
-        if (token.percentage >= minPercent) {
-          return token
-        }
-        changed = true
-        const nextPercent = parseFloat(Math.min(100, minPercent).toFixed(2))
-        return {
-          ...token,
-          percentage: nextPercent,
-          lockedUsd: Math.max(token.lockedUsd ?? MIN_USD, MIN_USD),
-          status: "idle",
-          message: null,
-        } as TokenAllocation
-      })
-
-      return changed ? adjustedTokens : prevTokens
+      return prevTokens
     })
   }, [budgetForUi, minPercentFloor])
 
@@ -709,52 +698,16 @@ function PortfolioPage() {
     )
   }
 
-  const renderStatusBadge = (status: AllocationStatus) => {
-    const colorMap: Record<AllocationStatus, string> = {
-      idle: "bg-muted text-muted-foreground border border-border",
-      working: "bg-amber-500/20 text-amber-400 border border-amber-500/40",
-      filled: "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40",
-      failed: "bg-rose-500/20 text-rose-400 border border-rose-500/40",
-    }
-    const labelMap: Record<AllocationStatus, string> = {
-      idle: "idle",
-      working: "processing",
-      filled: "filled",
-      failed: "failed",
-    }
-    return (
-      <span
-        className={cn(
-          "rounded-full px-3 py-1 text-xs font-medium capitalize",
-          colorMap[status],
-        )}
-      >
-        {labelMap[status]}
-      </span>
-    )
-  }
-
   const allocationCard = (token: TokenAllocation) => {
     const tokenUsdValue = getTokenUsdAllocation(token, budgetForUi)
     const effectivePercent =
       budgetForUi > 0 ? (tokenUsdValue / budgetForUi) * 100 : token.percentage
-    const otherPercent = totalPercent - token.percentage
-    const maxForToken = Math.max(0, Math.min(100, 100 - otherPercent))
-    const sliderMax = Math.max(
-      effectivePercent,
-      Math.min(100, maxForToken || effectivePercent),
-    )
+    const sideColor = getSideColor(token.side)
+    const isLong = token.side === "buy"
     const usdAmount = Number.isFinite(tokenUsdValue)
       ? tokenUsdValue.toFixed(2)
       : "0.00"
-    const availableExtra = Math.max(0, sliderMax - effectivePercent)
-    const displayGradientStop = Math.min(
-      100,
-      effectivePercent + Math.max(0, sliderMax - effectivePercent),
-    )
-    const sideColor = getSideColor(token.side)
-    const isLong = token.side === "buy"
-    const gradient = `linear-gradient(90deg, ${sideColor} 0% ${effectivePercent}%, rgba(250,204,21,0.6) ${effectivePercent}% ${displayGradientStop}%, rgba(107,114,128,0.3) ${displayGradientStop}% 100%)`
+    const maxLeverage = leverageLimitsMap[token.symbol]
     const sliderMaxValue =
       budgetForUi > 0 ? budgetForUi : Math.max(tokenUsdValue, MIN_USD)
     const sliderMinValue = Math.min(MIN_USD, sliderMaxValue)
@@ -762,116 +715,156 @@ function PortfolioPage() {
       sliderMaxValue,
       Math.max(tokenUsdValue, sliderMinValue),
     )
-    const maxLeverage = leverageLimitsMap[token.symbol]
 
-    return (
+    const otherTokensAllocatedUsd = selectedTokens.reduce((acc, t) => {
+      if (t.symbol === token.symbol) {
+        return acc
+      }
+      return acc + getTokenUsdAllocation(t, budgetForUi)
+    }, 0)
+    const maxUsdForToken = Math.max(0, budgetForUi - otherTokensAllocatedUsd)
+
+    const cardContent = (
       <Card
-        key={token.symbol}
-        className="gap-3 py-3 border-l-4"
-        style={{ borderLeftColor: sideColor }}
+        className={cn(
+          "overflow-hidden",
+          token.status === "idle" && "border-l-4",
+          token.status === "filled" && "border-2 border-emerald-500",
+          token.status === "working" && "border-animated-gradient",
+          token.status === "failed" && "border-2 border-rose-500",
+        )}
+        style={{
+          borderLeftColor: token.status === "idle" ? sideColor : "transparent",
+        }}
       >
-        <CardHeader className="flex flex-row items-center justify-between space-y-0">
-          <div className="flex items-center gap-2">
-            <div
-              className="h-3 w-3 rounded-full"
-              style={{ backgroundColor: sideColor }}
-            />
-            <CardTitle className="text-lg font-semibold flex items-center gap-2">
-              <span>{token.symbol}</span>
-            </CardTitle>
-          </div>
-          {renderStatusBadge(token.status)}
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
-            <span>
-              {effectivePercent.toFixed(2)}% (~${usdAmount})
-            </span>
-            <select
-              value={token.side}
-              onChange={event =>
-                handleSideChange(token.symbol, event.target.value as OrderSide)
-              }
-              className={cn(
-                "rounded-md border bg-transparent px-2 py-1 text-sm font-medium",
-                isLong
-                  ? "border-green-500/50 bg-green-500/10 text-green-600 dark:text-green-400"
-                  : "border-red-500/50 bg-red-500/10 text-red-600 dark:text-red-400",
-              )}
-            >
-              <option value="buy">Long</option>
-              <option value="sell">Short</option>
-            </select>
-            <Dialog>
-              <DialogTrigger asChild>
-                <Button variant="outline" size="sm" className="text-xs">
-                  {token.leverage}x
-                </Button>
-              </DialogTrigger>
-              <DialogContent className="sm:max-w-[425px]">
-                <DialogHeader>
-                  <DialogTitle>Set Leverage for {token.symbol}</DialogTitle>
-                  <DialogDescription>
-                    Max leverage is {maxLeverage?.toFixed(1)}x. High leverage
-                    increases risk.
-                  </DialogDescription>
-                </DialogHeader>
-                <div className="grid gap-4 py-4">
-                  <div className="flex items-center justify-between">
-                    <span>{token.leverage}x</span>
-                    <Slider
-                      value={[token.leverage]}
-                      onValueChange={([value]: number[]) =>
-                        handleLeverageChange(token.symbol, value)
-                      }
-                      min={1}
-                      max={maxLeverage}
-                      step={1}
-                      className="w-[80%]"
-                    />
+        {/* This inner div is for the gradient border trick to work */}
+        <div
+          className={cn(
+            token.status === "working"
+              ? "rounded-[--radius] bg-background"
+              : "",
+          )}
+        >
+          <div className="flex items-center gap-2 px-3">
+            {/* Coin Name and Leverage */}
+            <div className="flex w-32 items-center">
+              <span className="font-semibold" style={{ color: sideColor }}>
+                {token.symbol.split("/")[0]}
+              </span>
+              <Dialog>
+                <DialogTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-auto px-2 py-1 text-xs"
+                    style={{ color: sideColor }}
+                  >
+                    {token.leverage}x
+                  </Button>
+                </DialogTrigger>
+                <DialogContent className="sm:max-w-[425px]">
+                  <DialogHeader>
+                    <DialogTitle>Set Leverage for {token.symbol}</DialogTitle>
+                    <DialogDescription>
+                      Adjust the leverage for this position. Max leverage is{" "}
+                      {maxLeverage?.toFixed(1)}x.
+                    </DialogDescription>
+                  </DialogHeader>
+                  <div className="grid gap-4 py-4">
+                    <div className="flex items-center justify-between">
+                      <span>{token.leverage}x</span>
+                      <Slider
+                        value={[token.leverage]}
+                        onValueChange={([value]: number[]) =>
+                          handleLeverageChange(token.symbol, value)
+                        }
+                        min={1}
+                        max={maxLeverage}
+                        step={1}
+                        className="w-[80%]"
+                      />
+                    </div>
                   </div>
-                </div>
-              </DialogContent>
-            </Dialog>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => handleRemoveToken(token.symbol)}
-            >
-              Remove
-            </Button>
-          </div>
-          <div className="space-y-2">
-            <div className="relative w-full">
-              <div className="pointer-events-none absolute left-0 right-0 top-1/2 -translate-y-1/2 px-2">
-                <div
-                  className="h-2 rounded-full"
-                  style={{ background: gradient }}
-                />
-              </div>
-              <input
-                type="range"
-                min={0}
+                </DialogContent>
+              </Dialog>
+            </div>
+
+            {/* Percentage */}
+            <div className="w-24 text-center">
+              <span className="text-sm">{effectivePercent.toFixed(2)}%</span>
+            </div>
+
+            {/* Position Value */}
+            <div className="w-24 text-center">
+              <span className="text-sm">${usdAmount}</span>
+            </div>
+
+            {/* Long/Short Select */}
+            <div className="w-24">
+              <select
+                value={token.side}
+                onChange={event =>
+                  handleSideChange(
+                    token.symbol,
+                    event.target.value as OrderSide,
+                  )
+                }
+                className={cn(
+                  "w-full rounded-md border bg-transparent px-2 py-1 text-sm font-medium",
+                  isLong
+                    ? "border-green-500/50 bg-green-500/10 text-green-600 dark:text-green-400"
+                    : "border-red-500/50 bg-red-500/10 text-red-600 dark:text-red-400",
+                )}
+              >
+                <option value="buy">Long</option>
+                <option value="sell">Short</option>
+              </select>
+            </div>
+
+            {/* Slider */}
+            <div className="flex-1 px-2">
+              <Slider
+                value={[sliderValue]}
+                onValueChange={([value]) =>
+                  handleSliderChange(token.symbol, value)
+                }
+                min={sliderMinValue}
                 max={sliderMaxValue}
                 step={0.01}
-                value={sliderValue}
-                className="portfolio-slider relative z-10"
-                onChange={event =>
-                  handleSliderChange(token.symbol, Number(event.target.value))
-                }
+                limitValue={maxUsdForToken}
               />
             </div>
-            <div className="text-xs text-muted-foreground">
-              Additional allocation available for this token:{" "}
-              {availableExtra.toFixed(2)}%
+
+            {/* Remove Button and Status */}
+            <div className="flex w-16 items-center justify-end gap-2">
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => handleRemoveToken(token.symbol)}
+                className="h-8 w-8"
+              >
+                <Trash2 className="h-4 w-4" />
+              </Button>
             </div>
           </div>
-          {token.message && (
-            <div className="text-sm text-muted-foreground">{token.message}</div>
-          )}
-        </CardContent>
+        </div>
       </Card>
     )
+
+    if (token.status === "failed" && token.message) {
+      return (
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>{cardContent}</TooltipTrigger>
+            <TooltipContent>
+              <p>{token.message}</p>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+      )
+    }
+
+    return cardContent
   }
 
   const disableSubmit =
@@ -889,238 +882,141 @@ function PortfolioPage() {
     <>
       <div
         className={cn(
-          "container mx-auto flex max-w-5xl flex-col gap-4 py-4 pl-28",
+          "container mx-auto flex max-w-5xl flex-col gap-4 py-4 pl-28 min-h-screen",
           isNetworkSwitching && "pointer-events-none opacity-50",
         )}
       >
-        <div>
-          <h1 className="text-3xl font-bold">Portfolio builder</h1>
-          <p className="text-muted-foreground">
-            Select perp tokens, distribute percentages, and submit orders to
-            Hyperliquid.
-          </p>
-        </div>
-
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-[2fr_3fr] lg:items-stretch">
-          <Card className="flex min-h-0 flex-col gap-3 py-3">
-            <CardHeader className="flex-shrink-0">
-              <CardTitle>Token list</CardTitle>
-            </CardHeader>
-            <CardContent className="flex min-h-0 flex-1 flex-col space-y-3">
-              <input
-                type="text"
-                placeholder="Search by ticker"
-                value={searchTerm}
-                onChange={event => setSearchTerm(event.target.value)}
-                className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
-              />
-              {tickersError && (
-                <p className="text-sm text-rose-400">{tickersError.message}</p>
-              )}
-              <div className="min-h-0 flex-1 overflow-y-auto rounded-lg border border-border">
-                {isTickersLoading ? (
-                  <div className="p-4 text-sm text-muted-foreground">
-                    Loading tickers...
-                  </div>
-                ) : filteredTickers.length ? (
-                  filteredTickers.map(symbol => {
-                    const alreadySelected = selectedTokens.some(
-                      token => token.symbol === symbol,
-                    )
-                    return (
-                      <button
-                        key={symbol}
-                        type="button"
-                        onClick={() => handleAddToken(symbol)}
-                        disabled={alreadySelected}
-                        className={cn(
-                          "flex w-full items-center justify-between border-b border-border/60 px-4 py-2 text-left text-sm hover:bg-muted/40",
-                          alreadySelected && "cursor-not-allowed opacity-50",
-                        )}
-                      >
-                        {symbol}
-                        {alreadySelected && (
-                          <span className="text-xs text-muted-foreground">
-                            added
-                          </span>
-                        )}
-                      </button>
-                    )
-                  })
-                ) : (
-                  <div className="p-4 text-sm text-muted-foreground">
-                    Nothing found
-                  </div>
-                )}
+        <div className="flex flex-col gap-4">
+          {/* Top section for controls */}
+          <Card>
+            <CardContent className="flex flex-wrap items-center justify-between gap-4">
+              <div className="flex flex-wrap items-center gap-3">
+                <span className="text-sm font-semibold text-muted-foreground">
+                  Total Budget:
+                </span>
+                <div className="w-40">
+                  <input
+                    type="number"
+                    min={MIN_USD}
+                    step={10}
+                    value={budgetInput}
+                    onChange={event =>
+                      handleBudgetInputChange(event.target.value)
+                    }
+                    onBlur={handleBudgetInputBlur}
+                    className={cn(
+                      "w-full rounded-md border border-border bg-background px-3 py-2 text-sm",
+                      budgetError && "border-rose-500",
+                    )}
+                  />
+                </div>
+                <span className="text-sm text-muted-foreground">USDC</span>
+                {typeof balanceData?.perp_usdc_balance === "number" &&
+                  budget > balanceData?.perp_usdc_balance && (
+                    <span className="text-xs text-rose-400">
+                      Exceeds available balance
+                    </span>
+                  )}
               </div>
+              <Dialog>
+                <DialogTrigger asChild>
+                  <Button>Add New Token</Button>
+                </DialogTrigger>
+                <DialogContent className="flex h-[70vh] max-w-md flex-col">
+                  <DialogHeader>
+                    <DialogTitle>Select a Token</DialogTitle>
+                    <DialogDescription>
+                      Search and select a token to add to your portfolio
+                      allocation.
+                    </DialogDescription>
+                  </DialogHeader>
+                  <input
+                    type="text"
+                    placeholder="Search by ticker"
+                    value={searchTerm}
+                    onChange={event => setSearchTerm(event.target.value)}
+                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+                  />
+                  {tickersError && (
+                    <p className="text-sm text-rose-400">
+                      {tickersError.message}
+                    </p>
+                  )}
+                  <div className="min-h-0 flex-1 overflow-y-auto rounded-lg border border-border">
+                    {isTickersLoading ? (
+                      <div className="p-4 text-sm text-muted-foreground">
+                        Loading tickers...
+                      </div>
+                    ) : filteredTickers.length ? (
+                      filteredTickers.map(symbol => {
+                        const alreadySelected = selectedTokens.some(
+                          token => token.symbol === symbol,
+                        )
+                        return (
+                          <button
+                            key={symbol}
+                            type="button"
+                            onClick={() => handleAddToken(symbol)}
+                            disabled={alreadySelected}
+                            className={cn(
+                              "flex w-full items-center justify-between border-b border-border/60 px-4 py-2 text-left text-sm hover:bg-muted/40",
+                              alreadySelected &&
+                                "cursor-not-allowed opacity-50",
+                            )}
+                          >
+                            {symbol}
+                            {alreadySelected && (
+                              <span className="text-xs text-muted-foreground">
+                                added
+                              </span>
+                            )}
+                          </button>
+                        )
+                      })
+                    ) : (
+                      <div className="p-4 text-sm text-muted-foreground">
+                        Nothing found
+                      </div>
+                    )}
+                  </div>
+                </DialogContent>
+              </Dialog>
             </CardContent>
           </Card>
 
-          <div className="flex min-h-0 flex-col space-y-4">
-            <Card className="gap-3 py-3">
-              <CardHeader>
-                <CardTitle>Total budget</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                {balanceError && (
-                  <p className="text-sm text-rose-400">
-                    {balanceError.message}
-                  </p>
-                )}
-                <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
-                  <span>
-                    Perp account balance:{" "}
-                    {isBalanceLoading
-                      ? "loading..."
-                      : `${
-                          typeof balanceData?.perp_usdc_balance === "number"
-                            ? balanceData.perp_usdc_balance.toFixed(2)
-                            : "0.00"
-                        } USDC`}
-                  </span>
-                  {typeof balanceData?.perp_usdc_balance === "number" &&
-                    budget > balanceData.perp_usdc_balance && (
-                      <span className="text-rose-400">
-                        Exceeds available balance
-                      </span>
-                    )}
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="flex-1">
-                    <input
-                      type="number"
-                      min={MIN_USD}
-                      step={10}
-                      value={budgetInput}
-                      onChange={event =>
-                        handleBudgetInputChange(event.target.value)
-                      }
-                      onBlur={handleBudgetInputBlur}
-                      className={cn(
-                        "w-full rounded-md border border-border bg-background px-3 py-2 text-sm",
-                        budgetError && "border-rose-500",
-                      )}
-                    />
-                    {budgetError && (
-                      <p className="mt-1 text-xs text-rose-400">
-                        {budgetError}
-                      </p>
-                    )}
-                    {insufficientBudgetForTokens && (
-                      <p className="mt-1 text-xs text-rose-400">
-                        Delete some tokens or make bigger budget (need at least
-                        ${requiredBudgetForTokens}).
-                      </p>
-                    )}
-                  </div>
-                  <span className="text-sm text-muted-foreground">USDC</span>
-                </div>
-                <div className="text-sm text-muted-foreground">
-                  Allocated: {totalPercent.toFixed(2)}% — free:{" "}
-                  {remainingPercent.toFixed(2)}%
-                </div>
-              </CardContent>
-            </Card>
-
+          {/* Token Allocation Cards */}
+          <div className="w-full space-y-2">
             {selectedTokens.length === 0 ? (
               <Card className="gap-3 py-3">
-                <CardContent className="py-6 text-center text-sm text-muted-foreground">
-                  Add tokens from the list on the left to configure allocations.
+                <CardContent className="text-center text-sm text-muted-foreground">
+                  Add tokens from the button on the top right to configure
+                  allocations.
                 </CardContent>
               </Card>
             ) : (
               <>
-                <Card className="gap-3 py-3">
-                  <CardHeader>
-                    <CardTitle>Allocation block</CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-3">
-                    <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-muted-foreground">
-                      <span>Total allocated</span>
-                      <span>
-                        {totalPercent.toFixed(2)}% · ${displayBudget.toFixed(2)}
-                      </span>
-                    </div>
-                    <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-muted-foreground">
-                      <span>Net long/short</span>
-                      <span>${netExposure.toFixed(2)}</span>
-                    </div>
-                    <div className="flex h-12 overflow-hidden rounded-lg border border-border text-xs font-medium text-background">
-                      {selectedTokens.map(token => {
-                        const sideColor = getSideColor(token.side)
-                        return (
-                          <div
-                            key={token.symbol}
-                            className="flex items-center justify-center px-2 text-center"
-                            style={{
-                              flexGrow: Math.max(token.percentage, 0.1),
-                              flexBasis: 0,
-                              backgroundColor: sideColor,
-                            }}
-                          >
-                            {token.symbol} · {token.percentage.toFixed(1)}%
-                          </div>
-                        )
-                      })}
-                      {remainingPercent > 0 && (
-                        <div
-                          className="flex items-center justify-center bg-muted px-2 text-center text-foreground"
-                          style={{
-                            flexGrow: remainingPercent,
-                            flexBasis: 0,
-                          }}
-                        >
-                          Free {remainingPercent.toFixed(1)}%
-                        </div>
-                      )}
-                    </div>
-                    <div className="space-y-1 text-xs text-muted-foreground">
-                      {selectedTokens.map(token => {
-                        const sideColor = getSideColor(token.side)
-                        const isLong = token.side === "buy"
-                        const tokenUsdValue = getTokenUsdAllocation(
-                          token,
-                          budgetForUi,
-                        )
-                        const percentDisplay =
-                          budgetForUi > 0
-                            ? (tokenUsdValue / budgetForUi) * 100
-                            : token.percentage
-                        return (
-                          <div
-                            key={`${token.symbol}-summary`}
-                            className="flex items-center justify-between"
-                          >
-                            <div className="flex items-center gap-2">
-                              <div
-                                className="h-2 w-2 rounded-full"
-                                style={{ backgroundColor: sideColor }}
-                              />
-                              <span className="font-medium text-foreground">
-                                {token.symbol}
-                              </span>
-                              <span
-                                className={cn(
-                                  "text-xs px-1.5 py-0.5 rounded font-medium",
-                                  isLong
-                                    ? "bg-green-500/20 text-green-600 dark:text-green-400"
-                                    : "bg-red-500/20 text-red-600 dark:text-red-400",
-                                )}
-                              >
-                                {isLong ? "LONG" : "SHORT"}
-                              </span>
-                            </div>
-                            <span>
-                              {percentDisplay.toFixed(2)}% · $
-                              {tokenUsdValue.toFixed(2)}
-                            </span>
-                          </div>
-                        )
-                      })}
-                    </div>
-                  </CardContent>
-                </Card>
-                <div className="space-y-4">
+                {/* Column Headers */}
+                <div className="flex items-center gap-2 px-3 text-xs font-semibold text-muted-foreground">
+                  <div className="w-32">
+                    <span>COIN</span>
+                  </div>
+                  <div className="w-24 text-center">
+                    <span>PERCENTAGE</span>
+                  </div>
+                  <div className="w-24 text-center">
+                    <span>VALUE</span>
+                  </div>
+                  <div className="w-24 text-center">
+                    <span>SIDE</span>
+                  </div>
+                  <div className="flex-1 px-2 text-center">
+                    <span>ALLOCATION</span>
+                  </div>
+                  <div className="w-16 text-right">
+                    <span>ACTIONS</span>
+                  </div>
+                </div>
+                <div className="space-y-2">
                   {selectedTokens.map(allocationCard)}
                 </div>
               </>
@@ -1137,11 +1033,18 @@ function PortfolioPage() {
           </div>
         </div>
 
-        <div className="sticky bottom-0 bg-background/80 py-3 backdrop-blur">
+        <div className="sticky bottom-0 bg-background/80 py-3 backdrop-blur mt-auto">
           <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-3">
-            <div className="text-sm text-muted-foreground">
-              Each token must receive at least ${MIN_USD}. Remove extra
-              positions if you run out of budget.
+            <div className="text-sm font-semibold text-muted-foreground">
+              <span>Net Exposure: </span>
+              <span
+                className={cn(
+                  netExposure > 0 && "text-green-500",
+                  netExposure < 0 && "text-red-500",
+                )}
+              >
+                ${netExposure.toFixed(2)}
+              </span>
             </div>
             <Button onClick={handleOpenPositions} disabled={disableSubmit}>
               {rebalancePositionsMutation.isPending

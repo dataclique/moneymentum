@@ -136,11 +136,41 @@
 
 @layer base {
   * {
-    @apply border-border outline-ring/50;
+    @apply border-border;
   }
   body {
     @apply bg-background text-foreground;
   }
+}
+
+@keyframes rotate {
+  100% {
+    transform: rotate(1turn);
+  }
+}
+
+.border-animated-gradient {
+  position: relative;
+  z-index: 0;
+  border-radius: var(--radius); /* Match your card's border-radius */
+}
+
+.border-animated-gradient::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset: -2px; /* Border thickness */
+  border-radius: inherit; /* Match parent */
+  background-image: conic-gradient(
+    from 180deg at 50% 50%,
+    #fbbf24,
+    #f59e0b,
+    #d97706,
+    #b45309,
+    #f59e0b,
+    #fbbf24
+  );
+  animation: rotate 4s linear infinite;
 }
 
 .portfolio-slider {

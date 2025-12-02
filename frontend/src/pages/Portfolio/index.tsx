@@ -693,11 +693,6 @@ function PortfolioPage() {
             />
             <CardTitle className="text-lg font-semibold flex items-center gap-2">
               <span>{token.symbol}</span>
-              {typeof maxLeverage === "number" && (
-                <span className="text-xs font-normal text-muted-foreground">
-                  max {maxLeverage.toFixed(1)}x
-                </span>
-              )}
             </CardTitle>
           </div>
           {renderStatusBadge(token.status)}

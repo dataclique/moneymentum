@@ -48,6 +48,65 @@ const getSideColor = (side: OrderSide) => {
     : "rgba(239, 68, 68, 0.8)" // red-500 for short
 }
 
+const AllocationBar = ({
+  tokens,
+  remainingPercent,
+}: {
+  tokens: TokenAllocation[]
+  remainingPercent: number
+}) => {
+  const longs = tokens.filter(t => t.side === "buy")
+  const shorts = tokens.filter(t => t.side === "sell")
+
+  return (
+    <div className="fixed left-0 top-0 z-20 flex h-screen w-16 flex-col border-r border-border bg-background/50 text-xs backdrop-blur-sm">
+      {/* Longs */}
+      {longs.map(token => (
+        <div
+          key={token.symbol}
+          className="flex items-center justify-center overflow-hidden border-b border-background p-1 text-center text-white"
+          style={{
+            height: `${token.percentage}%`,
+            backgroundColor: getSideColor(token.side),
+          }}
+        >
+          <div className="flex flex-col">
+            <span className="font-bold">{token.symbol.split("/")[0]}</span>
+            <span>{token.percentage.toFixed(1)}%</span>
+          </div>
+        </div>
+      ))}
+
+      {/* Free space */}
+      {remainingPercent > 0.1 && (
+        <div
+          className="flex items-center justify-center text-center"
+          style={{ height: `${remainingPercent}%` }}
+        >
+          <span className="text-muted-foreground">Free</span>
+        </div>
+      )}
+
+      {/* Shorts */}
+      {shorts.map(token => (
+        <div
+          key={token.symbol}
+          className="flex items-center justify-center overflow-hidden border-b border-background p-1 text-center text-white"
+          style={{
+            height: `${token.percentage}%`,
+            backgroundColor: getSideColor(token.side),
+          }}
+        >
+          <div className="flex flex-col">
+            <span className="font-bold">{token.symbol.split("/")[0]}</span>
+            <span>{token.percentage.toFixed(1)}%</span>
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 const getTokenUsdAllocation = (
   token: TokenAllocation,
   currentBudget: number,
@@ -801,270 +860,282 @@ function PortfolioPage() {
   }, 0)
 
   return (
-    <div
-      className={cn(
-        "container mx-auto flex max-w-5xl flex-col gap-4 py-4",
-        isNetworkSwitching && "pointer-events-none opacity-50",
-      )}
-    >
-      <div>
-        <h1 className="text-3xl font-bold">Portfolio builder</h1>
-        <p className="text-muted-foreground">
-          Select perp tokens, distribute percentages, and submit orders to
-          Hyperliquid.
-        </p>
-      </div>
+    <>
+      <div
+        className={cn(
+          "container mx-auto flex max-w-5xl flex-col gap-4 py-4 pl-28",
+          isNetworkSwitching && "pointer-events-none opacity-50",
+        )}
+      >
+        <div>
+          <h1 className="text-3xl font-bold">Portfolio builder</h1>
+          <p className="text-muted-foreground">
+            Select perp tokens, distribute percentages, and submit orders to
+            Hyperliquid.
+          </p>
+        </div>
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[2fr_3fr] lg:items-stretch">
-        <Card className="flex min-h-0 flex-col gap-3 py-3">
-          <CardHeader className="flex-shrink-0">
-            <CardTitle>Token list</CardTitle>
-          </CardHeader>
-          <CardContent className="flex min-h-0 flex-1 flex-col space-y-3">
-            <input
-              type="text"
-              placeholder="Search by ticker"
-              value={searchTerm}
-              onChange={event => setSearchTerm(event.target.value)}
-              className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
-            />
-            {tickersError && (
-              <p className="text-sm text-rose-400">{tickersError.message}</p>
-            )}
-            <div className="min-h-0 flex-1 overflow-y-auto rounded-lg border border-border">
-              {isTickersLoading ? (
-                <div className="p-4 text-sm text-muted-foreground">
-                  Loading tickers...
-                </div>
-              ) : filteredTickers.length ? (
-                filteredTickers.map(symbol => {
-                  const alreadySelected = selectedTokens.some(
-                    token => token.symbol === symbol,
-                  )
-                  return (
-                    <button
-                      key={symbol}
-                      type="button"
-                      onClick={() => handleAddToken(symbol)}
-                      disabled={alreadySelected}
-                      className={cn(
-                        "flex w-full items-center justify-between border-b border-border/60 px-4 py-2 text-left text-sm hover:bg-muted/40",
-                        alreadySelected && "cursor-not-allowed opacity-50",
-                      )}
-                    >
-                      {symbol}
-                      {alreadySelected && (
-                        <span className="text-xs text-muted-foreground">
-                          added
-                        </span>
-                      )}
-                    </button>
-                  )
-                })
-              ) : (
-                <div className="p-4 text-sm text-muted-foreground">
-                  Nothing found
-                </div>
-              )}
-            </div>
-          </CardContent>
-        </Card>
-
-        <div className="flex min-h-0 flex-col space-y-4">
-          <Card className="gap-3 py-3">
-            <CardHeader>
-              <CardTitle>Total budget</CardTitle>
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-[2fr_3fr] lg:items-stretch">
+          <Card className="flex min-h-0 flex-col gap-3 py-3">
+            <CardHeader className="flex-shrink-0">
+              <CardTitle>Token list</CardTitle>
             </CardHeader>
-            <CardContent className="space-y-3">
-              {balanceError && (
-                <p className="text-sm text-rose-400">{balanceError.message}</p>
+            <CardContent className="flex min-h-0 flex-1 flex-col space-y-3">
+              <input
+                type="text"
+                placeholder="Search by ticker"
+                value={searchTerm}
+                onChange={event => setSearchTerm(event.target.value)}
+                className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+              />
+              {tickersError && (
+                <p className="text-sm text-rose-400">{tickersError.message}</p>
               )}
-              <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
-                <span>
-                  Perp account balance:{" "}
-                  {isBalanceLoading
-                    ? "loading..."
-                    : `${
-                        typeof balanceData?.perp_usdc_balance === "number"
-                          ? balanceData.perp_usdc_balance.toFixed(2)
-                          : "0.00"
-                      } USDC`}
-                </span>
-                {typeof balanceData?.perp_usdc_balance === "number" &&
-                  budget > balanceData.perp_usdc_balance && (
-                    <span className="text-rose-400">
-                      Exceeds available balance
-                    </span>
-                  )}
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="flex-1">
-                  <input
-                    type="number"
-                    min={MIN_USD}
-                    step={10}
-                    value={budgetInput}
-                    onChange={event =>
-                      handleBudgetInputChange(event.target.value)
-                    }
-                    onBlur={handleBudgetInputBlur}
-                    className={cn(
-                      "w-full rounded-md border border-border bg-background px-3 py-2 text-sm",
-                      budgetError && "border-rose-500",
-                    )}
-                  />
-                  {budgetError && (
-                    <p className="mt-1 text-xs text-rose-400">{budgetError}</p>
-                  )}
-                  {insufficientBudgetForTokens && (
-                    <p className="mt-1 text-xs text-rose-400">
-                      Delete some tokens or make bigger budget (need at least $
-                      {requiredBudgetForTokens}).
-                    </p>
-                  )}
-                </div>
-                <span className="text-sm text-muted-foreground">USDC</span>
-              </div>
-              <div className="text-sm text-muted-foreground">
-                Allocated: {totalPercent.toFixed(2)}% — free:{" "}
-                {remainingPercent.toFixed(2)}%
+              <div className="min-h-0 flex-1 overflow-y-auto rounded-lg border border-border">
+                {isTickersLoading ? (
+                  <div className="p-4 text-sm text-muted-foreground">
+                    Loading tickers...
+                  </div>
+                ) : filteredTickers.length ? (
+                  filteredTickers.map(symbol => {
+                    const alreadySelected = selectedTokens.some(
+                      token => token.symbol === symbol,
+                    )
+                    return (
+                      <button
+                        key={symbol}
+                        type="button"
+                        onClick={() => handleAddToken(symbol)}
+                        disabled={alreadySelected}
+                        className={cn(
+                          "flex w-full items-center justify-between border-b border-border/60 px-4 py-2 text-left text-sm hover:bg-muted/40",
+                          alreadySelected && "cursor-not-allowed opacity-50",
+                        )}
+                      >
+                        {symbol}
+                        {alreadySelected && (
+                          <span className="text-xs text-muted-foreground">
+                            added
+                          </span>
+                        )}
+                      </button>
+                    )
+                  })
+                ) : (
+                  <div className="p-4 text-sm text-muted-foreground">
+                    Nothing found
+                  </div>
+                )}
               </div>
             </CardContent>
           </Card>
 
-          {selectedTokens.length === 0 ? (
+          <div className="flex min-h-0 flex-col space-y-4">
             <Card className="gap-3 py-3">
-              <CardContent className="py-6 text-center text-sm text-muted-foreground">
-                Add tokens from the list on the left to configure allocations.
-              </CardContent>
-            </Card>
-          ) : (
-            <>
-              <Card className="gap-3 py-3">
-                <CardHeader>
-                  <CardTitle>Allocation block</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-muted-foreground">
-                    <span>Total allocated</span>
-                    <span>
-                      {totalPercent.toFixed(2)}% · ${displayBudget.toFixed(2)}
-                    </span>
-                  </div>
-                  <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-muted-foreground">
-                    <span>Net long/short</span>
-                    <span>
-                      {netExposure === 0
-                        ? "$0.00"
-                        : `${netExposure > 0 ? "Long" : "Short"} $${Math.abs(
-                            netExposure,
-                          ).toFixed(2)}`}
-                    </span>
-                  </div>
-                  <div className="flex h-12 overflow-hidden rounded-lg border border-border text-xs font-medium text-background">
-                    {selectedTokens.map(token => {
-                      const sideColor = getSideColor(token.side)
-                      return (
-                        <div
-                          key={token.symbol}
-                          className="flex items-center justify-center px-2 text-center"
-                          style={{
-                            flexGrow: Math.max(token.percentage, 0.1),
-                            flexBasis: 0,
-                            backgroundColor: sideColor,
-                          }}
-                        >
-                          {token.symbol} · {token.percentage.toFixed(1)}%
-                        </div>
-                      )
-                    })}
-                    {remainingPercent > 0 && (
-                      <div
-                        className="flex items-center justify-center bg-muted px-2 text-center text-foreground"
-                        style={{
-                          flexGrow: remainingPercent,
-                          flexBasis: 0,
-                        }}
-                      >
-                        Free {remainingPercent.toFixed(1)}%
-                      </div>
+              <CardHeader>
+                <CardTitle>Total budget</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {balanceError && (
+                  <p className="text-sm text-rose-400">
+                    {balanceError.message}
+                  </p>
+                )}
+                <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
+                  <span>
+                    Perp account balance:{" "}
+                    {isBalanceLoading
+                      ? "loading..."
+                      : `${
+                          typeof balanceData?.perp_usdc_balance === "number"
+                            ? balanceData.perp_usdc_balance.toFixed(2)
+                            : "0.00"
+                        } USDC`}
+                  </span>
+                  {typeof balanceData?.perp_usdc_balance === "number" &&
+                    budget > balanceData.perp_usdc_balance && (
+                      <span className="text-rose-400">
+                        Exceeds available balance
+                      </span>
+                    )}
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="flex-1">
+                    <input
+                      type="number"
+                      min={MIN_USD}
+                      step={10}
+                      value={budgetInput}
+                      onChange={event =>
+                        handleBudgetInputChange(event.target.value)
+                      }
+                      onBlur={handleBudgetInputBlur}
+                      className={cn(
+                        "w-full rounded-md border border-border bg-background px-3 py-2 text-sm",
+                        budgetError && "border-rose-500",
+                      )}
+                    />
+                    {budgetError && (
+                      <p className="mt-1 text-xs text-rose-400">
+                        {budgetError}
+                      </p>
+                    )}
+                    {insufficientBudgetForTokens && (
+                      <p className="mt-1 text-xs text-rose-400">
+                        Delete some tokens or make bigger budget (need at least
+                        ${requiredBudgetForTokens}).
+                      </p>
                     )}
                   </div>
-                  <div className="space-y-1 text-xs text-muted-foreground">
-                    {selectedTokens.map(token => {
-                      const sideColor = getSideColor(token.side)
-                      const isLong = token.side === "buy"
-                      const tokenUsdValue = getTokenUsdAllocation(
-                        token,
-                        budgetForUi,
-                      )
-                      const percentDisplay =
-                        budgetForUi > 0
-                          ? (tokenUsdValue / budgetForUi) * 100
-                          : token.percentage
-                      return (
-                        <div
-                          key={`${token.symbol}-summary`}
-                          className="flex items-center justify-between"
-                        >
-                          <div className="flex items-center gap-2">
-                            <div
-                              className="h-2 w-2 rounded-full"
-                              style={{ backgroundColor: sideColor }}
-                            />
-                            <span className="font-medium text-foreground">
-                              {token.symbol}
-                            </span>
-                            <span
-                              className={cn(
-                                "text-xs px-1.5 py-0.5 rounded font-medium",
-                                isLong
-                                  ? "bg-green-500/20 text-green-600 dark:text-green-400"
-                                  : "bg-red-500/20 text-red-600 dark:text-red-400",
-                              )}
-                            >
-                              {isLong ? "LONG" : "SHORT"}
-                            </span>
-                          </div>
-                          <span>
-                            {percentDisplay.toFixed(2)}% · $
-                            {tokenUsdValue.toFixed(2)}
-                          </span>
-                        </div>
-                      )
-                    })}
-                  </div>
-                </CardContent>
-              </Card>
-              <div className="space-y-4">
-                {selectedTokens.map(allocationCard)}
-              </div>
-            </>
-          )}
-          {blockingReasons.length > 0 && (
-            <Card className="gap-3 py-3">
-              <CardContent className="space-y-2 text-sm text-rose-400">
-                {blockingReasons.map(reason => (
-                  <p key={reason}>{reason}</p>
-                ))}
+                  <span className="text-sm text-muted-foreground">USDC</span>
+                </div>
+                <div className="text-sm text-muted-foreground">
+                  Allocated: {totalPercent.toFixed(2)}% — free:{" "}
+                  {remainingPercent.toFixed(2)}%
+                </div>
               </CardContent>
             </Card>
-          )}
-        </div>
-      </div>
 
-      <div className="sticky bottom-0 bg-background/80 py-3 backdrop-blur">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-3">
-          <div className="text-sm text-muted-foreground">
-            Each token must receive at least ${MIN_USD}. Remove extra positions
-            if you run out of budget.
+            {selectedTokens.length === 0 ? (
+              <Card className="gap-3 py-3">
+                <CardContent className="py-6 text-center text-sm text-muted-foreground">
+                  Add tokens from the list on the left to configure allocations.
+                </CardContent>
+              </Card>
+            ) : (
+              <>
+                <Card className="gap-3 py-3">
+                  <CardHeader>
+                    <CardTitle>Allocation block</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-muted-foreground">
+                      <span>Total allocated</span>
+                      <span>
+                        {totalPercent.toFixed(2)}% · ${displayBudget.toFixed(2)}
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-muted-foreground">
+                      <span>Net long/short</span>
+                      <span>
+                        {netExposure === 0
+                          ? "$0.00"
+                          : `${netExposure > 0 ? "Long" : "Short"} $${Math.abs(
+                              netExposure,
+                            ).toFixed(2)}`}
+                      </span>
+                    </div>
+                    <div className="flex h-12 overflow-hidden rounded-lg border border-border text-xs font-medium text-background">
+                      {selectedTokens.map(token => {
+                        const sideColor = getSideColor(token.side)
+                        return (
+                          <div
+                            key={token.symbol}
+                            className="flex items-center justify-center px-2 text-center"
+                            style={{
+                              flexGrow: Math.max(token.percentage, 0.1),
+                              flexBasis: 0,
+                              backgroundColor: sideColor,
+                            }}
+                          >
+                            {token.symbol} · {token.percentage.toFixed(1)}%
+                          </div>
+                        )
+                      })}
+                      {remainingPercent > 0 && (
+                        <div
+                          className="flex items-center justify-center bg-muted px-2 text-center text-foreground"
+                          style={{
+                            flexGrow: remainingPercent,
+                            flexBasis: 0,
+                          }}
+                        >
+                          Free {remainingPercent.toFixed(1)}%
+                        </div>
+                      )}
+                    </div>
+                    <div className="space-y-1 text-xs text-muted-foreground">
+                      {selectedTokens.map(token => {
+                        const sideColor = getSideColor(token.side)
+                        const isLong = token.side === "buy"
+                        const tokenUsdValue = getTokenUsdAllocation(
+                          token,
+                          budgetForUi,
+                        )
+                        const percentDisplay =
+                          budgetForUi > 0
+                            ? (tokenUsdValue / budgetForUi) * 100
+                            : token.percentage
+                        return (
+                          <div
+                            key={`${token.symbol}-summary`}
+                            className="flex items-center justify-between"
+                          >
+                            <div className="flex items-center gap-2">
+                              <div
+                                className="h-2 w-2 rounded-full"
+                                style={{ backgroundColor: sideColor }}
+                              />
+                              <span className="font-medium text-foreground">
+                                {token.symbol}
+                              </span>
+                              <span
+                                className={cn(
+                                  "text-xs px-1.5 py-0.5 rounded font-medium",
+                                  isLong
+                                    ? "bg-green-500/20 text-green-600 dark:text-green-400"
+                                    : "bg-red-500/20 text-red-600 dark:text-red-400",
+                                )}
+                              >
+                                {isLong ? "LONG" : "SHORT"}
+                              </span>
+                            </div>
+                            <span>
+                              {percentDisplay.toFixed(2)}% · $
+                              {tokenUsdValue.toFixed(2)}
+                            </span>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </CardContent>
+                </Card>
+                <div className="space-y-4">
+                  {selectedTokens.map(allocationCard)}
+                </div>
+              </>
+            )}
+            {blockingReasons.length > 0 && (
+              <Card className="gap-3 py-3">
+                <CardContent className="space-y-2 text-sm text-rose-400">
+                  {blockingReasons.map(reason => (
+                    <p key={reason}>{reason}</p>
+                  ))}
+                </CardContent>
+              </Card>
+            )}
           </div>
-          <Button onClick={handleOpenPositions} disabled={disableSubmit}>
-            {rebalancePositionsMutation.isPending ? "Sending..." : "Rebalance"}
-          </Button>
+        </div>
+
+        <div className="sticky bottom-0 bg-background/80 py-3 backdrop-blur">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-3">
+            <div className="text-sm text-muted-foreground">
+              Each token must receive at least ${MIN_USD}. Remove extra
+              positions if you run out of budget.
+            </div>
+            <Button onClick={handleOpenPositions} disabled={disableSubmit}>
+              {rebalancePositionsMutation.isPending
+                ? "Sending..."
+                : "Rebalance"}
+            </Button>
+          </div>
         </div>
       </div>
-    </div>
+      <AllocationBar
+        tokens={selectedTokens}
+        remainingPercent={remainingPercent}
+      />
+    </>
   )
 }
 

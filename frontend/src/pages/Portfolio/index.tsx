@@ -1017,13 +1017,7 @@ function PortfolioPage() {
                     </div>
                     <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-muted-foreground">
                       <span>Net long/short</span>
-                      <span>
-                        {netExposure === 0
-                          ? "$0.00"
-                          : `${netExposure > 0 ? "Long" : "Short"} $${Math.abs(
-                              netExposure,
-                            ).toFixed(2)}`}
-                      </span>
+                      <span>${netExposure.toFixed(2)}</span>
                     </div>
                     <div className="flex h-12 overflow-hidden rounded-lg border border-border text-xs font-medium text-background">
                       {selectedTokens.map(token => {

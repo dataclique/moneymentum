@@ -345,7 +345,7 @@ function PortfolioPage() {
   const tickers = tickersData?.data ?? []
   const filteredTickers = useMemo(() => {
     if (!searchTerm.trim()) {
-      return tickers.slice(0, 50)
+      return tickers
     }
     return tickers.filter(ticker =>
       ticker.toLowerCase().includes(searchTerm.toLowerCase()),
@@ -592,7 +592,6 @@ function PortfolioPage() {
   }, [budget, isBudgetInitialized, saveBudgetPreferenceMutation])
 
   const handleBudgetInputChange = (value: string) => {
-    console.log("handleBudgetInputChange", value)
     setBudgetInput(value)
     setBudgetError(null)
 
@@ -922,7 +921,7 @@ function PortfolioPage() {
                 <DialogTrigger asChild>
                   <Button>Add New Token</Button>
                 </DialogTrigger>
-                <DialogContent className="flex h-[70vh] max-w-md flex-col">
+                <DialogContent className="flex h-[90vh] max-w-2xl flex-col">
                   <DialogHeader>
                     <DialogTitle>Select a Token</DialogTitle>
                     <DialogDescription>

@@ -12,6 +12,7 @@ if str(parent_dir) not in sys.path:
     sys.path.insert(0, str(parent_dir))
 
 import ccxt  # type: ignore[import] # noqa: E402
+from ccxt.base.errors import ExchangeError  # type: ignore[import] # noqa: E402
 
 from hyperliquid.settings import UserSettings  # noqa: E402
 
@@ -88,24 +89,29 @@ class Trader:
         self.exchange.options["defaultSlippage"] = 0.05  # 5% slippage as number
         self.exchange.load_markets()
 
-    def _set_leverage(self, symbol: str, leverage: int) -> tuple[str, str | None]:
-        """Set leverage for a symbol."""
-        try:
-            self.exchange.set_leverage(leverage, symbol)
-            logger.info("Set leverage for %s to %sx", symbol, leverage)
-        except Exception as exc:  # noqa: BLE001
-            logger.exception("Failed to set leverage for %s", symbol)
-            return "failed", str(exc)
-        else:
-            return "success", None
+    def _set_leverage(self, symbol: str, leverage: int) -> None:
+        """Set leverage for a symbol. Raises ExchangeError on failure."""
+        self.exchange.set_leverage(leverage, symbol)
+        logger.info("Set leverage for %s to %sx", symbol, leverage)
 
     def _fetch_symbol_prices(self, symbols: set[str]) -> dict[str, float]:
+        if not symbols:
+            return {}
         prices: dict[str, float] = {}
+        # Make a single API call to fetch all tickers
+        all_tickers = self.exchange.fetch_tickers(list(symbols))
+
         for symbol in symbols:
-            ticker = self.exchange.fetch_ticker(symbol)
+            ticker = all_tickers.get(symbol)
+            if ticker is None or ticker.get("last") is None:
+                msg = (
+                    f"Could not fetch price for {symbol}. The asset may be untradable or delisted."
+                )
+                raise ValueError(msg)
+
             last_price = float(ticker["last"])
             if last_price <= 0:
-                msg = f"Invalid price for {symbol}"
+                msg = f"Invalid price for {symbol}: {last_price}"
                 raise ValueError(msg)
             prices[symbol] = last_price
         return prices
@@ -194,18 +200,35 @@ class Trader:
     def get_current_positions(self) -> list[dict[str, Any]]:
         """Fetch current open positions from Hyperliquid."""
         positions = self.exchange.fetch_positions()
-        return [
-            {
-                "symbol": pos["symbol"],
-                "side": "buy" if pos["side"] == "long" else "sell",
-                "notional": float(pos["notional"]),
-                "entryPrice": float(pos["entryPrice"]) if pos["entryPrice"] else 0.0,
-                "unrealizedPnl": float(pos["unrealizedPnl"]) if pos.get("unrealizedPnl") else 0.0,
-                "leverage": int(pos["leverage"]) if pos.get("leverage") else 1,
-            }
-            for pos in positions
-            if float(pos.get("notional", 0)) > 0
-        ]
+        processed = []
+        for pos in positions:
+            try:
+                notional_raw = pos.get("notional")
+                if notional_raw is None or float(notional_raw) <= 0:
+                    continue
+
+                entry_price_raw = pos.get("entryPrice")
+                pnl_raw = pos.get("unrealizedPnl")
+                leverage_raw = pos.get("leverage")
+
+                processed.append(
+                    {
+                        "symbol": pos["symbol"],
+                        "side": "buy" if pos["side"] == "long" else "sell",
+                        "notional": float(notional_raw),
+                        "entryPrice": float(entry_price_raw)
+                        if entry_price_raw is not None
+                        else 0.0,
+                        "unrealizedPnl": float(pnl_raw) if pnl_raw is not None else 0.0,
+                        "leverage": int(leverage_raw) if leverage_raw is not None else 1,
+                    }
+                )
+            except (TypeError, ValueError, KeyError) as e:
+                logger.warning(
+                    "Could not parse position from exchange: %s. Error: %s. Skipping.", pos, e
+                )
+                continue
+        return processed
 
     def open_positions(self, positions: list[Position], budget: float) -> list[dict[str, Any]]:
         """Open positions based on the given positions and budget."""
@@ -292,25 +315,61 @@ class Trader:
             msg = "Budget must be positive"
             raise ValueError(msg)
 
-        for position in positions:
-            self._set_leverage(position.symbol, position.leverage)
+        summaries = self._initialize_summaries(positions, {})
+        results: list[dict[str, Any]] = []
 
-        target_notional = self._build_target_notional(positions, budget)
+        # First, set leverage for all positions and capture any failures
+        for position in positions:
+            try:
+                self._set_leverage(position.symbol, position.leverage)
+            except ExchangeError as exc:  # noqa: PERF203
+                logger.exception("Failed to set leverage for %s", position.symbol)
+                # Hyperliquid nests the real error message, so we try to extract it
+                original_error = getattr(exc, "args", [""])[0]
+                message = str(exc)
+                if "response" in original_error:
+                    try:
+                        # The error message is a stringified dict
+                        import json
+
+                        error_details = json.loads(original_error.replace("hyperliquid ", ""))
+                        message = error_details.get("response", str(exc))
+                    except (json.JSONDecodeError, TypeError):
+                        pass  # Fallback to default message
+
+                summary = summaries.setdefault(
+                    position.symbol,
+                    {
+                        "symbol": position.symbol,
+                        "side": position.side,
+                        "percentage": position.percentage,
+                    },
+                )
+                summary["status"] = "failed"
+                summary["message"] = message
+                results.append(summary)
+
+        # Filter out positions that already failed the leverage check
+        valid_positions = [
+            p for p in positions if summaries.get(p.symbol, {}).get("status") != "failed"
+        ]
+
+        target_notional = self._build_target_notional(valid_positions, budget)
         current_notional = self._fetch_current_notional()
         symbols = set(current_notional.keys()) | set(target_notional.keys())
+
         if not symbols:
-            return []
+            return results
 
         prices = self._fetch_symbol_prices(symbols)
-        summaries = self._initialize_summaries(positions, target_notional)
+        summaries = self._initialize_summaries(valid_positions, target_notional)
 
-        results: list[dict[str, Any]] = []
-        for symbol in symbols:
+        for symbol, summary in summaries.items():
             price = prices.get(symbol)
             if price is None:
                 logger.error("Missing price for %s, skipping rebalance", symbol)
                 continue
-            summary = summaries.get(symbol)
+
             result = self._rebalance_symbol(
                 symbol=symbol,
                 price=price,
@@ -318,7 +377,8 @@ class Trader:
                 current_value=current_notional.get(symbol, 0.0),
                 summary_entry=summary,
             )
-            if result is not None:
+            # Avoid duplicating results for leverage failures
+            if result is not None and result not in results:
                 results.append(result)
         return results
 
@@ -345,18 +405,20 @@ class Trader:
         self,
         positions: list[Position],
         target_notional: dict[str, float],
+        summaries: dict[str, Any] | None = None,
     ) -> dict[str, dict[str, Any]]:
+        summaries = summaries if summaries is not None else {}
         percentage_lookup = {pos.symbol: pos.percentage for pos in positions}
-        return {
-            symbol: {
-                "symbol": symbol,
-                "side": "buy" if target_notional[symbol] >= 0 else "sell",
-                "percentage": percentage_lookup.get(symbol, 0.0),
-                "status": "filled",
-                "message": None,
-            }
-            for symbol in target_notional
-        }
+        for symbol, notional_value in target_notional.items():
+            if symbol not in summaries:
+                summaries[symbol] = {
+                    "symbol": symbol,
+                    "side": "buy" if notional_value >= 0 else "sell",
+                    "percentage": percentage_lookup.get(symbol, 0.0),
+                    "status": "filled",
+                    "message": None,
+                }
+        return summaries
 
     def _rebalance_symbol(
         self,

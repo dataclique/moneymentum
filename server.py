@@ -346,16 +346,7 @@ async def rebalance_hyperliquid_positions(payload: OpenPositionsPayload) -> dict
             for item in payload.positions
         ]
         order_results = trader.rebalance_positions(parsed_positions, payload.budget)
-        response = [
-            OrderStatusResponse(
-                symbol=result.get("symbol", ""),
-                side=result.get("side", "buy"),
-                percentage=float(result.get("percentage", 0.0)),
-                status=result.get("status", "working"),
-                message=result.get("message"),
-            )
-            for result in order_results
-        ]
+        response = [OrderStatusResponse(**result) for result in order_results]
         return {"orders": [resp.model_dump() for resp in response]}
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

@@ -26,12 +26,6 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog"
 import { Slider } from "@/components/ui/slider"
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip"
 
 type AllocationStatus = OrderStatus["status"] | "idle"
 
@@ -657,6 +651,7 @@ function PortfolioPage() {
       },
       {
         onSuccess: async data => {
+          console.log("Rebalance successful. Server response:", data)
           setSelectedTokens(prev =>
             prev.map(token => {
               const status = data.orders.find(
@@ -673,7 +668,12 @@ function PortfolioPage() {
           const allFilled = data.orders.every(
             order => order.status === "filled",
           )
-          if (allFilled) {
+          const hasFailures = data.orders.some(
+            order => order.status === "failed",
+          )
+
+          // Refresh data if all orders were filled AND there were no failures
+          if (allFilled && !hasFailures) {
             setIsNetworkSwitching(true)
             try {
               await refreshAllData(queryClient)
@@ -685,12 +685,37 @@ function PortfolioPage() {
           }
         },
         onError: error => {
+          console.error("Error in rebalancePositionsMutation:", error)
+
+          // Attempt to find a specific token symbol in the error message
+          // This regex is designed to find patterns like "BTC/USDC:USDC"
+          const symbolMatch = error.message.match(/([A-Z0-9-]+\/[A-Z]+:[A-Z]+)/)
+          const failedSymbol = symbolMatch ? symbolMatch[0] : null
+
           setSelectedTokens(prev =>
-            prev.map(token => ({
-              ...token,
-              status: "failed",
-              message: error.message,
-            })),
+            prev.map(token => {
+              // If a specific token was identified in the error message
+              if (failedSymbol) {
+                if (token.symbol === failedSymbol) {
+                  // Mark this specific token as failed and add the error message
+                  return {
+                    ...token,
+                    status: "failed",
+                    message: error.message,
+                  }
+                }
+                // Reset all other tokens back to idle status
+                return { ...token, status: "idle", message: null }
+              }
+
+              // If the error is generic and no specific token could be found,
+              // mark all tokens as failed.
+              return {
+                ...token,
+                status: "failed",
+                message: error.message,
+              }
+            }),
           )
         },
       },
@@ -723,8 +748,9 @@ function PortfolioPage() {
     }, 0)
     const maxUsdForToken = Math.max(0, budgetForUi - otherTokensAllocatedUsd)
 
-    const cardContent = (
+    return (
       <Card
+        key={token.symbol}
         className={cn(
           "overflow-hidden",
           token.status === "idle" && "border-l-4",
@@ -846,24 +872,15 @@ function PortfolioPage() {
               </Button>
             </div>
           </div>
+
+          {token.status === "failed" && token.message && (
+            <div className="border-t border-border bg-rose-500/10 px-3 py-2 text-xs text-rose-500">
+              <p>{token.message}</p>
+            </div>
+          )}
         </div>
       </Card>
     )
-
-    if (token.status === "failed" && token.message) {
-      return (
-        <TooltipProvider>
-          <Tooltip>
-            <TooltipTrigger asChild>{cardContent}</TooltipTrigger>
-            <TooltipContent>
-              <p>{token.message}</p>
-            </TooltipContent>
-          </Tooltip>
-        </TooltipProvider>
-      )
-    }
-
-    return cardContent
   }
 
   const disableSubmit =

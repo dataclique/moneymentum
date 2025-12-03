@@ -747,7 +747,7 @@ function PortfolioPage() {
         >
           <div className="flex items-center gap-2 px-3">
             {/* Coin Name and Leverage */}
-            <div className="flex w-32 items-center">
+            <div className="flex w-32 items-center gap-2">
               <span className="font-semibold" style={{ color: sideColor }}>
                 {token.symbol.split("/")[0]}
               </span>
@@ -756,7 +756,7 @@ function PortfolioPage() {
                   <Button
                     variant="ghost"
                     size="sm"
-                    className="h-auto px-2 py-1 text-xs"
+                    className="h-auto px-2 py-1 text-xs border border-border rounded-md"
                     style={{ color: sideColor }}
                   >
                     {token.leverage}x

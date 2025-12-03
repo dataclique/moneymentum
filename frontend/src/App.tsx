@@ -146,13 +146,11 @@ function App() {
         // You can add other global styles here if needed
       )}
     >
-      <header className="border-b border-border px-4 py-2">
-        <div className="container mx-auto flex items-center justify-between">
-          <h1 className="text-lg font-semibold">Portfolio builder</h1>
-          <div className="flex items-center gap-4">
-            <WalletHeader />
-            <ModeToggle />
-          </div>
+      <header className="border-b border-border px-4 py-2 pl-28 pr-28 flex items-center justify-between w-full">
+        <h1 className="text-lg font-semibold">Moneymentum</h1>
+        <div className="flex items-center gap-4">
+          <WalletHeader />
+          <ModeToggle />
         </div>
         {isNetworkSwitching && (
           <div className="container mx-auto mt-2 text-center text-sm text-muted-foreground">

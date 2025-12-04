@@ -676,7 +676,7 @@ function PortfolioPage() {
       return
     }
     if (maxBudget > 0 && numValue > maxBudget) {
-      setBudgetError("Budget exceeds maximum (5x balance)")
+      setBudgetError(`Max budget: $${maxBudget.toFixed(2)}`)
       // Do not set budget, but keep the input value for user to edit
       return
     }
@@ -697,8 +697,8 @@ function PortfolioPage() {
         setBudgetError("Budget must be a positive number")
         setBudgetInput(budget.toString())
       } else if (maxBudget > 0 && numValue > maxBudget) {
-        setBudgetError("Budget exceeds maximum (5x balance)")
-        setBudgetInput(budget.toString())
+        setBudgetError(`Max budget: $${maxBudget.toFixed(2)}`)
+        // Do not reset input. Let user see their value.
       } else if (numValue < MIN_USD && selectedTokens.length > 0) {
         setBudgetError(`Budget must be at least $${MIN_USD}`)
       } else {
@@ -1051,7 +1051,7 @@ function PortfolioPage() {
                   <input
                     type="number"
                     min={MIN_USD}
-                    step={10}
+                    max={maxBudget}
                     value={budgetInput}
                     onChange={event =>
                       handleBudgetInputChange(event.target.value)
@@ -1064,12 +1064,9 @@ function PortfolioPage() {
                   />
                 </div>
                 <span className="text-sm text-muted-foreground">USDC</span>
-                {typeof balanceData?.perp_usdc_balance === "number" &&
-                  budget > maxBudget && (
-                    <span className="text-xs text-rose-400">
-                      Exceeds maximum budget (5x balance)
-                    </span>
-                  )}
+                {budgetError && (
+                  <span className="text-xs text-rose-400">{budgetError}</span>
+                )}
               </div>
               <Dialog>
                 <DialogTrigger asChild>

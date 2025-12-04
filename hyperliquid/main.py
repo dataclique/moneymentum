@@ -233,88 +233,47 @@ class Trader:
         return processed
 
     def open_positions(self, positions: list[Position], budget: float) -> list[dict[str, Any]]:
-        """Open positions based on the given positions and budget."""
-        if not positions:
-            return []
+        """Open new positions based on the provided allocation."""
+        results: list[dict[str, Any]] = []
+        if budget <= 0:
+            msg = "Budget must be positive"
+            raise ValueError(msg)
 
-        symbols = [pos.symbol for pos in positions]
-        logger.info("Fetching tickers for %d symbols...", len(symbols))
+        symbols = [p.symbol for p in positions]
+        prices = self._fetch_symbol_prices(symbols)
 
-        tickers: dict[str, float] = {}
-        for symbol in symbols:
-            # TODO: we can do fetch_tickers(symbols) instead
-            ticker = self.exchange.fetch_ticker(symbol)
-            tickers[symbol] = float(ticker["last"])
-            logger.debug("  %s: %s", symbol, tickers[symbol])
-
-        order_results: list[dict[str, Any]] = []
-        logger.info("Creating %d orders...", len(positions))
         for position in positions:
-            # Set leverage before opening position
-            self._set_leverage(position.symbol, position.leverage)
-
-            current_price = tickers[position.symbol]
-            amount = position.percentage * budget / current_price
-
-            min_order_value = 10.0
-            if position.percentage * budget < min_order_value:
-                msg = (
-                    f"Skipped {position.symbol}: allocation "
-                    f"{position.percentage * budget:.2f} < ${min_order_value}"
-                )
-                logger.warning(msg)
-                order_results.append(
+            price = prices.get(position.symbol)
+            if price is None:
+                results.append(
                     {
                         "symbol": position.symbol,
-                        "side": position.side,
-                        "percentage": position.percentage,
                         "status": "failed",
-                        "message": msg,
-                    }
+                        "message": f"Could not fetch price for {position.symbol}",
+                    },
                 )
                 continue
 
-            logger.info(
-                "  %s %s of %s at %s", position.side, amount, position.symbol, current_price
+            notional_delta = budget * position.percentage
+            summary = {
+                "symbol": position.symbol,
+                "side": position.side,
+                "percentage": position.percentage,
+            }
+            order_result = self._place_order(
+                symbol=position.symbol,
+                price=price,
+                notional_delta=notional_delta,
+                summary_entry=summary,
             )
+            if order_result:
+                results.append(order_result)
 
-            try:
-                response = self.exchange.create_order(
-                    position.symbol,
-                    "market",
-                    position.side,
-                    amount,
-                    price=current_price,  # Required for Hyperliquid slippage calculation
-                )
-                status = self._normalize_order_status(response)
-                order_results.append(
-                    {
-                        "symbol": position.symbol,
-                        "side": position.side,
-                        "percentage": position.percentage,
-                        "status": status,
-                        "message": None,
-                    }
-                )
-            except Exception as exc:  # noqa: BLE001
-                error_msg = f"Order for {position.symbol} failed: {exc}"
-                logger.exception(error_msg)
-                order_results.append(
-                    {
-                        "symbol": position.symbol,
-                        "side": position.side,
-                        "percentage": position.percentage,
-                        "status": "failed",
-                        "message": error_msg,
-                    }
-                )
-
-        return order_results
+        return results
 
     def _close_position(self, original_position: Position) -> dict[str, Any]:
         """Close a position for a symbol using a reduce-only market order."""
         symbol = original_position.symbol
-
         # Fetch price before entering the try block to avoid TRY301
         ticker = self.exchange.fetch_ticker(symbol)
         current_price = ticker.get("last")
@@ -424,22 +383,20 @@ class Trader:
             raise ValueError(msg)
 
         results: list[dict[str, Any]] = []
-        # All positions that are not explicitly 'untouched' will be processed.
-        # This includes 'deleted' positions, which will be treated as a rebalance to 0.
-        positions_to_rebalance = [p for p in positions if p.status != "untouched"]
 
-        # Handle deletions
+        # 1. Process deletions first
         for p in positions:
             if p.status == "deleted":
                 close_result = self._close_position(p)
                 results.append(close_result)
 
-        positions_to_rebalance = [p for p in positions_to_rebalance if p.status != "deleted"]
+        # 2. Filter for positions that need actual rebalancing
+        positions_to_rebalance = [p for p in positions if p.status not in ["untouched", "deleted"]]
 
         if not positions_to_rebalance:
-            return results
+            return results  # Return if only deletions were processed
 
-        # Set leverages and handle any immediate failures
+        # 3. Set leverages for the subset of positions that need rebalancing
         leverage_failures, successful_positions = self._set_leverages(
             positions_to_rebalance,
         )
@@ -448,18 +405,19 @@ class Trader:
         if not successful_positions:
             return results
 
-        # Proceed with rebalancing for successful positions
+        # 4. Proceed with rebalancing logic ONLY for the successful subset
         target_notional = self._build_target_notional(successful_positions, budget)
-        current_notional = self._fetch_current_notional()
-        symbols = set(current_notional.keys()) | set(target_notional.keys())
+        all_current_notional = self._fetch_current_notional()
         summaries = self._initialize_summaries(successful_positions, target_notional)
 
-        if not symbols:
+        # The set of symbols to iterate over is ONLY from the successful positions
+        symbols_to_rebalance = {p.symbol for p in successful_positions}
+        if not symbols_to_rebalance:
             return results
 
-        prices = self._fetch_symbol_prices(list(symbols))
+        prices = self._fetch_symbol_prices(list(symbols_to_rebalance))
 
-        for symbol in symbols:
+        for symbol in symbols_to_rebalance:
             price = prices.get(symbol)
             if price is None:
                 error_msg = f"Could not fetch price for {symbol}"
@@ -468,13 +426,18 @@ class Trader:
                 continue
 
             summary = summaries.get(symbol)
-            self._rebalance_symbol(
+            current_value = all_current_notional.get(symbol, 0.0)
+            target_value = target_notional.get(symbol, 0.0)
+
+            result = self._rebalance_symbol(
                 symbol=symbol,
                 price=price,
-                target_value=target_notional.get(symbol, 0.0),
-                current_value=current_notional.get(symbol, 0.0),
+                target_value=target_value,
+                current_value=current_value,
                 summary_entry=summary,
             )
+            if result is not None:
+                results.append(result)
         return results
 
     def _build_target_notional(
@@ -517,18 +480,20 @@ class Trader:
 
     def _rebalance_symbol(
         self,
-        *,
         symbol: str,
         price: float,
         target_value: float,
         current_value: float,
         summary_entry: dict[str, Any] | None,
     ) -> dict[str, Any] | None:
-        """Place a market order to match the target notional value."""
+        """Calculate the delta and place an order for a single symbol."""
         notional_delta = target_value - current_value
-
-        if notional_delta == 0:
-            return summary_entry
+        if abs(notional_delta) < 1.0:  # Less than $1 change is negligible
+            if summary_entry:
+                summary_entry["status"] = "filled"
+                summary_entry["message"] = "No action taken: change is negligible."
+                return summary_entry
+            return None
 
         return self._place_order(
             symbol=symbol,
@@ -576,7 +541,12 @@ class Trader:
         )
 
         try:
-            self.exchange.create_market_order(symbol, side, coin_amount)
+            # Calculate slippage price to satisfy Hyperliquid's requirement for market orders
+            slippage = 0.05  # 5%
+            slippage_price = price * (1 + slippage) if side == "buy" else price * (1 - slippage)
+
+            # Use the more explicit create_order to include the slippage price
+            self.exchange.create_order(symbol, "market", side, coin_amount, slippage_price)
         except Exception as exc:  # noqa: BLE001
             logger.exception("Failed to place order for %s", symbol)
             if summary_entry:

@@ -200,6 +200,10 @@ function PortfolioPage() {
   const [budgetError, setBudgetError] = useState<string | null>(null)
   const [isBudgetInitialized, setIsBudgetInitialized] = useState(false)
   const [selectedTokens, setSelectedTokens] = useState<TokenAllocation[]>([])
+  // State to store the initial portfolio load, acting as our "source of truth"
+  const [initialPortfolio, setInitialPortfolio] = useState<TokenAllocation[]>(
+    [],
+  )
   const [positionsLoadedFromExchange, setPositionsLoadedFromExchange] =
     useState(false)
   const lastSufficientBudgetRef = useRef(0)
@@ -303,11 +307,14 @@ function PortfolioPage() {
         status: "untouched", // <-- New status for existing positions
         message: null,
         notional: pos.notional, // Store actual notional value
+        // Store the initial USD value as the source of truth for changes
+        lockedUsd: pos.notional,
       }),
     )
 
     if (loadedTokens.length > 0) {
       setSelectedTokens(loadedTokens)
+      setInitialPortfolio(loadedTokens) // <-- Store the initial state
       // Update budget to total spent (sum of position notional values)
       const totalSpent = positionsData.total_notional
       if (totalSpent > 0) {
@@ -400,6 +407,7 @@ function PortfolioPage() {
   const minPercentFloor = budgetForUi >= MIN_USD ? minPercentOfBudget : 0
   const hasBlockingBudgetIssue =
     budgetBelowMinimum || insufficientBudgetForTokens
+  const totalPercentExceeds100 = totalPercent > 100
   const leverageLimitsMap = useMemo(() => {
     const map: Record<string, number> = {}
     if (!leverageLimitsData?.data) {
@@ -420,6 +428,9 @@ function PortfolioPage() {
     blockingReasons.push(
       `Delete some tokens or make bigger budget (need at least $${requiredBudgetForTokens}).`,
     )
+  }
+  if (totalPercentExceeds100) {
+    blockingReasons.push("Total allocation cannot exceed 100%.")
   }
 
   // Combines logic for recalculating percentages and enforcing minimums to prevent re-render loops.
@@ -515,8 +526,19 @@ function PortfolioPage() {
   }
 
   const handleRemoveToken = (symbol: string) => {
-    setSelectedTokens(prev =>
-      prev.map(token => {
+    setSelectedTokens(prev => {
+      // Check if the token existed in the initial portfolio load.
+      const wasInitiallyInPortfolio = initialPortfolio.some(
+        initialToken => initialToken.symbol === symbol,
+      )
+
+      // If the token was not in the initial portfolio, it's a new token. Remove it directly.
+      if (!wasInitiallyInPortfolio) {
+        return prev.filter(token => token.symbol !== symbol)
+      }
+
+      // Otherwise, it's an existing position that needs to be closed. Mark it for deletion.
+      return prev.map(token => {
         if (token.symbol === symbol) {
           return {
             ...token,
@@ -527,8 +549,8 @@ function PortfolioPage() {
           }
         }
         return token
-      }),
-    )
+      })
+    })
   }
 
   const handleUndoRemoveToken = (symbol: string) => {
@@ -557,18 +579,12 @@ function PortfolioPage() {
         if (token.symbol !== symbol) {
           return token
         }
-        const totalWithoutCurrent = prev.reduce((sum, item) => {
-          if (item.symbol === symbol || item.status === "deleted") return sum
-          return sum + item.percentage
-        }, 0)
-        const maxForToken = Math.max(
-          0,
-          Math.min(100, 100 - totalWithoutCurrent),
-        )
-        let nextValue = Math.min(targetPercent, maxForToken)
 
-        nextValue = Math.max(nextValue, minPercentFloor)
+        // Cap the individual token's percentage between the floor and 100.
+        // Do not cap based on the sum of other tokens.
+        const nextValue = Math.max(minPercentFloor, targetPercent)
         const finalPercent = parseFloat(Math.min(nextValue, 100).toFixed(2))
+
         const overrides = getOverrides ? getOverrides(finalPercent) : {}
         const hasNotionalOverride = Object.prototype.hasOwnProperty.call(
           overrides,
@@ -580,7 +596,7 @@ function PortfolioPage() {
           ...overrides,
           percentage: finalPercent,
           notional: hasNotionalOverride ? overrides.notional : token.notional,
-          status: token.status === "untouched" ? "modified" : token.status,
+          // Status is now handled by a central useEffect
           message: null,
         }
       }),
@@ -620,15 +636,7 @@ function PortfolioPage() {
 
   const handleSideChange = (symbol: string, side: OrderSide) => {
     setSelectedTokens(prev =>
-      prev.map(token =>
-        token.symbol === symbol
-          ? {
-              ...token,
-              side,
-              status: token.status === "untouched" ? "modified" : token.status,
-            }
-          : token,
-      ),
+      prev.map(token => (token.symbol === symbol ? { ...token, side } : token)),
     )
   }
 
@@ -637,16 +645,56 @@ function PortfolioPage() {
     const newLeverage = Math.max(1, Math.min(leverage, maxLeverage))
     setSelectedTokens(prev =>
       prev.map(token =>
-        token.symbol === symbol
-          ? {
-              ...token,
-              leverage: newLeverage,
-              status: token.status === "untouched" ? "modified" : token.status,
-            }
-          : token,
+        token.symbol === symbol ? { ...token, leverage: newLeverage } : token,
       ),
     )
   }
+
+  // Effect to automatically update token statuses based on changes from initial state
+  useEffect(() => {
+    if (initialPortfolio.length === 0) {
+      return // Don't run if the initial portfolio hasn't loaded
+    }
+
+    setSelectedTokens(prevTokens => {
+      let hasChanged = false
+      const updatedTokens = prevTokens.map(currentToken => {
+        // Find the corresponding token in the initial state
+        const initialToken = initialPortfolio.find(
+          it => it.symbol === currentToken.symbol,
+        )
+
+        // Don't change status for new, deleted, or failed tokens in this effect
+        if (
+          !initialToken ||
+          currentToken.status === "deleted" ||
+          currentToken.status === "failed" ||
+          currentToken.status === "working"
+        ) {
+          return currentToken
+        }
+
+        // Check if any key properties have changed
+        const isModified =
+          Math.abs(
+            (currentToken.lockedUsd ?? 0) - (initialToken.lockedUsd ?? 0),
+          ) > 0.01 ||
+          currentToken.side !== initialToken.side ||
+          currentToken.leverage !== initialToken.leverage
+
+        const newStatus = isModified ? "modified" : "untouched"
+
+        if (currentToken.status !== newStatus) {
+          hasChanged = true
+          return { ...currentToken, status: newStatus }
+        }
+
+        return currentToken
+      })
+
+      return hasChanged ? updatedTokens : prevTokens
+    })
+  }, [selectedTokens, initialPortfolio])
 
   // Debounced budget save effect
   useEffect(() => {
@@ -720,6 +768,19 @@ function PortfolioPage() {
       return
     }
 
+    const payload = {
+      budget,
+      positions: selectedTokens.map(token => ({
+        symbol: token.symbol,
+        side: token.side,
+        percentage: token.percentage / 100,
+        leverage: token.leverage,
+        status: token.status,
+      })),
+    }
+
+    console.log("Sending rebalance payload:", payload)
+
     setSelectedTokens(prev =>
       prev.map(token => ({
         ...token,
@@ -728,98 +789,82 @@ function PortfolioPage() {
       })),
     )
 
-    rebalancePositionsMutation.mutate(
-      {
-        budget,
-        positions: selectedTokens.map(token => ({
-          symbol: token.symbol,
-          side: token.side,
-          percentage: token.percentage / 100,
-          leverage: token.leverage,
-          status: token.status,
-        })),
-      },
-      {
-        onSuccess: async data => {
-          console.log("Rebalance successful. Server response:", data)
+    rebalancePositionsMutation.mutate(payload, {
+      onSuccess: async data => {
+        console.log("Rebalance successful. Server response:", data)
 
-          const updatedTokens = selectedTokens
-            .map(token => {
-              const status = data.orders.find(
-                order => order.symbol === token.symbol,
-              )
-              if (!status) return token // Should not happen, but for safety
+        const updatedTokens = selectedTokens
+          .map(token => {
+            const status = data.orders.find(
+              order => order.symbol === token.symbol,
+            )
+            if (!status) return token // Should not happen, but for safety
 
-              // If token was pending deletion and rebalance was successful, filter it out
-              if (token.status === "deleted" && status.status === "filled") {
-                return null
-              }
-
-              return {
-                ...token,
-                status: status.status,
-                message: status.message ?? null,
-              }
-            })
-            .filter((t): t is TokenAllocation => t !== null)
-
-          setSelectedTokens(updatedTokens)
-
-          const allFilled = data.orders.every(
-            order => order.status === "filled",
-          )
-          const hasFailures = data.orders.some(
-            order => order.status === "failed",
-          )
-
-          // Refresh data if all orders were filled AND there were no failures
-          if (allFilled && !hasFailures) {
-            setIsNetworkSwitching(true)
-            try {
-              await refreshAllData(queryClient)
-            } catch (error) {
-              console.error("Failed to refresh after positions filled:", error)
-            } finally {
-              setIsNetworkSwitching(false)
+            // If token was pending deletion and rebalance was successful, filter it out
+            if (token.status === "deleted" && status.status === "filled") {
+              return null
             }
+
+            return {
+              ...token,
+              status: status.status,
+              message: status.message ?? null,
+            }
+          })
+          .filter((t): t is TokenAllocation => t !== null)
+
+        setSelectedTokens(updatedTokens)
+
+        const allFilled = data.orders.every(order => order.status === "filled")
+        const hasFailures = data.orders.some(order => order.status === "failed")
+
+        // Refresh data if all orders were filled AND there were no failures
+        if (allFilled && !hasFailures) {
+          setIsNetworkSwitching(true)
+          try {
+            await refreshAllData(queryClient)
+          } catch (error) {
+            console.error("Failed to refresh after positions filled:", error)
+          } finally {
+            setIsNetworkSwitching(false)
           }
-        },
-        onError: error => {
-          console.error("Error in rebalancePositionsMutation:", error)
-
-          // Attempt to find a specific token symbol in the error message
-          // This regex is designed to find patterns like "BTC/USDC:USDC"
-          const symbolMatch = error.message.match(/([A-Z0-9-]+\/[A-Z]+:[A-Z]+)/)
-          const failedSymbol = symbolMatch ? symbolMatch[0] : null
-
-          setSelectedTokens(prev =>
-            prev.map(token => {
-              // If a specific token was identified in the error message
-              if (failedSymbol) {
-                if (token.symbol === failedSymbol) {
-                  // Mark this specific token as failed and add the error message
-                  return {
-                    ...token,
-                    status: "failed",
-                    message: error.message,
-                  }
-                }
-                // Reset all other tokens back to idle status
-                return { ...token, status: "idle", message: null }
-              }
-
-              // If the error is generic and no specific token could be found,
-              // mark all tokens as failed.
-              return {
-                ...token,
-                status: "failed",
-                message: error.message,
-              }
-            }),
-          )
-        },
+        }
       },
-    )
+      onError: error => {
+        console.error("Error in rebalancePositionsMutation:", error)
+
+        // Attempt to find a specific token symbol in the error message
+        // This regex is designed to find patterns like "BTC/USDC:USDC"
+        const symbolMatch = error.message.match(/([A-Z0-9-]+\/[A-Z]+:[A-Z]+)/)
+        const failedSymbol = symbolMatch ? symbolMatch[0] : null
+
+        setSelectedTokens(prev =>
+          prev.map(token => {
+            // If a specific token was identified in the error message
+            if (failedSymbol) {
+              if (token.symbol === failedSymbol) {
+                // Mark this specific token as failed and add the error message
+                return {
+                  ...token,
+                  status: "failed",
+                  message: error.message,
+                }
+              }
+              // Reset all other tokens back to idle status
+              return { ...token, status: "idle", message: null }
+            }
+
+            // If the error is generic and no specific token could be found,
+            // mark all tokens as failed.
+            return {
+              ...token,
+              status: "failed",
+              message: error.message,
+            }
+          }),
+        )
+      },
+    })
   }
 
   const allocationCard = (token: TokenAllocation) => {
@@ -840,7 +885,7 @@ function PortfolioPage() {
       Math.max(tokenUsdValue, sliderMinValue),
     )
 
-    const otherTokensAllocatedUsd = selectedTokens.reduce((acc, t) => {
+    const otherTokensAllocatedUsd = activeTokens.reduce((acc, t) => {
       if (t.symbol === token.symbol) {
         return acc
       }
@@ -1025,7 +1070,8 @@ function PortfolioPage() {
     budget <= 0 ||
     rebalancePositionsMutation.isPending ||
     (totalPercent <= 0 && !hasPendingDeletions) ||
-    hasBlockingBudgetIssue
+    hasBlockingBudgetIssue ||
+    totalPercentExceeds100
   const netExposure = activeTokens.reduce((acc, token) => {
     const usdValue = getTokenUsdAllocation(token, budgetForUi)
     return acc + (token.side === "buy" ? usdValue : -usdValue)

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { useQueryClient } from "@tanstack/react-query"
-import { Trash2 } from "lucide-react"
+import { Trash2, Undo2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   refreshAllData,
@@ -27,7 +27,12 @@ import {
 } from "@/components/ui/dialog"
 import { Slider } from "@/components/ui/slider"
 
-type AllocationStatus = OrderStatus["status"] | "idle"
+type AllocationStatus =
+  | OrderStatus["status"]
+  | "idle"
+  | "untouched"
+  | "deleted"
+  | "modified"
 
 interface TokenAllocation {
   symbol: string
@@ -38,6 +43,7 @@ interface TokenAllocation {
   message?: string | null
   notional?: number // Actual position value in USD (from exchange)
   lockedUsd?: number // User-defined USD allocation that persists across budget edits
+  previousPercentage?: number
 }
 
 const STORAGE_KEY = "portfolio-allocation-state"
@@ -227,7 +233,7 @@ function PortfolioPage() {
             parsed.tokens.map((token: TokenAllocation) => ({
               ...token,
               leverage: token.leverage || 1,
-              status: "idle",
+              status: "untouched",
               message: null,
             })),
           )
@@ -294,7 +300,7 @@ function PortfolioPage() {
         percentage: parseFloat(pos.percentage.toFixed(2)),
         side: pos.side,
         leverage: pos.leverage || 1,
-        status: "idle",
+        status: "untouched", // <-- New status for existing positions
         message: null,
         notional: pos.notional, // Store actual notional value
       }),
@@ -324,12 +330,13 @@ function PortfolioPage() {
     const payload = {
       budget,
       tokens: selectedTokens.map(
-        ({ symbol, percentage, side, lockedUsd, leverage }) => ({
+        ({ symbol, percentage, side, lockedUsd, leverage, status }) => ({
           symbol,
           percentage,
           side,
           lockedUsd,
           leverage,
+          status,
         }),
       ),
     }
@@ -346,17 +353,26 @@ function PortfolioPage() {
     )
   }, [tickers, searchTerm])
 
-  const totalPercent = selectedTokens.reduce(
+  const activeTokens = useMemo(
+    () => selectedTokens.filter(t => t.status !== "deleted"),
+    [selectedTokens],
+  )
+  const hasPendingDeletions = useMemo(
+    () => selectedTokens.some(t => t.status === "deleted"),
+    [selectedTokens],
+  )
+
+  const totalPercent = activeTokens.reduce(
     (acc, token) => acc + token.percentage,
     0,
   )
   const remainingPercent = Math.max(0, 100 - totalPercent)
-  const requiredBudgetForTokens = selectedTokens.length * MIN_USD
+  const requiredBudgetForTokens = activeTokens.length * MIN_USD
   const budgetIsPositive = budget > 0
   const budgetBelowMinimum =
-    selectedTokens.length > 0 && budgetIsPositive && budget < MIN_USD
+    activeTokens.length > 0 && budgetIsPositive && budget < MIN_USD
   const insufficientBudgetForTokens =
-    selectedTokens.length > 0 &&
+    activeTokens.length > 0 &&
     budgetIsPositive &&
     requiredBudgetForTokens > budget
   useEffect(() => {
@@ -365,7 +381,7 @@ function PortfolioPage() {
     }
   }, [budget, requiredBudgetForTokens])
   const budgetForUi = useMemo(() => {
-    if (selectedTokens.length === 0) {
+    if (activeTokens.length === 0) {
       return budget > 0 ? budget : lastSufficientBudgetRef.current || 0
     }
     if (budget > 0 && budget >= requiredBudgetForTokens) {
@@ -378,7 +394,7 @@ function PortfolioPage() {
       return budget
     }
     return Math.max(requiredBudgetForTokens, MIN_USD)
-  }, [budget, requiredBudgetForTokens, selectedTokens.length])
+  }, [budget, requiredBudgetForTokens, activeTokens.length])
   const minPercentOfBudget =
     budgetForUi > 0 ? Math.min(100, (MIN_USD / budgetForUi) * 100) : 0
   const minPercentFloor = budgetForUi >= MIN_USD ? minPercentOfBudget : 0
@@ -413,9 +429,15 @@ function PortfolioPage() {
     }
 
     setSelectedTokens(prevTokens => {
+      // Filter out pending deletion tokens for this calculation
+      const currentActiveTokens = prevTokens.filter(t => t.status !== "deleted")
+      const tokensPendingDeletion = prevTokens.filter(
+        t => t.status === "deleted",
+      )
+
       // First, recalculate percentages based on any locked values
       const recalculatedTokens = recalcPercentagesFromLockedValues(
-        prevTokens,
+        currentActiveTokens,
         budgetForUi,
       )
 
@@ -424,6 +446,7 @@ function PortfolioPage() {
       if (minPercent > 0) {
         const adjustedTokens = recalculatedTokens.map(token => {
           if (
+            token.status === "deleted" || // extra check
             (token.notional !== undefined && token.notional > 0) ||
             token.percentage >= minPercent
           ) {
@@ -439,14 +462,17 @@ function PortfolioPage() {
           } as TokenAllocation
         })
 
+        const finalTokens = [...adjustedTokens, ...tokensPendingDeletion]
+
         // Only update state if the array has actually changed
-        if (JSON.stringify(adjustedTokens) !== JSON.stringify(prevTokens)) {
-          return adjustedTokens
+        if (JSON.stringify(finalTokens) !== JSON.stringify(prevTokens)) {
+          return finalTokens
         }
-      } else if (
-        JSON.stringify(recalculatedTokens) !== JSON.stringify(prevTokens)
-      ) {
-        return recalculatedTokens
+      } else {
+        const finalTokens = [...recalculatedTokens, ...tokensPendingDeletion]
+        if (JSON.stringify(finalTokens) !== JSON.stringify(prevTokens)) {
+          return finalTokens
+        }
       }
 
       return prevTokens
@@ -455,6 +481,11 @@ function PortfolioPage() {
 
   const handleAddToken = (symbol: string) => {
     if (selectedTokens.some(token => token.symbol === symbol)) {
+      // If token is pending deletion, undo the deletion instead of doing nothing
+      const existingToken = selectedTokens.find(t => t.symbol === symbol)
+      if (existingToken?.status === "deleted") {
+        handleUndoRemoveToken(symbol)
+      }
       return
     }
 
@@ -484,7 +515,36 @@ function PortfolioPage() {
   }
 
   const handleRemoveToken = (symbol: string) => {
-    setSelectedTokens(prev => prev.filter(token => token.symbol !== symbol))
+    setSelectedTokens(prev =>
+      prev.map(token => {
+        if (token.symbol === symbol) {
+          return {
+            ...token,
+            status: "deleted",
+            previousPercentage: token.percentage,
+            percentage: 0,
+            message: null,
+          }
+        }
+        return token
+      }),
+    )
+  }
+
+  const handleUndoRemoveToken = (symbol: string) => {
+    setSelectedTokens(prev =>
+      prev.map(token => {
+        if (token.symbol === symbol) {
+          return {
+            ...token,
+            status: token.notional ? "untouched" : "idle",
+            percentage: token.previousPercentage ?? minPercentFloor,
+            previousPercentage: undefined,
+          }
+        }
+        return token
+      }),
+    )
   }
 
   const enforceLimits = (
@@ -498,7 +558,7 @@ function PortfolioPage() {
           return token
         }
         const totalWithoutCurrent = prev.reduce((sum, item) => {
-          if (item.symbol === symbol) return sum
+          if (item.symbol === symbol || item.status === "deleted") return sum
           return sum + item.percentage
         }, 0)
         const maxForToken = Math.max(
@@ -520,7 +580,7 @@ function PortfolioPage() {
           ...overrides,
           percentage: finalPercent,
           notional: hasNotionalOverride ? overrides.notional : token.notional,
-          status: "idle",
+          status: token.status === "untouched" ? "modified" : token.status,
           message: null,
         }
       }),
@@ -540,7 +600,7 @@ function PortfolioPage() {
       return
     }
     const tokenUsdValue = getTokenUsdAllocation(targetToken, sliderBudget)
-    const totalLockedUsd = selectedTokens.reduce(
+    const totalLockedUsd = activeTokens.reduce(
       (sum, token) => sum + getTokenUsdAllocation(token, sliderBudget),
       0,
     )
@@ -560,7 +620,15 @@ function PortfolioPage() {
 
   const handleSideChange = (symbol: string, side: OrderSide) => {
     setSelectedTokens(prev =>
-      prev.map(token => (token.symbol === symbol ? { ...token, side } : token)),
+      prev.map(token =>
+        token.symbol === symbol
+          ? {
+              ...token,
+              side,
+              status: token.status === "untouched" ? "modified" : token.status,
+            }
+          : token,
+      ),
     )
   }
 
@@ -569,7 +637,13 @@ function PortfolioPage() {
     const newLeverage = Math.max(1, Math.min(leverage, maxLeverage))
     setSelectedTokens(prev =>
       prev.map(token =>
-        token.symbol === symbol ? { ...token, leverage: newLeverage } : token,
+        token.symbol === symbol
+          ? {
+              ...token,
+              leverage: newLeverage,
+              status: token.status === "untouched" ? "modified" : token.status,
+            }
+          : token,
       ),
     )
   }
@@ -585,6 +659,8 @@ function PortfolioPage() {
     return () => clearTimeout(timeoutId)
   }, [budget, isBudgetInitialized, saveBudgetPreferenceMutation])
 
+  const maxBudget = (balanceData?.perp_usdc_balance ?? 0) * 5
+
   const handleBudgetInputChange = (value: string) => {
     setBudgetInput(value)
     setBudgetError(null)
@@ -597,6 +673,11 @@ function PortfolioPage() {
     const numValue = Number(value)
     if (Number.isNaN(numValue) || numValue < 0) {
       setBudgetError("Budget must be a positive number")
+      return
+    }
+    if (maxBudget > 0 && numValue > maxBudget) {
+      setBudgetError("Budget exceeds maximum (5x balance)")
+      // Do not set budget, but keep the input value for user to edit
       return
     }
 
@@ -615,6 +696,9 @@ function PortfolioPage() {
       if (Number.isNaN(numValue) || numValue < 0) {
         setBudgetError("Budget must be a positive number")
         setBudgetInput(budget.toString())
+      } else if (maxBudget > 0 && numValue > maxBudget) {
+        setBudgetError("Budget exceeds maximum (5x balance)")
+        setBudgetInput(budget.toString())
       } else if (numValue < MIN_USD && selectedTokens.length > 0) {
         setBudgetError(`Budget must be at least $${MIN_USD}`)
       } else {
@@ -630,13 +714,18 @@ function PortfolioPage() {
       !selectedTokens.length ||
       budget <= 0 ||
       hasBlockingBudgetIssue ||
-      totalPercent <= 0
+      (totalPercent <= 0 && !hasPendingDeletions) ||
+      rebalancePositionsMutation.isPending
     ) {
       return
     }
 
     setSelectedTokens(prev =>
-      prev.map(token => ({ ...token, status: "working", message: null })),
+      prev.map(token => ({
+        ...token,
+        status: token.status === "deleted" ? "deleted" : "working",
+        message: null,
+      })),
     )
 
     rebalancePositionsMutation.mutate(
@@ -647,24 +736,35 @@ function PortfolioPage() {
           side: token.side,
           percentage: token.percentage / 100,
           leverage: token.leverage,
+          status: token.status,
         })),
       },
       {
         onSuccess: async data => {
           console.log("Rebalance successful. Server response:", data)
-          setSelectedTokens(prev =>
-            prev.map(token => {
+
+          const updatedTokens = selectedTokens
+            .map(token => {
               const status = data.orders.find(
                 order => order.symbol === token.symbol,
               )
-              if (!status) return token
+              if (!status) return token // Should not happen, but for safety
+
+              // If token was pending deletion and rebalance was successful, filter it out
+              if (token.status === "deleted" && status.status === "filled") {
+                return null
+              }
+
               return {
                 ...token,
                 status: status.status,
                 message: status.message ?? null,
               }
-            }),
-          )
+            })
+            .filter((t): t is TokenAllocation => t !== null)
+
+          setSelectedTokens(updatedTokens)
+
           const allFilled = data.orders.every(
             order => order.status === "filled",
           )
@@ -757,9 +857,13 @@ function PortfolioPage() {
           token.status === "filled" && "border-2 border-emerald-500",
           token.status === "working" && "border-animated-gradient",
           token.status === "failed" && "border-2 border-rose-500",
+          token.status === "untouched" && "border-l-4 border-blue-500/50",
         )}
         style={{
-          borderLeftColor: token.status === "idle" ? sideColor : "transparent",
+          borderLeftColor:
+            token.status === "idle" || token.status === "untouched"
+              ? sideColor
+              : "transparent",
         }}
       >
         {/* This inner div is for the gradient border trick to work */}
@@ -772,17 +876,23 @@ function PortfolioPage() {
         >
           <div className="flex items-center gap-2 px-3">
             {/* Coin Name and Leverage */}
-            <div className="flex w-32 items-center gap-2">
+            <div
+              className={cn(
+                "flex w-32 items-center gap-2",
+                token.status === "deleted" && "opacity-50",
+              )}
+            >
               <span className="font-semibold" style={{ color: sideColor }}>
                 {token.symbol.split("/")[0]}
               </span>
               <Dialog>
-                <DialogTrigger asChild>
+                <DialogTrigger asChild disabled={token.status === "deleted"}>
                   <Button
                     variant="ghost"
                     size="sm"
                     className="h-auto px-2 py-1 text-xs border border-border rounded-md"
                     style={{ color: sideColor }}
+                    disabled={token.status === "deleted"}
                   >
                     {token.leverage}x
                   </Button>
@@ -815,17 +925,29 @@ function PortfolioPage() {
             </div>
 
             {/* Percentage */}
-            <div className="w-24 text-center">
+            <div
+              className={cn(
+                "w-24 text-center",
+                token.status === "deleted" && "opacity-50",
+              )}
+            >
               <span className="text-sm">{effectivePercent.toFixed(2)}%</span>
             </div>
 
             {/* Position Value */}
-            <div className="w-24 text-center">
+            <div
+              className={cn(
+                "w-24 text-center",
+                token.status === "deleted" && "opacity-50",
+              )}
+            >
               <span className="text-sm">${usdAmount}</span>
             </div>
 
             {/* Long/Short Select */}
-            <div className="w-24">
+            <div
+              className={cn("w-24", token.status === "deleted" && "opacity-50")}
+            >
               <select
                 value={token.side}
                 onChange={event =>
@@ -834,6 +956,7 @@ function PortfolioPage() {
                     event.target.value as OrderSide,
                   )
                 }
+                disabled={token.status === "deleted"}
                 className={cn(
                   "w-full rounded-md border bg-transparent px-2 py-1 text-sm font-medium",
                   isLong
@@ -847,7 +970,12 @@ function PortfolioPage() {
             </div>
 
             {/* Slider */}
-            <div className="flex-1 px-2">
+            <div
+              className={cn(
+                "flex-1 px-2",
+                token.status === "deleted" && "opacity-50",
+              )}
+            >
               <Slider
                 value={[sliderValue]}
                 onValueChange={([value]) =>
@@ -857,6 +985,7 @@ function PortfolioPage() {
                 max={sliderMaxValue}
                 step={0.01}
                 limitValue={maxUsdForToken}
+                disabled={token.status === "deleted"}
               />
             </div>
 
@@ -865,10 +994,18 @@ function PortfolioPage() {
               <Button
                 variant="ghost"
                 size="icon"
-                onClick={() => handleRemoveToken(token.symbol)}
+                onClick={() =>
+                  token.status === "deleted"
+                    ? handleUndoRemoveToken(token.symbol)
+                    : handleRemoveToken(token.symbol)
+                }
                 className="h-8 w-8"
               >
-                <Trash2 className="h-4 w-4" />
+                {token.status === "deleted" ? (
+                  <Undo2 className="h-4 w-4" />
+                ) : (
+                  <Trash2 className="h-4 w-4" />
+                )}
               </Button>
             </div>
           </div>
@@ -887,9 +1024,9 @@ function PortfolioPage() {
     !selectedTokens.length ||
     budget <= 0 ||
     rebalancePositionsMutation.isPending ||
-    totalPercent <= 0 ||
+    (totalPercent <= 0 && !hasPendingDeletions) ||
     hasBlockingBudgetIssue
-  const netExposure = selectedTokens.reduce((acc, token) => {
+  const netExposure = activeTokens.reduce((acc, token) => {
     const usdValue = getTokenUsdAllocation(token, budgetForUi)
     return acc + (token.side === "buy" ? usdValue : -usdValue)
   }, 0)
@@ -928,9 +1065,9 @@ function PortfolioPage() {
                 </div>
                 <span className="text-sm text-muted-foreground">USDC</span>
                 {typeof balanceData?.perp_usdc_balance === "number" &&
-                  budget > balanceData?.perp_usdc_balance && (
+                  budget > maxBudget && (
                     <span className="text-xs text-rose-400">
-                      Exceeds available balance
+                      Exceeds maximum budget (5x balance)
                     </span>
                   )}
               </div>
@@ -1071,7 +1208,7 @@ function PortfolioPage() {
         </div>
       </div>
       <AllocationBar
-        tokens={selectedTokens}
+        tokens={activeTokens}
         remainingPercent={remainingPercent}
         budget={budgetForUi}
       />

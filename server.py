@@ -147,6 +147,7 @@ class PositionPayload(BaseModel):
     percentage: float
     side: Literal["buy", "sell"]
     leverage: int
+    status: Literal["untouched", "modified", "deleted", "idle"]
 
 
 class OpenPositionsPayload(BaseModel):
@@ -300,6 +301,7 @@ async def save_budget_preference(payload: BudgetPreferencePayload) -> dict[str, 
 
 @app.post("/api/hyperliquid/open_positions")
 async def open_hyperliquid_positions(payload: OpenPositionsPayload) -> dict[str, Any]:
+    """Open positions on Hyperliquid based on the provided allocation."""
     if payload.budget <= 0:
         raise HTTPException(status_code=400, detail="Budget must be positive")
     if not payload.positions:
@@ -313,6 +315,7 @@ async def open_hyperliquid_positions(payload: OpenPositionsPayload) -> dict[str,
                 percentage=item.percentage,
                 side=item.side,
                 leverage=item.leverage,
+                status=item.status,
             )
             for item in payload.positions
         ]
@@ -342,6 +345,7 @@ async def rebalance_hyperliquid_positions(payload: OpenPositionsPayload) -> dict
                 percentage=item.percentage,
                 side=item.side,
                 leverage=item.leverage,
+                status=item.status,
             )
             for item in payload.positions
         ]

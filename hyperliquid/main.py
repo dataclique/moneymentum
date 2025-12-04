@@ -19,6 +19,7 @@ from hyperliquid.settings import UserSettings  # noqa: E402
 logger = logging.getLogger(__name__)
 
 OrderSide = Literal["buy", "sell"]
+Status = Literal["untouched", "modified", "deleted", "idle"]
 MIN_ORDER_VALUE = 10.0
 
 
@@ -37,6 +38,7 @@ class Position:
     percentage: float
     side: OrderSide
     leverage: int
+    status: Status
 
 
 class Trader:
@@ -309,33 +311,92 @@ class Trader:
 
         return order_results
 
-    def rebalance_positions(self, positions: list[Position], budget: float) -> list[dict[str, Any]]:
-        """Adjust live positions to match the requested allocation."""
-        if budget <= 0:
-            msg = "Budget must be positive"
-            raise ValueError(msg)
+    def _close_position(self, original_position: Position) -> dict[str, Any]:
+        """Close a position for a symbol using a reduce-only market order."""
+        symbol = original_position.symbol
 
-        summaries = self._initialize_summaries(positions, {})
+        # Fetch price before entering the try block to avoid TRY301
+        ticker = self.exchange.fetch_ticker(symbol)
+        current_price = ticker.get("last")
+        if current_price is None:
+            err_msg = f"Could not fetch price for {symbol} to close position."
+            raise ValueError(err_msg)
+        try:
+            # 1. Fetch current position from the exchange
+            positions = self.exchange.fetch_positions([symbol])
+            if not positions or float(positions[0].get("contracts", 0)) == 0:
+                return {
+                    "symbol": symbol,
+                    "status": "filled",
+                    "message": "Position already closed.",
+                    "side": original_position.side,
+                    "percentage": 0.0,
+                }
+
+            position = positions[0]
+            side = "sell" if position["side"] == "long" else "buy"
+            amount = float(position["contracts"])
+
+            # 2. Calculate a slippage price to protect the market order
+            slippage = 0.05  # 5%
+            if side == "buy":  # Closing a short
+                slippage_price = current_price * (1 + slippage)
+            else:  # Closing a long
+                slippage_price = current_price * (1 - slippage)
+
+            # 3. Create a reduce-only market order with a slippage price
+            self.exchange.create_order(
+                symbol,
+                "market",
+                side,
+                amount,
+                slippage_price,
+                params={"reduceOnly": True},
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Failed to close position for %s", symbol)
+            return {
+                "symbol": symbol,
+                "status": "failed",
+                "message": str(exc),
+                "side": original_position.side,
+                "percentage": original_position.percentage,
+            }
+        else:
+            logger.info("Submitted close order for %s", symbol)
+            return {
+                "symbol": symbol,
+                "status": "filled",
+                "side": original_position.side,
+                "percentage": 0.0,
+            }
+
+    def _set_leverages(
+        self,
+        positions: list[Position],
+    ) -> tuple[list[dict[str, Any]], list[Position]]:
+        """Set leverage for all positions and return failures and successes."""
         results: list[dict[str, Any]] = []
+        successful_positions: list[Position] = []
+        summaries: dict[str, dict[str, Any]] = {}
 
-        # First, set leverage for all positions and capture any failures
         for position in positions:
             try:
                 self._set_leverage(position.symbol, position.leverage)
             except ExchangeError as exc:  # noqa: PERF203
                 logger.exception("Failed to set leverage for %s", position.symbol)
-                # Hyperliquid nests the real error message, so we try to extract it
                 original_error = getattr(exc, "args", [""])[0]
                 message = str(exc)
                 if "response" in original_error:
                     try:
-                        # The error message is a stringified dict
                         import json
 
-                        error_details = json.loads(original_error.replace("hyperliquid ", ""))
+                        error_details = json.loads(
+                            original_error.replace("hyperliquid ", ""),
+                        )
                         message = error_details.get("response", str(exc))
                     except (json.JSONDecodeError, TypeError):
-                        pass  # Fallback to default message
+                        pass
 
                 summary = summaries.setdefault(
                     position.symbol,
@@ -348,38 +409,72 @@ class Trader:
                 summary["status"] = "failed"
                 summary["message"] = message
                 results.append(summary)
+            else:
+                successful_positions.append(position)
+        return results, successful_positions
 
-        # Filter out positions that already failed the leverage check
-        valid_positions = [
-            p for p in positions if summaries.get(p.symbol, {}).get("status") != "failed"
-        ]
+    def rebalance_positions(
+        self,
+        positions: list[Position],
+        budget: float,
+    ) -> list[dict[str, Any]]:
+        """Adjust live positions to match the requested allocation."""
+        if budget <= 0:
+            msg = "Budget must be positive"
+            raise ValueError(msg)
 
-        target_notional = self._build_target_notional(valid_positions, budget)
+        results: list[dict[str, Any]] = []
+        # All positions that are not explicitly 'untouched' will be processed.
+        # This includes 'deleted' positions, which will be treated as a rebalance to 0.
+        positions_to_rebalance = [p for p in positions if p.status != "untouched"]
+
+        # Handle deletions
+        for p in positions:
+            if p.status == "deleted":
+                close_result = self._close_position(p)
+                results.append(close_result)
+
+        positions_to_rebalance = [p for p in positions_to_rebalance if p.status != "deleted"]
+
+        if not positions_to_rebalance:
+            return results
+
+        # Set leverages and handle any immediate failures
+        leverage_failures, successful_positions = self._set_leverages(
+            positions_to_rebalance,
+        )
+        results.extend(leverage_failures)
+
+        if not successful_positions:
+            return results
+
+        # Proceed with rebalancing for successful positions
+        target_notional = self._build_target_notional(successful_positions, budget)
         current_notional = self._fetch_current_notional()
         symbols = set(current_notional.keys()) | set(target_notional.keys())
+        summaries = self._initialize_summaries(successful_positions, target_notional)
 
         if not symbols:
             return results
 
-        prices = self._fetch_symbol_prices(symbols)
-        summaries = self._initialize_summaries(valid_positions, target_notional)
+        prices = self._fetch_symbol_prices(list(symbols))
 
-        for symbol, summary in summaries.items():
+        for symbol in symbols:
             price = prices.get(symbol)
             if price is None:
-                logger.error("Missing price for %s, skipping rebalance", symbol)
+                error_msg = f"Could not fetch price for {symbol}"
+                logger.error(error_msg)
+                results.append({"symbol": symbol, "status": "failed", "message": error_msg})
                 continue
 
-            result = self._rebalance_symbol(
+            summary = summaries.get(symbol)
+            self._rebalance_symbol(
                 symbol=symbol,
                 price=price,
                 target_value=target_notional.get(symbol, 0.0),
                 current_value=current_notional.get(symbol, 0.0),
                 summary_entry=summary,
             )
-            # Avoid duplicating results for leverage failures
-            if result is not None and result not in results:
-                results.append(result)
         return results
 
     def _build_target_notional(
@@ -429,53 +524,71 @@ class Trader:
         current_value: float,
         summary_entry: dict[str, Any] | None,
     ) -> dict[str, Any] | None:
-        summary = summary_entry or {
-            "symbol": symbol,
-            "side": "buy" if target_value >= 0 else "sell",
-            "percentage": 0.0,
-            "status": "filled",
-            "message": None,
-        }
-        status_rank = {"failed": 3, "working": 2, "filled": 1}
+        """Place a market order to match the target notional value."""
+        notional_delta = target_value - current_value
 
-        def update_summary(status: str, message: str | None) -> None:
-            normalized = status if status in status_rank else "working"
-            if status_rank[normalized] >= status_rank[summary["status"]]:
-                summary["status"] = normalized
-                summary["message"] = message
+        if notional_delta == 0:
+            return summary_entry
 
-        def apply_order(
-            *,
-            side: OrderSide,
-            usd_value: float,
-            reduce_only: bool,
-        ) -> bool:
-            order_status, message = self._place_market_order(
-                symbol=symbol,
-                side=side,
-                usd_value=usd_value,
-                price=price,
-                reduce_only=reduce_only,
+        return self._place_order(
+            symbol=symbol,
+            price=price,
+            notional_delta=notional_delta,
+            summary_entry=summary_entry,
+        )
+
+    def _place_order(
+        self,
+        symbol: str,
+        price: float,
+        notional_delta: float,
+        summary_entry: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        """Place a market order to match the target notional value."""
+        side = "buy" if notional_delta > 0 else "sell"
+        coin_amount = abs(notional_delta) / price
+        usd_amount = abs(notional_delta)
+
+        min_notional = 10.0
+        if usd_amount < min_notional:
+            logger.warning(
+                "Skipping order for %s. Requested notional $%.2f is below minimum $%.2f",
+                symbol,
+                usd_amount,
+                min_notional,
             )
-            update_summary(order_status, message)
-            return order_status != "failed"
+            if summary_entry:
+                summary_entry["status"] = "filled"  # Treat as success
+                message = (
+                    f"No action taken: change (${usd_amount:.2f}) is below minimum"
+                    f" order size (${min_notional:.2f})."
+                )
+                summary_entry["message"] = message
+                return summary_entry
+            return None
 
-        reduce_success, adjusted_value = self._reduce_position_if_needed(
-            symbol=symbol,
-            current_value=current_value,
-            target_value=target_value,
-            apply_order=apply_order,
+        logger.info(
+            "Placing order: symbol=%s, side=%s, coin_amount=%s, usd_amount=%s",
+            symbol,
+            side,
+            coin_amount,
+            usd_amount,
         )
-        if not reduce_success:
-            return summary
 
-        self._increase_position_if_needed(
-            symbol=symbol,
-            current_value=adjusted_value,
-            target_value=target_value,
-            apply_order=apply_order,
-        )
-        return summary
+        try:
+            self.exchange.create_market_order(symbol, side, coin_amount)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Failed to place order for %s", symbol)
+            if summary_entry:
+                summary_entry["status"] = "failed"
+                summary_entry["message"] = str(exc)
+                return summary_entry
+            return None
+        else:
+            if summary_entry:
+                summary_entry["status"] = "filled"
+                return summary_entry
+            return None
 
     def _reduce_position_if_needed(
         self,
@@ -564,9 +677,15 @@ def main() -> None:
     #     json.dump(all_tickers, f)
 
     positions = [
-        Position(symbol="BTC/USDC:USDC", percentage=0.1, side="buy", leverage=1),
-        Position(symbol="ETH/USDC:USDC", percentage=0.7, side="buy", leverage=2),
-        Position(symbol="SOL/USDC:USDC", percentage=0.2, side="buy", leverage=3),
+        Position(
+            symbol="BTC/USDC:USDC", percentage=0.1, side="buy", leverage=1, status="untouched"
+        ),
+        Position(
+            symbol="ETH/USDC:USDC", percentage=0.7, side="buy", leverage=2, status="untouched"
+        ),
+        Position(
+            symbol="SOL/USDC:USDC", percentage=0.2, side="buy", leverage=3, status="untouched"
+        ),
     ]
     trader.rebalance_positions(positions, 100)
 

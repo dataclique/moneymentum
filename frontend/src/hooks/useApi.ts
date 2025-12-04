@@ -80,6 +80,17 @@ export interface AnalysisDataParams {
   timeframe: Timeframe
 }
 
+export interface OpenPositionsParams {
+  budget: number
+  positions: Array<{
+    symbol: string
+    percentage: number
+    side: OrderSide
+    leverage: number
+    status: "untouched" | "modified" | "idle" | "deleted" | "working"
+  }>
+}
+
 export interface OrderStatus {
   symbol: string
   side: OrderSide
@@ -252,16 +263,6 @@ export function useHyperliquidBalance() {
       return response.json()
     },
   })
-}
-
-export interface OpenPositionsParams {
-  budget: number
-  positions: Array<{
-    symbol: string
-    percentage: number
-    side: OrderSide
-    leverage: number
-  }>
 }
 
 export function useOpenHyperliquidPositions() {

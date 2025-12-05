@@ -26,6 +26,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog"
 import { Slider } from "@/components/ui/slider"
+import { useCallback } from "react"
 
 type AllocationStatus =
   | OrderStatus["status"]
@@ -208,6 +209,15 @@ function PortfolioPage() {
     useState(false)
   const lastSufficientBudgetRef = useRef(0)
 
+  // Memoize the mutation function to stabilize its identity
+  const { mutate: saveBudgetPreference } = useSaveBudgetPreference()
+  const memoizedSaveBudgetPreference = useCallback(
+    (vars: { budget: number }) => {
+      saveBudgetPreference(vars)
+    },
+    [saveBudgetPreference],
+  )
+
   const {
     data: tickersData,
     isLoading: isTickersLoading,
@@ -219,7 +229,6 @@ function PortfolioPage() {
   const { data: leverageLimitsData } = useHyperliquidLeverageLimits()
   const { data: budgetPreferenceData, isLoading: isBudgetPreferenceLoading } =
     useBudgetPreference()
-  const saveBudgetPreferenceMutation = useSaveBudgetPreference()
   const rebalancePositionsMutation = useRebalanceHyperliquidPositions()
 
   useEffect(() => {
@@ -322,14 +331,14 @@ function PortfolioPage() {
         setBudgetInput(totalSpent.toString())
         setIsBudgetInitialized(true)
         // Save this as budget preference
-        saveBudgetPreferenceMutation.mutate({ budget: totalSpent })
+        memoizedSaveBudgetPreference({ budget: totalSpent })
       }
       setPositionsLoadedFromExchange(true)
     }
   }, [
     positionsData,
     isPositionsLoading,
-    saveBudgetPreferenceMutation,
+    memoizedSaveBudgetPreference,
     positionsLoadedFromExchange,
   ])
 
@@ -696,7 +705,7 @@ function PortfolioPage() {
 
       return hasChanged ? updatedTokens : prevTokens
     })
-  }, [selectedTokens, initialPortfolio])
+  }, [initialPortfolio]) // Removed selectedTokens to break loop
 
   // Debounced budget save effect
   useEffect(() => {
@@ -704,10 +713,10 @@ function PortfolioPage() {
       return
     }
     const timeoutId = setTimeout(() => {
-      saveBudgetPreferenceMutation.mutate({ budget })
+      memoizedSaveBudgetPreference({ budget })
     }, 3000)
     return () => clearTimeout(timeoutId)
-  }, [budget, isBudgetInitialized, saveBudgetPreferenceMutation])
+  }, [budget, isBudgetInitialized, memoizedSaveBudgetPreference])
 
   const maxBudget = (balanceData?.perp_usdc_balance ?? 0) * 5
 
@@ -781,8 +790,6 @@ function PortfolioPage() {
       })),
     }
 
-    console.log("Sending rebalance payload:", payload)
-
     setSelectedTokens(prev =>
       prev.map(token => ({
         ...token,
@@ -793,8 +800,6 @@ function PortfolioPage() {
 
     rebalancePositionsMutation.mutate(payload, {
       onSuccess: async data => {
-        console.log("Rebalance successful. Server response:", data)
-
         const updatedTokens = selectedTokens
           .map(token => {
             const status = data.orders.find(
@@ -894,6 +899,8 @@ function PortfolioPage() {
       return acc + getTokenUsdAllocation(t, budgetForUi)
     }, 0)
     const maxUsdForToken = Math.max(0, budgetForUi - otherTokensAllocatedUsd)
+
+    console.log("maxUsdForToken", maxUsdForToken)
 
     return (
       <Card

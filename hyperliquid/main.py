@@ -50,8 +50,6 @@ class Trader:
         self.public_key = settings.public_key
         self.secret_key = settings.secret_key
 
-        # self.leverage = settings.trade.leverage TODO: Add leverage
-
         is_testnet = _is_testnet()
         if is_testnet:
             logger.debug(

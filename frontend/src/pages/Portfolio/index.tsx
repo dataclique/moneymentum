@@ -430,7 +430,9 @@ function PortfolioPage() {
     )
   }
   if (totalPercentExceeds100) {
-    blockingReasons.push("Total allocation cannot exceed 100%.")
+    blockingReasons.push(
+      `Total allocation cannot exceed 100%. Current allocation: ${totalPercent.toFixed(2)}%`,
+    )
   }
 
   // Combines logic for recalculating percentages and enforcing minimums to prevent re-render loops.

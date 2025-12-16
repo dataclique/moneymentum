@@ -960,4 +960,363 @@ describe("usePortfolioState", () => {
       expect(result.current.hasPendingDeletions).toBe(true)
     })
   })
+
+  describe("token status derivation", () => {
+    it("sets status to modified when lockedUsd changes from initial", async () => {
+      const useApiModule = await import("@/hooks/useApi")
+      vi.mocked(useApiModule.useHyperliquidPositions).mockReturnValue({
+        data: {
+          positions: [
+            {
+              symbol: "BTC/USDC:USDC",
+              percentage: 50,
+              side: "buy",
+              leverage: 2,
+              notional: 500,
+            },
+          ],
+          total_notional: 500,
+        },
+        isLoading: false,
+      } as unknown as ReturnType<typeof useApiModule.useHyperliquidPositions>)
+
+      const { result } = renderHook(() => usePortfolioState(), {
+        wrapper: createWrapper(),
+      })
+
+      await waitFor(() => {
+        expect(result.current.selectedTokens).toHaveLength(1)
+      })
+
+      expect(result.current.selectedTokens[0].status).toBe("untouched")
+
+      // Change the slider value (changes lockedUsd)
+      await act(async () => {
+        result.current.handleSliderChange("BTC/USDC:USDC", 300)
+      })
+
+      await waitFor(() => {
+        expect(result.current.selectedTokens[0].status).toBe("modified")
+      })
+    })
+
+    it("sets status to modified when side changes from initial", async () => {
+      const useApiModule = await import("@/hooks/useApi")
+      vi.mocked(useApiModule.useHyperliquidPositions).mockReturnValue({
+        data: {
+          positions: [
+            {
+              symbol: "BTC/USDC:USDC",
+              percentage: 50,
+              side: "buy",
+              leverage: 2,
+              notional: 500,
+            },
+          ],
+          total_notional: 500,
+        },
+        isLoading: false,
+      } as unknown as ReturnType<typeof useApiModule.useHyperliquidPositions>)
+
+      const { result } = renderHook(() => usePortfolioState(), {
+        wrapper: createWrapper(),
+      })
+
+      await waitFor(() => {
+        expect(result.current.selectedTokens).toHaveLength(1)
+      })
+
+      expect(result.current.selectedTokens[0].status).toBe("untouched")
+      expect(result.current.selectedTokens[0].side).toBe("buy")
+
+      await act(async () => {
+        result.current.handleSideChange("BTC/USDC:USDC", "sell")
+      })
+
+      await waitFor(() => {
+        expect(result.current.selectedTokens[0].status).toBe("modified")
+      })
+    })
+
+    it("sets status to modified when leverage changes from initial", async () => {
+      const useApiModule = await import("@/hooks/useApi")
+      vi.mocked(useApiModule.useHyperliquidPositions).mockReturnValue({
+        data: {
+          positions: [
+            {
+              symbol: "BTC/USDC:USDC",
+              percentage: 50,
+              side: "buy",
+              leverage: 2,
+              notional: 500,
+            },
+          ],
+          total_notional: 500,
+        },
+        isLoading: false,
+      } as unknown as ReturnType<typeof useApiModule.useHyperliquidPositions>)
+
+      const { result } = renderHook(() => usePortfolioState(), {
+        wrapper: createWrapper(),
+      })
+
+      await waitFor(() => {
+        expect(result.current.selectedTokens).toHaveLength(1)
+      })
+
+      expect(result.current.selectedTokens[0].status).toBe("untouched")
+      expect(result.current.selectedTokens[0].leverage).toBe(2)
+
+      await act(async () => {
+        result.current.handleLeverageChange("BTC/USDC:USDC", 5)
+      })
+
+      await waitFor(() => {
+        expect(result.current.selectedTokens[0].status).toBe("modified")
+      })
+    })
+
+    it("preserves deleted status when token is deleted", async () => {
+      const useApiModule = await import("@/hooks/useApi")
+      vi.mocked(useApiModule.useHyperliquidPositions).mockReturnValue({
+        data: {
+          positions: [
+            {
+              symbol: "BTC/USDC:USDC",
+              percentage: 50,
+              side: "buy",
+              leverage: 2,
+              notional: 500,
+            },
+          ],
+          total_notional: 500,
+        },
+        isLoading: false,
+      } as unknown as ReturnType<typeof useApiModule.useHyperliquidPositions>)
+
+      const { result } = renderHook(() => usePortfolioState(), {
+        wrapper: createWrapper(),
+      })
+
+      await waitFor(() => {
+        expect(result.current.selectedTokens).toHaveLength(1)
+      })
+
+      await act(async () => {
+        result.current.handleRemoveToken("BTC/USDC:USDC")
+      })
+
+      expect(result.current.selectedTokens[0].status).toBe("deleted")
+
+      // Status should remain deleted even though values differ from initial
+      await waitFor(() => {
+        expect(result.current.selectedTokens[0].status).toBe("deleted")
+      })
+    })
+  })
+
+  describe("initialization priority", () => {
+    it("prioritizes localStorage over exchange positions", async () => {
+      // Set up localStorage with existing data
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({
+          budget: 800,
+          tokens: [
+            {
+              symbol: "ETH/USDC:USDC",
+              percentage: 60,
+              side: "sell",
+              leverage: 3,
+              lockedUsd: 480,
+              status: "idle",
+            },
+          ],
+        }),
+      )
+
+      // Mock exchange positions with different data
+      const useApiModule = await import("@/hooks/useApi")
+      vi.mocked(useApiModule.useHyperliquidPositions).mockReturnValue({
+        data: {
+          positions: [
+            {
+              symbol: "BTC/USDC:USDC",
+              percentage: 50,
+              side: "buy",
+              leverage: 2,
+              notional: 500,
+            },
+          ],
+          total_notional: 500,
+        },
+        isLoading: false,
+      } as unknown as ReturnType<typeof useApiModule.useHyperliquidPositions>)
+
+      const { result } = renderHook(() => usePortfolioState(), {
+        wrapper: createWrapper(),
+      })
+
+      // Should load from localStorage, not exchange
+      await waitFor(() => {
+        expect(result.current.selectedTokens).toHaveLength(1)
+      })
+      expect(result.current.selectedTokens[0].symbol).toBe("ETH/USDC:USDC")
+      expect(result.current.budget).toBe(800)
+    })
+
+    it("prioritizes budget preference over balance when no positions", async () => {
+      const useApiModule = await import("@/hooks/useApi")
+      vi.mocked(useApiModule.useHyperliquidPositions).mockReturnValue({
+        data: { positions: [], total_notional: 0 },
+        isLoading: false,
+      } as unknown as ReturnType<typeof useApiModule.useHyperliquidPositions>)
+      vi.mocked(useApiModule.useBudgetPreference).mockReturnValue({
+        data: { budget: 1500 },
+        isLoading: false,
+      } as ReturnType<typeof useApiModule.useBudgetPreference>)
+      vi.mocked(useApiModule.useHyperliquidBalance).mockReturnValue({
+        data: { perp_usdc_balance: 3000 },
+      } as ReturnType<typeof useApiModule.useHyperliquidBalance>)
+
+      const { result } = renderHook(() => usePortfolioState(), {
+        wrapper: createWrapper(),
+      })
+
+      await waitFor(() => {
+        expect(result.current.budget).toBe(1500)
+      })
+    })
+
+    it("uses exchange total_notional as budget when loading positions", async () => {
+      const useApiModule = await import("@/hooks/useApi")
+      vi.mocked(useApiModule.useHyperliquidPositions).mockReturnValue({
+        data: {
+          positions: [
+            {
+              symbol: "SOL/USDC:USDC",
+              percentage: 100,
+              side: "buy",
+              leverage: 1,
+              notional: 750,
+            },
+          ],
+          total_notional: 750,
+        },
+        isLoading: false,
+      } as unknown as ReturnType<typeof useApiModule.useHyperliquidPositions>)
+      vi.mocked(useApiModule.useBudgetPreference).mockReturnValue({
+        data: { budget: 0 },
+        isLoading: false,
+      } as ReturnType<typeof useApiModule.useBudgetPreference>)
+
+      const { result } = renderHook(() => usePortfolioState(), {
+        wrapper: createWrapper(),
+      })
+
+      await waitFor(() => {
+        expect(result.current.budget).toBe(750)
+      })
+    })
+  })
+
+  describe("percentage derivation from lockedUsd", () => {
+    it("derives percentage from lockedUsd and budget", async () => {
+      const useApiModule = await import("@/hooks/useApi")
+      vi.mocked(useApiModule.useHyperliquidPositions).mockReturnValue({
+        data: { positions: [], total_notional: 0 },
+        isLoading: false,
+      } as unknown as ReturnType<typeof useApiModule.useHyperliquidPositions>)
+
+      const { result } = renderHook(() => usePortfolioState(), {
+        wrapper: createWrapper(),
+      })
+
+      // Set budget to 200
+      await act(async () => {
+        result.current.handleBudgetInputChange("200")
+      })
+
+      // Add a token (should get MIN_USD = 11 as lockedUsd)
+      await act(async () => {
+        result.current.handleAddToken("BTC/USDC:USDC")
+      })
+
+      await waitFor(() => {
+        expect(result.current.selectedTokens).toHaveLength(1)
+      })
+
+      // With budget 200 and lockedUsd 11, percentage should be (11/200)*100 = 5.5%
+      expect(result.current.selectedTokens[0].lockedUsd).toBe(MIN_USD)
+      expect(result.current.selectedTokens[0].percentage).toBeCloseTo(5.5, 1)
+    })
+
+    it("recalculates percentage when budget changes", async () => {
+      const useApiModule = await import("@/hooks/useApi")
+      vi.mocked(useApiModule.useHyperliquidPositions).mockReturnValue({
+        data: { positions: [], total_notional: 0 },
+        isLoading: false,
+      } as unknown as ReturnType<typeof useApiModule.useHyperliquidPositions>)
+
+      const { result } = renderHook(() => usePortfolioState(), {
+        wrapper: createWrapper(),
+      })
+
+      await act(async () => {
+        result.current.handleBudgetInputChange("100")
+      })
+
+      await act(async () => {
+        result.current.handleAddToken("BTC/USDC:USDC")
+      })
+
+      await waitFor(() => {
+        expect(result.current.selectedTokens).toHaveLength(1)
+      })
+
+      const percentAt100 = result.current.selectedTokens[0].percentage
+
+      // Double the budget
+      await act(async () => {
+        result.current.handleBudgetInputChange("200")
+      })
+
+      await waitFor(() => {
+        // Percentage should roughly halve when budget doubles (same lockedUsd)
+        expect(result.current.selectedTokens[0].percentage).toBeLessThan(
+          percentAt100,
+        )
+      })
+    })
+
+    it("derives percentage from notional when available", async () => {
+      const useApiModule = await import("@/hooks/useApi")
+      vi.mocked(useApiModule.useHyperliquidPositions).mockReturnValue({
+        data: {
+          positions: [
+            {
+              symbol: "BTC/USDC:USDC",
+              percentage: 50,
+              side: "buy",
+              leverage: 1,
+              notional: 250,
+            },
+          ],
+          total_notional: 500,
+        },
+        isLoading: false,
+      } as unknown as ReturnType<typeof useApiModule.useHyperliquidPositions>)
+
+      const { result } = renderHook(() => usePortfolioState(), {
+        wrapper: createWrapper(),
+      })
+
+      await waitFor(() => {
+        expect(result.current.selectedTokens).toHaveLength(1)
+      })
+
+      // With notional 250 and budget 500 (from total_notional), percentage = 50%
+      expect(result.current.selectedTokens[0].percentage).toBe(50)
+    })
+  })
 })

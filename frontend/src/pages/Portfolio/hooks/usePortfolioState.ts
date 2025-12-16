@@ -116,7 +116,8 @@ export const usePortfolioState = () => {
   const { data: leverageLimitsData } = useHyperliquidLeverageLimits()
   const { data: budgetPreferenceData, isLoading: isBudgetPreferenceLoading } =
     useBudgetPreference()
-  const { data: storedData } = useStoredPortfolio()
+  const { data: storedData, isFetched: isStoredDataFetched } =
+    useStoredPortfolio()
 
   // Mutations
   const { mutate: saveBudgetPreference } = useSaveBudgetPreference()
@@ -190,6 +191,9 @@ export const usePortfolioState = () => {
 
   // Load positions from exchange (only once if no local storage)
   useEffect(() => {
+    // Wait for localStorage query to complete first
+    if (!isStoredDataFetched) return
+
     if (
       isPositionsLoading ||
       !positionsData?.positions ||
@@ -233,6 +237,7 @@ export const usePortfolioState = () => {
     positionsData,
     isPositionsLoading,
     storedData,
+    isStoredDataFetched,
     memoizedSaveBudgetPreference,
     positionsLoadedFromExchange,
   ])
@@ -426,7 +431,7 @@ export const usePortfolioState = () => {
 
       return tracker.hasChanged ? updatedTokens : prevTokens
     })
-  }, [initialPortfolio])
+  }, [initialPortfolio, selectedTokens])
 
   // Debounced budget save
   useEffect(() => {

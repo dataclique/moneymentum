@@ -29,7 +29,36 @@ interface ManualDateSelection {
   endDate: Date | null
 }
 
-const App = () => {
+const AppWrapper = ({ children }: { children: React.ReactNode }) => {
+  const { isNetworkSwitching } = useNetwork()
+
+  return (
+    <div
+      className={twMerge(
+        clsx(
+          "min-h-screen flex flex-col bg-background text-foreground",
+          isNetworkSwitching && "pointer-events-none opacity-80",
+        ),
+      )}
+    >
+      <header className="border-b border-border px-4 py-2 pl-28 pr-28 flex items-center justify-between w-full">
+        <h1 className="text-lg font-semibold">Moneymentum</h1>
+        <div className="flex items-center gap-4">
+          <WalletHeader />
+          <ModeToggle />
+        </div>
+        {isNetworkSwitching && (
+          <div className="container mx-auto mt-2 text-center text-sm text-muted-foreground">
+            Switching network... All data will reload automatically
+          </div>
+        )}
+      </header>
+      {children}
+    </div>
+  )
+}
+
+const MainPage = () => {
   const { isNetworkSwitching } = useNetwork()
   const [timeframe, setTimeframe] = useState<Timeframe>("1h")
   const [manualDateSelection, setManualDateSelection] =
@@ -117,7 +146,36 @@ const App = () => {
   const data = analysisData?.data ?? []
   const message = analysisData?.message ?? null
 
-  const MainPage = () => (
+  if (loading) {
+    return (
+      <div className="mt-4 max-h-96 overflow-y-auto whitespace-pre-wrap rounded p-4 text-sm">
+        <div className="flex items-center gap-1">
+          <span>Loading data</span>
+          <span className="inline-flex">
+            <span className="animate-bounce [animation-delay:-0.3s]">.</span>
+            <span className="animate-bounce [animation-delay:-0.15s]">.</span>
+            <span className="animate-bounce">.</span>
+          </span>
+        </div>
+        {reloadMutation.isPending && (
+          <button
+            onClick={handleStopReload}
+            className="rounded-md border px-3 py-2 mt-4"
+          >
+            Stop reloading
+          </button>
+        )}
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="container mx-auto py-10 text-center">Error: {error}</div>
+    )
+  }
+
+  return (
     <div
       className={twMerge(
         clsx(
@@ -151,7 +209,6 @@ const App = () => {
           maxDate={maxAvailableDate ?? undefined}
         />
         <div>
-          {/* Calling only fetch + analysis */}
           <Button
             onClick={() => {
               handleReload("analysis_only")
@@ -171,69 +228,10 @@ const App = () => {
       <DataTable columns={columns} data={data} />
     </div>
   )
+}
 
-  // Define a common wrapper for all states (loading, error, main content)
-  const AppWrapper = ({ children }: { children: React.ReactNode }) => (
-    <div
-      className={twMerge(
-        clsx(
-          "min-h-screen flex flex-col bg-background text-foreground", // Apply theme classes here
-          isNetworkSwitching && "pointer-events-none opacity-80", // Disable whole app during network switch
-          // You can add other global styles here if needed
-        ),
-      )}
-    >
-      <header className="border-b border-border px-4 py-2 pl-28 pr-28 flex items-center justify-between w-full">
-        <h1 className="text-lg font-semibold">Moneymentum</h1>
-        <div className="flex items-center gap-4">
-          <WalletHeader />
-          <ModeToggle />
-        </div>
-        {isNetworkSwitching && (
-          <div className="container mx-auto mt-2 text-center text-sm text-muted-foreground">
-            Switching network... All data will reload automatically
-          </div>
-        )}
-      </header>
-      {children}
-    </div>
-  )
-
-  if (loading) {
-    return (
-      <AppWrapper>
-        <div className="mt-4 max-h-96 overflow-y-auto whitespace-pre-wrap rounded p-4 text-sm">
-          <div className="flex items-center gap-1">
-            <span>Loading data</span>
-            <span className="inline-flex">
-              <span className="animate-bounce [animation-delay:-0.3s]">.</span>
-              <span className="animate-bounce [animation-delay:-0.15s]">.</span>
-              <span className="animate-bounce">.</span>
-            </span>
-          </div>
-        </div>
-
-        {reloadMutation.isPending && (
-          <button
-            onClick={handleStopReload}
-            className="rounded-md border px-3 py-2"
-          >
-            Stop reloading
-          </button>
-        )}
-      </AppWrapper>
-    )
-  }
-
-  if (error) {
-    return (
-      <AppWrapper>
-        <div className="container mx-auto py-10 text-center">
-          Error: {error}
-        </div>
-      </AppWrapper>
-    )
-  }
+const App = () => {
+  const [timeframe] = useState<Timeframe>("1h")
 
   return (
     <AppWrapper>

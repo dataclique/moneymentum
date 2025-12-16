@@ -31,6 +31,13 @@ const useAnalysisDataMock = vi.hoisted(() =>
   })),
 )
 
+const useBudgetPreferenceMock = vi.hoisted(() =>
+  vi.fn(() => ({
+    data: { budget: 0 },
+    isLoading: false,
+  })),
+)
+
 // Mock CCXT to prevent initialization errors
 vi.mock("ccxt", () => ({
   default: {
@@ -75,10 +82,7 @@ vi.mock("@/hooks/useApi", () => ({
   useStopReload: vi.fn(() => ({
     mutate: vi.fn(),
   })),
-  useBudgetPreference: vi.fn(() => ({
-    data: { budget: 0 },
-    isLoading: false,
-  })),
+  useBudgetPreference: useBudgetPreferenceMock,
   useSaveBudgetPreference: vi.fn(() => ({
     mutate: vi.fn(),
   })),
@@ -462,19 +466,21 @@ describe("App", () => {
   })
 
   describe("route isolation", () => {
-    it("does not call useDateRange or useAnalysisData on /portfolio route", async () => {
+    it("does not call backend API hooks on /portfolio route", async () => {
       const useApiModule = await import("@/hooks/useApi")
       const useDateRangeMock = vi.mocked(useApiModule.useDateRange)
 
       // Reset mocks
       useDateRangeMock.mockClear()
       useAnalysisDataMock.mockClear()
+      useBudgetPreferenceMock.mockClear()
 
       render(<App />, { wrapper: createWrapper("/portfolio") })
 
       // Portfolio page should not trigger backend API calls
       expect(useDateRangeMock).not.toHaveBeenCalled()
       expect(useAnalysisDataMock).not.toHaveBeenCalled()
+      expect(useBudgetPreferenceMock).not.toHaveBeenCalled()
     })
   })
 })

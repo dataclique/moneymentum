@@ -39,13 +39,12 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
+      "socks-proxy-agent": path.resolve(__dirname, "./src/stubs/empty.ts"),
     },
   },
   build: {
     chunkSizeWarningLimit: 6000,
-    rollupOptions: {
-      external: ["socks-proxy-agent"],
-    },
+    rollupOptions: {},
   },
   server: {
     host: "0.0.0.0",

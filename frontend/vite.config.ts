@@ -44,12 +44,7 @@ export default defineConfig({
   build: {
     chunkSizeWarningLimit: 6000,
     rollupOptions: {
-      external: [
-        "socks-proxy-agent",
-        "protobufjs/minimal.js",
-        "protobufjs/minimal",
-        "protobufjs",
-      ],
+      external: ["socks-proxy-agent"],
     },
   },
   server: {

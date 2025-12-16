@@ -2,13 +2,54 @@
 import path from "path"
 import tailwindcss from "@tailwindcss/vite"
 import react from "@vitejs/plugin-react"
-import { defineConfig } from "vite"
+import { defineConfig, type Plugin } from "vite"
+import nodePolyfills from "vite-plugin-node-stdlib-browser"
+
+function suppressUseClientWarning(): Plugin {
+  return {
+    name: "suppress-use-client-warning",
+    apply: "build",
+    enforce: "post",
+    configResolved(config) {
+      const originalOnWarn = config.build.rollupOptions.onwarn
+      config.build.rollupOptions.onwarn = (warning, warn) => {
+        if (
+          warning.code === "MODULE_LEVEL_DIRECTIVE" &&
+          warning.id?.includes("node_modules")
+        ) {
+          return
+        }
+        if (originalOnWarn) {
+          originalOnWarn(warning, warn)
+        } else {
+          warn(warning)
+        }
+      }
+    },
+  }
+}
 
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: [
+    react(),
+    tailwindcss(),
+    nodePolyfills(),
+    suppressUseClientWarning(),
+  ],
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
+    },
+  },
+  build: {
+    chunkSizeWarningLimit: 6000,
+    rollupOptions: {
+      external: [
+        "socks-proxy-agent",
+        "protobufjs/minimal.js",
+        "protobufjs/minimal",
+        "protobufjs",
+      ],
     },
   },
   server: {

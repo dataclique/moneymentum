@@ -1,14 +1,14 @@
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { cn } from "@/lib/utils"
-import { useNetwork } from "@/contexts/NetworkContext"
+import { useNetwork } from "@/hooks/useNetwork"
 
 import { usePortfolioState, MIN_USD } from "./hooks/usePortfolioState"
 import { AllocationBar } from "./components/AllocationBar"
 import { TokenCard } from "./components/TokenCard"
 import { TokenPickerDialog } from "./components/TokenPickerDialog"
 
-function PortfolioPage() {
+const PortfolioPage = () => {
   const { isNetworkSwitching } = useNetwork()
 
   const {
@@ -57,7 +57,9 @@ function PortfolioPage() {
                     min={MIN_USD}
                     max={maxBudget}
                     value={budgetInput}
-                    onChange={e => handleBudgetInputChange(e.target.value)}
+                    onChange={e => {
+                      handleBudgetInputChange(e.target.value)
+                    }}
                     onBlur={handleBudgetInputBlur}
                     className={cn(
                       "w-full rounded-md border border-border bg-background px-3 py-2 text-sm",

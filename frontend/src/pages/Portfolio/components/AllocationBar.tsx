@@ -12,11 +12,11 @@ interface AllocationBarTokenProps {
   isHovered: boolean
 }
 
-function AllocationBarToken({
+const AllocationBarToken = ({
   token,
   budget,
   isHovered,
-}: AllocationBarTokenProps) {
+}: AllocationBarTokenProps) => {
   const isSmall = token.percentage < 4
   const usdAmount = (token.percentage / 100) * budget
 
@@ -24,7 +24,7 @@ function AllocationBarToken({
     <div
       className="flex items-center justify-center overflow-hidden border-b border-background p-1 text-center text-white"
       style={{
-        height: `${token.percentage}%`,
+        height: `${String(token.percentage)}%`,
         backgroundColor: getSideColor(token.side),
       }}
     >
@@ -46,11 +46,11 @@ interface AllocationBarProps {
   budget: number
 }
 
-export function AllocationBar({
+export const AllocationBar = ({
   tokens,
   remainingPercent,
   budget,
-}: AllocationBarProps) {
+}: AllocationBarProps) => {
   const [isHovered, setIsHovered] = useState(false)
   const longs = tokens.filter(t => t.side === "buy")
   const shorts = tokens.filter(t => t.side === "sell")
@@ -58,8 +58,12 @@ export function AllocationBar({
   return (
     <div
       className="fixed left-0 top-0 z-20 flex h-screen w-20 flex-col border-r border-border bg-background/50 text-xs backdrop-blur-sm"
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
+      onMouseEnter={() => {
+        setIsHovered(true)
+      }}
+      onMouseLeave={() => {
+        setIsHovered(false)
+      }}
     >
       {longs.map(token => (
         <AllocationBarToken
@@ -73,7 +77,7 @@ export function AllocationBar({
       {remainingPercent > 0.1 && (
         <div
           className="flex items-center justify-center text-center"
-          style={{ height: `${remainingPercent}%` }}
+          style={{ height: `${remainingPercent.toFixed(2)}%` }}
         >
           <span className="text-muted-foreground">Free</span>
         </div>

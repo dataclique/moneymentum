@@ -11,11 +11,11 @@ interface SliderProps
 }
 
 const Slider = React.forwardRef<
-  React.ElementRef<typeof SliderPrimitive.Root>,
+  React.ComponentRef<typeof SliderPrimitive.Root>,
   SliderProps
 >(({ className, limitValue, ...props }, ref) => {
-  const min = props.min || 0
-  const max = props.max || 100
+  const min = props.min ?? 0
+  const max = props.max ?? 100
   const range = max - min
   const limitPercent =
     limitValue !== undefined && range > 0
@@ -35,7 +35,7 @@ const Slider = React.forwardRef<
         {limitPercent > 0 && (
           <div
             className="absolute h-full bg-amber-500/30"
-            style={{ width: `${limitPercent}%` }}
+            style={{ width: `${String(limitPercent)}%` }}
           />
         )}
         <SliderPrimitive.Range className="absolute h-full bg-primary" />

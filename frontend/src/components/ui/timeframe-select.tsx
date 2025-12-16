@@ -19,11 +19,11 @@ interface TimeframeSelectProps {
   className?: string
 }
 
-export function TimeframeSelect({
+export const TimeframeSelect = ({
   value,
   onValueChange,
   className,
-}: TimeframeSelectProps) {
+}: TimeframeSelectProps) => {
   return (
     <Select value={value} onValueChange={onValueChange}>
       <SelectTrigger className={className}>

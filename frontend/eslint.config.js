@@ -63,6 +63,7 @@ export default tseslint.config(
       "eqeqeq": ["error", "always"],
       "curly": ["error", "multi-line"],
       "no-throw-literal": "error",
+      "func-style": ["error", "expression"],
     },
   },
   // Test files - relax some rules
@@ -76,6 +77,8 @@ export default tseslint.config(
       "@typescript-eslint/no-unsafe-return": "off",
       "@typescript-eslint/no-explicit-any": "off",
       "@typescript-eslint/unbound-method": "off",
+      "@typescript-eslint/require-await": "off",
+      "@typescript-eslint/no-invalid-void-type": "off",
       "no-console": "off",
     },
   },

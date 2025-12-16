@@ -1,13 +1,7 @@
-import { createContext, useContext, useState, type ReactNode } from "react"
+import { useState, type ReactNode } from "react"
+import { NetworkContext } from "./network-context"
 
-interface NetworkContextType {
-  isNetworkSwitching: boolean
-  setIsNetworkSwitching: (value: boolean) => void
-}
-
-const NetworkContext = createContext<NetworkContextType | undefined>(undefined)
-
-export function NetworkProvider({ children }: { children: ReactNode }) {
+export const NetworkProvider = ({ children }: { children: ReactNode }) => {
   const [isNetworkSwitching, setIsNetworkSwitching] = useState(false)
 
   return (
@@ -17,12 +11,4 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
       {children}
     </NetworkContext.Provider>
   )
-}
-
-export function useNetwork() {
-  const context = useContext(NetworkContext)
-  if (context === undefined) {
-    throw new Error("useNetwork must be used within a NetworkProvider")
-  }
-  return context
 }

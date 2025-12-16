@@ -23,9 +23,9 @@ import {
   useReloadData,
   useStopReload,
 } from "@/hooks/useApi"
-import { useNetwork } from "@/contexts/NetworkContext"
+import { useNetwork } from "@/hooks/useNetwork"
 
-function App() {
+const App = () => {
   const { isNetworkSwitching } = useNetwork()
   const [timeframe, setTimeframe] = useState<Timeframe>("1h")
   const [dateRange, setDateRange] = useState({
@@ -64,8 +64,8 @@ function App() {
     error: analysisError,
     isLoading: isAnalysisLoading,
   } = useAnalysisData({
-    startDate: dateRange.startDate?.toISOString().split("T")[0] || "",
-    endDate: dateRange.endDate?.toISOString().split("T")[0] || "",
+    startDate: dateRange.startDate?.toISOString().split("T")[0] ?? "",
+    endDate: dateRange.endDate?.toISOString().split("T")[0] ?? "",
     timeframe,
   })
 
@@ -82,10 +82,10 @@ function App() {
 
   const loading =
     isDateRangeLoading || isAnalysisLoading || reloadMutation.isPending
-  const error = dateRangeError?.message || analysisError?.message || null
-  const data = analysisData?.data || []
+  const error = dateRangeError?.message ?? analysisError?.message ?? null
+  const data = analysisData?.data ?? []
   const tableData = data as unknown as TableTradingData[]
-  const message = analysisData?.message || null
+  const message = analysisData?.message ?? null
 
   const MainPage = () => (
     <div
@@ -103,23 +103,27 @@ function App() {
         <DatePicker
           label="Start Date"
           selected={dateRange.startDate}
-          onChange={date =>
+          onChange={date => {
             setDateRange(prev => ({ ...prev, startDate: date }))
-          }
-          minDate={minAvailableDate || undefined}
-          maxDate={maxAvailableDate || undefined}
+          }}
+          minDate={minAvailableDate ?? undefined}
+          maxDate={maxAvailableDate ?? undefined}
         />
         <DatePicker
           label="End Date"
           selected={dateRange.endDate}
-          onChange={date => setDateRange(prev => ({ ...prev, endDate: date }))}
-          minDate={minAvailableDate || undefined}
-          maxDate={maxAvailableDate || undefined}
+          onChange={date => {
+            setDateRange(prev => ({ ...prev, endDate: date }))
+          }}
+          minDate={minAvailableDate ?? undefined}
+          maxDate={maxAvailableDate ?? undefined}
         />
         <div>
           {/* Calling only fetch + analysis */}
           <Button
-            onClick={() => handleReload("analysis_only")}
+            onClick={() => {
+              handleReload("analysis_only")
+            }}
             disabled={loading || isNetworkSwitching}
           >
             {loading ? "Loading..." : "Reload Data"}

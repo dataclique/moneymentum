@@ -323,7 +323,8 @@ describe("usePortfolioState", () => {
         expect(stored).not.toBeNull()
       })
 
-      const stored = JSON.parse(localStorage.getItem(STORAGE_KEY)!)
+      const storedRaw = localStorage.getItem(STORAGE_KEY)
+      const stored = JSON.parse(storedRaw ?? "{}")
       expect(stored.tokens).toHaveLength(1)
       expect(stored.tokens[0].symbol).toBe("BTC/USDC:USDC")
     })

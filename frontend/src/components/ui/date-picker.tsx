@@ -20,13 +20,13 @@ interface Calendar22Props {
   maxDate?: Date
 }
 
-export function Calendar22({
+export const Calendar22 = ({
   label,
   selected,
   onChange,
   minDate,
   maxDate,
-}: Calendar22Props) {
+}: Calendar22Props) => {
   const [open, setOpen] = React.useState(false)
 
   const disabledDays: ({ before: Date } | { after: Date })[] = []
@@ -58,7 +58,7 @@ export function Calendar22({
         <PopoverContent className="w-auto overflow-hidden p-0" align="start">
           <Calendar
             mode="single"
-            selected={selected || undefined}
+            selected={selected ?? undefined}
             captionLayout="dropdown"
             startMonth={minDate}
             endMonth={maxDate}

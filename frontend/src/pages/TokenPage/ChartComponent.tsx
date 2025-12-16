@@ -7,15 +7,27 @@ import {
   HistogramSeries,
   LineSeries,
   LineStyle,
+  type Time,
 } from "lightweight-charts"
-import type { IChartApi, ISeriesApi } from "lightweight-charts"
+import type {
+  IChartApi,
+  ISeriesApi,
+  CandlestickSeriesOptions,
+  HistogramSeriesOptions,
+  LineSeriesOptions,
+} from "lightweight-charts"
 import type { TradingData } from "./types"
 import { transformToLineData, transformToOHLC } from "./utils"
+
+type AnySeries =
+  | ISeriesApi<"Candlestick", Time, unknown, CandlestickSeriesOptions, unknown>
+  | ISeriesApi<"Histogram", Time, unknown, HistogramSeriesOptions, unknown>
+  | ISeriesApi<"Line", Time, unknown, LineSeriesOptions, unknown>
 
 // Chart Component using TradingView Lightweight Charts
 interface ChartComponentProps {
   data: TradingData[]
-  selectedMetric: string
+  selectedMetric: keyof TradingData
   timeframe: string
 }
 
@@ -26,8 +38,8 @@ const ChartComponent: React.FC<ChartComponentProps> = ({
 }) => {
   const chartContainerRef = React.useRef<HTMLDivElement>(null)
   const chartRef = React.useRef<IChartApi | null>(null)
-  const seriesRef = React.useRef<ISeriesApi<any> | null>(null)
-  const volumeSeriesRef = React.useRef<ISeriesApi<any> | null>(null)
+  const seriesRef = React.useRef<AnySeries | null>(null)
+  const volumeSeriesRef = React.useRef<AnySeries | null>(null)
 
   React.useEffect(() => {
     if (!chartContainerRef.current) return
@@ -74,12 +86,8 @@ const ChartComponent: React.FC<ChartComponentProps> = ({
         resizeObserver.disconnect()
 
         // Clean up series references first
-        if (seriesRef.current) {
-          seriesRef.current = null
-        }
-        if (volumeSeriesRef.current) {
-          volumeSeriesRef.current = null
-        }
+        seriesRef.current = null
+        volumeSeriesRef.current = null
 
         // Then remove the chart
         if (chartRef.current) {
@@ -90,54 +98,49 @@ const ChartComponent: React.FC<ChartComponentProps> = ({
     } catch (error) {
       console.error("Error creating chart:", error)
     }
-  }, [])
+  }, [timeframe])
 
   React.useEffect(() => {
     if (!chartRef.current || !data.length) return
 
     try {
+      const chart = chartRef.current
       // Remove existing series safely
-      if (seriesRef.current && chartRef.current) {
+      if (seriesRef.current) {
         try {
-          chartRef.current.removeSeries(seriesRef.current)
-        } catch (error) {
-          console.warn("Error removing main series:", error)
+          chart.removeSeries(seriesRef.current)
+        } catch {
+          // Series may already be removed
         }
         seriesRef.current = null
       }
-      if (volumeSeriesRef.current && chartRef.current) {
+      if (volumeSeriesRef.current) {
         try {
-          chartRef.current.removeSeries(volumeSeriesRef.current)
-        } catch (error) {
-          console.warn("Error removing volume series:", error)
+          chart.removeSeries(volumeSeriesRef.current)
+        } catch {
+          // Series may already be removed
         }
         volumeSeriesRef.current = null
       }
 
       if (selectedMetric === "price") {
         // Create candlestick series for price data
-        const candlestickSeries = chartRef.current.addSeries(
-          CandlestickSeries,
-          {
-            upColor: "#26a69a",
-            downColor: "#ef5350",
-            borderVisible: false,
-            wickUpColor: "#26a69a",
-            wickDownColor: "#ef5350",
-          },
-        )
+        const candlestickSeries = chart.addSeries(CandlestickSeries, {
+          upColor: "#26a69a",
+          downColor: "#ef5350",
+          borderVisible: false,
+          wickUpColor: "#26a69a",
+          wickDownColor: "#ef5350",
+        })
 
         const ohlcData = transformToOHLC(data)
         const chartData = ohlcData.map(item => ({
-          time: (item.date.getTime() / 1000) as any, // Convert to UNIX timestamp
+          time: (item.date.getTime() / 1000) as Time,
           open: item.open,
           high: item.high,
           low: item.low,
           close: item.close,
         }))
-
-        console.log("Chart data sample:", chartData.slice(0, 5))
-        console.log("Chart data length:", chartData.length)
 
         // Validate data doesn't have duplicates
         const times = chartData.map(d => d.time)
@@ -157,7 +160,7 @@ const ChartComponent: React.FC<ChartComponentProps> = ({
 
         // Add volume series only if we have volume data
         if (ohlcData.some(item => item.volume > 0)) {
-          const volumeSeries = chartRef.current.addSeries(HistogramSeries, {
+          const volumeSeries = chart.addSeries(HistogramSeries, {
             color: "#26a69a",
             priceFormat: {
               type: "volume",
@@ -166,9 +169,9 @@ const ChartComponent: React.FC<ChartComponentProps> = ({
           })
 
           const volumeData = ohlcData.map(item => ({
-            time: (item.date.getTime() / 1000) as any,
+            time: (item.date.getTime() / 1000) as Time,
             value: item.volume,
-            color: item.close >= item.open ? "#26a69a80" : "#ef535080", // Semi-transparent
+            color: item.close >= item.open ? "#26a69a80" : "#ef535080",
           }))
 
           // Validate volume data
@@ -189,8 +192,6 @@ const ChartComponent: React.FC<ChartComponentProps> = ({
       } else {
         // Create line series for metrics
         const lineData = transformToLineData(data, selectedMetric)
-        console.log("Line data sample:", lineData.slice(0, 5))
-        console.log("Line data length:", lineData.length)
 
         // Calculate the range of values to determine appropriate precision
         const values = lineData.map(d => d.value)
@@ -202,16 +203,18 @@ const ChartComponent: React.FC<ChartComponentProps> = ({
 
         // Determine precision and format based on the metric type
         let precision = 2
-        let priceFormat: any = { type: "price" }
+        const metricStr = String(selectedMetric)
+        const isReturnMetric =
+          metricStr.includes("return") ||
+          selectedMetric === "sharpe" ||
+          selectedMetric === "sortino"
+        const isVolatilityMetric =
+          metricStr.includes("volatility") || metricStr.includes("stddev")
 
         // Handle edge case where all values are very close to zero
         if (range < 0.0000001 && avgAbsValue < 0.000001) {
           precision = 8
-        } else if (
-          selectedMetric.includes("return") ||
-          selectedMetric === "sharpe" ||
-          selectedMetric === "sortino"
-        ) {
+        } else if (isReturnMetric) {
           // For returns and ratios, use more precision
           if (range < 0.0001) {
             precision = 6
@@ -222,23 +225,9 @@ const ChartComponent: React.FC<ChartComponentProps> = ({
           } else if (range < 0.1) {
             precision = 3
           }
-
-          priceFormat = {
-            type: "price",
-            precision: precision,
-            minMove: Math.pow(10, -precision),
-          }
-        } else if (
-          selectedMetric.includes("volatility") ||
-          selectedMetric.includes("stddev")
-        ) {
+        } else if (isVolatilityMetric) {
           // For volatility metrics
           precision = range < 0.001 ? 5 : range < 0.01 ? 4 : 3
-          priceFormat = {
-            type: "price",
-            precision: precision,
-            minMove: Math.pow(10, -precision),
-          }
         } else {
           // General case
           if (range < 0.001) {
@@ -250,21 +239,15 @@ const ChartComponent: React.FC<ChartComponentProps> = ({
           } else if (range < 1) {
             precision = 3
           }
-
-          priceFormat = {
-            type: "price",
-            precision: precision,
-            minMove: Math.pow(10, -precision),
-          }
         }
 
-        console.log(
-          `Metric: ${selectedMetric}, Value range: ${minValue.toFixed(8)} to ${maxValue.toFixed(
-            8,
-          )}, avg abs: ${avgAbsValue.toFixed(8)}, using precision: ${precision}`,
-        )
+        const priceFormat = {
+          type: "price" as const,
+          precision: precision,
+          minMove: Math.pow(10, -precision),
+        }
 
-        const lineSeries = chartRef.current.addSeries(LineSeries, {
+        const lineSeries = chart.addSeries(LineSeries, {
           color: "#2563eb",
           lineWidth: 2,
           lineStyle: LineStyle.Solid,
@@ -275,15 +258,8 @@ const ChartComponent: React.FC<ChartComponentProps> = ({
           priceFormat: priceFormat,
         })
 
-        // Validate line data
-        const lineTimes = lineData.map(d => d.time)
-        const uniqueLineTimes = new Set(lineTimes)
-        if (lineTimes.length !== uniqueLineTimes.size) {
-          console.warn("Duplicate timestamps detected in line data")
-        }
-
         const chartData = lineData.map(d => ({
-          time: (new Date(d.time).getTime() / 1000) as any,
+          time: (new Date(d.time).getTime() / 1000) as Time,
           value: d.value,
         }))
 
@@ -292,14 +268,14 @@ const ChartComponent: React.FC<ChartComponentProps> = ({
 
         // Set visible range to show data properly
         if (lineData.length > 0) {
-          chartRef.current.priceScale("right").applyOptions({
+          chart.priceScale("right").applyOptions({
             autoScale: true,
           })
         }
       }
 
       // Fit content to show all data
-      chartRef.current.timeScale().fitContent()
+      chart.timeScale().fitContent()
     } catch (error) {
       console.error("Error updating chart data:", error)
     }

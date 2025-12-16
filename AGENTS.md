@@ -138,6 +138,12 @@ Uses Nix flakes with devenv configured in `flake.nix`:
 **Prettier**: Configured in `frontend/package.json` with tabWidth 2, no
 semicolons
 
+## Agent Rules
+
+**IMPORTANT**: Never disable or relax any quality checks (lints, type checks,
+tests, pre-commit hooks, etc.) without explicitly asking the user first. Always
+fix the underlying issue rather than suppressing the warning/error.
+
 ## Testing
 
 - Python tests in `tests/` directory

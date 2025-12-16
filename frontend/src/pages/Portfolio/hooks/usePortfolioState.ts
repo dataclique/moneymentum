@@ -11,7 +11,7 @@ import {
   type OrderSide,
   type OrderStatus,
 } from "@/hooks/useApi"
-import { useNetwork } from "@/contexts/NetworkContext"
+import { useNetwork } from "@/hooks/useNetwork"
 
 export const STORAGE_KEY = "portfolio-allocation-state"
 export const MIN_USD = 11
@@ -63,7 +63,7 @@ const recalcPercentagesFromLockedValues = (
 ): TokenAllocation[] => {
   if (!tokens.length || currentBudget <= 0) return tokens
 
-  let changed = false
+  const changeTracker = { changed: false }
   const updatedTokens = tokens.map(token => {
     const referenceUsd =
       token.notional !== undefined && token.notional > 0
@@ -77,25 +77,25 @@ const recalcPercentagesFromLockedValues = (
         Number.isFinite(nextPercent) &&
         Math.abs(nextPercent - token.percentage) > 0.01
       ) {
-        changed = true
+        changeTracker.changed = true
         return { ...token, percentage: nextPercent }
       }
     }
     return token
   })
 
-  return changed ? updatedTokens : tokens
+  return changeTracker.changed ? updatedTokens : tokens
 }
 
 // Query for localStorage - provides initial hydration
-function useStoredPortfolio() {
+const useStoredPortfolio = () => {
   return useQuery({
     queryKey: ["portfolio", "stored"],
     queryFn: (): StoredPortfolioState | null => {
       const stored = localStorage.getItem(STORAGE_KEY)
       if (!stored) return null
       try {
-        return JSON.parse(stored)
+        return JSON.parse(stored) as StoredPortfolioState
       } catch {
         return null
       }
@@ -105,7 +105,7 @@ function useStoredPortfolio() {
   })
 }
 
-export function usePortfolioState() {
+export const usePortfolioState = () => {
   const { setIsNetworkSwitching } = useNetwork()
   const queryClient = useQueryClient()
 
@@ -137,7 +137,9 @@ export function usePortfolioState() {
 
   // Memoized save function
   const memoizedSaveBudgetPreference = useCallback(
-    (vars: { budget: number }) => saveBudgetPreference(vars),
+    (vars: { budget: number }) => {
+      saveBudgetPreference(vars)
+    },
     [saveBudgetPreference],
   )
 
@@ -192,8 +194,9 @@ export function usePortfolioState() {
       isPositionsLoading ||
       !positionsData?.positions ||
       positionsLoadedFromExchange
-    )
+    ) {
       return
+    }
 
     // Don't override if user already has positions configured
     if (storedData?.tokens && storedData.tokens.length > 0) {
@@ -325,7 +328,7 @@ export function usePortfolioState() {
   }
   if (insufficientBudgetForTokens) {
     blockingReasons.push(
-      `Delete some tokens or make bigger budget (need at least $${requiredBudgetForTokens}).`,
+      `Delete some tokens or make bigger budget (need at least $${String(requiredBudgetForTokens)}).`,
     )
   }
   if (totalPercentExceeds100) {
@@ -387,7 +390,7 @@ export function usePortfolioState() {
     if (initialPortfolio.length === 0) return
 
     setSelectedTokens(prevTokens => {
-      let hasChanged = false
+      const tracker = { hasChanged: false }
       const updatedTokens = prevTokens.map(currentToken => {
         const initialToken = initialPortfolio.find(
           it => it.symbol === currentToken.symbol,
@@ -414,14 +417,14 @@ export function usePortfolioState() {
           : "untouched"
 
         if (currentToken.status !== newStatus) {
-          hasChanged = true
+          tracker.hasChanged = true
           return { ...currentToken, status: newStatus } as TokenAllocation
         }
 
         return currentToken
       })
 
-      return hasChanged ? updatedTokens : prevTokens
+      return tracker.hasChanged ? updatedTokens : prevTokens
     })
   }, [initialPortfolio])
 
@@ -431,7 +434,9 @@ export function usePortfolioState() {
     const timeoutId = setTimeout(() => {
       memoizedSaveBudgetPreference({ budget })
     }, 3000)
-    return () => clearTimeout(timeoutId)
+    return () => {
+      clearTimeout(timeoutId)
+    }
   }, [budget, isBudgetInitialized, memoizedSaveBudgetPreference])
 
   // Action handlers
@@ -623,7 +628,7 @@ export function usePortfolioState() {
       } else if (maxBudget > 0 && numValue > maxBudget) {
         setBudgetError(`Max budget: $${maxBudget.toFixed(2)}`)
       } else if (numValue < MIN_USD && selectedTokens.length > 0) {
-        setBudgetError(`Budget must be at least $${MIN_USD}`)
+        setBudgetError(`Budget must be at least $${String(MIN_USD)}`)
       } else {
         setBudget(numValue)
         setIsBudgetInitialized(true)
@@ -670,7 +675,7 @@ export function usePortfolioState() {
     )
 
     rebalancePositionsMutation.mutate(payload, {
-      onSuccess: async data => {
+      onSuccess: data => {
         const updatedTokens = selectedTokens
           .map(token => {
             const status = data.orders.find(
@@ -697,13 +702,13 @@ export function usePortfolioState() {
 
         if (allFilled && !hasFailures) {
           setIsNetworkSwitching(true)
-          try {
-            await refreshAllData(queryClient)
-          } catch (error) {
-            console.error("Failed to refresh after positions filled:", error)
-          } finally {
-            setIsNetworkSwitching(false)
-          }
+          refreshAllData(queryClient)
+            .catch((error: unknown) => {
+              console.error("Failed to refresh after positions filled:", error)
+            })
+            .finally(() => {
+              setIsNetworkSwitching(false)
+            })
         }
       },
       onError: error => {

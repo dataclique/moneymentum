@@ -39,7 +39,7 @@ interface TokenCardProps {
   onLeverageChange: (symbol: string, leverage: number) => void
 }
 
-export function TokenCard({
+export const TokenCard = ({
   token,
   budgetForUi,
   activeTokens,
@@ -49,7 +49,7 @@ export function TokenCard({
   onSliderChange,
   onSideChange,
   onLeverageChange,
-}: TokenCardProps) {
+}: TokenCardProps) => {
   const tokenUsdValue = getTokenUsdAllocation(token, budgetForUi)
   const effectivePercent =
     budgetForUi > 0 ? (tokenUsdValue / budgetForUi) * 100 : token.percentage
@@ -132,9 +132,9 @@ export function TokenCard({
                     <span>{token.leverage}x</span>
                     <Slider
                       value={[token.leverage]}
-                      onValueChange={([value]: number[]) =>
+                      onValueChange={([value]: number[]) => {
                         onLeverageChange(token.symbol, value)
-                      }
+                      }}
                       min={1}
                       max={maxLeverage}
                       step={1}
@@ -172,9 +172,9 @@ export function TokenCard({
           >
             <select
               value={token.side}
-              onChange={event =>
+              onChange={event => {
                 onSideChange(token.symbol, event.target.value as OrderSide)
-              }
+              }}
               disabled={token.status === "deleted"}
               className={cn(
                 "w-full rounded-md border bg-transparent px-2 py-1 text-sm font-medium",
@@ -197,7 +197,9 @@ export function TokenCard({
           >
             <Slider
               value={[sliderValue]}
-              onValueChange={([value]) => onSliderChange(token.symbol, value)}
+              onValueChange={([value]) => {
+                onSliderChange(token.symbol, value)
+              }}
               min={sliderMinValue}
               max={sliderMaxValue}
               step={0.01}
@@ -211,11 +213,13 @@ export function TokenCard({
             <Button
               variant="ghost"
               size="icon"
-              onClick={() =>
-                token.status === "deleted"
-                  ? onUndoRemove(token.symbol)
-                  : onRemove(token.symbol)
-              }
+              onClick={() => {
+                if (token.status === "deleted") {
+                  onUndoRemove(token.symbol)
+                } else {
+                  onRemove(token.symbol)
+                }
+              }}
               className="h-8 w-8"
             >
               {token.status === "deleted" ? (

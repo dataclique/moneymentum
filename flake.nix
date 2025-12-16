@@ -30,7 +30,12 @@
           sort-requirements-txt.enable = true;
 
           # TypeScript
-          # eslint.enable = true;
+          eslint = {
+            enable = true;
+            files = "^frontend/.*\\.(ts|tsx|js|jsx)$";
+            entry = "bash -c 'cd frontend && npm run lint'";
+            pass_filenames = false;
+          };
           prettier.enable = true;
         };
 

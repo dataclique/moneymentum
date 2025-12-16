@@ -5,9 +5,9 @@ import {
   useWalletSettings,
   useSwitchNetwork,
 } from "@/hooks/useApi"
-import { useNetwork } from "@/contexts/NetworkContext"
+import { useNetwork } from "@/hooks/useNetwork"
 
-function formatPublicKey(key: string): string {
+const formatPublicKey = (key: string): string => {
   if (!key || key.length < 10) return key
   if (key.startsWith("0x")) {
     return `${key.slice(0, 6)}...${key.slice(-4)}`
@@ -15,7 +15,7 @@ function formatPublicKey(key: string): string {
   return `${key.slice(0, 4)}...${key.slice(-4)}`
 }
 
-export function WalletHeader() {
+export const WalletHeader = () => {
   const { data: walletSettings, isLoading } = useWalletSettings()
   const switchNetworkMutation = useSwitchNetwork()
   const { isNetworkSwitching, setIsNetworkSwitching } = useNetwork()
@@ -44,7 +44,7 @@ export function WalletHeader() {
     }
   }
 
-  const currentPublicKey = walletSettings?.public_key || ""
+  const currentPublicKey = walletSettings?.public_key ?? ""
   const currentIsTestnet = walletSettings?.is_testnet ?? true
   const isDisabled =
     isLoading ||

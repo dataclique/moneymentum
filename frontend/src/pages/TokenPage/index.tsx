@@ -2,7 +2,7 @@ import * as React from "react"
 import { Link, useParams } from "react-router-dom"
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { useNetwork } from "@/contexts/NetworkContext"
+import { useNetwork } from "@/hooks/useNetwork"
 import { cn } from "@/lib/utils"
 import {
   Select,
@@ -18,7 +18,6 @@ import {
 import { Button } from "@/components/ui/button"
 import { AVAILABLE_METRICS } from "./constants"
 import ChartComponent from "./ChartComponent"
-import type { TradingData } from "./types"
 import { useTokenData } from "@/hooks/useApi"
 
 const TokenPage: React.FC<{ timeframe: Timeframe }> = ({
@@ -27,14 +26,15 @@ const TokenPage: React.FC<{ timeframe: Timeframe }> = ({
   const { ticker } = useParams<{ ticker: string }>()
   const [selectedMetric, setSelectedMetric] = React.useState("price")
   const [timeframe, setTimeframe] = React.useState<Timeframe>(initialTimeframe)
+  const { isNetworkSwitching } = useNetwork()
 
   const { data: tokenData, error, isLoading } = useTokenData(ticker, timeframe)
 
-  const data = tokenData?.data || []
+  const data = tokenData?.data ?? []
 
   const selectedMetricLabel = React.useMemo(() => {
     return (
-      AVAILABLE_METRICS.find(m => m.value === selectedMetric)?.label ||
+      AVAILABLE_METRICS.find(m => m.value === selectedMetric)?.label ??
       selectedMetric
     )
   }, [selectedMetric])
@@ -71,8 +71,6 @@ const TokenPage: React.FC<{ timeframe: Timeframe }> = ({
       </div>
     )
   }
-
-  const { isNetworkSwitching } = useNetwork()
 
   return (
     <Card

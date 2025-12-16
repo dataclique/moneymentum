@@ -17,10 +17,10 @@ interface TokenPickerDialogProps {
   onAddToken: (symbol: string) => void
 }
 
-export function TokenPickerDialog({
+export const TokenPickerDialog = ({
   selectedTokens,
   onAddToken,
-}: TokenPickerDialogProps) {
+}: TokenPickerDialogProps) => {
   const [searchTerm, setSearchTerm] = useState("")
   const {
     data: tickersData,
@@ -28,15 +28,15 @@ export function TokenPickerDialog({
     error: tickersError,
   } = useHyperliquidTickers()
 
-  const tickers = tickersData?.data ?? []
   const filteredTickers = useMemo(() => {
+    const tickers = tickersData?.data ?? []
     if (!searchTerm.trim()) {
       return tickers
     }
     return tickers.filter(ticker =>
       ticker.toLowerCase().includes(searchTerm.toLowerCase()),
     )
-  }, [tickers, searchTerm])
+  }, [tickersData?.data, searchTerm])
 
   return (
     <Dialog>
@@ -54,7 +54,9 @@ export function TokenPickerDialog({
           type="text"
           placeholder="Search by ticker"
           value={searchTerm}
-          onChange={event => setSearchTerm(event.target.value)}
+          onChange={event => {
+            setSearchTerm(event.target.value)
+          }}
           className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
         />
         {tickersError && (
@@ -74,7 +76,9 @@ export function TokenPickerDialog({
                 <button
                   key={symbol}
                   type="button"
-                  onClick={() => onAddToken(symbol)}
+                  onClick={() => {
+                    onAddToken(symbol)
+                  }}
                   disabled={alreadySelected}
                   className={cn(
                     "flex w-full items-center justify-between border-b border-border/60 px-4 py-2 text-left text-sm hover:bg-muted/40",

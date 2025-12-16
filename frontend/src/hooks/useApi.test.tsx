@@ -51,7 +51,9 @@ describe("useApi hooks with Timeframe type", () => {
         wrapper: createWrapper(),
       })
 
-      await waitFor(() => expect(result.current.isSuccess).toBe(true))
+      await waitFor(() => {
+        expect(result.current.isSuccess).toBe(true)
+      })
 
       expect(global.fetch).toHaveBeenCalledWith("/api/date-range?timeframe=1h")
       expect(result.current.data).toEqual(mockResponse)
@@ -74,7 +76,9 @@ describe("useApi hooks with Timeframe type", () => {
         wrapper: createWrapper(),
       })
 
-      await waitFor(() => expect(result.current.isSuccess).toBe(true))
+      await waitFor(() => {
+        expect(result.current.isSuccess).toBe(true)
+      })
 
       expect(global.fetch).toHaveBeenCalledWith("/api/date-range?timeframe=15m")
     })
@@ -110,7 +114,9 @@ describe("useApi hooks with Timeframe type", () => {
         wrapper: createWrapper(),
       })
 
-      await waitFor(() => expect(result.current.isSuccess).toBe(true))
+      await waitFor(() => {
+        expect(result.current.isSuccess).toBe(true)
+      })
 
       expect(global.fetch).toHaveBeenCalledWith(
         "/api/data?timeframe=1h",
@@ -141,7 +147,9 @@ describe("useApi hooks with Timeframe type", () => {
         wrapper: createWrapper(),
       })
 
-      await waitFor(() => expect(result.current.isSuccess).toBe(true))
+      await waitFor(() => {
+        expect(result.current.isSuccess).toBe(true)
+      })
 
       expect(global.fetch).toHaveBeenCalledWith(
         "/api/data?timeframe=15m",
@@ -169,7 +177,9 @@ describe("useApi hooks with Timeframe type", () => {
         wrapper: createWrapper(),
       })
 
-      await waitFor(() => expect(result.current.isSuccess).toBe(true))
+      await waitFor(() => {
+        expect(result.current.isSuccess).toBe(true)
+      })
 
       expect(global.fetch).toHaveBeenCalledWith("/api/token/BTC?timeframe=1h")
     })
@@ -192,7 +202,9 @@ describe("useApi hooks with Timeframe type", () => {
         wrapper: createWrapper(),
       })
 
-      await waitFor(() => expect(result.current.isSuccess).toBe(true))
+      await waitFor(() => {
+        expect(result.current.isSuccess).toBe(true)
+      })
 
       expect(global.fetch).toHaveBeenCalledWith("/api/token/ETH?timeframe=15m")
     })
@@ -242,7 +254,9 @@ describe("useApi hooks with Timeframe type", () => {
         result.current.mutate({ is_testnet: true })
       })
 
-      await waitFor(() => expect(result.current.isSuccess).toBe(true))
+      await waitFor(() => {
+        expect(result.current.isSuccess).toBe(true)
+      })
 
       expect(global.fetch).toHaveBeenCalledWith("/api/hyperliquid/network", {
         method: "POST",
@@ -270,7 +284,9 @@ describe("useApi hooks with Timeframe type", () => {
         result.current.mutate({ is_testnet: false })
       })
 
-      await waitFor(() => expect(result.current.isSuccess).toBe(true))
+      await waitFor(() => {
+        expect(result.current.isSuccess).toBe(true)
+      })
 
       expect(global.fetch).toHaveBeenCalledWith("/api/hyperliquid/network", {
         method: "POST",
@@ -293,7 +309,9 @@ describe("useApi hooks with Timeframe type", () => {
         result.current.mutate({ is_testnet: true })
       })
 
-      await waitFor(() => expect(result.current.isError).toBe(true))
+      await waitFor(() => {
+        expect(result.current.isError).toBe(true)
+      })
 
       expect(result.current.error?.message).toBe("Network switch failed")
     })
@@ -314,7 +332,9 @@ describe("useApi hooks with Timeframe type", () => {
         result.current.mutate({ is_testnet: true })
       })
 
-      await waitFor(() => expect(result.current.isSuccess).toBe(true))
+      await waitFor(() => {
+        expect(result.current.isSuccess).toBe(true)
+      })
 
       // Verify no secret_key in request body
       const callArgs = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0]
@@ -340,7 +360,9 @@ describe("useApi hooks with Timeframe type", () => {
         wrapper: createWrapper(),
       })
 
-      await waitFor(() => expect(result.current.isSuccess).toBe(true))
+      await waitFor(() => {
+        expect(result.current.isSuccess).toBe(true)
+      })
 
       expect(global.fetch).toHaveBeenCalledWith(
         "/api/hyperliquid/wallet-settings",
@@ -365,7 +387,9 @@ describe("useApi hooks with Timeframe type", () => {
         wrapper: createWrapper(),
       })
 
-      await waitFor(() => expect(result.current.isSuccess).toBe(true))
+      await waitFor(() => {
+        expect(result.current.isSuccess).toBe(true)
+      })
 
       expect(result.current.data).not.toHaveProperty("secret_key")
     })

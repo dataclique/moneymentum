@@ -6,13 +6,15 @@ import {
 } from "@tanstack/react-query"
 import type { Timeframe } from "@/components/ui/timeframe-select"
 
+interface ApiError {
+  detail?: string
+}
+
 /**
  * Refresh all data in the application.
  * Invalidates and refetches all queries to ensure UI is up-to-date.
  */
-export async function refreshAllData(queryClient: QueryClient) {
-  console.log("Refreshing all data...")
-
+export const refreshAllData = async (queryClient: QueryClient) => {
   // First, invalidate and refetch wallet settings
   await queryClient.invalidateQueries({
     queryKey: ["hyperliquid", "wallet-settings"],
@@ -42,12 +44,10 @@ export async function refreshAllData(queryClient: QueryClient) {
   ])
 
   // Invalidate other queries (they'll refetch when components need them)
-  queryClient.invalidateQueries({ queryKey: ["analysisData"] })
-  queryClient.invalidateQueries({ queryKey: ["tokenData"] })
-  queryClient.invalidateQueries({ queryKey: ["dateRange"] })
-  queryClient.invalidateQueries({ queryKey: ["hyperliquid"] })
-
-  console.log("All data refreshed")
+  await queryClient.invalidateQueries({ queryKey: ["analysisData"] })
+  await queryClient.invalidateQueries({ queryKey: ["tokenData"] })
+  await queryClient.invalidateQueries({ queryKey: ["dateRange"] })
+  await queryClient.invalidateQueries({ queryKey: ["hyperliquid"] })
 }
 
 export type OrderSide = "buy" | "sell"
@@ -99,27 +99,27 @@ export interface OrderStatus {
   message?: string | null
 }
 
-export function useDateRange(timeframe: Timeframe) {
+export const useDateRange = (timeframe: Timeframe) => {
   return useQuery<DateRange>({
     queryKey: ["dateRange", timeframe],
     queryFn: async () => {
       const response = await fetch(`/api/date-range?timeframe=${timeframe}`)
       if (!response.ok) {
-        const errorData = await response.json()
+        const errorData = (await response.json().catch(() => ({}))) as ApiError
         throw new Error(
-          errorData.detail || `HTTP error! status: ${response.status}`,
+          errorData.detail ?? `HTTP error! status: ${String(response.status)}`,
         )
       }
-      return response.json()
+      return response.json() as Promise<DateRange>
     },
   })
 }
 
-export function useAnalysisData({
+export const useAnalysisData = ({
   startDate,
   endDate,
   timeframe,
-}: AnalysisDataParams) {
+}: AnalysisDataParams) => {
   return useQuery<{ data: TradingData[]; message: string | null }>({
     queryKey: ["analysisData", timeframe, startDate, endDate],
     queryFn: async () => {
@@ -138,19 +138,25 @@ export function useAnalysisData({
       })
 
       if (!response.ok) {
-        const errorData = await response.json()
+        const errorData = (await response.json().catch(() => ({}))) as ApiError
         throw new Error(
-          errorData.detail || `HTTP error! status: ${response.status}`,
+          errorData.detail ?? `HTTP error! status: ${String(response.status)}`,
         )
       }
 
-      return response.json()
+      return response.json() as Promise<{
+        data: TradingData[]
+        message: string | null
+      }>
     },
     enabled: !!startDate && !!endDate,
   })
 }
 
-export function useTokenData(ticker: string | undefined, timeframe: Timeframe) {
+export const useTokenData = (
+  ticker: string | undefined,
+  timeframe: Timeframe,
+) => {
   return useQuery<{ data: TradingData[]; message?: string }>({
     queryKey: ["tokenData", ticker, timeframe],
     queryFn: async () => {
@@ -163,10 +169,13 @@ export function useTokenData(ticker: string | undefined, timeframe: Timeframe) {
       )
 
       if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`)
+        throw new Error(`HTTP error! status: ${String(response.status)}`)
       }
 
-      const result = await response.json()
+      const result = (await response.json()) as {
+        data: TradingData[]
+        message?: string
+      }
 
       if (result.message) {
         throw new Error(result.message)
@@ -178,10 +187,10 @@ export function useTokenData(ticker: string | undefined, timeframe: Timeframe) {
   })
 }
 
-export function useReloadData() {
+export const useReloadData = () => {
   const queryClient = useQueryClient()
 
-  return useMutation<void, Error, { mode: string }>({
+  return useMutation<undefined, Error, { mode: string }>({
     mutationFn: async ({ mode }) => {
       const controller = new AbortController()
 
@@ -195,7 +204,7 @@ export function useReloadData() {
       })
 
       if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`)
+        throw new Error(`HTTP error! status: ${String(response.status)}`)
       }
 
       if (!response.body) {
@@ -206,66 +215,71 @@ export function useReloadData() {
       const decoder = new TextDecoder("utf-8")
 
       try {
-        while (true) {
-          const { value, done } = await reader.read()
-          if (done) break
-          console.log(decoder.decode(value, { stream: true }))
+        let done = false
+        while (!done) {
+          const readResult = await reader.read()
+          done = readResult.done
+          if (readResult.value) {
+            // Log streaming output for debugging
+            // eslint-disable-next-line no-console
+            console.log(decoder.decode(readResult.value, { stream: true }))
+          }
         }
       } finally {
         reader.releaseLock()
       }
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["analysisData"] })
-      queryClient.invalidateQueries({ queryKey: ["tokenData"] })
-      queryClient.invalidateQueries({ queryKey: ["dateRange"] })
+      void queryClient.invalidateQueries({ queryKey: ["analysisData"] })
+      void queryClient.invalidateQueries({ queryKey: ["tokenData"] })
+      void queryClient.invalidateQueries({ queryKey: ["dateRange"] })
     },
   })
 }
 
-export function useStopReload() {
-  return useMutation<void, Error>({
+export const useStopReload = () => {
+  return useMutation({
     mutationFn: async () => {
       const response = await fetch("/api/stop_reload", {
         method: "POST",
       })
 
       if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`)
+        throw new Error(`HTTP error! status: ${String(response.status)}`)
       }
     },
   })
 }
 
-export function useHyperliquidTickers() {
+export const useHyperliquidTickers = () => {
   return useQuery<{ data: string[] }>({
     queryKey: ["hyperliquid", "tickers"],
     queryFn: async () => {
       const response = await fetch("/api/hyperliquid/tickers")
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}))
-        throw new Error(errorData.detail || "Unable to fetch tickers")
+        const errorData = (await response.json().catch(() => ({}))) as ApiError
+        throw new Error(errorData.detail ?? "Unable to fetch tickers")
       }
-      return response.json()
+      return response.json() as Promise<{ data: string[] }>
     },
   })
 }
 
-export function useHyperliquidBalance() {
+export const useHyperliquidBalance = () => {
   return useQuery<{ perp_usdc_balance: number }>({
     queryKey: ["hyperliquid", "balance"],
     queryFn: async () => {
       const response = await fetch("/api/hyperliquid/balance")
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}))
-        throw new Error(errorData.detail || "Unable to fetch balance")
+        const errorData = (await response.json().catch(() => ({}))) as ApiError
+        throw new Error(errorData.detail ?? "Unable to fetch balance")
       }
-      return response.json()
+      return response.json() as Promise<{ perp_usdc_balance: number }>
     },
   })
 }
 
-export function useOpenHyperliquidPositions() {
+export const useOpenHyperliquidPositions = () => {
   return useMutation<{ orders: OrderStatus[] }, Error, OpenPositionsParams>({
     mutationFn: async payload => {
       const response = await fetch("/api/hyperliquid/open_positions", {
@@ -277,16 +291,16 @@ export function useOpenHyperliquidPositions() {
       })
 
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}))
-        throw new Error(errorData.detail || "Unable to open positions")
+        const errorData = (await response.json().catch(() => ({}))) as ApiError
+        throw new Error(errorData.detail ?? "Unable to open positions")
       }
 
-      return response.json()
+      return response.json() as Promise<{ orders: OrderStatus[] }>
     },
   })
 }
 
-export function useRebalanceHyperliquidPositions() {
+export const useRebalanceHyperliquidPositions = () => {
   return useMutation<{ orders: OrderStatus[] }, Error, OpenPositionsParams>({
     mutationFn: async payload => {
       const response = await fetch("/api/hyperliquid/rebalance_positions", {
@@ -298,11 +312,11 @@ export function useRebalanceHyperliquidPositions() {
       })
 
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}))
-        throw new Error(errorData.detail || "Unable to rebalance positions")
+        const errorData = (await response.json().catch(() => ({}))) as ApiError
+        throw new Error(errorData.detail ?? "Unable to rebalance positions")
       }
 
-      return response.json()
+      return response.json() as Promise<{ orders: OrderStatus[] }>
     },
   })
 }
@@ -322,51 +336,54 @@ export interface LeverageLimit {
   max_leverage: number
 }
 
-export function useHyperliquidPositions() {
+export const useHyperliquidPositions = () => {
   return useQuery<{ positions: CurrentPosition[]; total_notional: number }>({
     queryKey: ["hyperliquid", "positions"],
     queryFn: async () => {
       const response = await fetch("/api/hyperliquid/positions")
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}))
-        throw new Error(errorData.detail || "Unable to fetch positions")
+        const errorData = (await response.json().catch(() => ({}))) as ApiError
+        throw new Error(errorData.detail ?? "Unable to fetch positions")
       }
-      return response.json()
+      return response.json() as Promise<{
+        positions: CurrentPosition[]
+        total_notional: number
+      }>
     },
   })
 }
 
-export function useHyperliquidLeverageLimits() {
+export const useHyperliquidLeverageLimits = () => {
   return useQuery<{ data: LeverageLimit[] }>({
     queryKey: ["hyperliquid", "leverage-limits"],
     queryFn: async () => {
       const response = await fetch("/api/hyperliquid/leverage-limits")
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}))
-        throw new Error(errorData.detail || "Unable to fetch leverage limits")
+        const errorData = (await response.json().catch(() => ({}))) as ApiError
+        throw new Error(errorData.detail ?? "Unable to fetch leverage limits")
       }
-      return response.json()
+      return response.json() as Promise<{ data: LeverageLimit[] }>
     },
   })
 }
 
-export function useBudgetPreference() {
+export const useBudgetPreference = () => {
   return useQuery<{ budget: number }>({
     queryKey: ["hyperliquid", "budget-preference"],
     queryFn: async () => {
       const response = await fetch("/api/hyperliquid/budget-preference")
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}))
-        throw new Error(errorData.detail || "Unable to fetch budget preference")
+        const errorData = (await response.json().catch(() => ({}))) as ApiError
+        throw new Error(errorData.detail ?? "Unable to fetch budget preference")
       }
-      return response.json()
+      return response.json() as Promise<{ budget: number }>
     },
   })
 }
 
-export function useSaveBudgetPreference() {
-  return useMutation<void, Error, { budget: number }>({
-    mutationFn: async payload => {
+export const useSaveBudgetPreference = () => {
+  return useMutation({
+    mutationFn: async (payload: { budget: number }) => {
       const response = await fetch("/api/hyperliquid/budget-preference", {
         method: "POST",
         headers: {
@@ -376,8 +393,8 @@ export function useSaveBudgetPreference() {
       })
 
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}))
-        throw new Error(errorData.detail || "Unable to save budget preference")
+        const errorData = (await response.json().catch(() => ({}))) as ApiError
+        throw new Error(errorData.detail ?? "Unable to save budget preference")
       }
     },
   })
@@ -388,21 +405,21 @@ export interface WalletSettings {
   is_testnet: boolean
 }
 
-export function useWalletSettings() {
+export const useWalletSettings = () => {
   return useQuery<WalletSettings>({
     queryKey: ["hyperliquid", "wallet-settings"],
     queryFn: async () => {
       const response = await fetch("/api/hyperliquid/wallet-settings")
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}))
-        throw new Error(errorData.detail || "Unable to fetch wallet settings")
+        const errorData = (await response.json().catch(() => ({}))) as ApiError
+        throw new Error(errorData.detail ?? "Unable to fetch wallet settings")
       }
-      return response.json()
+      return response.json() as Promise<WalletSettings>
     },
   })
 }
 
-export function useSwitchNetwork() {
+export const useSwitchNetwork = () => {
   return useMutation<{ is_testnet: boolean }, Error, { is_testnet: boolean }>({
     mutationFn: async payload => {
       const response = await fetch("/api/hyperliquid/network", {
@@ -414,10 +431,10 @@ export function useSwitchNetwork() {
       })
 
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}))
-        throw new Error(errorData.detail || "Unable to switch network")
+        const errorData = (await response.json().catch(() => ({}))) as ApiError
+        throw new Error(errorData.detail ?? "Unable to switch network")
       }
-      return response.json()
+      return response.json() as Promise<{ is_testnet: boolean }>
     },
   })
 }

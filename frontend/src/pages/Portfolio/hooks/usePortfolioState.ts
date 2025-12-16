@@ -57,36 +57,6 @@ const getTokenUsdAllocation = (
   return 0
 }
 
-const recalcPercentagesFromLockedValues = (
-  tokens: TokenAllocation[],
-  currentBudget: number,
-): TokenAllocation[] => {
-  if (!tokens.length || currentBudget <= 0) return tokens
-
-  const changeTracker = { changed: false }
-  const updatedTokens = tokens.map(token => {
-    const referenceUsd =
-      token.notional !== undefined && token.notional > 0
-        ? token.notional
-        : token.lockedUsd
-    if (referenceUsd !== undefined && referenceUsd >= 0) {
-      const nextPercent = parseFloat(
-        ((referenceUsd / currentBudget) * 100).toFixed(2),
-      )
-      if (
-        Number.isFinite(nextPercent) &&
-        Math.abs(nextPercent - token.percentage) > 0.01
-      ) {
-        changeTracker.changed = true
-        return { ...token, percentage: nextPercent }
-      }
-    }
-    return token
-  })
-
-  return changeTracker.changed ? updatedTokens : tokens
-}
-
 // Query for localStorage - provides initial hydration
 const useStoredPortfolio = () => {
   return useQuery({
@@ -144,102 +114,95 @@ export const usePortfolioState = () => {
     [saveBudgetPreference],
   )
 
-  // Initialize from localStorage (one-time on mount)
+  // Combined initialization effect with priority: localStorage > exchange > server preference > balance
   useEffect(() => {
-    if (!storedData) return
-    if (typeof storedData.budget === "number") {
-      setBudget(storedData.budget)
-      setBudgetInput(storedData.budget.toString())
-      setIsBudgetInitialized(true)
+    // Wait for localStorage query to complete first
+    if (!isStoredDataFetched) return
+
+    if (isBudgetInitialized && positionsLoadedFromExchange) return
+
+    // Priority 1: Load from localStorage
+    if (storedData) {
+      if (!isBudgetInitialized && typeof storedData.budget === "number") {
+        setBudget(storedData.budget)
+        setBudgetInput(storedData.budget.toString())
+        setIsBudgetInitialized(true)
+      }
+      if (Array.isArray(storedData.tokens) && storedData.tokens.length > 0) {
+        setSelectedTokens(
+          storedData.tokens.map(token => ({
+            ...token,
+            leverage: token.leverage || 1,
+            status: "untouched" as const,
+            message: null,
+          })),
+        )
+        setPositionsLoadedFromExchange(true)
+        return
+      }
     }
-    if (Array.isArray(storedData.tokens)) {
-      setSelectedTokens(
-        storedData.tokens.map(token => ({
-          ...token,
-          leverage: token.leverage || 1,
+
+    // Priority 2: Load positions from exchange (if no localStorage tokens)
+    if (
+      !isPositionsLoading &&
+      positionsData?.positions &&
+      !positionsLoadedFromExchange
+    ) {
+      const loadedTokens: TokenAllocation[] = positionsData.positions.map(
+        pos => ({
+          symbol: pos.symbol,
+          percentage: parseFloat(pos.percentage.toFixed(2)),
+          side: pos.side,
+          leverage: pos.leverage || 1,
           status: "untouched" as const,
           message: null,
-        })),
+          notional: pos.notional,
+          lockedUsd: pos.notional,
+        }),
       )
+
+      if (loadedTokens.length > 0) {
+        setSelectedTokens(loadedTokens)
+        setInitialPortfolio(loadedTokens)
+        const totalSpent = positionsData.total_notional
+        if (totalSpent > 0) {
+          setBudget(totalSpent)
+          setBudgetInput(totalSpent.toString())
+          setIsBudgetInitialized(true)
+          memoizedSaveBudgetPreference({ budget: totalSpent })
+        }
+      }
+      setPositionsLoadedFromExchange(true)
+      return
     }
-  }, [storedData])
 
-  // Initialize budget from server (budget preference > balance)
-  useEffect(() => {
-    if (isBudgetInitialized || positionsLoadedFromExchange) return
-
-    if (
-      !isBudgetPreferenceLoading &&
-      typeof budgetPreferenceData?.budget === "number" &&
-      budgetPreferenceData.budget > 0
-    ) {
-      setBudget(budgetPreferenceData.budget)
-      setBudgetInput(budgetPreferenceData.budget.toString())
-      setIsBudgetInitialized(true)
-    } else if (typeof balanceData?.perp_usdc_balance === "number") {
-      setBudget(balanceData.perp_usdc_balance)
-      setBudgetInput(balanceData.perp_usdc_balance.toString())
-      setIsBudgetInitialized(true)
+    // Priority 3: Initialize budget from server preference or balance (if no positions)
+    if (!isBudgetInitialized && positionsLoadedFromExchange) {
+      if (
+        !isBudgetPreferenceLoading &&
+        typeof budgetPreferenceData?.budget === "number" &&
+        budgetPreferenceData.budget > 0
+      ) {
+        setBudget(budgetPreferenceData.budget)
+        setBudgetInput(budgetPreferenceData.budget.toString())
+        setIsBudgetInitialized(true)
+      } else if (typeof balanceData?.perp_usdc_balance === "number") {
+        setBudget(balanceData.perp_usdc_balance)
+        setBudgetInput(balanceData.perp_usdc_balance.toString())
+        setIsBudgetInitialized(true)
+      }
     }
   }, [
+    storedData,
+    isStoredDataFetched,
+    positionsData,
+    isPositionsLoading,
     balanceData,
     budgetPreferenceData,
     isBudgetInitialized,
     isBudgetPreferenceLoading,
     positionsLoadedFromExchange,
-  ])
-
-  // Load positions from exchange (only once if no local storage)
-  useEffect(() => {
-    // Wait for localStorage query to complete first
-    if (!isStoredDataFetched) return
-
-    if (
-      isPositionsLoading ||
-      !positionsData?.positions ||
-      positionsLoadedFromExchange
-    ) {
-      return
-    }
-
-    // Don't override if user already has positions configured
-    if (storedData?.tokens && storedData.tokens.length > 0) {
-      setPositionsLoadedFromExchange(true)
-      return
-    }
-
-    const loadedTokens: TokenAllocation[] = positionsData.positions.map(
-      pos => ({
-        symbol: pos.symbol,
-        percentage: parseFloat(pos.percentage.toFixed(2)),
-        side: pos.side,
-        leverage: pos.leverage || 1,
-        status: "untouched" as const,
-        message: null,
-        notional: pos.notional,
-        lockedUsd: pos.notional,
-      }),
-    )
-
-    if (loadedTokens.length > 0) {
-      setSelectedTokens(loadedTokens)
-      setInitialPortfolio(loadedTokens)
-      const totalSpent = positionsData.total_notional
-      if (totalSpent > 0) {
-        setBudget(totalSpent)
-        setBudgetInput(totalSpent.toString())
-        setIsBudgetInitialized(true)
-        memoizedSaveBudgetPreference({ budget: totalSpent })
-      }
-    }
-    setPositionsLoadedFromExchange(true)
-  }, [
-    positionsData,
-    isPositionsLoading,
-    storedData,
-    isStoredDataFetched,
     memoizedSaveBudgetPreference,
-    positionsLoadedFromExchange,
   ])
 
   // Persist to localStorage
@@ -260,22 +223,55 @@ export const usePortfolioState = () => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(payload))
   }, [budget, selectedTokens])
 
+  // Derive token statuses (modified/untouched) by comparing to initial portfolio
+  const tokensWithComputedStatus = useMemo(() => {
+    if (initialPortfolio.length === 0) return selectedTokens
+
+    return selectedTokens.map(currentToken => {
+      const initialToken = initialPortfolio.find(
+        it => it.symbol === currentToken.symbol,
+      )
+
+      // Don't compute status for certain base statuses
+      if (
+        !initialToken ||
+        currentToken.status === "deleted" ||
+        currentToken.status === "failed" ||
+        currentToken.status === "working"
+      ) {
+        return currentToken
+      }
+
+      const isModified =
+        Math.abs(
+          (currentToken.lockedUsd ?? 0) - (initialToken.lockedUsd ?? 0),
+        ) > 0.01 ||
+        currentToken.side !== initialToken.side ||
+        currentToken.leverage !== initialToken.leverage
+
+      const computedStatus: "modified" | "untouched" = isModified
+        ? "modified"
+        : "untouched"
+
+      if (currentToken.status !== computedStatus) {
+        return { ...currentToken, status: computedStatus }
+      }
+
+      return currentToken
+    })
+  }, [selectedTokens, initialPortfolio])
+
   // Computed values
   const activeTokens = useMemo(
-    () => selectedTokens.filter(t => t.status !== "deleted"),
-    [selectedTokens],
+    () => tokensWithComputedStatus.filter(t => t.status !== "deleted"),
+    [tokensWithComputedStatus],
   )
 
   const hasPendingDeletions = useMemo(
-    () => selectedTokens.some(t => t.status === "deleted"),
-    [selectedTokens],
+    () => tokensWithComputedStatus.some(t => t.status === "deleted"),
+    [tokensWithComputedStatus],
   )
 
-  const totalPercent = activeTokens.reduce(
-    (acc, token) => acc + token.percentage,
-    0,
-  )
-  const remainingPercent = Math.max(0, 100 - totalPercent)
   const requiredBudgetForTokens = activeTokens.length * MIN_USD
   const budgetIsPositive = budget > 0
   const budgetBelowMinimum =
@@ -284,7 +280,6 @@ export const usePortfolioState = () => {
     activeTokens.length > 0 &&
     budgetIsPositive &&
     requiredBudgetForTokens > budget
-  const totalPercentExceeds100 = totalPercent > 100
   const maxBudget = (balanceData?.perp_usdc_balance ?? 0) * 5
 
   // Track last sufficient budget
@@ -316,6 +311,44 @@ export const usePortfolioState = () => {
   const hasBlockingBudgetIssue =
     budgetBelowMinimum || insufficientBudgetForTokens
 
+  // Derive percentages from lockedUsd/notional and budgetForUi
+  const tokensWithDerivedPercentages = useMemo(() => {
+    if (budgetForUi <= 0) return tokensWithComputedStatus
+
+    return tokensWithComputedStatus.map(token => {
+      if (token.status === "deleted") return token
+
+      const referenceUsd =
+        token.notional !== undefined && token.notional > 0
+          ? token.notional
+          : token.lockedUsd
+
+      if (referenceUsd !== undefined && referenceUsd >= 0) {
+        const derivedPercent = parseFloat(
+          ((referenceUsd / budgetForUi) * 100).toFixed(2),
+        )
+        if (
+          Number.isFinite(derivedPercent) &&
+          Math.abs(derivedPercent - token.percentage) > 0.01
+        ) {
+          return { ...token, percentage: derivedPercent }
+        }
+      }
+      return token
+    })
+  }, [tokensWithComputedStatus, budgetForUi])
+
+  // Recompute derived values with correct percentages
+  const derivedActiveTokens = useMemo(
+    () => tokensWithDerivedPercentages.filter(t => t.status !== "deleted"),
+    [tokensWithDerivedPercentages],
+  )
+  const derivedTotalPercent = derivedActiveTokens.reduce(
+    (acc, token) => acc + token.percentage,
+    0,
+  )
+  const derivedRemainingPercent = Math.max(0, 100 - derivedTotalPercent)
+
   const leverageLimitsMap = useMemo(() => {
     const map: Record<string, number> = {}
     if (!leverageLimitsData?.data) return map
@@ -336,102 +369,48 @@ export const usePortfolioState = () => {
       `Delete some tokens or make bigger budget (need at least $${String(requiredBudgetForTokens)}).`,
     )
   }
-  if (totalPercentExceeds100) {
+  const derivedTotalPercentExceeds100 = derivedTotalPercent > 100
+  if (derivedTotalPercentExceeds100) {
     blockingReasons.push(
-      `Total allocation cannot exceed 100%. Current allocation: ${totalPercent.toFixed(2)}%`,
+      `Total allocation cannot exceed 100%. Current allocation: ${derivedTotalPercent.toFixed(2)}%`,
     )
   }
 
-  // Recalculate percentages and enforce limits
+  // Enforce minimum USD amounts for tokens (percentage is now derived)
   useEffect(() => {
-    if (budgetForUi <= 0) return
+    if (budgetForUi <= 0 || minPercentFloor <= 0) return
 
     setSelectedTokens(prevTokens => {
-      const currentActiveTokens = prevTokens.filter(t => t.status !== "deleted")
-      const tokensPendingDeletion = prevTokens.filter(
-        t => t.status === "deleted",
+      const needsAdjustment = prevTokens.some(
+        token =>
+          token.status !== "deleted" &&
+          !(token.notional !== undefined && token.notional > 0) &&
+          (token.lockedUsd === undefined || token.lockedUsd < MIN_USD),
       )
-      const recalculatedTokens = recalcPercentagesFromLockedValues(
-        currentActiveTokens,
-        budgetForUi,
-      )
+      if (!needsAdjustment) return prevTokens
 
-      const minPercent = minPercentFloor
-      if (minPercent > 0) {
-        const adjustedTokens = recalculatedTokens.map(token => {
-          if (
-            token.status === "deleted" ||
-            (token.notional !== undefined && token.notional > 0) ||
-            token.percentage >= minPercent
-          ) {
-            return token
-          }
-          const nextPercent = parseFloat(Math.min(100, minPercent).toFixed(2))
-          return {
-            ...token,
-            percentage: nextPercent,
-            lockedUsd: Math.max(token.lockedUsd ?? MIN_USD, MIN_USD),
-            status: "idle" as const,
-            message: null,
-          }
-        })
-
-        const finalTokens = [...adjustedTokens, ...tokensPendingDeletion]
-        if (JSON.stringify(finalTokens) !== JSON.stringify(prevTokens)) {
-          return finalTokens
+      return prevTokens.map(token => {
+        // Skip deleted tokens or tokens with exchange notional
+        if (
+          token.status === "deleted" ||
+          (token.notional !== undefined && token.notional > 0)
+        ) {
+          return token
         }
-      } else {
-        const finalTokens = [...recalculatedTokens, ...tokensPendingDeletion]
-        if (JSON.stringify(finalTokens) !== JSON.stringify(prevTokens)) {
-          return finalTokens
+        // Check if token meets minimum USD requirement
+        if (token.lockedUsd !== undefined && token.lockedUsd >= MIN_USD) {
+          return token
         }
-      }
-      return prevTokens
+        // Bump up to minimum
+        return {
+          ...token,
+          lockedUsd: MIN_USD,
+          status: "idle" as const,
+          message: null,
+        }
+      })
     })
   }, [budgetForUi, minPercentFloor])
-
-  // Update token statuses based on changes from initial state
-  useEffect(() => {
-    if (initialPortfolio.length === 0) return
-
-    setSelectedTokens(prevTokens => {
-      const tracker = { hasChanged: false }
-      const updatedTokens = prevTokens.map(currentToken => {
-        const initialToken = initialPortfolio.find(
-          it => it.symbol === currentToken.symbol,
-        )
-
-        if (
-          !initialToken ||
-          currentToken.status === "deleted" ||
-          currentToken.status === "failed" ||
-          currentToken.status === "working"
-        ) {
-          return currentToken
-        }
-
-        const isModified =
-          Math.abs(
-            (currentToken.lockedUsd ?? 0) - (initialToken.lockedUsd ?? 0),
-          ) > 0.01 ||
-          currentToken.side !== initialToken.side ||
-          currentToken.leverage !== initialToken.leverage
-
-        const newStatus: "modified" | "untouched" = isModified
-          ? "modified"
-          : "untouched"
-
-        if (currentToken.status !== newStatus) {
-          tracker.hasChanged = true
-          return { ...currentToken, status: newStatus } as TokenAllocation
-        }
-
-        return currentToken
-      })
-
-      return tracker.hasChanged ? updatedTokens : prevTokens
-    })
-  }, [initialPortfolio, selectedTokens])
 
   // Debounced budget save
   useEffect(() => {
@@ -632,7 +611,10 @@ export const usePortfolioState = () => {
         setBudgetInput(budget.toString())
       } else if (maxBudget > 0 && numValue > maxBudget) {
         setBudgetError(`Max budget: $${maxBudget.toFixed(2)}`)
-      } else if (numValue < MIN_USD && selectedTokens.length > 0) {
+      } else if (
+        numValue < MIN_USD &&
+        tokensWithDerivedPercentages.length > 0
+      ) {
         setBudgetError(`Budget must be at least $${String(MIN_USD)}`)
       } else {
         setBudget(numValue)
@@ -640,14 +622,14 @@ export const usePortfolioState = () => {
         setBudgetError(null)
       }
     }
-  }, [budgetInput, budget, maxBudget, selectedTokens.length])
+  }, [budgetInput, budget, maxBudget, tokensWithDerivedPercentages.length])
 
   const handleOpenPositions = useCallback(() => {
     if (
-      !selectedTokens.length ||
+      !tokensWithDerivedPercentages.length ||
       budget <= 0 ||
       hasBlockingBudgetIssue ||
-      (totalPercent <= 0 && !hasPendingDeletions) ||
+      (derivedTotalPercent <= 0 && !hasPendingDeletions) ||
       rebalancePositionsMutation.isPending
     ) {
       return
@@ -662,7 +644,7 @@ export const usePortfolioState = () => {
 
     const payload = {
       budget,
-      positions: selectedTokens.map(token => ({
+      positions: tokensWithDerivedPercentages.map(token => ({
         symbol: token.symbol,
         side: token.side,
         percentage: token.percentage / 100,
@@ -681,7 +663,7 @@ export const usePortfolioState = () => {
 
     rebalancePositionsMutation.mutate(payload, {
       onSuccess: data => {
-        const updatedTokens = selectedTokens
+        const updatedTokens = tokensWithDerivedPercentages
           .map(token => {
             const status = data.orders.find(
               order => order.symbol === token.symbol,
@@ -734,41 +716,41 @@ export const usePortfolioState = () => {
       },
     })
   }, [
-    selectedTokens,
+    tokensWithDerivedPercentages,
     budget,
     hasBlockingBudgetIssue,
-    totalPercent,
+    derivedTotalPercent,
     hasPendingDeletions,
     rebalancePositionsMutation,
     setIsNetworkSwitching,
     queryClient,
   ])
 
-  const netExposure = activeTokens.reduce((acc, token) => {
+  const netExposure = derivedActiveTokens.reduce((acc, token) => {
     const usdValue = getTokenUsdAllocation(token, budgetForUi)
     return acc + (token.side === "buy" ? usdValue : -usdValue)
   }, 0)
 
   const disableSubmit =
-    !selectedTokens.length ||
+    !tokensWithDerivedPercentages.length ||
     budget <= 0 ||
     rebalancePositionsMutation.isPending ||
-    (totalPercent <= 0 && !hasPendingDeletions) ||
+    (derivedTotalPercent <= 0 && !hasPendingDeletions) ||
     hasBlockingBudgetIssue ||
-    totalPercentExceeds100
+    derivedTotalPercentExceeds100
 
   return {
     // State
     budget,
     budgetInput,
     budgetError,
-    selectedTokens,
-    activeTokens,
+    selectedTokens: tokensWithDerivedPercentages,
+    activeTokens: derivedActiveTokens,
     budgetForUi,
     maxBudget,
     minPercentFloor,
-    totalPercent,
-    remainingPercent,
+    totalPercent: derivedTotalPercent,
+    remainingPercent: derivedRemainingPercent,
     hasPendingDeletions,
     blockingReasons,
     leverageLimitsMap,

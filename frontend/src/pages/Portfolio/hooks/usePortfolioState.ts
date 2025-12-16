@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from "react"
-import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { useQueryClient } from "@tanstack/react-query"
 import {
   useHyperliquidBalance,
   useHyperliquidPositions,
@@ -57,22 +57,14 @@ const getTokenUsdAllocation = (
   return 0
 }
 
-// Query for localStorage - provides initial hydration
-const useStoredPortfolio = () => {
-  return useQuery({
-    queryKey: ["portfolio", "stored"],
-    queryFn: (): StoredPortfolioState | null => {
-      const stored = localStorage.getItem(STORAGE_KEY)
-      if (!stored) return null
-      try {
-        return JSON.parse(stored) as StoredPortfolioState
-      } catch {
-        return null
-      }
-    },
-    staleTime: Infinity,
-    gcTime: Infinity,
-  })
+const getStoredPortfolio = (): StoredPortfolioState | null => {
+  const stored = localStorage.getItem(STORAGE_KEY)
+  if (!stored) return null
+  try {
+    return JSON.parse(stored) as StoredPortfolioState
+  } catch {
+    return null
+  }
 }
 
 export const usePortfolioState = () => {
@@ -86,63 +78,108 @@ export const usePortfolioState = () => {
   const { data: leverageLimitsData } = useHyperliquidLeverageLimits()
   const { data: budgetPreferenceData, isLoading: isBudgetPreferenceLoading } =
     useBudgetPreference()
-  const { data: storedData, isFetched: isStoredDataFetched } =
-    useStoredPortfolio()
 
   // Mutations
   const { mutate: saveBudgetPreference } = useSaveBudgetPreference()
   const rebalancePositionsMutation = useRebalanceHyperliquidPositions()
 
-  // Local state
-  const [budget, setBudget] = useState(0)
-  const [budgetInput, setBudgetInput] = useState("")
+  const [storedDataSnapshot] = useState(() => getStoredPortfolio())
+  const hasStoredTokens =
+    storedDataSnapshot?.tokens && storedDataSnapshot.tokens.length > 0
+
+  const [budget, setBudget] = useState(() => storedDataSnapshot?.budget ?? 0)
+  const [budgetInput, setBudgetInput] = useState(
+    () => storedDataSnapshot?.budget.toString() ?? "",
+  )
   const [budgetError, setBudgetError] = useState<string | null>(null)
-  const [isBudgetInitialized, setIsBudgetInitialized] = useState(false)
-  const [selectedTokens, setSelectedTokens] = useState<TokenAllocation[]>([])
+  const [isBudgetInitialized, setIsBudgetInitialized] = useState(
+    () => typeof storedDataSnapshot?.budget === "number",
+  )
+  const [selectedTokens, setSelectedTokens] = useState<TokenAllocation[]>(
+    () =>
+      storedDataSnapshot?.tokens.map(token => ({
+        ...token,
+        leverage: token.leverage || 1,
+        lockedUsd:
+          token.lockedUsd === undefined || token.lockedUsd < MIN_USD
+            ? MIN_USD
+            : token.lockedUsd,
+        status: "untouched" as const,
+        message: null,
+      })) ?? [],
+  )
   const [initialPortfolio, setInitialPortfolio] = useState<TokenAllocation[]>(
     [],
   )
   const [positionsLoadedFromExchange, setPositionsLoadedFromExchange] =
-    useState(false)
+    useState(() => hasStoredTokens)
   const lastSufficientBudgetRef = useRef(0)
 
-  // Memoized save function
-  const memoizedSaveBudgetPreference = useCallback(
-    (vars: { budget: number }) => {
-      saveBudgetPreference(vars)
+  const budgetSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  )
+
+  const debouncedSaveBudgetPreference = useCallback(
+    (newBudget: number) => {
+      if (budgetSaveTimeoutRef.current) {
+        clearTimeout(budgetSaveTimeoutRef.current)
+      }
+      budgetSaveTimeoutRef.current = setTimeout(() => {
+        saveBudgetPreference({ budget: newBudget })
+      }, 3000)
     },
     [saveBudgetPreference],
   )
 
-  // Combined initialization effect with priority: localStorage > exchange > server preference > balance
-  useEffect(() => {
-    // Wait for localStorage query to complete first
-    if (!isStoredDataFetched) return
+  const persistStateToLocalStorage = useCallback(
+    (budgetVal: number, tokens: TokenAllocation[]) => {
+      const payload = {
+        budget: budgetVal,
+        tokens: tokens.map(
+          ({ symbol, percentage, side, lockedUsd, leverage, status }) => ({
+            symbol,
+            percentage,
+            side,
+            lockedUsd,
+            leverage,
+            status,
+          }),
+        ),
+      }
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(payload))
+    },
+    [],
+  )
 
+  const latestBudgetRef = useRef(budget)
+  const latestSelectedTokensRef = useRef(selectedTokens)
+  latestBudgetRef.current = budget
+  latestSelectedTokensRef.current = selectedTokens
+
+  const setSelectedTokensAndPersist = useCallback(
+    (updater: React.SetStateAction<TokenAllocation[]>) => {
+      setSelectedTokens(prev => {
+        const newTokens =
+          typeof updater === "function" ? updater(prev) : updater
+        persistStateToLocalStorage(latestBudgetRef.current, newTokens)
+        return newTokens
+      })
+    },
+    [persistStateToLocalStorage],
+  )
+
+  const setBudgetAndPersist = useCallback(
+    (newBudget: number) => {
+      setBudget(newBudget)
+      persistStateToLocalStorage(newBudget, latestSelectedTokensRef.current)
+      debouncedSaveBudgetPreference(newBudget)
+    },
+    [persistStateToLocalStorage, debouncedSaveBudgetPreference],
+  )
+
+  useEffect(() => {
     if (isBudgetInitialized && positionsLoadedFromExchange) return
 
-    // Priority 1: Load from localStorage
-    if (storedData) {
-      if (!isBudgetInitialized && typeof storedData.budget === "number") {
-        setBudget(storedData.budget)
-        setBudgetInput(storedData.budget.toString())
-        setIsBudgetInitialized(true)
-      }
-      if (Array.isArray(storedData.tokens) && storedData.tokens.length > 0) {
-        setSelectedTokens(
-          storedData.tokens.map(token => ({
-            ...token,
-            leverage: token.leverage || 1,
-            status: "untouched" as const,
-            message: null,
-          })),
-        )
-        setPositionsLoadedFromExchange(true)
-        return
-      }
-    }
-
-    // Priority 2: Load positions from exchange (if no localStorage tokens)
     if (
       !isPositionsLoading &&
       positionsData?.positions &&
@@ -169,15 +206,16 @@ export const usePortfolioState = () => {
           setBudget(totalSpent)
           setBudgetInput(totalSpent.toString())
           setIsBudgetInitialized(true)
-          memoizedSaveBudgetPreference({ budget: totalSpent })
+          saveBudgetPreference({ budget: totalSpent })
         }
       }
       setPositionsLoadedFromExchange(true)
       return
     }
 
-    // Priority 3: Initialize budget from server preference or balance (if no positions)
-    if (!isBudgetInitialized && positionsLoadedFromExchange) {
+    const shouldInitializeBudgetFromServer =
+      !isBudgetInitialized && positionsLoadedFromExchange
+    if (shouldInitializeBudgetFromServer) {
       if (
         !isBudgetPreferenceLoading &&
         typeof budgetPreferenceData?.budget === "number" &&
@@ -193,8 +231,6 @@ export const usePortfolioState = () => {
       }
     }
   }, [
-    storedData,
-    isStoredDataFetched,
     positionsData,
     isPositionsLoading,
     balanceData,
@@ -202,28 +238,9 @@ export const usePortfolioState = () => {
     isBudgetInitialized,
     isBudgetPreferenceLoading,
     positionsLoadedFromExchange,
-    memoizedSaveBudgetPreference,
+    saveBudgetPreference,
   ])
 
-  // Persist to localStorage
-  useEffect(() => {
-    const payload = {
-      budget,
-      tokens: selectedTokens.map(
-        ({ symbol, percentage, side, lockedUsd, leverage, status }) => ({
-          symbol,
-          percentage,
-          side,
-          lockedUsd,
-          leverage,
-          status,
-        }),
-      ),
-    }
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(payload))
-  }, [budget, selectedTokens])
-
-  // Derive token statuses (modified/untouched) by comparing to initial portfolio
   const tokensWithComputedStatus = useMemo(() => {
     if (initialPortfolio.length === 0) return selectedTokens
 
@@ -232,13 +249,13 @@ export const usePortfolioState = () => {
         it => it.symbol === currentToken.symbol,
       )
 
-      // Don't compute status for certain base statuses
-      if (
-        !initialToken ||
-        currentToken.status === "deleted" ||
-        currentToken.status === "failed" ||
-        currentToken.status === "working"
-      ) {
+      const shouldComputeStatus =
+        initialToken &&
+        currentToken.status !== "deleted" &&
+        currentToken.status !== "failed" &&
+        currentToken.status !== "working"
+
+      if (!shouldComputeStatus) {
         return currentToken
       }
 
@@ -261,7 +278,6 @@ export const usePortfolioState = () => {
     })
   }, [selectedTokens, initialPortfolio])
 
-  // Computed values
   const activeTokens = useMemo(
     () => tokensWithComputedStatus.filter(t => t.status !== "deleted"),
     [tokensWithComputedStatus],
@@ -282,14 +298,12 @@ export const usePortfolioState = () => {
     requiredBudgetForTokens > budget
   const maxBudget = (balanceData?.perp_usdc_balance ?? 0) * 5
 
-  // Track last sufficient budget
-  useEffect(() => {
-    if (budget > 0 && budget >= requiredBudgetForTokens) {
+  const budgetForUi = useMemo(() => {
+    const isSufficientBudget = budget > 0 && budget >= requiredBudgetForTokens
+    if (isSufficientBudget) {
       lastSufficientBudgetRef.current = budget
     }
-  }, [budget, requiredBudgetForTokens])
 
-  const budgetForUi = useMemo(() => {
     if (activeTokens.length === 0) {
       return budget > 0 ? budget : lastSufficientBudgetRef.current || 0
     }
@@ -311,7 +325,6 @@ export const usePortfolioState = () => {
   const hasBlockingBudgetIssue =
     budgetBelowMinimum || insufficientBudgetForTokens
 
-  // Derive percentages from lockedUsd/notional and budgetForUi
   const tokensWithDerivedPercentages = useMemo(() => {
     if (budgetForUi <= 0) return tokensWithComputedStatus
 
@@ -338,7 +351,6 @@ export const usePortfolioState = () => {
     })
   }, [tokensWithComputedStatus, budgetForUi])
 
-  // Recompute derived values with correct percentages
   const derivedActiveTokens = useMemo(
     () => tokensWithDerivedPercentages.filter(t => t.status !== "deleted"),
     [tokensWithDerivedPercentages],
@@ -376,70 +388,27 @@ export const usePortfolioState = () => {
     )
   }
 
-  // Enforce minimum USD amounts for tokens (percentage is now derived)
-  useEffect(() => {
-    if (budgetForUi <= 0 || minPercentFloor <= 0) return
-
-    setSelectedTokens(prevTokens => {
-      const needsAdjustment = prevTokens.some(
-        token =>
-          token.status !== "deleted" &&
-          !(token.notional !== undefined && token.notional > 0) &&
-          (token.lockedUsd === undefined || token.lockedUsd < MIN_USD),
-      )
-      if (!needsAdjustment) return prevTokens
-
-      return prevTokens.map(token => {
-        // Skip deleted tokens or tokens with exchange notional
-        if (
-          token.status === "deleted" ||
-          (token.notional !== undefined && token.notional > 0)
-        ) {
-          return token
-        }
-        // Check if token meets minimum USD requirement
-        if (token.lockedUsd !== undefined && token.lockedUsd >= MIN_USD) {
-          return token
-        }
-        // Bump up to minimum
-        return {
-          ...token,
-          lockedUsd: MIN_USD,
-          status: "idle" as const,
-          message: null,
-        }
-      })
-    })
-  }, [budgetForUi, minPercentFloor])
-
-  // Debounced budget save
-  useEffect(() => {
-    if (budget <= 0 || !isBudgetInitialized) return
-    const timeoutId = setTimeout(() => {
-      memoizedSaveBudgetPreference({ budget })
-    }, 3000)
-    return () => {
-      clearTimeout(timeoutId)
-    }
-  }, [budget, isBudgetInitialized, memoizedSaveBudgetPreference])
-
-  // Action handlers
   const handleAddToken = useCallback(
     (symbol: string) => {
       const existingToken = selectedTokens.find(t => t.symbol === symbol)
       if (existingToken) {
         if (existingToken.status === "deleted") {
-          setSelectedTokens(prev =>
-            prev.map(token =>
-              token.symbol === symbol
-                ? {
-                    ...token,
-                    status: token.notional ? "untouched" : "idle",
-                    percentage: token.previousPercentage ?? minPercentFloor,
-                    previousPercentage: undefined,
-                  }
-                : token,
-            ),
+          setSelectedTokensAndPersist(prev =>
+            prev.map(token => {
+              if (token.symbol !== symbol) return token
+              const hasExchangeNotional =
+                token.notional !== undefined && token.notional > 0
+              const needsMinimumUsd =
+                !hasExchangeNotional &&
+                (token.lockedUsd === undefined || token.lockedUsd < MIN_USD)
+              return {
+                ...token,
+                status: hasExchangeNotional ? "untouched" : "idle",
+                percentage: token.previousPercentage ?? minPercentFloor,
+                previousPercentage: undefined,
+                lockedUsd: needsMinimumUsd ? MIN_USD : token.lockedUsd,
+              }
+            }),
           )
         }
         return
@@ -455,7 +424,7 @@ export const usePortfolioState = () => {
           ? parseFloat(((initialUsd / baseBudget) * 100).toFixed(2))
           : 0
 
-      setSelectedTokens(prev => [
+      setSelectedTokensAndPersist(prev => [
         ...prev,
         {
           symbol,
@@ -469,12 +438,12 @@ export const usePortfolioState = () => {
         },
       ])
     },
-    [selectedTokens, budgetForUi, minPercentFloor],
+    [selectedTokens, budgetForUi, minPercentFloor, setSelectedTokensAndPersist],
   )
 
   const handleRemoveToken = useCallback(
     (symbol: string) => {
-      setSelectedTokens(prev => {
+      setSelectedTokensAndPersist(prev => {
         const wasInitiallyInPortfolio = initialPortfolio.some(
           it => it.symbol === symbol,
         )
@@ -496,25 +465,30 @@ export const usePortfolioState = () => {
         )
       })
     },
-    [initialPortfolio],
+    [initialPortfolio, setSelectedTokensAndPersist],
   )
 
   const handleUndoRemoveToken = useCallback(
     (symbol: string) => {
-      setSelectedTokens(prev =>
-        prev.map(token =>
-          token.symbol === symbol
-            ? {
-                ...token,
-                status: token.notional ? "untouched" : "idle",
-                percentage: token.previousPercentage ?? minPercentFloor,
-                previousPercentage: undefined,
-              }
-            : token,
-        ),
+      setSelectedTokensAndPersist(prev =>
+        prev.map(token => {
+          if (token.symbol !== symbol) return token
+          const hasExchangeNotional =
+            token.notional !== undefined && token.notional > 0
+          const needsMinimumUsd =
+            !hasExchangeNotional &&
+            (token.lockedUsd === undefined || token.lockedUsd < MIN_USD)
+          return {
+            ...token,
+            status: hasExchangeNotional ? "untouched" : "idle",
+            percentage: token.previousPercentage ?? minPercentFloor,
+            previousPercentage: undefined,
+            lockedUsd: needsMinimumUsd ? MIN_USD : token.lockedUsd,
+          }
+        }),
       )
     },
-    [minPercentFloor],
+    [minPercentFloor, setSelectedTokensAndPersist],
   )
 
   const handleSliderChange = useCallback(
@@ -540,7 +514,7 @@ export const usePortfolioState = () => {
       )
       const targetPercent = (clampedUsd / sliderBudget) * 100
 
-      setSelectedTokens(prev =>
+      setSelectedTokensAndPersist(prev =>
         prev.map(token => {
           if (token.symbol !== symbol) return token
           const nextValue = Math.max(minPercentFloor, targetPercent)
@@ -555,26 +529,37 @@ export const usePortfolioState = () => {
         }),
       )
     },
-    [selectedTokens, activeTokens, budgetForUi, minPercentFloor],
+    [
+      selectedTokens,
+      activeTokens,
+      budgetForUi,
+      minPercentFloor,
+      setSelectedTokensAndPersist,
+    ],
   )
 
-  const handleSideChange = useCallback((symbol: string, side: OrderSide) => {
-    setSelectedTokens(prev =>
-      prev.map(token => (token.symbol === symbol ? { ...token, side } : token)),
-    )
-  }, [])
+  const handleSideChange = useCallback(
+    (symbol: string, side: OrderSide) => {
+      setSelectedTokensAndPersist(prev =>
+        prev.map(token =>
+          token.symbol === symbol ? { ...token, side } : token,
+        ),
+      )
+    },
+    [setSelectedTokensAndPersist],
+  )
 
   const handleLeverageChange = useCallback(
     (symbol: string, leverage: number) => {
       const maxLeverage = leverageLimitsMap[symbol] || 1
       const newLeverage = Math.max(1, Math.min(leverage, maxLeverage))
-      setSelectedTokens(prev =>
+      setSelectedTokensAndPersist(prev =>
         prev.map(token =>
           token.symbol === symbol ? { ...token, leverage: newLeverage } : token,
         ),
       )
     },
-    [leverageLimitsMap],
+    [leverageLimitsMap, setSelectedTokensAndPersist],
   )
 
   const handleBudgetInputChange = useCallback(
@@ -594,10 +579,10 @@ export const usePortfolioState = () => {
         return
       }
 
-      setBudget(numValue)
+      setBudgetAndPersist(numValue)
       setIsBudgetInitialized(true)
     },
-    [maxBudget],
+    [maxBudget, setBudgetAndPersist],
   )
 
   const handleBudgetInputBlur = useCallback(() => {
@@ -617,12 +602,18 @@ export const usePortfolioState = () => {
       ) {
         setBudgetError(`Budget must be at least $${String(MIN_USD)}`)
       } else {
-        setBudget(numValue)
+        setBudgetAndPersist(numValue)
         setIsBudgetInitialized(true)
         setBudgetError(null)
       }
     }
-  }, [budgetInput, budget, maxBudget, tokensWithDerivedPercentages.length])
+  }, [
+    budgetInput,
+    budget,
+    maxBudget,
+    tokensWithDerivedPercentages.length,
+    setBudgetAndPersist,
+  ])
 
   const handleOpenPositions = useCallback(() => {
     if (
@@ -653,7 +644,7 @@ export const usePortfolioState = () => {
       })),
     }
 
-    setSelectedTokens(prev =>
+    setSelectedTokensAndPersist(prev =>
       prev.map(token => ({
         ...token,
         status: token.status === "deleted" ? "deleted" : "working",
@@ -682,7 +673,7 @@ export const usePortfolioState = () => {
           })
           .filter((t): t is TokenAllocation => t !== null)
 
-        setSelectedTokens(updatedTokens)
+        setSelectedTokensAndPersist(updatedTokens)
 
         const allFilled = data.orders.every(order => order.status === "filled")
         const hasFailures = data.orders.some(order => order.status === "failed")
@@ -702,7 +693,7 @@ export const usePortfolioState = () => {
         const symbolMatch = error.message.match(/([A-Z0-9-]+\/[A-Z]+:[A-Z]+)/)
         const failedSymbol = symbolMatch ? symbolMatch[0] : null
 
-        setSelectedTokens(prev =>
+        setSelectedTokensAndPersist(prev =>
           prev.map(token => {
             if (failedSymbol) {
               if (token.symbol === failedSymbol) {
@@ -724,6 +715,7 @@ export const usePortfolioState = () => {
     rebalancePositionsMutation,
     setIsNetworkSwitching,
     queryClient,
+    setSelectedTokensAndPersist,
   ])
 
   const netExposure = derivedActiveTokens.reduce((acc, token) => {

@@ -328,6 +328,52 @@ describe("usePortfolioState", () => {
       expect(stored.tokens).toHaveLength(1)
       expect(stored.tokens[0].symbol).toBe("BTC/USDC:USDC")
     })
+
+    it("persists budget to localStorage when budget changes", async () => {
+      const { result } = renderHook(() => usePortfolioState(), {
+        wrapper: createWrapper(),
+      })
+
+      await act(async () => {
+        result.current.handleBudgetInputChange("500")
+      })
+
+      await waitFor(() => {
+        const stored = localStorage.getItem(STORAGE_KEY)
+        expect(stored).not.toBeNull()
+        const parsed = JSON.parse(stored ?? "{}")
+        expect(parsed.budget).toBe(500)
+      })
+    })
+
+    it("persists token modifications to localStorage", async () => {
+      const { result } = renderHook(() => usePortfolioState(), {
+        wrapper: createWrapper(),
+      })
+
+      await act(async () => {
+        result.current.handleBudgetInputChange("100")
+      })
+
+      await act(async () => {
+        result.current.handleAddToken("BTC/USDC:USDC")
+      })
+
+      await act(async () => {
+        result.current.handleSideChange("BTC/USDC:USDC", "sell")
+      })
+
+      await act(async () => {
+        result.current.handleLeverageChange("BTC/USDC:USDC", 5)
+      })
+
+      await waitFor(() => {
+        const stored = localStorage.getItem(STORAGE_KEY)
+        const parsed = JSON.parse(stored ?? "{}")
+        expect(parsed.tokens[0].side).toBe("sell")
+        expect(parsed.tokens[0].leverage).toBe(5)
+      })
+    })
   })
 
   describe("activeTokens filtering", () => {
@@ -359,6 +405,87 @@ describe("usePortfolioState", () => {
       })
 
       expect(result.current.blockingReasons).toEqual([])
+    })
+  })
+
+  describe("budgetForUi fallback behavior", () => {
+    it("uses current budget when sufficient for tokens", async () => {
+      const { result } = renderHook(() => usePortfolioState(), {
+        wrapper: createWrapper(),
+      })
+
+      await act(async () => {
+        result.current.handleBudgetInputChange("200")
+      })
+
+      await act(async () => {
+        result.current.handleAddToken("BTC/USDC:USDC")
+      })
+
+      // Budget 200 is sufficient for 1 token requiring MIN_USD (11)
+      expect(result.current.budgetForUi).toBe(200)
+    })
+
+    it("falls back to last sufficient budget when current budget becomes insufficient", async () => {
+      const { result } = renderHook(() => usePortfolioState(), {
+        wrapper: createWrapper(),
+      })
+
+      // Set a sufficient budget first
+      await act(async () => {
+        result.current.handleBudgetInputChange("100")
+      })
+
+      await act(async () => {
+        result.current.handleAddToken("BTC/USDC:USDC")
+      })
+
+      await act(async () => {
+        result.current.handleAddToken("ETH/USDC:USDC")
+      })
+
+      // With 2 tokens, need 22 (2 * MIN_USD)
+      expect(result.current.budgetForUi).toBe(100)
+
+      // Now set budget to less than required (less than 22)
+      await act(async () => {
+        result.current.handleBudgetInputChange("15")
+      })
+
+      // Should fall back to last sufficient budget (100)
+      await waitFor(() => {
+        expect(result.current.budgetForUi).toBe(100)
+      })
+    })
+
+    it("returns budget when no tokens regardless of amount", async () => {
+      const { result } = renderHook(() => usePortfolioState(), {
+        wrapper: createWrapper(),
+      })
+
+      await act(async () => {
+        result.current.handleBudgetInputChange("5")
+      })
+
+      // No tokens, so any budget is fine for UI
+      expect(result.current.budgetForUi).toBe(5)
+    })
+
+    it("uses minimum required budget when no prior sufficient budget exists", async () => {
+      const { result } = renderHook(() => usePortfolioState(), {
+        wrapper: createWrapper(),
+      })
+
+      // Start with zero budget, add tokens
+      await act(async () => {
+        result.current.handleAddToken("BTC/USDC:USDC")
+      })
+
+      // budgetForUi should show a reasonable value for UI calculations
+      // When budget is 0 and we have tokens, it should fall back to MIN_USD
+      await waitFor(() => {
+        expect(result.current.budgetForUi).toBeGreaterThanOrEqual(MIN_USD)
+      })
     })
   })
 
@@ -1217,6 +1344,124 @@ describe("usePortfolioState", () => {
       await waitFor(() => {
         expect(result.current.budget).toBe(750)
       })
+    })
+  })
+
+  describe("minimum USD enforcement", () => {
+    it("sets lockedUsd to MIN_USD when adding new token", async () => {
+      // Reset mocks to ensure clean state
+      const useApiModule = await import("@/hooks/useApi")
+      vi.mocked(useApiModule.useHyperliquidPositions).mockReturnValue({
+        data: { positions: [], total_notional: 0 },
+        isLoading: false,
+      } as unknown as ReturnType<typeof useApiModule.useHyperliquidPositions>)
+
+      const { result } = renderHook(() => usePortfolioState(), {
+        wrapper: createWrapper(),
+      })
+
+      await act(async () => {
+        result.current.handleBudgetInputChange("200")
+      })
+
+      await act(async () => {
+        result.current.handleAddToken("BTC/USDC:USDC")
+      })
+
+      await waitFor(() => {
+        expect(result.current.selectedTokens[0].lockedUsd).toBe(MIN_USD)
+      })
+    })
+
+    it("does not modify tokens with exchange notional", async () => {
+      const useApiModule = await import("@/hooks/useApi")
+      vi.mocked(useApiModule.useHyperliquidPositions).mockReturnValue({
+        data: {
+          positions: [
+            {
+              symbol: "BTC/USDC:USDC",
+              percentage: 10,
+              side: "buy",
+              leverage: 1,
+              notional: 5, // Below MIN_USD but from exchange
+            },
+          ],
+          total_notional: 500,
+        },
+        isLoading: false,
+      } as unknown as ReturnType<typeof useApiModule.useHyperliquidPositions>)
+
+      const { result } = renderHook(() => usePortfolioState(), {
+        wrapper: createWrapper(),
+      })
+
+      await waitFor(() => {
+        expect(result.current.selectedTokens).toHaveLength(1)
+      })
+
+      // Should preserve the exchange notional, not bump to MIN_USD
+      expect(result.current.selectedTokens[0].notional).toBe(5)
+    })
+
+    it("does not modify tokens already at or above MIN_USD", async () => {
+      const { result } = renderHook(() => usePortfolioState(), {
+        wrapper: createWrapper(),
+      })
+
+      await act(async () => {
+        result.current.handleBudgetInputChange("200")
+      })
+
+      await act(async () => {
+        result.current.handleAddToken("BTC/USDC:USDC")
+      })
+
+      // Move slider to 50 USD (above MIN_USD)
+      await act(async () => {
+        result.current.handleSliderChange("BTC/USDC:USDC", 50)
+      })
+
+      await waitFor(() => {
+        expect(result.current.selectedTokens[0].lockedUsd).toBe(50)
+      })
+
+      // Should stay at 50, not be modified
+      expect(result.current.selectedTokens[0].lockedUsd).toBe(50)
+    })
+
+    it("does not enforce minimum on deleted tokens", async () => {
+      const useApiModule = await import("@/hooks/useApi")
+      vi.mocked(useApiModule.useHyperliquidPositions).mockReturnValue({
+        data: {
+          positions: [
+            {
+              symbol: "BTC/USDC:USDC",
+              percentage: 50,
+              side: "buy",
+              leverage: 1,
+              notional: 250,
+            },
+          ],
+          total_notional: 500,
+        },
+        isLoading: false,
+      } as unknown as ReturnType<typeof useApiModule.useHyperliquidPositions>)
+
+      const { result } = renderHook(() => usePortfolioState(), {
+        wrapper: createWrapper(),
+      })
+
+      await waitFor(() => {
+        expect(result.current.selectedTokens).toHaveLength(1)
+      })
+
+      await act(async () => {
+        result.current.handleRemoveToken("BTC/USDC:USDC")
+      })
+
+      // Deleted token should have percentage 0 and remain deleted
+      expect(result.current.selectedTokens[0].status).toBe("deleted")
+      expect(result.current.selectedTokens[0].percentage).toBe(0)
     })
   })
 

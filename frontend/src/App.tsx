@@ -41,7 +41,6 @@ const App = () => {
     isLoading: isDateRangeLoading,
   } = useDateRange(timeframe)
 
-  // Derive available date bounds from query data
   const { maxAvailableDate, minAvailableDate } = useMemo(() => {
     if (!dateRangeData) {
       return { maxAvailableDate: null, minAvailableDate: null }
@@ -56,9 +55,10 @@ const App = () => {
     }
   }, [dateRangeData])
 
-  // Use manual selection if it matches current timeframe, otherwise default to maxDate
   const dateRange = useMemo(() => {
-    if (manualDateSelection?.timeframe === timeframe) {
+    const isManualSelectionForCurrentTimeframe =
+      manualDateSelection?.timeframe === timeframe
+    if (isManualSelectionForCurrentTimeframe) {
       return {
         startDate: manualDateSelection.startDate,
         endDate: manualDateSelection.endDate,

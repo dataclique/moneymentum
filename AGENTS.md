@@ -165,6 +165,19 @@ Avoid project-specific or non-standard abbreviations:
 - `cn` → `mergeClassNames` (not a well-known abbreviation)
 - `btn` → `button` (prefer full word in most cases)
 
+### Self-Documenting Code Over Comments
+
+Code must be self-explaining through good names and clean architecture.
+
+- **Documentation comments are good**: Explain what something does and how to
+  use it (docstrings, API docs, README sections)
+- **Implementation comments are a last resort**: Comments explaining how code
+  works should only be used when the code cannot be made clear by improving the
+  code itself (better names, smaller functions, clearer structure)
+
+If you find yourself writing a comment to explain complex logic, first try to
+refactor the code to be self-explanatory.
+
 ### Test-Driven Development
 
 When writing tests for existing code, do NOT assume the current behavior is

@@ -1,3 +1,10 @@
+"""
+Trade execution via CCXT for Hyperliquid exchange.
+
+This module is planned for migration to the frontend using CCXT JS.
+See https://github.com/data-cartel/moneymentum/issues/46
+"""
+
 import logging
 import os
 import sys

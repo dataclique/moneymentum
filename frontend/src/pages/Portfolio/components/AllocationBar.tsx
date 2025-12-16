@@ -1,7 +1,7 @@
 import { useState } from "react"
 import { clsx } from "clsx"
 import { twMerge } from "tailwind-merge"
-import type { OrderSide } from "@/hooks/useApi"
+import type { OrderSide } from "@/hooks/useTrading"
 import type { TokenAllocation } from "../hooks/usePortfolioState"
 
 const getSideColor = (side: OrderSide) =>

@@ -31,6 +31,35 @@ const useAnalysisDataMock = vi.hoisted(() =>
   })),
 )
 
+// Mock CCXT to prevent initialization errors
+vi.mock("ccxt", () => ({
+  default: {
+    hyperliquid: class MockHyperliquid {
+      setSandboxMode = vi.fn()
+      fetchBalance = vi.fn()
+      fetchPositions = vi.fn()
+      fetchTickers = vi.fn()
+      fetchMarkets = vi.fn()
+      createOrder = vi.fn()
+    },
+  },
+}))
+
+// Mock the trading hooks
+vi.mock("@/hooks/useTrading", () => ({
+  useHyperliquidBalance: vi.fn(() => ({ data: null, isLoading: true })),
+  useHyperliquidPositions: vi.fn(() => ({ data: null, isLoading: true })),
+  useHyperliquidTickers: vi.fn(() => ({ data: null, isLoading: true })),
+  useHyperliquidLeverageLimits: vi.fn(() => ({ data: null, isLoading: true })),
+  useRebalanceHyperliquidPositions: vi.fn(() => ({
+    mutate: vi.fn(),
+    isPending: false,
+  })),
+  useWalletSettings: vi.fn(() => ({ data: null, isLoading: true })),
+  useSwitchNetwork: vi.fn(() => ({ mutate: vi.fn(), isPending: false })),
+  refreshClientData: vi.fn(),
+}))
+
 // Mock the API hooks
 vi.mock("@/hooks/useApi", () => ({
   useDateRange: vi.fn(() => ({

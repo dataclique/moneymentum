@@ -12,7 +12,7 @@ import {
 import { Slider } from "@/components/ui/slider"
 import { clsx } from "clsx"
 import { twMerge } from "tailwind-merge"
-import type { OrderSide } from "@/hooks/useApi"
+import type { OrderSide } from "@/hooks/useTrading"
 import { type TokenAllocation, MIN_USD } from "../hooks/usePortfolioState"
 
 const getSideColor = (side: OrderSide) =>

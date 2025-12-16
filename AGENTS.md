@@ -19,11 +19,11 @@ repository.
 
 ### Frontend (React + Vite)
 
-- **Development server**: `cd frontend && npm run dev` (port 5173)
-- **Build frontend**: `cd frontend && npm run build`
-- **Lint frontend**: `cd frontend && npm run lint`
-- **Preview build**: `cd frontend && npm run preview`
-- **Serve production build**: `cd frontend && npm run serve:spa`
+- **Development server**: `bun --cwd frontend run dev` (port 5173)
+- **Build frontend**: `bun --cwd frontend run build`
+- **Lint frontend**: `bun --cwd frontend run lint`
+- **Preview build**: `bun --cwd frontend run preview`
+- **Serve production build**: `bun --cwd frontend run serve:spa`
 
 ### Environment Setup
 
@@ -31,7 +31,9 @@ repository.
 - **Python dependencies**: The nix flake automatically installs all pip
   dependencies from `requirements.txt` when entering the dev shell. Do not run
   `pip install` manually.
-- **Frontend dependencies**: `cd frontend && npm install`
+- **Frontend dependencies**: The nix flake automatically runs `bun install` in
+  the frontend directory when entering the dev shell. Do not run `bun install`
+  manually.
 
 ## Architecture Overview
 
@@ -119,7 +121,7 @@ Uses Nix flakes with devenv configured in `flake.nix`:
 
 - Python 3.11 with venv and automatic dependency installation from
   requirements.txt
-- Node.js for frontend development
+- Bun for frontend development (JavaScript runtime and package manager)
 - Java 17 and native libraries for PySpark (zlib, libffi, gcc)
 - Pre-commit hooks: ruff, ruff-format, prettier, nixfmt-classic
 - Environment variables: `JAVA_HOME`, `LD_LIBRARY_PATH` set automatically

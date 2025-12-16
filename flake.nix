@@ -33,7 +33,7 @@
           eslint = {
             enable = true;
             files = "^frontend/.*\\.(ts|tsx|js|jsx)$";
-            entry = "bash -c 'cd frontend && npm run lint'";
+            entry = "bun --cwd frontend run lint";
             pass_filenames = false;
           };
           prettier.enable = true;
@@ -64,7 +64,7 @@
           inherit inputs pkgs;
           modules = [{
             # https://devenv.sh/reference/options/
-            packages = with pkgs; deps ++ [ ruff mypy git-lfs nodejs ];
+            packages = with pkgs; deps ++ [ ruff mypy git-lfs ];
             # deps ++ [ ruff-lsp mypy git-lfs timescaledb-tune ];
 
             languages = {
@@ -76,6 +76,13 @@
                 venv.requirements = builtins.readFile ./requirements.txt;
                 libraries = deps
                   ++ [ pkgs.zlib pkgs.libffi pkgs.stdenv.cc.cc.lib ];
+              };
+              javascript = {
+                enable = true;
+                bun = {
+                  enable = true;
+                  install.enable = true;
+                };
               };
             };
 

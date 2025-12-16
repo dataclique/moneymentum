@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from "react"
-import { useBudgetPreference, useSaveBudgetPreference } from "@/hooks/useApi"
 import {
   useHyperliquidBalance,
   useHyperliquidPositions,
@@ -64,16 +63,13 @@ const getStoredPortfolio = (): StoredPortfolioState | null => {
 }
 
 export const usePortfolioState = () => {
-  // Server data queries
+  // Exchange data queries
   const { data: balanceData } = useHyperliquidBalance()
   const { data: positionsData, isLoading: isPositionsLoading } =
     useHyperliquidPositions()
   const { data: leverageLimitsData } = useHyperliquidLeverageLimits()
-  const { data: budgetPreferenceData, isLoading: isBudgetPreferenceLoading } =
-    useBudgetPreference()
 
   // Mutations
-  const { mutate: saveBudgetPreference } = useSaveBudgetPreference()
   const rebalancePositionsMutation = useRebalanceHyperliquidPositions()
 
   const [storedDataSnapshot] = useState(() => getStoredPortfolio())
@@ -107,22 +103,6 @@ export const usePortfolioState = () => {
   const [positionsLoadedFromExchange, setPositionsLoadedFromExchange] =
     useState(() => hasStoredTokens)
   const lastSufficientBudgetRef = useRef(0)
-
-  const budgetSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
-    null,
-  )
-
-  const debouncedSaveBudgetPreference = useCallback(
-    (newBudget: number) => {
-      if (budgetSaveTimeoutRef.current) {
-        clearTimeout(budgetSaveTimeoutRef.current)
-      }
-      budgetSaveTimeoutRef.current = setTimeout(() => {
-        saveBudgetPreference({ budget: newBudget })
-      }, 3000)
-    },
-    [saveBudgetPreference],
-  )
 
   const persistStateToLocalStorage = useCallback(
     (budgetVal: number, tokens: TokenAllocation[]) => {
@@ -165,9 +145,8 @@ export const usePortfolioState = () => {
     (newBudget: number) => {
       setBudget(newBudget)
       persistStateToLocalStorage(newBudget, latestSelectedTokensRef.current)
-      debouncedSaveBudgetPreference(newBudget)
     },
-    [persistStateToLocalStorage, debouncedSaveBudgetPreference],
+    [persistStateToLocalStorage],
   )
 
   useEffect(() => {
@@ -199,25 +178,15 @@ export const usePortfolioState = () => {
           setBudget(totalSpent)
           setBudgetInput(totalSpent.toString())
           setIsBudgetInitialized(true)
-          saveBudgetPreference({ budget: totalSpent })
         }
       }
       setPositionsLoadedFromExchange(true)
       return
     }
 
-    const shouldInitializeBudgetFromServer =
-      !isBudgetInitialized && positionsLoadedFromExchange
-    if (shouldInitializeBudgetFromServer) {
-      if (
-        !isBudgetPreferenceLoading &&
-        typeof budgetPreferenceData?.budget === "number" &&
-        budgetPreferenceData.budget > 0
-      ) {
-        setBudget(budgetPreferenceData.budget)
-        setBudgetInput(budgetPreferenceData.budget.toString())
-        setIsBudgetInitialized(true)
-      } else if (typeof balanceData === "number") {
+    // Initialize budget from balance if not set from positions
+    if (!isBudgetInitialized && positionsLoadedFromExchange) {
+      if (typeof balanceData === "number") {
         setBudget(balanceData)
         setBudgetInput(balanceData.toString())
         setIsBudgetInitialized(true)
@@ -227,11 +196,8 @@ export const usePortfolioState = () => {
     positionsData,
     isPositionsLoading,
     balanceData,
-    budgetPreferenceData,
     isBudgetInitialized,
-    isBudgetPreferenceLoading,
     positionsLoadedFromExchange,
-    saveBudgetPreference,
   ])
 
   const tokensWithComputedStatus = useMemo(() => {

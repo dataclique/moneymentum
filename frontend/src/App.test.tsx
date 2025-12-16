@@ -75,6 +75,13 @@ vi.mock("@/hooks/useApi", () => ({
   useStopReload: vi.fn(() => ({
     mutate: vi.fn(),
   })),
+  useBudgetPreference: vi.fn(() => ({
+    data: { budget: 0 },
+    isLoading: false,
+  })),
+  useSaveBudgetPreference: vi.fn(() => ({
+    mutate: vi.fn(),
+  })),
 }))
 
 // Mock useNetwork hook
@@ -94,7 +101,7 @@ vi.mock("./components/ui/data-table", () => ({
   DataTable: () => <div data-testid="data-table">DataTable</div>,
 }))
 
-const createWrapper = () => {
+const createWrapper = (initialRoute = "/") => {
   const queryClient = new QueryClient({
     defaultOptions: {
       queries: {
@@ -106,7 +113,9 @@ const createWrapper = () => {
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
         <NetworkProvider>
-          <MemoryRouter>{children}</MemoryRouter>
+          <MemoryRouter initialEntries={[initialRoute]}>
+            {children}
+          </MemoryRouter>
         </NetworkProvider>
       </ThemeProvider>
     </QueryClientProvider>
@@ -449,6 +458,23 @@ describe("App", () => {
         endDate: "",
         timeframe: "1h",
       })
+    })
+  })
+
+  describe("route isolation", () => {
+    it("does not call useDateRange or useAnalysisData on /portfolio route", async () => {
+      const useApiModule = await import("@/hooks/useApi")
+      const useDateRangeMock = vi.mocked(useApiModule.useDateRange)
+
+      // Reset mocks
+      useDateRangeMock.mockClear()
+      useAnalysisDataMock.mockClear()
+
+      render(<App />, { wrapper: createWrapper("/portfolio") })
+
+      // Portfolio page should not trigger backend API calls
+      expect(useDateRangeMock).not.toHaveBeenCalled()
+      expect(useAnalysisDataMock).not.toHaveBeenCalled()
     })
   })
 })

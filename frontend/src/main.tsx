@@ -7,6 +7,7 @@ import { ThemeProvider } from "@/components/ui/theme-provider"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { ReactQueryDevtools } from "@tanstack/react-query-devtools"
 import { NetworkProvider } from "@/contexts/NetworkContext"
+import { WalletProvider } from "@/contexts/WalletProvider"
 import { Toaster } from "@/components/ui/sonner"
 
 const queryClient = new QueryClient({
@@ -28,11 +29,13 @@ createRoot(rootElement).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
       <ThemeProvider defaultTheme="dark" storageKey="vite-ui-theme">
-        <NetworkProvider>
-          <BrowserRouter>
-            <App />
-          </BrowserRouter>
-        </NetworkProvider>
+        <WalletProvider>
+          <NetworkProvider>
+            <BrowserRouter>
+              <App />
+            </BrowserRouter>
+          </NetworkProvider>
+        </WalletProvider>
         <Toaster />
       </ThemeProvider>
       <ReactQueryDevtools initialIsOpen={false} />

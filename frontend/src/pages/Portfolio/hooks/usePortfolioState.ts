@@ -1,23 +1,19 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from "react"
-import { useQueryClient } from "@tanstack/react-query"
+import { useBudgetPreference, useSaveBudgetPreference } from "@/hooks/useApi"
 import {
   useHyperliquidBalance,
   useHyperliquidPositions,
   useHyperliquidLeverageLimits,
-  useBudgetPreference,
-  useSaveBudgetPreference,
   useRebalanceHyperliquidPositions,
-  refreshAllData,
   type OrderSide,
-  type OrderStatus,
-} from "@/hooks/useApi"
-import { useNetwork } from "@/hooks/useNetwork"
+  type OrderResult,
+} from "@/hooks/useTrading"
 
 export const STORAGE_KEY = "portfolio-allocation-state"
 export const MIN_USD = 11
 
 export type AllocationStatus =
-  | OrderStatus["status"]
+  | OrderResult["status"]
   | "idle"
   | "untouched"
   | "deleted"
@@ -68,9 +64,6 @@ const getStoredPortfolio = (): StoredPortfolioState | null => {
 }
 
 export const usePortfolioState = () => {
-  const { setIsNetworkSwitching } = useNetwork()
-  const queryClient = useQueryClient()
-
   // Server data queries
   const { data: balanceData } = useHyperliquidBalance()
   const { data: positionsData, isLoading: isPositionsLoading } =
@@ -201,7 +194,7 @@ export const usePortfolioState = () => {
       if (loadedTokens.length > 0) {
         setSelectedTokens(loadedTokens)
         setInitialPortfolio(loadedTokens)
-        const totalSpent = positionsData.total_notional
+        const totalSpent = positionsData.totalNotional
         if (totalSpent > 0) {
           setBudget(totalSpent)
           setBudgetInput(totalSpent.toString())
@@ -224,9 +217,9 @@ export const usePortfolioState = () => {
         setBudget(budgetPreferenceData.budget)
         setBudgetInput(budgetPreferenceData.budget.toString())
         setIsBudgetInitialized(true)
-      } else if (typeof balanceData?.perp_usdc_balance === "number") {
-        setBudget(balanceData.perp_usdc_balance)
-        setBudgetInput(balanceData.perp_usdc_balance.toString())
+      } else if (typeof balanceData === "number") {
+        setBudget(balanceData)
+        setBudgetInput(balanceData.toString())
         setIsBudgetInitialized(true)
       }
     }
@@ -296,7 +289,7 @@ export const usePortfolioState = () => {
     activeTokens.length > 0 &&
     budgetIsPositive &&
     requiredBudgetForTokens > budget
-  const maxBudget = (balanceData?.perp_usdc_balance ?? 0) * 5
+  const maxBudget = (balanceData ?? 0) * 5
 
   const budgetForUi = useMemo(() => {
     const isSufficientBudget = budget > 0 && budget >= requiredBudgetForTokens
@@ -363,9 +356,9 @@ export const usePortfolioState = () => {
 
   const leverageLimitsMap = useMemo(() => {
     const map: Record<string, number> = {}
-    if (!leverageLimitsData?.data) return map
-    for (const item of leverageLimitsData.data) {
-      map[item.symbol] = item.max_leverage
+    if (!leverageLimitsData) return map
+    for (const item of leverageLimitsData) {
+      map[item.symbol] = item.maxLeverage
     }
     return map
   }, [leverageLimitsData])
@@ -674,20 +667,6 @@ export const usePortfolioState = () => {
           .filter((t): t is TokenAllocation => t !== null)
 
         setSelectedTokensAndPersist(updatedTokens)
-
-        const allFilled = data.orders.every(order => order.status === "filled")
-        const hasFailures = data.orders.some(order => order.status === "failed")
-
-        if (allFilled && !hasFailures) {
-          setIsNetworkSwitching(true)
-          refreshAllData(queryClient)
-            .catch((error: unknown) => {
-              console.error("Failed to refresh after positions filled:", error)
-            })
-            .finally(() => {
-              setIsNetworkSwitching(false)
-            })
-        }
       },
       onError: error => {
         const symbolMatch = error.message.match(/([A-Z0-9-]+\/[A-Z]+:[A-Z]+)/)
@@ -713,8 +692,6 @@ export const usePortfolioState = () => {
     derivedTotalPercent,
     hasPendingDeletions,
     rebalancePositionsMutation,
-    setIsNetworkSwitching,
-    queryClient,
     setSelectedTokensAndPersist,
   ])
 

@@ -14,7 +14,8 @@ import {
   TimeframeSelect,
   type Timeframe,
 } from "./components/ui/timeframe-select"
-import { cn } from "@/lib/utils"
+import { clsx } from "clsx"
+import { twMerge } from "tailwind-merge"
 import { Button } from "@/components/ui/button"
 import { WalletHeader } from "./components/wallet-header"
 import {
@@ -89,9 +90,11 @@ const App = () => {
 
   const MainPage = () => (
     <div
-      className={cn(
-        "container mx-auto py-2",
-        isNetworkSwitching && "pointer-events-none opacity-80",
+      className={twMerge(
+        clsx(
+          "container mx-auto py-2",
+          isNetworkSwitching && "pointer-events-none opacity-80",
+        ),
       )}
     >
       <div className="mb-4 flex items-end justify-start gap-4">
@@ -144,10 +147,12 @@ const App = () => {
   // Define a common wrapper for all states (loading, error, main content)
   const AppWrapper = ({ children }: { children: React.ReactNode }) => (
     <div
-      className={cn(
-        "min-h-screen flex flex-col bg-background text-foreground", // Apply theme classes here
-        isNetworkSwitching && "pointer-events-none opacity-80", // Disable whole app during network switch
-        // You can add other global styles here if needed
+      className={twMerge(
+        clsx(
+          "min-h-screen flex flex-col bg-background text-foreground", // Apply theme classes here
+          isNetworkSwitching && "pointer-events-none opacity-80", // Disable whole app during network switch
+          // You can add other global styles here if needed
+        ),
       )}
     >
       <header className="border-b border-border px-4 py-2 pl-28 pr-28 flex items-center justify-between w-full">

@@ -5,6 +5,7 @@ from dotenv import load_dotenv  # type: ignore[import]
 
 load_dotenv()
 
+
 def load_required_env(env_var: str) -> str:
     """Load required value from environment variable or raise error"""
     value = os.getenv(env_var)
@@ -12,6 +13,7 @@ def load_required_env(env_var: str) -> str:
         msg = f"Required environment variable {env_var} is not set"
         raise ValueError(msg)
     return value
+
 
 @dataclass(frozen=True)
 class UserSettings:

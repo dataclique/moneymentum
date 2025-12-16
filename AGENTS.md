@@ -144,6 +144,33 @@ semicolons
 tests, pre-commit hooks, etc.) without explicitly asking the user first. Always
 fix the underlying issue rather than suppressing the warning/error.
 
+## Code Style Anti-Patterns
+
+The following patterns are **NOT ALLOWED** in this codebase:
+
+### No `types.ts` files
+
+Do not create separate `types.ts` files. Types should be colocated with the code
+that uses them. If a type is used by multiple files, export it from the primary
+file that defines the concept.
+
+### Prefer descriptive names over abbreviations
+
+Default to descriptive names rather than abbreviations. Well-established
+abbreviations like `msg`, `ctx`, `err`, `req`, `res` are acceptable when their
+meaning is clear from context, but full names should be the default choice.
+
+Avoid project-specific or non-standard abbreviations:
+
+- `cn` → `mergeClassNames` (not a well-known abbreviation)
+- `btn` → `button` (prefer full word in most cases)
+
+### Test-Driven Development
+
+When writing tests for existing code, do NOT assume the current behavior is
+correct. The code may have bugs. Ask the user if you're unsure whether a
+behavior is intentional or a bug.
+
 ## Testing
 
 - Python tests in `tests/` directory

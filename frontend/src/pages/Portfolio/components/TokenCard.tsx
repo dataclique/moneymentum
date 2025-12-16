@@ -10,7 +10,8 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog"
 import { Slider } from "@/components/ui/slider"
-import { cn } from "@/lib/utils"
+import { clsx } from "clsx"
+import { twMerge } from "tailwind-merge"
 import type { OrderSide } from "@/hooks/useApi"
 import { type TokenAllocation, MIN_USD } from "../hooks/usePortfolioState"
 
@@ -76,13 +77,15 @@ export const TokenCard = ({
 
   return (
     <Card
-      className={cn(
-        "overflow-hidden",
-        token.status === "idle" && "border-l-4",
-        token.status === "filled" && "border-2 border-emerald-500",
-        token.status === "working" && "border-animated-gradient",
-        token.status === "failed" && "border-2 border-rose-500",
-        token.status === "untouched" && "border-l-4 border-blue-500/50",
+      className={twMerge(
+        clsx(
+          "overflow-hidden",
+          token.status === "idle" && "border-l-4",
+          token.status === "filled" && "border-2 border-emerald-500",
+          token.status === "working" && "border-animated-gradient",
+          token.status === "failed" && "border-2 border-rose-500",
+          token.status === "untouched" && "border-l-4 border-blue-500/50",
+        ),
       )}
       style={{
         borderLeftColor:
@@ -92,16 +95,22 @@ export const TokenCard = ({
       }}
     >
       <div
-        className={cn(
-          token.status === "working" ? "rounded-[--radius] bg-background" : "",
+        className={twMerge(
+          clsx(
+            token.status === "working"
+              ? "rounded-[--radius] bg-background"
+              : "",
+          ),
         )}
       >
         <div className="flex items-center gap-2 px-3">
           {/* Coin Name and Leverage */}
           <div
-            className={cn(
-              "flex w-32 items-center gap-2",
-              token.status === "deleted" && "opacity-50",
+            className={twMerge(
+              clsx(
+                "flex w-32 items-center gap-2",
+                token.status === "deleted" && "opacity-50",
+              ),
             )}
           >
             <span className="font-semibold" style={{ color: sideColor }}>
@@ -148,9 +157,11 @@ export const TokenCard = ({
 
           {/* Percentage */}
           <div
-            className={cn(
-              "w-24 text-center",
-              token.status === "deleted" && "opacity-50",
+            className={twMerge(
+              clsx(
+                "w-24 text-center",
+                token.status === "deleted" && "opacity-50",
+              ),
             )}
           >
             <span className="text-sm">{effectivePercent.toFixed(2)}%</span>
@@ -158,9 +169,11 @@ export const TokenCard = ({
 
           {/* Position Value */}
           <div
-            className={cn(
-              "w-24 text-center",
-              token.status === "deleted" && "opacity-50",
+            className={twMerge(
+              clsx(
+                "w-24 text-center",
+                token.status === "deleted" && "opacity-50",
+              ),
             )}
           >
             <span className="text-sm">${usdAmount}</span>
@@ -168,7 +181,9 @@ export const TokenCard = ({
 
           {/* Long/Short Select */}
           <div
-            className={cn("w-24", token.status === "deleted" && "opacity-50")}
+            className={twMerge(
+              clsx("w-24", token.status === "deleted" && "opacity-50"),
+            )}
           >
             <select
               value={token.side}
@@ -176,11 +191,13 @@ export const TokenCard = ({
                 onSideChange(token.symbol, event.target.value as OrderSide)
               }}
               disabled={token.status === "deleted"}
-              className={cn(
-                "w-full rounded-md border bg-transparent px-2 py-1 text-sm font-medium",
-                isLong
-                  ? "border-green-500/50 bg-green-500/10 text-green-600 dark:text-green-400"
-                  : "border-red-500/50 bg-red-500/10 text-red-600 dark:text-red-400",
+              className={twMerge(
+                clsx(
+                  "w-full rounded-md border bg-transparent px-2 py-1 text-sm font-medium",
+                  isLong
+                    ? "border-green-500/50 bg-green-500/10 text-green-600 dark:text-green-400"
+                    : "border-red-500/50 bg-red-500/10 text-red-600 dark:text-red-400",
+                ),
               )}
             >
               <option value="buy">Long</option>
@@ -190,9 +207,8 @@ export const TokenCard = ({
 
           {/* Slider */}
           <div
-            className={cn(
-              "flex-1 px-2",
-              token.status === "deleted" && "opacity-50",
+            className={twMerge(
+              clsx("flex-1 px-2", token.status === "deleted" && "opacity-50"),
             )}
           >
             <Slider

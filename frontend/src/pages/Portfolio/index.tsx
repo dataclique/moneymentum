@@ -1,6 +1,7 @@
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
-import { cn } from "@/lib/utils"
+import { clsx } from "clsx"
+import { twMerge } from "tailwind-merge"
 import { useNetwork } from "@/hooks/useNetwork"
 
 import { usePortfolioState, MIN_USD } from "./hooks/usePortfolioState"
@@ -38,9 +39,11 @@ const PortfolioPage = () => {
   return (
     <>
       <div
-        className={cn(
-          "container mx-auto flex max-w-5xl flex-col gap-4 py-4 pl-28 min-h-screen",
-          isNetworkSwitching && "pointer-events-none opacity-50",
+        className={twMerge(
+          clsx(
+            "container mx-auto flex max-w-5xl flex-col gap-4 py-4 pl-28 min-h-screen",
+            isNetworkSwitching && "pointer-events-none opacity-50",
+          ),
         )}
       >
         <div className="flex flex-col gap-4">
@@ -61,9 +64,11 @@ const PortfolioPage = () => {
                       handleBudgetInputChange(e.target.value)
                     }}
                     onBlur={handleBudgetInputBlur}
-                    className={cn(
-                      "w-full rounded-md border border-border bg-background px-3 py-2 text-sm",
-                      budgetError && "border-rose-500",
+                    className={twMerge(
+                      clsx(
+                        "w-full rounded-md border border-border bg-background px-3 py-2 text-sm",
+                        budgetError && "border-rose-500",
+                      ),
                     )}
                   />
                 </div>
@@ -135,9 +140,11 @@ const PortfolioPage = () => {
             <div className="text-sm font-semibold text-muted-foreground">
               <span>Net Exposure: </span>
               <span
-                className={cn(
-                  netExposure > 0 && "text-green-500",
-                  netExposure < 0 && "text-red-500",
+                className={twMerge(
+                  clsx(
+                    netExposure > 0 && "text-green-500",
+                    netExposure < 0 && "text-red-500",
+                  ),
                 )}
               >
                 ${netExposure.toFixed(2)}

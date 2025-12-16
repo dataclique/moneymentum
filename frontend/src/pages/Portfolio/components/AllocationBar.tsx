@@ -1,5 +1,6 @@
 import { useState } from "react"
-import { cn } from "@/lib/utils"
+import { clsx } from "clsx"
+import { twMerge } from "tailwind-merge"
 import type { OrderSide } from "@/hooks/useApi"
 import type { TokenAllocation } from "../hooks/usePortfolioState"
 
@@ -28,7 +29,11 @@ const AllocationBarToken = ({
         backgroundColor: getSideColor(token.side),
       }}
     >
-      <div className={cn("flex", isSmall ? "flex-row gap-1" : "flex-col")}>
+      <div
+        className={twMerge(
+          clsx("flex", isSmall ? "flex-row gap-1" : "flex-col"),
+        )}
+      >
         <span className="font-bold">{token.symbol.split("/")[0]}</span>
         <span>
           {isHovered

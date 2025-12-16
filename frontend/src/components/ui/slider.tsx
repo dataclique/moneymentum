@@ -2,8 +2,8 @@
 
 import * as React from "react"
 import * as SliderPrimitive from "@radix-ui/react-slider"
-
-import { cn } from "@/lib/utils"
+import { clsx } from "clsx"
+import { twMerge } from "tailwind-merge"
 
 interface SliderProps
   extends React.ComponentPropsWithoutRef<typeof SliderPrimitive.Root> {
@@ -25,9 +25,11 @@ const Slider = React.forwardRef<
   return (
     <SliderPrimitive.Root
       ref={ref}
-      className={cn(
-        "relative flex w-full touch-none select-none items-center",
-        className,
+      className={twMerge(
+        clsx(
+          "relative flex w-full touch-none select-none items-center",
+          className,
+        ),
       )}
       {...props}
     >

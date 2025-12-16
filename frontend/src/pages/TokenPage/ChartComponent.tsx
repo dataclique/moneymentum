@@ -16,8 +16,11 @@ import type {
   HistogramSeriesOptions,
   LineSeriesOptions,
 } from "lightweight-charts"
-import type { TradingData } from "./types"
+import type { TradingData } from "@/hooks/useApi"
 import { transformToLineData, transformToOHLC } from "./utils"
+
+// "price" is a special case for OHLC chart, other metrics are keys of TradingData
+export type MetricSelection = "price" | keyof TradingData
 
 type AnySeries =
   | ISeriesApi<"Candlestick", Time, unknown, CandlestickSeriesOptions, unknown>
@@ -27,7 +30,7 @@ type AnySeries =
 // Chart Component using TradingView Lightweight Charts
 interface ChartComponentProps {
   data: TradingData[]
-  selectedMetric: keyof TradingData
+  selectedMetric: MetricSelection
   timeframe: string
 }
 
@@ -108,7 +111,10 @@ const ChartComponent: React.FC<ChartComponentProps> = ({
       // Remove existing series safely
       if (seriesRef.current) {
         try {
-          chart.removeSeries(seriesRef.current)
+          // Type assertion needed as the library's removeSeries typing is overly restrictive
+          chart.removeSeries(
+            seriesRef.current as Parameters<typeof chart.removeSeries>[0],
+          )
         } catch {
           // Series may already be removed
         }
@@ -116,7 +122,9 @@ const ChartComponent: React.FC<ChartComponentProps> = ({
       }
       if (volumeSeriesRef.current) {
         try {
-          chart.removeSeries(volumeSeriesRef.current)
+          chart.removeSeries(
+            volumeSeriesRef.current as Parameters<typeof chart.removeSeries>[0],
+          )
         } catch {
           // Series may already be removed
         }
@@ -190,7 +198,7 @@ const ChartComponent: React.FC<ChartComponentProps> = ({
           volumeSeriesRef.current = volumeSeries
         }
       } else {
-        // Create line series for metrics
+        // Create line series for metrics (selectedMetric is narrowed to keyof TradingData here)
         const lineData = transformToLineData(data, selectedMetric)
 
         // Calculate the range of values to determine appropriate precision

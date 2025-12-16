@@ -8,7 +8,8 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog"
-import { cn } from "@/lib/utils"
+import { clsx } from "clsx"
+import { twMerge } from "tailwind-merge"
 import { useHyperliquidTickers } from "@/hooks/useApi"
 import type { TokenAllocation } from "../hooks/usePortfolioState"
 
@@ -80,9 +81,11 @@ export const TokenPickerDialog = ({
                     onAddToken(symbol)
                   }}
                   disabled={alreadySelected}
-                  className={cn(
-                    "flex w-full items-center justify-between border-b border-border/60 px-4 py-2 text-left text-sm hover:bg-muted/40",
-                    alreadySelected && "cursor-not-allowed opacity-50",
+                  className={twMerge(
+                    clsx(
+                      "flex w-full items-center justify-between border-b border-border/60 px-4 py-2 text-left text-sm hover:bg-muted/40",
+                      alreadySelected && "cursor-not-allowed opacity-50",
+                    ),
                   )}
                 >
                   {symbol}

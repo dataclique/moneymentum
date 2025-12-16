@@ -3,7 +3,8 @@ import { Link, useParams } from "react-router-dom"
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { useNetwork } from "@/hooks/useNetwork"
-import { cn } from "@/lib/utils"
+import { clsx } from "clsx"
+import { twMerge } from "tailwind-merge"
 import {
   Select,
   SelectContent,
@@ -17,14 +18,15 @@ import {
 } from "@/components/ui/timeframe-select"
 import { Button } from "@/components/ui/button"
 import { AVAILABLE_METRICS } from "./constants"
-import ChartComponent from "./ChartComponent"
+import ChartComponent, { type MetricSelection } from "./ChartComponent"
 import { useTokenData } from "@/hooks/useApi"
 
 const TokenPage: React.FC<{ timeframe: Timeframe }> = ({
   timeframe: initialTimeframe,
 }) => {
   const { ticker } = useParams<{ ticker: string }>()
-  const [selectedMetric, setSelectedMetric] = React.useState("price")
+  const [selectedMetric, setSelectedMetric] =
+    React.useState<MetricSelection>("price")
   const [timeframe, setTimeframe] = React.useState<Timeframe>(initialTimeframe)
   const { isNetworkSwitching } = useNetwork()
 
@@ -74,9 +76,11 @@ const TokenPage: React.FC<{ timeframe: Timeframe }> = ({
 
   return (
     <Card
-      className={cn(
-        "w-screen h-screen rounded-none border-none px-[2%] pt-[10px] flex flex-col",
-        isNetworkSwitching && "pointer-events-none opacity-50",
+      className={twMerge(
+        clsx(
+          "w-screen h-screen rounded-none border-none px-[2%] pt-[10px] flex flex-col",
+          isNetworkSwitching && "pointer-events-none opacity-50",
+        ),
       )}
     >
       <CardHeader>
@@ -96,7 +100,12 @@ const TokenPage: React.FC<{ timeframe: Timeframe }> = ({
               className="w-48"
             />
             <div className="w-48">
-              <Select value={selectedMetric} onValueChange={setSelectedMetric}>
+              <Select
+                value={selectedMetric}
+                onValueChange={value => {
+                  setSelectedMetric(value as MetricSelection)
+                }}
+              >
                 <SelectTrigger>
                   <SelectValue placeholder="Select a metric" />
                 </SelectTrigger>

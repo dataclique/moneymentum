@@ -1,4 +1,13 @@
-import type { IOHLCData, TradingData } from "./types"
+import type { TradingData } from "@/hooks/useApi"
+
+export interface IOHLCData {
+  readonly close: number
+  readonly date: Date
+  readonly high: number
+  readonly low: number
+  readonly open: number
+  readonly volume: number
+}
 
 // Transform trading data to OHLC format for price chart
 export const transformToOHLC = (data: TradingData[]): IOHLCData[] => {

@@ -1,10 +1,5 @@
 import { Switch } from "@/components/ui/switch"
-import { useQueryClient } from "@tanstack/react-query"
-import {
-  refreshAllData,
-  useWalletSettings,
-  useSwitchNetwork,
-} from "@/hooks/useApi"
+import { useWalletSettings, useSwitchNetwork } from "@/hooks/useTrading"
 import { useNetwork } from "@/hooks/useNetwork"
 import { toast } from "sonner"
 
@@ -17,14 +12,13 @@ const formatPublicKey = (key: string): string => {
 }
 
 export const WalletHeader = () => {
-  const { data: walletSettings, isLoading } = useWalletSettings()
+  const { data: walletSettings, isConnected } = useWalletSettings()
   const switchNetworkMutation = useSwitchNetwork()
   const { isNetworkSwitching, setIsNetworkSwitching } = useNetwork()
-  const queryClient = useQueryClient()
 
   const handleTestnetToggle = async (checked: boolean) => {
-    if (!walletSettings?.public_key) {
-      toast.error("Please configure wallet in .env file first")
+    if (!isConnected) {
+      toast.error("Please connect wallet first")
       return
     }
 
@@ -35,8 +29,7 @@ export const WalletHeader = () => {
     setIsNetworkSwitching(true)
 
     try {
-      await switchNetworkMutation.mutateAsync({ is_testnet: checked })
-      await refreshAllData(queryClient)
+      await switchNetworkMutation.mutateAsync(checked ? "testnet" : "mainnet")
     } catch (error) {
       console.error("Failed to toggle testnet/mainnet:", error)
       toast.error("Failed to toggle network. Please try again.")
@@ -45,13 +38,10 @@ export const WalletHeader = () => {
     }
   }
 
-  const currentPublicKey = walletSettings?.public_key ?? ""
-  const currentIsTestnet = walletSettings?.is_testnet ?? true
+  const currentPublicKey = walletSettings?.publicKey ?? ""
+  const currentIsTestnet = walletSettings?.isTestnet ?? true
   const isDisabled =
-    isLoading ||
-    !walletSettings ||
-    switchNetworkMutation.isPending ||
-    isNetworkSwitching
+    !isConnected || switchNetworkMutation.isPending || isNetworkSwitching
 
   return (
     <div className="flex items-center gap-4">
@@ -67,11 +57,9 @@ export const WalletHeader = () => {
       </div>
 
       <div className="rounded-md border border-border px-3 py-1.5 font-mono text-sm text-muted-foreground">
-        {isLoading
-          ? "Loading..."
-          : currentPublicKey
-            ? formatPublicKey(currentPublicKey)
-            : "No wallet configured"}
+        {currentPublicKey
+          ? formatPublicKey(currentPublicKey)
+          : "No wallet configured"}
       </div>
     </div>
   )

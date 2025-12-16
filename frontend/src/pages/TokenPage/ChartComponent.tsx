@@ -211,13 +211,13 @@ const ChartComponent: React.FC<ChartComponentProps> = ({
 
         // Determine precision and format based on the metric type
         let precision = 2
-        const metricStr = String(selectedMetric)
         const isReturnMetric =
-          metricStr.includes("return") ||
+          selectedMetric.includes("return") ||
           selectedMetric === "sharpe" ||
           selectedMetric === "sortino"
         const isVolatilityMetric =
-          metricStr.includes("volatility") || metricStr.includes("stddev")
+          selectedMetric.includes("volatility") ||
+          selectedMetric.includes("stddev")
 
         // Handle edge case where all values are very close to zero
         if (range < 0.0000001 && avgAbsValue < 0.000001) {

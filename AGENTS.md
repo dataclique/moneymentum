@@ -22,6 +22,7 @@ repository.
 - **Development server**: `bun --cwd frontend run dev` (port 5173)
 - **Build frontend**: `bun --cwd frontend run build`
 - **Lint frontend**: `bun --cwd frontend run lint`
+- **Run tests**: `bun --cwd frontend run test` (uses vitest)
 - **Preview build**: `bun --cwd frontend run preview`
 - **Serve production build**: `bun --cwd frontend run serve:spa`
 

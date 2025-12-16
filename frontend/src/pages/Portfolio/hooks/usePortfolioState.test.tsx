@@ -3,19 +3,13 @@ import { renderHook, waitFor, act } from "@testing-library/react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import React from "react"
 import { STORAGE_KEY, MIN_USD, usePortfolioState } from "./usePortfolioState"
+import { useBudgetPreference, useSaveBudgetPreference } from "@/hooks/useApi"
+import {
+  useHyperliquidBalance,
+  useHyperliquidPositions,
+} from "@/hooks/useTrading"
 
-// Mock the API hooks
 vi.mock("@/hooks/useApi", () => ({
-  useHyperliquidBalance: vi.fn(() => ({
-    data: { perp_usdc_balance: 1000 },
-  })),
-  useHyperliquidPositions: vi.fn(() => ({
-    data: { positions: [], total_notional: 0 },
-    isLoading: false,
-  })),
-  useHyperliquidLeverageLimits: vi.fn(() => ({
-    data: { data: [{ symbol: "BTC/USDC:USDC", max_leverage: 50 }] },
-  })),
   useBudgetPreference: vi.fn(() => ({
     data: { budget: 0 },
     isLoading: false,
@@ -23,11 +17,23 @@ vi.mock("@/hooks/useApi", () => ({
   useSaveBudgetPreference: vi.fn(() => ({
     mutate: vi.fn(),
   })),
+}))
+
+vi.mock("@/hooks/useTrading", () => ({
+  useHyperliquidBalance: vi.fn(() => ({
+    data: 1000,
+  })),
+  useHyperliquidPositions: vi.fn(() => ({
+    data: { positions: [], totalNotional: 0 },
+    isLoading: false,
+  })),
+  useHyperliquidLeverageLimits: vi.fn(() => ({
+    data: [{ symbol: "BTC/USDC:USDC", maxLeverage: 50 }],
+  })),
   useRebalanceHyperliquidPositions: vi.fn(() => ({
     mutate: vi.fn(),
     isPending: false,
   })),
-  refreshAllData: vi.fn(),
 }))
 
 // Mock useNetwork hook
@@ -569,11 +575,10 @@ describe("usePortfolioState", () => {
 
   describe("server budget initialization useEffect", () => {
     it("uses budget preference from server when available", async () => {
-      const useApiModule = await import("@/hooks/useApi")
-      vi.mocked(useApiModule.useBudgetPreference).mockReturnValue({
+      vi.mocked(useBudgetPreference).mockReturnValue({
         data: { budget: 750 },
         isLoading: false,
-      } as ReturnType<typeof useApiModule.useBudgetPreference>)
+      } as ReturnType<typeof useBudgetPreference>)
 
       const { result } = renderHook(() => usePortfolioState(), {
         wrapper: createWrapper(),
@@ -585,14 +590,13 @@ describe("usePortfolioState", () => {
     })
 
     it("falls back to balance when budget preference is zero", async () => {
-      const useApiModule = await import("@/hooks/useApi")
-      vi.mocked(useApiModule.useBudgetPreference).mockReturnValue({
+      vi.mocked(useBudgetPreference).mockReturnValue({
         data: { budget: 0 },
         isLoading: false,
-      } as ReturnType<typeof useApiModule.useBudgetPreference>)
-      vi.mocked(useApiModule.useHyperliquidBalance).mockReturnValue({
-        data: { perp_usdc_balance: 2000 },
-      } as ReturnType<typeof useApiModule.useHyperliquidBalance>)
+      } as ReturnType<typeof useBudgetPreference>)
+      vi.mocked(useHyperliquidBalance).mockReturnValue({
+        data: 2000,
+      } as ReturnType<typeof useHyperliquidBalance>)
 
       const { result } = renderHook(() => usePortfolioState(), {
         wrapper: createWrapper(),
@@ -606,8 +610,7 @@ describe("usePortfolioState", () => {
 
   describe("exchange positions loading useEffect", () => {
     it("loads positions from exchange when no localStorage data exists", async () => {
-      const useApiModule = await import("@/hooks/useApi")
-      vi.mocked(useApiModule.useHyperliquidPositions).mockReturnValue({
+      vi.mocked(useHyperliquidPositions).mockReturnValue({
         data: {
           positions: [
             {
@@ -618,10 +621,10 @@ describe("usePortfolioState", () => {
               notional: 400,
             },
           ],
-          total_notional: 400,
+          totalNotional: 400,
         },
         isLoading: false,
-      } as unknown as ReturnType<typeof useApiModule.useHyperliquidPositions>)
+      } as unknown as ReturnType<typeof useHyperliquidPositions>)
 
       const { result } = renderHook(() => usePortfolioState(), {
         wrapper: createWrapper(),
@@ -635,8 +638,7 @@ describe("usePortfolioState", () => {
     })
 
     it("sets initialPortfolio when loading from exchange", async () => {
-      const useApiModule = await import("@/hooks/useApi")
-      vi.mocked(useApiModule.useHyperliquidPositions).mockReturnValue({
+      vi.mocked(useHyperliquidPositions).mockReturnValue({
         data: {
           positions: [
             {
@@ -647,10 +649,10 @@ describe("usePortfolioState", () => {
               notional: 400,
             },
           ],
-          total_notional: 400,
+          totalNotional: 400,
         },
         isLoading: false,
-      } as unknown as ReturnType<typeof useApiModule.useHyperliquidPositions>)
+      } as unknown as ReturnType<typeof useHyperliquidPositions>)
 
       const { result } = renderHook(() => usePortfolioState(), {
         wrapper: createWrapper(),
@@ -666,8 +668,7 @@ describe("usePortfolioState", () => {
 
   describe("token status update useEffect", () => {
     it("sets initial tokens to untouched status when loaded from exchange", async () => {
-      const useApiModule = await import("@/hooks/useApi")
-      vi.mocked(useApiModule.useHyperliquidPositions).mockReturnValue({
+      vi.mocked(useHyperliquidPositions).mockReturnValue({
         data: {
           positions: [
             {
@@ -678,10 +679,10 @@ describe("usePortfolioState", () => {
               notional: 500,
             },
           ],
-          total_notional: 500,
+          totalNotional: 500,
         },
         isLoading: false,
-      } as unknown as ReturnType<typeof useApiModule.useHyperliquidPositions>)
+      } as unknown as ReturnType<typeof useHyperliquidPositions>)
 
       const { result } = renderHook(() => usePortfolioState(), {
         wrapper: createWrapper(),
@@ -696,8 +697,7 @@ describe("usePortfolioState", () => {
     })
 
     it("preserves token side when changed", async () => {
-      const useApiModule = await import("@/hooks/useApi")
-      vi.mocked(useApiModule.useHyperliquidPositions).mockReturnValue({
+      vi.mocked(useHyperliquidPositions).mockReturnValue({
         data: {
           positions: [
             {
@@ -708,10 +708,10 @@ describe("usePortfolioState", () => {
               notional: 500,
             },
           ],
-          total_notional: 500,
+          totalNotional: 500,
         },
         isLoading: false,
-      } as unknown as ReturnType<typeof useApiModule.useHyperliquidPositions>)
+      } as unknown as ReturnType<typeof useHyperliquidPositions>)
 
       const { result } = renderHook(() => usePortfolioState(), {
         wrapper: createWrapper(),
@@ -731,8 +731,7 @@ describe("usePortfolioState", () => {
     })
 
     it("preserves token leverage when changed", async () => {
-      const useApiModule = await import("@/hooks/useApi")
-      vi.mocked(useApiModule.useHyperliquidPositions).mockReturnValue({
+      vi.mocked(useHyperliquidPositions).mockReturnValue({
         data: {
           positions: [
             {
@@ -743,10 +742,10 @@ describe("usePortfolioState", () => {
               notional: 500,
             },
           ],
-          total_notional: 500,
+          totalNotional: 500,
         },
         isLoading: false,
-      } as unknown as ReturnType<typeof useApiModule.useHyperliquidPositions>)
+      } as unknown as ReturnType<typeof useHyperliquidPositions>)
 
       const { result } = renderHook(() => usePortfolioState(), {
         wrapper: createWrapper(),
@@ -767,11 +766,10 @@ describe("usePortfolioState", () => {
 
     it("adds new token with idle status", async () => {
       // Ensure no positions load from exchange that would set untouched status
-      const useApiModule = await import("@/hooks/useApi")
-      vi.mocked(useApiModule.useHyperliquidPositions).mockReturnValue({
-        data: { positions: [], total_notional: 0 },
+      vi.mocked(useHyperliquidPositions).mockReturnValue({
+        data: { positions: [], totalNotional: 0 },
         isLoading: false,
-      } as unknown as ReturnType<typeof useApiModule.useHyperliquidPositions>)
+      } as unknown as ReturnType<typeof useHyperliquidPositions>)
 
       const { result } = renderHook(() => usePortfolioState(), {
         wrapper: createWrapper(),
@@ -847,15 +845,14 @@ describe("usePortfolioState", () => {
 
     it("calls saveBudgetPreference after 3 seconds delay", async () => {
       const mockSaveBudget = vi.fn()
-      const useApiModule = await import("@/hooks/useApi")
-      vi.mocked(useApiModule.useSaveBudgetPreference).mockReturnValue({
+      vi.mocked(useSaveBudgetPreference).mockReturnValue({
         mutate: mockSaveBudget,
-      } as unknown as ReturnType<typeof useApiModule.useSaveBudgetPreference>)
+      } as unknown as ReturnType<typeof useSaveBudgetPreference>)
       // Ensure no positions load to avoid initial budget save
-      vi.mocked(useApiModule.useHyperliquidPositions).mockReturnValue({
-        data: { positions: [], total_notional: 0 },
+      vi.mocked(useHyperliquidPositions).mockReturnValue({
+        data: { positions: [], totalNotional: 0 },
         isLoading: false,
-      } as unknown as ReturnType<typeof useApiModule.useHyperliquidPositions>)
+      } as unknown as ReturnType<typeof useHyperliquidPositions>)
 
       const { result } = renderHook(() => usePortfolioState(), {
         wrapper: createWrapper(),
@@ -886,15 +883,14 @@ describe("usePortfolioState", () => {
 
     it("debounces multiple budget changes", async () => {
       const mockSaveBudget = vi.fn()
-      const useApiModule = await import("@/hooks/useApi")
-      vi.mocked(useApiModule.useSaveBudgetPreference).mockReturnValue({
+      vi.mocked(useSaveBudgetPreference).mockReturnValue({
         mutate: mockSaveBudget,
-      } as unknown as ReturnType<typeof useApiModule.useSaveBudgetPreference>)
+      } as unknown as ReturnType<typeof useSaveBudgetPreference>)
       // Ensure no positions load to avoid initial budget save
-      vi.mocked(useApiModule.useHyperliquidPositions).mockReturnValue({
-        data: { positions: [], total_notional: 0 },
+      vi.mocked(useHyperliquidPositions).mockReturnValue({
+        data: { positions: [], totalNotional: 0 },
         isLoading: false,
-      } as unknown as ReturnType<typeof useApiModule.useHyperliquidPositions>)
+      } as unknown as ReturnType<typeof useHyperliquidPositions>)
 
       const { result } = renderHook(() => usePortfolioState(), {
         wrapper: createWrapper(),
@@ -943,8 +939,7 @@ describe("usePortfolioState", () => {
 
   describe("handleRemoveToken with initialPortfolio", () => {
     it("marks token as deleted when it was in initialPortfolio", async () => {
-      const useApiModule = await import("@/hooks/useApi")
-      vi.mocked(useApiModule.useHyperliquidPositions).mockReturnValue({
+      vi.mocked(useHyperliquidPositions).mockReturnValue({
         data: {
           positions: [
             {
@@ -955,10 +950,10 @@ describe("usePortfolioState", () => {
               notional: 500,
             },
           ],
-          total_notional: 500,
+          totalNotional: 500,
         },
         isLoading: false,
-      } as unknown as ReturnType<typeof useApiModule.useHyperliquidPositions>)
+      } as unknown as ReturnType<typeof useHyperliquidPositions>)
 
       const { result } = renderHook(() => usePortfolioState(), {
         wrapper: createWrapper(),
@@ -980,11 +975,10 @@ describe("usePortfolioState", () => {
 
     it("removes token completely when it was not in initialPortfolio", async () => {
       // Ensure no positions load from exchange
-      const useApiModule = await import("@/hooks/useApi")
-      vi.mocked(useApiModule.useHyperliquidPositions).mockReturnValue({
-        data: { positions: [], total_notional: 0 },
+      vi.mocked(useHyperliquidPositions).mockReturnValue({
+        data: { positions: [], totalNotional: 0 },
         isLoading: false,
-      } as unknown as ReturnType<typeof useApiModule.useHyperliquidPositions>)
+      } as unknown as ReturnType<typeof useHyperliquidPositions>)
 
       const { result } = renderHook(() => usePortfolioState(), {
         wrapper: createWrapper(),
@@ -1007,8 +1001,7 @@ describe("usePortfolioState", () => {
 
   describe("handleUndoRemoveToken", () => {
     it("restores deleted token with previous percentage", async () => {
-      const useApiModule = await import("@/hooks/useApi")
-      vi.mocked(useApiModule.useHyperliquidPositions).mockReturnValue({
+      vi.mocked(useHyperliquidPositions).mockReturnValue({
         data: {
           positions: [
             {
@@ -1019,10 +1012,10 @@ describe("usePortfolioState", () => {
               notional: 500,
             },
           ],
-          total_notional: 500,
+          totalNotional: 500,
         },
         isLoading: false,
-      } as unknown as ReturnType<typeof useApiModule.useHyperliquidPositions>)
+      } as unknown as ReturnType<typeof useHyperliquidPositions>)
 
       const { result } = renderHook(() => usePortfolioState(), {
         wrapper: createWrapper(),
@@ -1053,8 +1046,7 @@ describe("usePortfolioState", () => {
 
   describe("hasPendingDeletions", () => {
     it("returns true when there are deleted tokens", async () => {
-      const useApiModule = await import("@/hooks/useApi")
-      vi.mocked(useApiModule.useHyperliquidPositions).mockReturnValue({
+      vi.mocked(useHyperliquidPositions).mockReturnValue({
         data: {
           positions: [
             {
@@ -1065,10 +1057,10 @@ describe("usePortfolioState", () => {
               notional: 500,
             },
           ],
-          total_notional: 500,
+          totalNotional: 500,
         },
         isLoading: false,
-      } as unknown as ReturnType<typeof useApiModule.useHyperliquidPositions>)
+      } as unknown as ReturnType<typeof useHyperliquidPositions>)
 
       const { result } = renderHook(() => usePortfolioState(), {
         wrapper: createWrapper(),
@@ -1090,8 +1082,7 @@ describe("usePortfolioState", () => {
 
   describe("token status derivation", () => {
     it("sets status to modified when lockedUsd changes from initial", async () => {
-      const useApiModule = await import("@/hooks/useApi")
-      vi.mocked(useApiModule.useHyperliquidPositions).mockReturnValue({
+      vi.mocked(useHyperliquidPositions).mockReturnValue({
         data: {
           positions: [
             {
@@ -1102,10 +1093,10 @@ describe("usePortfolioState", () => {
               notional: 500,
             },
           ],
-          total_notional: 500,
+          totalNotional: 500,
         },
         isLoading: false,
-      } as unknown as ReturnType<typeof useApiModule.useHyperliquidPositions>)
+      } as unknown as ReturnType<typeof useHyperliquidPositions>)
 
       const { result } = renderHook(() => usePortfolioState(), {
         wrapper: createWrapper(),
@@ -1128,8 +1119,7 @@ describe("usePortfolioState", () => {
     })
 
     it("sets status to modified when side changes from initial", async () => {
-      const useApiModule = await import("@/hooks/useApi")
-      vi.mocked(useApiModule.useHyperliquidPositions).mockReturnValue({
+      vi.mocked(useHyperliquidPositions).mockReturnValue({
         data: {
           positions: [
             {
@@ -1140,10 +1130,10 @@ describe("usePortfolioState", () => {
               notional: 500,
             },
           ],
-          total_notional: 500,
+          totalNotional: 500,
         },
         isLoading: false,
-      } as unknown as ReturnType<typeof useApiModule.useHyperliquidPositions>)
+      } as unknown as ReturnType<typeof useHyperliquidPositions>)
 
       const { result } = renderHook(() => usePortfolioState(), {
         wrapper: createWrapper(),
@@ -1166,8 +1156,7 @@ describe("usePortfolioState", () => {
     })
 
     it("sets status to modified when leverage changes from initial", async () => {
-      const useApiModule = await import("@/hooks/useApi")
-      vi.mocked(useApiModule.useHyperliquidPositions).mockReturnValue({
+      vi.mocked(useHyperliquidPositions).mockReturnValue({
         data: {
           positions: [
             {
@@ -1178,10 +1167,10 @@ describe("usePortfolioState", () => {
               notional: 500,
             },
           ],
-          total_notional: 500,
+          totalNotional: 500,
         },
         isLoading: false,
-      } as unknown as ReturnType<typeof useApiModule.useHyperliquidPositions>)
+      } as unknown as ReturnType<typeof useHyperliquidPositions>)
 
       const { result } = renderHook(() => usePortfolioState(), {
         wrapper: createWrapper(),
@@ -1204,8 +1193,7 @@ describe("usePortfolioState", () => {
     })
 
     it("preserves deleted status when token is deleted", async () => {
-      const useApiModule = await import("@/hooks/useApi")
-      vi.mocked(useApiModule.useHyperliquidPositions).mockReturnValue({
+      vi.mocked(useHyperliquidPositions).mockReturnValue({
         data: {
           positions: [
             {
@@ -1216,10 +1204,10 @@ describe("usePortfolioState", () => {
               notional: 500,
             },
           ],
-          total_notional: 500,
+          totalNotional: 500,
         },
         isLoading: false,
-      } as unknown as ReturnType<typeof useApiModule.useHyperliquidPositions>)
+      } as unknown as ReturnType<typeof useHyperliquidPositions>)
 
       const { result } = renderHook(() => usePortfolioState(), {
         wrapper: createWrapper(),
@@ -1263,8 +1251,7 @@ describe("usePortfolioState", () => {
       )
 
       // Mock exchange positions with different data
-      const useApiModule = await import("@/hooks/useApi")
-      vi.mocked(useApiModule.useHyperliquidPositions).mockReturnValue({
+      vi.mocked(useHyperliquidPositions).mockReturnValue({
         data: {
           positions: [
             {
@@ -1275,10 +1262,10 @@ describe("usePortfolioState", () => {
               notional: 500,
             },
           ],
-          total_notional: 500,
+          totalNotional: 500,
         },
         isLoading: false,
-      } as unknown as ReturnType<typeof useApiModule.useHyperliquidPositions>)
+      } as unknown as ReturnType<typeof useHyperliquidPositions>)
 
       const { result } = renderHook(() => usePortfolioState(), {
         wrapper: createWrapper(),
@@ -1293,18 +1280,17 @@ describe("usePortfolioState", () => {
     })
 
     it("prioritizes budget preference over balance when no positions", async () => {
-      const useApiModule = await import("@/hooks/useApi")
-      vi.mocked(useApiModule.useHyperliquidPositions).mockReturnValue({
-        data: { positions: [], total_notional: 0 },
+      vi.mocked(useHyperliquidPositions).mockReturnValue({
+        data: { positions: [], totalNotional: 0 },
         isLoading: false,
-      } as unknown as ReturnType<typeof useApiModule.useHyperliquidPositions>)
-      vi.mocked(useApiModule.useBudgetPreference).mockReturnValue({
+      } as unknown as ReturnType<typeof useHyperliquidPositions>)
+      vi.mocked(useBudgetPreference).mockReturnValue({
         data: { budget: 1500 },
         isLoading: false,
-      } as ReturnType<typeof useApiModule.useBudgetPreference>)
-      vi.mocked(useApiModule.useHyperliquidBalance).mockReturnValue({
-        data: { perp_usdc_balance: 3000 },
-      } as ReturnType<typeof useApiModule.useHyperliquidBalance>)
+      } as ReturnType<typeof useBudgetPreference>)
+      vi.mocked(useHyperliquidBalance).mockReturnValue({
+        data: 3000,
+      } as ReturnType<typeof useHyperliquidBalance>)
 
       const { result } = renderHook(() => usePortfolioState(), {
         wrapper: createWrapper(),
@@ -1315,9 +1301,8 @@ describe("usePortfolioState", () => {
       })
     })
 
-    it("uses exchange total_notional as budget when loading positions", async () => {
-      const useApiModule = await import("@/hooks/useApi")
-      vi.mocked(useApiModule.useHyperliquidPositions).mockReturnValue({
+    it("uses exchange totalNotional as budget when loading positions", async () => {
+      vi.mocked(useHyperliquidPositions).mockReturnValue({
         data: {
           positions: [
             {
@@ -1328,14 +1313,14 @@ describe("usePortfolioState", () => {
               notional: 750,
             },
           ],
-          total_notional: 750,
+          totalNotional: 750,
         },
         isLoading: false,
-      } as unknown as ReturnType<typeof useApiModule.useHyperliquidPositions>)
-      vi.mocked(useApiModule.useBudgetPreference).mockReturnValue({
+      } as unknown as ReturnType<typeof useHyperliquidPositions>)
+      vi.mocked(useBudgetPreference).mockReturnValue({
         data: { budget: 0 },
         isLoading: false,
-      } as ReturnType<typeof useApiModule.useBudgetPreference>)
+      } as ReturnType<typeof useBudgetPreference>)
 
       const { result } = renderHook(() => usePortfolioState(), {
         wrapper: createWrapper(),
@@ -1350,11 +1335,10 @@ describe("usePortfolioState", () => {
   describe("minimum USD enforcement", () => {
     it("sets lockedUsd to MIN_USD when adding new token", async () => {
       // Reset mocks to ensure clean state
-      const useApiModule = await import("@/hooks/useApi")
-      vi.mocked(useApiModule.useHyperliquidPositions).mockReturnValue({
-        data: { positions: [], total_notional: 0 },
+      vi.mocked(useHyperliquidPositions).mockReturnValue({
+        data: { positions: [], totalNotional: 0 },
         isLoading: false,
-      } as unknown as ReturnType<typeof useApiModule.useHyperliquidPositions>)
+      } as unknown as ReturnType<typeof useHyperliquidPositions>)
 
       const { result } = renderHook(() => usePortfolioState(), {
         wrapper: createWrapper(),
@@ -1374,8 +1358,7 @@ describe("usePortfolioState", () => {
     })
 
     it("does not modify tokens with exchange notional", async () => {
-      const useApiModule = await import("@/hooks/useApi")
-      vi.mocked(useApiModule.useHyperliquidPositions).mockReturnValue({
+      vi.mocked(useHyperliquidPositions).mockReturnValue({
         data: {
           positions: [
             {
@@ -1386,10 +1369,10 @@ describe("usePortfolioState", () => {
               notional: 5, // Below MIN_USD but from exchange
             },
           ],
-          total_notional: 500,
+          totalNotional: 500,
         },
         isLoading: false,
-      } as unknown as ReturnType<typeof useApiModule.useHyperliquidPositions>)
+      } as unknown as ReturnType<typeof useHyperliquidPositions>)
 
       const { result } = renderHook(() => usePortfolioState(), {
         wrapper: createWrapper(),
@@ -1430,8 +1413,7 @@ describe("usePortfolioState", () => {
     })
 
     it("does not enforce minimum on deleted tokens", async () => {
-      const useApiModule = await import("@/hooks/useApi")
-      vi.mocked(useApiModule.useHyperliquidPositions).mockReturnValue({
+      vi.mocked(useHyperliquidPositions).mockReturnValue({
         data: {
           positions: [
             {
@@ -1442,10 +1424,10 @@ describe("usePortfolioState", () => {
               notional: 250,
             },
           ],
-          total_notional: 500,
+          totalNotional: 500,
         },
         isLoading: false,
-      } as unknown as ReturnType<typeof useApiModule.useHyperliquidPositions>)
+      } as unknown as ReturnType<typeof useHyperliquidPositions>)
 
       const { result } = renderHook(() => usePortfolioState(), {
         wrapper: createWrapper(),
@@ -1467,11 +1449,10 @@ describe("usePortfolioState", () => {
 
   describe("percentage derivation from lockedUsd", () => {
     it("derives percentage from lockedUsd and budget", async () => {
-      const useApiModule = await import("@/hooks/useApi")
-      vi.mocked(useApiModule.useHyperliquidPositions).mockReturnValue({
-        data: { positions: [], total_notional: 0 },
+      vi.mocked(useHyperliquidPositions).mockReturnValue({
+        data: { positions: [], totalNotional: 0 },
         isLoading: false,
-      } as unknown as ReturnType<typeof useApiModule.useHyperliquidPositions>)
+      } as unknown as ReturnType<typeof useHyperliquidPositions>)
 
       const { result } = renderHook(() => usePortfolioState(), {
         wrapper: createWrapper(),
@@ -1497,11 +1478,10 @@ describe("usePortfolioState", () => {
     })
 
     it("recalculates percentage when budget changes", async () => {
-      const useApiModule = await import("@/hooks/useApi")
-      vi.mocked(useApiModule.useHyperliquidPositions).mockReturnValue({
-        data: { positions: [], total_notional: 0 },
+      vi.mocked(useHyperliquidPositions).mockReturnValue({
+        data: { positions: [], totalNotional: 0 },
         isLoading: false,
-      } as unknown as ReturnType<typeof useApiModule.useHyperliquidPositions>)
+      } as unknown as ReturnType<typeof useHyperliquidPositions>)
 
       const { result } = renderHook(() => usePortfolioState(), {
         wrapper: createWrapper(),
@@ -1535,8 +1515,7 @@ describe("usePortfolioState", () => {
     })
 
     it("derives percentage from notional when available", async () => {
-      const useApiModule = await import("@/hooks/useApi")
-      vi.mocked(useApiModule.useHyperliquidPositions).mockReturnValue({
+      vi.mocked(useHyperliquidPositions).mockReturnValue({
         data: {
           positions: [
             {
@@ -1547,10 +1526,10 @@ describe("usePortfolioState", () => {
               notional: 250,
             },
           ],
-          total_notional: 500,
+          totalNotional: 500,
         },
         isLoading: false,
-      } as unknown as ReturnType<typeof useApiModule.useHyperliquidPositions>)
+      } as unknown as ReturnType<typeof useHyperliquidPositions>)
 
       const { result } = renderHook(() => usePortfolioState(), {
         wrapper: createWrapper(),
@@ -1560,7 +1539,7 @@ describe("usePortfolioState", () => {
         expect(result.current.selectedTokens).toHaveLength(1)
       })
 
-      // With notional 250 and budget 500 (from total_notional), percentage = 50%
+      // With notional 250 and budget 500 (from totalNotional), percentage = 50%
       expect(result.current.selectedTokens[0].percentage).toBe(50)
     })
   })

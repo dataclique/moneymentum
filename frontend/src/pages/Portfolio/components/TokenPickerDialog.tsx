@@ -10,7 +10,7 @@ import {
 } from "@/components/ui/dialog"
 import { clsx } from "clsx"
 import { twMerge } from "tailwind-merge"
-import { useHyperliquidTickers } from "@/hooks/useApi"
+import { useHyperliquidTickers } from "@/hooks/useTrading"
 import type { TokenAllocation } from "../hooks/usePortfolioState"
 
 interface TokenPickerDialogProps {
@@ -30,14 +30,14 @@ export const TokenPickerDialog = ({
   } = useHyperliquidTickers()
 
   const filteredTickers = useMemo(() => {
-    const tickers = tickersData?.data ?? []
+    const tickers = tickersData ?? []
     if (!searchTerm.trim()) {
       return tickers
     }
     return tickers.filter(ticker =>
       ticker.toLowerCase().includes(searchTerm.toLowerCase()),
     )
-  }, [tickersData?.data, searchTerm])
+  }, [tickersData, searchTerm])
 
   return (
     <Dialog>

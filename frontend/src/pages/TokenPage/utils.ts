@@ -1,9 +1,17 @@
-import type { IOHLCData, TradingData } from "./types"
+import type { TradingData } from "@/hooks/useApi"
+
+export interface IOHLCData {
+  readonly close: number
+  readonly date: Date
+  readonly high: number
+  readonly low: number
+  readonly open: number
+  readonly volume: number
+}
 
 // Transform trading data to OHLC format for price chart
 export const transformToOHLC = (data: TradingData[]): IOHLCData[] => {
   return data
-    .filter(item => item.close !== null && item.close !== undefined)
     .map(item => ({
       date: new Date(item.timestamp),
       close: item.close,
@@ -23,16 +31,16 @@ export const transformToOHLC = (data: TradingData[]): IOHLCData[] => {
 // Transform trading data to line chart format for metrics
 export const transformToLineData = (
   data: TradingData[],
-  metric: string,
+  metric: keyof TradingData,
 ): { time: string; value: number }[] => {
   const processedData = data
     .filter(item => {
-      const value = (item as any)[metric]
-      return value !== null && value !== undefined && !isNaN(value)
+      const value = item[metric]
+      return typeof value === "number" && !isNaN(value)
     })
     .map(item => ({
-      time: item.timestamp, // Keep the full timestamp
-      value: (item as any)[metric] as number,
+      time: item.timestamp,
+      value: item[metric] as number,
     }))
     .sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime())
 

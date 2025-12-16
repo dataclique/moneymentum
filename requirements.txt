@@ -2,6 +2,7 @@ aiohttp
 ccxt
 colorlog
 fastapi==0.109.2
+httpx
 matplotlib
 numpy
 pandas==2.2.0

@@ -28,7 +28,9 @@ repository.
 ### Environment Setup
 
 - **Nix + Direnv**: Run `direnv allow` to activate the development environment
-- **Python dependencies**: Managed through Nix and `requirements.txt`
+- **Python dependencies**: The nix flake automatically installs all pip
+  dependencies from `requirements.txt` when entering the dev shell. Do not run
+  `pip install` manually.
 - **Frontend dependencies**: `cd frontend && npm install`
 
 ## Architecture Overview
@@ -135,6 +137,52 @@ Uses Nix flakes with devenv configured in `flake.nix`:
 
 **Prettier**: Configured in `frontend/package.json` with tabWidth 2, no
 semicolons
+
+## Agent Rules
+
+**IMPORTANT**: Never disable or relax any quality checks (lints, type checks,
+tests, pre-commit hooks, etc.) without explicitly asking the user first. Always
+fix the underlying issue rather than suppressing the warning/error.
+
+## Code Style Anti-Patterns
+
+The following patterns are **NOT ALLOWED** in this codebase:
+
+### No `types.ts` files
+
+Do not create separate `types.ts` files. Types should be colocated with the code
+that uses them. If a type is used by multiple files, export it from the primary
+file that defines the concept.
+
+### Prefer descriptive names over abbreviations
+
+Default to descriptive names rather than abbreviations. Well-established
+abbreviations like `msg`, `ctx`, `err`, `req`, `res` are acceptable when their
+meaning is clear from context, but full names should be the default choice.
+
+Avoid project-specific or non-standard abbreviations:
+
+- `cn` → `mergeClassNames` (not a well-known abbreviation)
+- `btn` → `button` (prefer full word in most cases)
+
+### Self-Documenting Code Over Comments
+
+Code must be self-explaining through good names and clean architecture.
+
+- **Documentation comments are good**: Explain what something does and how to
+  use it (docstrings, API docs, README sections)
+- **Implementation comments are a last resort**: Comments explaining how code
+  works should only be used when the code cannot be made clear by improving the
+  code itself (better names, smaller functions, clearer structure)
+
+If you find yourself writing a comment to explain complex logic, first try to
+refactor the code to be self-explanatory.
+
+### Test-Driven Development
+
+When writing tests for existing code, do NOT assume the current behavior is
+correct. The code may have bugs. Ask the user if you're unsure whether a
+behavior is intentional or a bug.
 
 ## Testing
 

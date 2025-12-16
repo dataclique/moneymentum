@@ -25,7 +25,7 @@ describe("TimeframeSelect", () => {
   })
 
   it("accepts only valid Timeframe values", () => {
-    const mockOnChange = vi.fn<[Timeframe], void>()
+    const mockOnChange = vi.fn<(value: Timeframe) => void>()
 
     render(<TimeframeSelect value="1h" onValueChange={mockOnChange} />)
 
@@ -52,7 +52,7 @@ describe("TimeframeSelect", () => {
   })
 
   it("enforces type safety with Timeframe union type", () => {
-    const mockOnChange = vi.fn<[Timeframe], void>()
+    const mockOnChange = vi.fn<(value: Timeframe) => void>()
 
     render(<TimeframeSelect value="1h" onValueChange={mockOnChange} />)
 
@@ -61,7 +61,7 @@ describe("TimeframeSelect", () => {
   })
 
   it("callback receives Timeframe type", () => {
-    const mockOnChange = vi.fn<[Timeframe], void>()
+    const mockOnChange = vi.fn<(value: Timeframe) => void>()
 
     render(<TimeframeSelect value="1h" onValueChange={mockOnChange} />)
 

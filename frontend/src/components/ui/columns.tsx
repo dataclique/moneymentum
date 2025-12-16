@@ -2,30 +2,7 @@ import type { ColumnDef } from "@tanstack/react-table"
 import { ArrowUpDown } from "lucide-react"
 import { Button } from "./button"
 import { Link } from "react-router-dom"
-
-export type TradingData = {
-  timestamp: string
-  close: number
-  volume: number
-  ticker: string
-  log_return: number | null
-  cum_return: number | null
-  autocorrelation: number | null
-  stddev: number | null
-  annualized_volatility: number | null
-  sma: number | null
-  mean_return: number | null
-  price_stddev: number | null
-  return_stddev: number | null
-  price_zscore: number | null
-  covariance: number | null
-  beta: number | null
-  information_discreteness: number | null
-  sharpe: number | null
-  log_return_above_mar: number | null
-  downside_deviation: number | null
-  sortino: number | null
-}
+import type { TradingData } from "@/hooks/useApi"
 
 export const columns: ColumnDef<TradingData>[] = [
   {
@@ -34,7 +11,9 @@ export const columns: ColumnDef<TradingData>[] = [
       return (
         <Button
           variant="ghost"
-          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+          onClick={() => {
+            column.toggleSorting(column.getIsSorted() === "asc")
+          }}
         >
           Timestamp
           <ArrowUpDown className="ml-2 h-4 w-4" />
@@ -48,7 +27,9 @@ export const columns: ColumnDef<TradingData>[] = [
       return (
         <Button
           variant="ghost"
-          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+          onClick={() => {
+            column.toggleSorting(column.getIsSorted() === "asc")
+          }}
         >
           Close
           <ArrowUpDown className="ml-2 h-4 w-4" />
@@ -62,7 +43,9 @@ export const columns: ColumnDef<TradingData>[] = [
       return (
         <Button
           variant="ghost"
-          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+          onClick={() => {
+            column.toggleSorting(column.getIsSorted() === "asc")
+          }}
         >
           Volume
           <ArrowUpDown className="ml-2 h-4 w-4" />
@@ -76,7 +59,9 @@ export const columns: ColumnDef<TradingData>[] = [
       return (
         <Button
           variant="ghost"
-          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+          onClick={() => {
+            column.toggleSorting(column.getIsSorted() === "asc")
+          }}
         >
           Ticker
           <ArrowUpDown className="ml-2 h-4 w-4" />
@@ -84,7 +69,7 @@ export const columns: ColumnDef<TradingData>[] = [
       )
     },
     cell: ({ row }) => {
-      const ticker = row.getValue("ticker") as string
+      const ticker = String(row.getValue("ticker"))
       return (
         <Link
           to={`/token/${ticker}`}
@@ -101,7 +86,9 @@ export const columns: ColumnDef<TradingData>[] = [
       return (
         <Button
           variant="ghost"
-          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+          onClick={() => {
+            column.toggleSorting(column.getIsSorted() === "asc")
+          }}
         >
           Log Return
           <ArrowUpDown className="ml-2 h-4 w-4" />
@@ -115,7 +102,9 @@ export const columns: ColumnDef<TradingData>[] = [
       return (
         <Button
           variant="ghost"
-          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+          onClick={() => {
+            column.toggleSorting(column.getIsSorted() === "asc")
+          }}
         >
           Cum Return
           <ArrowUpDown className="ml-2 h-4 w-4" />
@@ -129,7 +118,9 @@ export const columns: ColumnDef<TradingData>[] = [
       return (
         <Button
           variant="ghost"
-          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+          onClick={() => {
+            column.toggleSorting(column.getIsSorted() === "asc")
+          }}
         >
           Autocorrelation
           <ArrowUpDown className="ml-2 h-4 w-4" />
@@ -143,7 +134,9 @@ export const columns: ColumnDef<TradingData>[] = [
       return (
         <Button
           variant="ghost"
-          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+          onClick={() => {
+            column.toggleSorting(column.getIsSorted() === "asc")
+          }}
         >
           Stddev
           <ArrowUpDown className="ml-2 h-4 w-4" />
@@ -157,7 +150,9 @@ export const columns: ColumnDef<TradingData>[] = [
       return (
         <Button
           variant="ghost"
-          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+          onClick={() => {
+            column.toggleSorting(column.getIsSorted() === "asc")
+          }}
         >
           Annualized Volatility
           <ArrowUpDown className="ml-2 h-4 w-4" />
@@ -171,7 +166,9 @@ export const columns: ColumnDef<TradingData>[] = [
       return (
         <Button
           variant="ghost"
-          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+          onClick={() => {
+            column.toggleSorting(column.getIsSorted() === "asc")
+          }}
         >
           SMA
           <ArrowUpDown className="ml-2 h-4 w-4" />
@@ -185,7 +182,9 @@ export const columns: ColumnDef<TradingData>[] = [
       return (
         <Button
           variant="ghost"
-          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+          onClick={() => {
+            column.toggleSorting(column.getIsSorted() === "asc")
+          }}
         >
           Mean Return
           <ArrowUpDown className="ml-2 h-4 w-4" />
@@ -199,7 +198,9 @@ export const columns: ColumnDef<TradingData>[] = [
       return (
         <Button
           variant="ghost"
-          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+          onClick={() => {
+            column.toggleSorting(column.getIsSorted() === "asc")
+          }}
         >
           Price Stddev
           <ArrowUpDown className="ml-2 h-4 w-4" />
@@ -213,7 +214,9 @@ export const columns: ColumnDef<TradingData>[] = [
       return (
         <Button
           variant="ghost"
-          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+          onClick={() => {
+            column.toggleSorting(column.getIsSorted() === "asc")
+          }}
         >
           Return Stddev
           <ArrowUpDown className="ml-2 h-4 w-4" />
@@ -227,7 +230,9 @@ export const columns: ColumnDef<TradingData>[] = [
       return (
         <Button
           variant="ghost"
-          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+          onClick={() => {
+            column.toggleSorting(column.getIsSorted() === "asc")
+          }}
         >
           Price Zscore
           <ArrowUpDown className="ml-2 h-4 w-4" />
@@ -241,7 +246,9 @@ export const columns: ColumnDef<TradingData>[] = [
       return (
         <Button
           variant="ghost"
-          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+          onClick={() => {
+            column.toggleSorting(column.getIsSorted() === "asc")
+          }}
         >
           Covariance
           <ArrowUpDown className="ml-2 h-4 w-4" />
@@ -255,7 +262,9 @@ export const columns: ColumnDef<TradingData>[] = [
       return (
         <Button
           variant="ghost"
-          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+          onClick={() => {
+            column.toggleSorting(column.getIsSorted() === "asc")
+          }}
         >
           Beta
           <ArrowUpDown className="ml-2 h-4 w-4" />
@@ -269,7 +278,9 @@ export const columns: ColumnDef<TradingData>[] = [
       return (
         <Button
           variant="ghost"
-          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+          onClick={() => {
+            column.toggleSorting(column.getIsSorted() === "asc")
+          }}
         >
           Information Discreteness
           <ArrowUpDown className="ml-2 h-4 w-4" />
@@ -283,7 +294,9 @@ export const columns: ColumnDef<TradingData>[] = [
       return (
         <Button
           variant="ghost"
-          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+          onClick={() => {
+            column.toggleSorting(column.getIsSorted() === "asc")
+          }}
         >
           Sharpe
           <ArrowUpDown className="ml-2 h-4 w-4" />
@@ -297,7 +310,9 @@ export const columns: ColumnDef<TradingData>[] = [
       return (
         <Button
           variant="ghost"
-          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+          onClick={() => {
+            column.toggleSorting(column.getIsSorted() === "asc")
+          }}
         >
           Log Return Above MAR
           <ArrowUpDown className="ml-2 h-4 w-4" />
@@ -311,7 +326,9 @@ export const columns: ColumnDef<TradingData>[] = [
       return (
         <Button
           variant="ghost"
-          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+          onClick={() => {
+            column.toggleSorting(column.getIsSorted() === "asc")
+          }}
         >
           Downside Deviation
           <ArrowUpDown className="ml-2 h-4 w-4" />
@@ -325,7 +342,9 @@ export const columns: ColumnDef<TradingData>[] = [
       return (
         <Button
           variant="ghost"
-          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+          onClick={() => {
+            column.toggleSorting(column.getIsSorted() === "asc")
+          }}
         >
           Sortino
           <ArrowUpDown className="ml-2 h-4 w-4" />

@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useEffect, useRef } from "react"
+import React, { useRef } from "react"
 
 import {
   type ColumnDef,
@@ -10,7 +10,11 @@ import {
   type SortingState,
   useReactTable,
 } from "@tanstack/react-table"
-import { useVirtualizer, type VirtualItem } from "@tanstack/react-virtual"
+import {
+  useVirtualizer,
+  type Virtualizer,
+  type VirtualItem,
+} from "@tanstack/react-virtual"
 
 import {
   Table,
@@ -31,10 +35,10 @@ interface DataTableProps<TData, TValue> {
   data: TData[]
 }
 
-export function DataTable<TData, TValue>({
+export const DataTable = <TData, TValue>({
   columns,
   data,
-}: DataTableProps<TData, TValue>) {
+}: DataTableProps<TData, TValue>) => {
   const [sorting, setSorting] = React.useState<SortingState>([])
 
   const table = useReactTable({
@@ -50,26 +54,26 @@ export function DataTable<TData, TValue>({
 
   const { rows } = table.getRowModel()
   const tableContainerRef = useRef<HTMLDivElement>(null)
-  const rowVirtualizer = useVirtualizer({
+  const rowVirtualizer: Virtualizer<HTMLDivElement, Element> = useVirtualizer({
     count: rows.length,
     getScrollElement: () => tableContainerRef.current,
     estimateSize: () => ESTIMATED_ROW_HEIGHT_PX,
     overscan: OVERSCAN_ROW_COUNT,
   })
 
-  const virtualRows = rowVirtualizer.getVirtualItems()
-  const totalSize = rowVirtualizer.getTotalSize()
+  const virtualRows: VirtualItem[] = rowVirtualizer.getVirtualItems()
+  const totalSize: number = rowVirtualizer.getTotalSize()
 
-  const paddingTop = virtualRows.length > 0 ? virtualRows?.[0]?.start || 0 : 0
+  const paddingTop = virtualRows.length > 0 ? (virtualRows[0]?.start ?? 0) : 0
   const paddingBottom =
     virtualRows.length > 0
-      ? totalSize - (virtualRows?.[virtualRows.length - 1]?.end || 0)
+      ? totalSize - (virtualRows[virtualRows.length - 1]?.end ?? 0)
       : 0
 
   return (
     <div
       className="w-full overflow-auto rounded-md border"
-      style={{ height: `${TABLE_CONTAINER_HEIGHT_PX}px` }}
+      style={{ height: `${String(TABLE_CONTAINER_HEIGHT_PX)}px` }}
       ref={tableContainerRef}
     >
       <Table>
@@ -94,7 +98,7 @@ export function DataTable<TData, TValue>({
         <TableBody>
           {paddingTop > 0 && (
             <tr>
-              <td style={{ height: `${paddingTop}px` }} />
+              <td style={{ height: `${String(paddingTop)}px` }} />
             </tr>
           )}
           {virtualRows.map((virtualRow: VirtualItem) => {
@@ -114,7 +118,7 @@ export function DataTable<TData, TValue>({
           })}
           {paddingBottom > 0 && (
             <tr>
-              <td style={{ height: `${paddingBottom}px` }} />
+              <td style={{ height: `${String(paddingBottom)}px` }} />
             </tr>
           )}
         </TableBody>

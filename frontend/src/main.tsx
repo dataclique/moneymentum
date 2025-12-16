@@ -6,6 +6,8 @@ import { BrowserRouter } from "react-router-dom"
 import { ThemeProvider } from "@/components/ui/theme-provider"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { ReactQueryDevtools } from "@tanstack/react-query-devtools"
+import { NetworkProvider } from "@/contexts/NetworkContext"
+import { Toaster } from "@/components/ui/sonner"
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -17,13 +19,21 @@ const queryClient = new QueryClient({
   },
 })
 
-createRoot(document.getElementById("root")!).render(
+const rootElement = document.getElementById("root")
+if (!rootElement) {
+  throw new Error("Root element not found")
+}
+
+createRoot(rootElement).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
       <ThemeProvider defaultTheme="dark" storageKey="vite-ui-theme">
-        <BrowserRouter>
-          <App />
-        </BrowserRouter>
+        <NetworkProvider>
+          <BrowserRouter>
+            <App />
+          </BrowserRouter>
+        </NetworkProvider>
+        <Toaster />
       </ThemeProvider>
       <ReactQueryDevtools initialIsOpen={false} />
     </QueryClientProvider>

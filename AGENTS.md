@@ -28,7 +28,9 @@ repository.
 ### Environment Setup
 
 - **Nix + Direnv**: Run `direnv allow` to activate the development environment
-- **Python dependencies**: Managed through Nix and `requirements.txt`
+- **Python dependencies**: The nix flake automatically installs all pip
+  dependencies from `requirements.txt` when entering the dev shell. Do not run
+  `pip install` manually.
 - **Frontend dependencies**: `cd frontend && npm install`
 
 ## Architecture Overview

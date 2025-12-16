@@ -402,16 +402,10 @@ export function useWalletSettings() {
   })
 }
 
-export interface SaveWalletSettingsParams {
-  public_key?: string
-  secret_key?: string
-  is_testnet: boolean
-}
-
-export function useSaveWalletSettings() {
-  return useMutation<void, Error, SaveWalletSettingsParams>({
+export function useSwitchNetwork() {
+  return useMutation<{ is_testnet: boolean }, Error, { is_testnet: boolean }>({
     mutationFn: async payload => {
-      const response = await fetch("/api/hyperliquid/wallet-settings", {
+      const response = await fetch("/api/hyperliquid/network", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -421,8 +415,9 @@ export function useSaveWalletSettings() {
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}))
-        throw new Error(errorData.detail || "Unable to save wallet settings")
+        throw new Error(errorData.detail || "Unable to switch network")
       }
+      return response.json()
     },
   })
 }

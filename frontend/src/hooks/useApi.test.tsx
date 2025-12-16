@@ -1,7 +1,13 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
-import { renderHook, waitFor } from "@testing-library/react"
+import { renderHook, waitFor, act } from "@testing-library/react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { useDateRange, useAnalysisData, useTokenData } from "./useApi"
+import {
+  useDateRange,
+  useAnalysisData,
+  useTokenData,
+  useSwitchNetwork,
+  useWalletSettings,
+} from "./useApi"
 import type { Timeframe } from "@/components/ui/timeframe-select"
 import React from "react"
 
@@ -213,6 +219,155 @@ describe("useApi hooks with Timeframe type", () => {
 
       const allValid: Timeframe[] = ["1h", "15m"]
       expect(allValid).toHaveLength(2)
+    })
+  })
+
+  describe("useSwitchNetwork", () => {
+    it("calls network endpoint with correct payload to switch to testnet", async () => {
+      const mockResponse = {
+        success: true,
+        is_testnet: true,
+      }
+
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => mockResponse,
+      })
+
+      const { result } = renderHook(() => useSwitchNetwork(), {
+        wrapper: createWrapper(),
+      })
+
+      await act(async () => {
+        result.current.mutate({ is_testnet: true })
+      })
+
+      await waitFor(() => expect(result.current.isSuccess).toBe(true))
+
+      expect(global.fetch).toHaveBeenCalledWith("/api/hyperliquid/network", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ is_testnet: true }),
+      })
+    })
+
+    it("calls network endpoint with correct payload to switch to mainnet", async () => {
+      const mockResponse = {
+        success: true,
+        is_testnet: false,
+      }
+
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => mockResponse,
+      })
+
+      const { result } = renderHook(() => useSwitchNetwork(), {
+        wrapper: createWrapper(),
+      })
+
+      await act(async () => {
+        result.current.mutate({ is_testnet: false })
+      })
+
+      await waitFor(() => expect(result.current.isSuccess).toBe(true))
+
+      expect(global.fetch).toHaveBeenCalledWith("/api/hyperliquid/network", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ is_testnet: false }),
+      })
+    })
+
+    it("handles network switch error gracefully", async () => {
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: false,
+        json: async () => ({ detail: "Network switch failed" }),
+      })
+
+      const { result } = renderHook(() => useSwitchNetwork(), {
+        wrapper: createWrapper(),
+      })
+
+      await act(async () => {
+        result.current.mutate({ is_testnet: true })
+      })
+
+      await waitFor(() => expect(result.current.isError).toBe(true))
+
+      expect(result.current.error?.message).toBe("Network switch failed")
+    })
+
+    it("does not expose secret key in request", async () => {
+      const mockResponse = { success: true, is_testnet: true }
+
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => mockResponse,
+      })
+
+      const { result } = renderHook(() => useSwitchNetwork(), {
+        wrapper: createWrapper(),
+      })
+
+      await act(async () => {
+        result.current.mutate({ is_testnet: true })
+      })
+
+      await waitFor(() => expect(result.current.isSuccess).toBe(true))
+
+      // Verify no secret_key in request body
+      const callArgs = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0]
+      const requestBody = JSON.parse(callArgs[1].body)
+      expect(requestBody).not.toHaveProperty("secret_key")
+      expect(Object.keys(requestBody)).toEqual(["is_testnet"])
+    })
+  })
+
+  describe("useWalletSettings", () => {
+    it("fetches wallet settings successfully", async () => {
+      const mockResponse = {
+        public_key: "0xTestPublicKey123",
+        is_testnet: true,
+      }
+
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => mockResponse,
+      })
+
+      const { result } = renderHook(() => useWalletSettings(), {
+        wrapper: createWrapper(),
+      })
+
+      await waitFor(() => expect(result.current.isSuccess).toBe(true))
+
+      expect(global.fetch).toHaveBeenCalledWith(
+        "/api/hyperliquid/wallet-settings",
+      )
+      expect(result.current.data).toEqual(mockResponse)
+      expect(result.current.data?.public_key).toBe("0xTestPublicKey123")
+      expect(result.current.data?.is_testnet).toBe(true)
+    })
+
+    it("does not include secret_key in response", async () => {
+      const mockResponse = {
+        public_key: "0xTestKey",
+        is_testnet: false,
+      }
+
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => mockResponse,
+      })
+
+      const { result } = renderHook(() => useWalletSettings(), {
+        wrapper: createWrapper(),
+      })
+
+      await waitFor(() => expect(result.current.isSuccess).toBe(true))
+
+      expect(result.current.data).not.toHaveProperty("secret_key")
     })
   })
 })

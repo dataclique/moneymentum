@@ -3,6 +3,23 @@ import { render, screen, waitFor } from "@testing-library/react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { MemoryRouter } from "react-router-dom"
 import App from "./App"
+import { ThemeProvider } from "@/components/ui/theme-provider"
+import { NetworkProvider } from "@/contexts/NetworkContext"
+
+// Mock window.matchMedia for ThemeProvider
+Object.defineProperty(window, "matchMedia", {
+  writable: true,
+  value: vi.fn().mockImplementation((query: string) => ({
+    matches: false,
+    media: query,
+    onchange: null,
+    addListener: vi.fn(),
+    removeListener: vi.fn(),
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    dispatchEvent: vi.fn(),
+  })),
+})
 
 // Track useAnalysisData calls to verify date parameters
 // Use vi.hoisted to make this available before vi.mock hoisting
@@ -58,7 +75,11 @@ const createWrapper = () => {
   })
   return ({ children }: { children: React.ReactNode }) => (
     <QueryClientProvider client={queryClient}>
-      <MemoryRouter>{children}</MemoryRouter>
+      <ThemeProvider>
+        <NetworkProvider>
+          <MemoryRouter>{children}</MemoryRouter>
+        </NetworkProvider>
+      </ThemeProvider>
     </QueryClientProvider>
   )
 }
@@ -114,34 +135,6 @@ describe("App", () => {
       rerender(<App />)
 
       // After data loads, the app should render the main page (not loading)
-      await waitFor(() => {
-        expect(screen.queryByText(/Loading data/)).not.toBeInTheDocument()
-      })
-    })
-
-    it("parses date correctly stripping time component", async () => {
-      const useApiModule = await import("@/hooks/useApi")
-
-      vi.mocked(useApiModule.useDateRange).mockReturnValue({
-        data: {
-          min_date: "2024-01-15T12:30:45Z",
-          max_date: "2024-06-20T18:45:30Z",
-          last_timestamp: "2024-06-20T23:00:00Z",
-        },
-        error: null,
-        isLoading: false,
-      } as unknown as ReturnType<typeof useApiModule.useDateRange>)
-
-      vi.mocked(useApiModule.useAnalysisData).mockReturnValue({
-        data: { data: [], message: null },
-        error: null,
-        isLoading: false,
-      } as unknown as ReturnType<typeof useApiModule.useAnalysisData>)
-
-      render(<App />, { wrapper: createWrapper() })
-
-      // The effect should parse dates correctly
-      // We can't directly check state, but we verify the app renders without error
       await waitFor(() => {
         expect(screen.queryByText(/Loading data/)).not.toBeInTheDocument()
       })

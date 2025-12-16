@@ -37,6 +37,10 @@
   --sidebar-accent-foreground: oklch(0.205 0 0);
   --sidebar-border: oklch(0.922 0 0);
   --sidebar-ring: oklch(0.708 0 0);
+  --gradient-amber-400: #fbbf24;
+  --gradient-amber-500: #f59e0b;
+  --gradient-amber-600: #d97706;
+  --gradient-amber-700: #b45309;
 }
 
 .dark {
@@ -72,6 +76,10 @@
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.556 0 0);
+  --gradient-amber-400: #fbbf24;
+  --gradient-amber-500: #f59e0b;
+  --gradient-amber-600: #d97706;
+  --gradient-amber-700: #b45309;
 }
 
 /* Fix native option darkmode */
@@ -163,12 +171,12 @@
   border-radius: inherit; /* Match parent */
   background-image: conic-gradient(
     from 180deg at 50% 50%,
-    #fbbf24,
-    #f59e0b,
-    #d97706,
-    #b45309,
-    #f59e0b,
-    #fbbf24
+    var(--gradient-amber-400),
+    var(--gradient-amber-500),
+    var(--gradient-amber-600),
+    var(--gradient-amber-700),
+    var(--gradient-amber-500),
+    var(--gradient-amber-400)
   );
   animation: rotate 4s linear infinite;
 }

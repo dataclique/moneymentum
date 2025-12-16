@@ -71,21 +71,23 @@ const App = () => {
     field: "startDate" | "endDate",
     date: Date | null,
   ) => {
-    setManualDateSelection(prev => ({
-      timeframe,
-      startDate:
+    setManualDateSelection(prev => {
+      const sameTimeframe = prev?.timeframe === timeframe
+      const newStartDate =
         field === "startDate"
           ? date
-          : prev?.timeframe === timeframe
+          : sameTimeframe
             ? prev.startDate
-            : maxAvailableDate,
-      endDate:
+            : maxAvailableDate
+      const newEndDate =
         field === "endDate"
           ? date
-          : prev?.timeframe === timeframe
+          : sameTimeframe
             ? prev.endDate
-            : maxAvailableDate,
-    }))
+            : maxAvailableDate
+
+      return { timeframe, startDate: newStartDate, endDate: newEndDate }
+    })
   }
 
   const {
@@ -159,7 +161,6 @@ const App = () => {
             {loading ? "Loading..." : "Reload Data"}
           </Button>
         </div>
-        <ModeToggle /> {/* Added ModeToggle here for easy access */}
       </div>
       {isNetworkSwitching && (
         <div className="mb-4 text-center text-sm text-muted-foreground">

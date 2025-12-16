@@ -55,6 +55,10 @@ export default tseslint.config(
       "@typescript-eslint/no-unsafe-call": "error",
       "@typescript-eslint/no-unsafe-member-access": "error",
       "@typescript-eslint/no-unsafe-return": "error",
+      "@typescript-eslint/restrict-template-expressions": [
+        "error",
+        { allowNumber: true },
+      ],
 
       // General code quality
       "no-console": ["warn", { allow: ["warn", "error"] }],

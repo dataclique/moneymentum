@@ -25,7 +25,7 @@ const AllocationBarToken = ({
     <div
       className="flex items-center justify-center overflow-hidden border-b border-background p-1 text-center text-white"
       style={{
-        height: `${String(token.percentage)}%`,
+        height: `${token.percentage}%`,
         backgroundColor: getSideColor(token.side),
       }}
     >

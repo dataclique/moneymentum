@@ -42,6 +42,7 @@
     "react-dom": "^19.1.0",
     "react-router-dom": "^7.6.3",
     "serve": "^14.2.4",
+    "sonner": "^2.0.7",
     "tailwind-merge": "^3.3.1",
     "tailwindcss-animate": "^1.0.7"
   },

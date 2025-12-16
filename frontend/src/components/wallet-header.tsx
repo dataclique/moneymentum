@@ -6,6 +6,7 @@ import {
   useSwitchNetwork,
 } from "@/hooks/useApi"
 import { useNetwork } from "@/hooks/useNetwork"
+import { toast } from "sonner"
 
 const formatPublicKey = (key: string): string => {
   if (!key || key.length < 10) return key
@@ -23,7 +24,7 @@ export const WalletHeader = () => {
 
   const handleTestnetToggle = async (checked: boolean) => {
     if (!walletSettings?.public_key) {
-      alert("Please configure wallet in .env file first")
+      toast.error("Please configure wallet in .env file first")
       return
     }
 
@@ -38,7 +39,7 @@ export const WalletHeader = () => {
       await refreshAllData(queryClient)
     } catch (error) {
       console.error("Failed to toggle testnet/mainnet:", error)
-      alert("Failed to toggle network. Please try again.")
+      toast.error("Failed to toggle network. Please try again.")
     } finally {
       setIsNetworkSwitching(false)
     }

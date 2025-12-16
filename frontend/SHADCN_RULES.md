@@ -61,7 +61,7 @@ import { Switch } from "@/components/ui/switch"
 ### 5. Styling
 
 - Components use Tailwind CSS classes
-- Use the `cn()` utility from `@/lib/utils` for conditional classes
+- Use `twMerge(clsx(...))` for conditional classes (import from `clsx` and `tailwind-merge`)
 - Follow the design system defined in `components.json` (style: "new-york")
 - Use CSS variables for theming (defined in `src/index.css`)
 

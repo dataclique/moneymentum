@@ -59,11 +59,14 @@ const PortfolioPage = () => {
                     type="number"
                     min={MIN_USD}
                     max={maxBudget}
+                    step="0.01"
                     value={budgetInput}
                     onChange={e => {
                       handleBudgetInputChange(e.target.value)
                     }}
                     onBlur={handleBudgetInputBlur}
+                    aria-invalid={budgetError ? true : undefined}
+                    aria-describedby={budgetError ? "budget-error" : undefined}
                     className={twMerge(
                       clsx(
                         "w-full rounded-md border border-border bg-background px-3 py-2 text-sm",
@@ -74,7 +77,9 @@ const PortfolioPage = () => {
                 </div>
                 <span className="text-sm text-muted-foreground">USDC</span>
                 {budgetError && (
-                  <span className="text-xs text-rose-400">{budgetError}</span>
+                  <span id="budget-error" className="text-xs text-rose-400">
+                    {budgetError}
+                  </span>
                 )}
               </div>
               <TokenPickerDialog
@@ -125,8 +130,8 @@ const PortfolioPage = () => {
             {blockingReasons.length > 0 && (
               <Card className="gap-3 py-3">
                 <CardContent className="space-y-2 text-sm text-rose-400">
-                  {blockingReasons.map(reason => (
-                    <p key={reason}>{reason}</p>
+                  {blockingReasons.map((reason, index) => (
+                    <p key={`${reason}-${index}`}>{reason}</p>
                   ))}
                 </CardContent>
               </Card>

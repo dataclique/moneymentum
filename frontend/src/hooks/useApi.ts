@@ -67,11 +67,13 @@ export const refreshAllData = async (queryClient: QueryClient) => {
     }),
   ])
 
-  // Invalidate other queries (they'll refetch when components need them)
-  await queryClient.invalidateQueries({ queryKey: ["analysisData"] })
-  await queryClient.invalidateQueries({ queryKey: ["tokenData"] })
-  await queryClient.invalidateQueries({ queryKey: ["dateRange"] })
-  await queryClient.invalidateQueries({ queryKey: ["hyperliquid"] })
+  // Invalidate other queries in parallel (they'll refetch when components need them)
+  await Promise.all([
+    queryClient.invalidateQueries({ queryKey: ["analysisData"] }),
+    queryClient.invalidateQueries({ queryKey: ["tokenData"] }),
+    queryClient.invalidateQueries({ queryKey: ["dateRange"] }),
+    queryClient.invalidateQueries({ queryKey: ["hyperliquid"] }),
+  ])
 }
 
 export type OrderSide = "buy" | "sell"

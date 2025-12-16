@@ -393,5 +393,20 @@ describe("useApi hooks with Timeframe type", () => {
 
       expect(result.current.data).not.toHaveProperty("secret_key")
     })
+
+    it("handles error when fetch fails", async () => {
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: false,
+        json: async () => ({ detail: "Server error" }),
+      })
+
+      const { result } = renderHook(() => useWalletSettings(), {
+        wrapper: createWrapper(),
+      })
+
+      await waitFor(() => {
+        expect(result.current.isError).toBe(true)
+      })
+    })
   })
 })

@@ -1,9 +1,6 @@
 // WHOLE APP WORKING IN UTC TIMEZONE, NO LOCAL TIME
-import { useEffect, useState } from "react"
-import {
-  columns,
-  type TradingData as TableTradingData,
-} from "./components/ui/columns"
+import { useMemo, useState } from "react"
+import { columns } from "./components/ui/columns"
 import { DataTable } from "./components/ui/data-table"
 import { Calendar22 as DatePicker } from "./components/ui/date-picker"
 import { Route, Routes } from "react-router-dom"
@@ -26,15 +23,17 @@ import {
 } from "@/hooks/useApi"
 import { useNetwork } from "@/hooks/useNetwork"
 
+interface ManualDateSelection {
+  timeframe: Timeframe
+  startDate: Date | null
+  endDate: Date | null
+}
+
 const App = () => {
   const { isNetworkSwitching } = useNetwork()
   const [timeframe, setTimeframe] = useState<Timeframe>("1h")
-  const [dateRange, setDateRange] = useState({
-    startDate: null as Date | null,
-    endDate: null as Date | null,
-  })
-  const [maxAvailableDate, setMaxAvailableDate] = useState<Date | null>(null)
-  const [minAvailableDate, setMinAvailableDate] = useState<Date | null>(null)
+  const [manualDateSelection, setManualDateSelection] =
+    useState<ManualDateSelection | null>(null)
 
   const {
     data: dateRangeData,
@@ -42,23 +41,52 @@ const App = () => {
     isLoading: isDateRangeLoading,
   } = useDateRange(timeframe)
 
-  useEffect(() => {
-    if (dateRangeData) {
-      const maxDate = new Date(
+  // Derive available date bounds from query data
+  const { maxAvailableDate, minAvailableDate } = useMemo(() => {
+    if (!dateRangeData) {
+      return { maxAvailableDate: null, minAvailableDate: null }
+    }
+    return {
+      maxAvailableDate: new Date(
         `${dateRangeData.max_date.split("T")[0]}T00:00:00Z`,
-      )
-      const minDate = new Date(
+      ),
+      minAvailableDate: new Date(
         `${dateRangeData.min_date.split("T")[0]}T00:00:00Z`,
-      )
-      setMaxAvailableDate(maxDate)
-      setMinAvailableDate(minDate)
-      // After first load show only last day data
-      setDateRange({
-        startDate: maxDate,
-        endDate: maxDate,
-      })
+      ),
     }
   }, [dateRangeData])
+
+  // Use manual selection if it matches current timeframe, otherwise default to maxDate
+  const dateRange = useMemo(() => {
+    if (manualDateSelection?.timeframe === timeframe) {
+      return {
+        startDate: manualDateSelection.startDate,
+        endDate: manualDateSelection.endDate,
+      }
+    }
+    return { startDate: maxAvailableDate, endDate: maxAvailableDate }
+  }, [manualDateSelection, timeframe, maxAvailableDate])
+
+  const handleDateChange = (
+    field: "startDate" | "endDate",
+    date: Date | null,
+  ) => {
+    setManualDateSelection(prev => ({
+      timeframe,
+      startDate:
+        field === "startDate"
+          ? date
+          : prev?.timeframe === timeframe
+            ? prev.startDate
+            : maxAvailableDate,
+      endDate:
+        field === "endDate"
+          ? date
+          : prev?.timeframe === timeframe
+            ? prev.endDate
+            : maxAvailableDate,
+    }))
+  }
 
   const {
     data: analysisData,
@@ -85,7 +113,6 @@ const App = () => {
     isDateRangeLoading || isAnalysisLoading || reloadMutation.isPending
   const error = dateRangeError?.message ?? analysisError?.message ?? null
   const data = analysisData?.data ?? []
-  const tableData = data as unknown as TableTradingData[]
   const message = analysisData?.message ?? null
 
   const MainPage = () => (
@@ -107,7 +134,7 @@ const App = () => {
           label="Start Date"
           selected={dateRange.startDate}
           onChange={date => {
-            setDateRange(prev => ({ ...prev, startDate: date }))
+            handleDateChange("startDate", date)
           }}
           minDate={minAvailableDate ?? undefined}
           maxDate={maxAvailableDate ?? undefined}
@@ -116,7 +143,7 @@ const App = () => {
           label="End Date"
           selected={dateRange.endDate}
           onChange={date => {
-            setDateRange(prev => ({ ...prev, endDate: date }))
+            handleDateChange("endDate", date)
           }}
           minDate={minAvailableDate ?? undefined}
           maxDate={maxAvailableDate ?? undefined}
@@ -140,7 +167,7 @@ const App = () => {
         </div>
       )}
       {message && <div className="mb-4 text-center">{message}</div>}
-      <DataTable columns={columns} data={tableData} />
+      <DataTable columns={columns} data={data} />
     </div>
   )
 

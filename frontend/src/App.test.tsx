@@ -4,6 +4,16 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { MemoryRouter } from "react-router-dom"
 import App from "./App"
 
+// Track useAnalysisData calls to verify date parameters
+// Use vi.hoisted to make this available before vi.mock hoisting
+const useAnalysisDataMock = vi.hoisted(() =>
+  vi.fn(() => ({
+    data: null,
+    error: null,
+    isLoading: false,
+  })),
+)
+
 // Mock the API hooks
 vi.mock("@/hooks/useApi", () => ({
   useDateRange: vi.fn(() => ({
@@ -11,11 +21,7 @@ vi.mock("@/hooks/useApi", () => ({
     error: null,
     isLoading: true,
   })),
-  useAnalysisData: vi.fn(() => ({
-    data: null,
-    error: null,
-    isLoading: false,
-  })),
+  useAnalysisData: useAnalysisDataMock,
   useReloadData: vi.fn(() => ({
     mutate: vi.fn(),
     isPending: false,
@@ -237,6 +243,190 @@ describe("App", () => {
       render(<App />, { wrapper: createWrapper() })
 
       expect(screen.getByText("Stop reloading")).toBeInTheDocument()
+    })
+  })
+
+  describe("date range initialization and updates", () => {
+    it("calls useAnalysisData with maxDate for both start and end after dateRangeData loads", async () => {
+      const useApiModule = await import("@/hooks/useApi")
+
+      vi.mocked(useApiModule.useDateRange).mockReturnValue({
+        data: {
+          min_date: "2024-01-01T00:00:00Z",
+          max_date: "2024-06-15T00:00:00Z",
+          last_timestamp: "2024-06-15T23:00:00Z",
+        },
+        error: null,
+        isLoading: false,
+      } as unknown as ReturnType<typeof useApiModule.useDateRange>)
+
+      useAnalysisDataMock.mockReturnValue({
+        data: { data: [], message: null },
+        error: null,
+        isLoading: false,
+      } as never)
+
+      render(<App />, { wrapper: createWrapper() })
+
+      await waitFor(() => {
+        expect(useAnalysisDataMock).toHaveBeenCalledWith({
+          startDate: "2024-06-15",
+          endDate: "2024-06-15",
+          timeframe: "1h",
+        })
+      })
+    })
+
+    it("passes correct timeframe to useDateRange", async () => {
+      const useApiModule = await import("@/hooks/useApi")
+      const useDateRangeMock = vi.mocked(useApiModule.useDateRange)
+
+      useDateRangeMock.mockReturnValue({
+        data: {
+          min_date: "2024-01-01T00:00:00Z",
+          max_date: "2024-06-15T00:00:00Z",
+          last_timestamp: "2024-06-15T23:00:00Z",
+        },
+        error: null,
+        isLoading: false,
+      } as unknown as ReturnType<typeof useApiModule.useDateRange>)
+
+      useAnalysisDataMock.mockReturnValue({
+        data: { data: [], message: null },
+        error: null,
+        isLoading: false,
+      } as never)
+
+      render(<App />, { wrapper: createWrapper() })
+
+      expect(useDateRangeMock).toHaveBeenCalledWith("1h")
+    })
+
+    it("resets dates to new maxDate when dateRangeData changes", async () => {
+      const useApiModule = await import("@/hooks/useApi")
+      const useDateRangeMock = vi.mocked(useApiModule.useDateRange)
+
+      // Reset mocks that may have been modified by previous tests
+      const useNetworkModule = await import("@/hooks/useNetwork")
+      vi.mocked(useNetworkModule.useNetwork).mockReturnValue({
+        isNetworkSwitching: false,
+        setIsNetworkSwitching: vi.fn(),
+      })
+      vi.mocked(useApiModule.useReloadData).mockReturnValue({
+        mutate: vi.fn(),
+        isPending: false,
+      } as unknown as ReturnType<typeof useApiModule.useReloadData>)
+
+      // Initial state
+      useDateRangeMock.mockReturnValue({
+        data: {
+          min_date: "2024-01-01T00:00:00Z",
+          max_date: "2024-06-15T00:00:00Z",
+          last_timestamp: "2024-06-15T23:00:00Z",
+        },
+        error: null,
+        isLoading: false,
+      } as unknown as ReturnType<typeof useApiModule.useDateRange>)
+
+      useAnalysisDataMock.mockReturnValue({
+        data: { data: [], message: null },
+        error: null,
+        isLoading: false,
+      } as never)
+
+      const { rerender } = render(<App />, { wrapper: createWrapper() })
+
+      // Verify initial call with maxDate
+      await waitFor(() => {
+        expect(useAnalysisDataMock).toHaveBeenCalledWith({
+          startDate: "2024-06-15",
+          endDate: "2024-06-15",
+          timeframe: "1h",
+        })
+      })
+
+      // Clear mock calls to verify the next call
+      useAnalysisDataMock.mockClear()
+
+      // Simulate dateRangeData changing (e.g., from timeframe change or data refresh)
+      useDateRangeMock.mockReturnValue({
+        data: {
+          min_date: "2024-03-01T00:00:00Z",
+          max_date: "2024-07-20T00:00:00Z",
+          last_timestamp: "2024-07-20T23:00:00Z",
+        },
+        error: null,
+        isLoading: false,
+      } as unknown as ReturnType<typeof useApiModule.useDateRange>)
+
+      rerender(<App />)
+
+      // Should now call with new maxDate
+      await waitFor(() => {
+        expect(useAnalysisDataMock).toHaveBeenCalledWith({
+          startDate: "2024-07-20",
+          endDate: "2024-07-20",
+          timeframe: "1h",
+        })
+      })
+    })
+
+    it("strips time component from dates, using only YYYY-MM-DD", async () => {
+      const useApiModule = await import("@/hooks/useApi")
+
+      // Dates with various time components
+      vi.mocked(useApiModule.useDateRange).mockReturnValue({
+        data: {
+          min_date: "2024-01-15T12:30:45.123Z",
+          max_date: "2024-06-20T18:45:30.999Z",
+          last_timestamp: "2024-06-20T23:59:59Z",
+        },
+        error: null,
+        isLoading: false,
+      } as unknown as ReturnType<typeof useApiModule.useDateRange>)
+
+      useAnalysisDataMock.mockReturnValue({
+        data: { data: [], message: null },
+        error: null,
+        isLoading: false,
+      } as never)
+
+      render(<App />, { wrapper: createWrapper() })
+
+      // Should strip time and only use date portion
+      await waitFor(() => {
+        expect(useAnalysisDataMock).toHaveBeenCalledWith({
+          startDate: "2024-06-20",
+          endDate: "2024-06-20",
+          timeframe: "1h",
+        })
+      })
+    })
+
+    it("calls useAnalysisData with empty strings when dateRange is not yet set", async () => {
+      const useApiModule = await import("@/hooks/useApi")
+
+      // No data yet - dates will be null
+      vi.mocked(useApiModule.useDateRange).mockReturnValue({
+        data: null,
+        error: null,
+        isLoading: true,
+      } as unknown as ReturnType<typeof useApiModule.useDateRange>)
+
+      useAnalysisDataMock.mockReturnValue({
+        data: null,
+        error: null,
+        isLoading: false,
+      } as never)
+
+      render(<App />, { wrapper: createWrapper() })
+
+      // With null dates, should call with empty strings
+      expect(useAnalysisDataMock).toHaveBeenCalledWith({
+        startDate: "",
+        endDate: "",
+        timeframe: "1h",
+      })
     })
   })
 })

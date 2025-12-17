@@ -33,7 +33,7 @@
           eslint = {
             enable = true;
             files = "^frontend/.*\\.(ts|tsx|js|jsx)$";
-            entry = "bun --cwd frontend run lint";
+            entry = "${pkgs.bun}/bin/bun --cwd frontend run lint";
             pass_filenames = false;
           };
           prettier.enable = true;

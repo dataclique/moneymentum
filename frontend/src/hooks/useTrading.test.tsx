@@ -77,7 +77,8 @@ describe("useTrading hooks", () => {
       localStorage.setItem(
         "hyperliquid-wallet",
         JSON.stringify({
-          publicKey: "0xTestKey",
+          accountAddress: "0xTestAccountAddress",
+          apiWalletAddress: "0xTestApiWallet",
           privateKey: "0xTestSecret",
         }),
       )
@@ -95,7 +96,8 @@ describe("useTrading hooks", () => {
       localStorage.setItem(
         "hyperliquid-wallet",
         JSON.stringify({
-          publicKey: "0xTestKey",
+          accountAddress: "0xTestAccountAddress",
+          apiWalletAddress: "0xTestApiWallet",
           privateKey: "0xTestSecret",
         }),
       )
@@ -122,7 +124,8 @@ describe("useTrading hooks", () => {
       localStorage.setItem(
         "hyperliquid-wallet",
         JSON.stringify({
-          publicKey: "0xTestKey",
+          accountAddress: "0xTestAccountAddress",
+          apiWalletAddress: "0xTestApiWallet",
           privateKey: "0xTestSecret",
         }),
       )
@@ -154,7 +157,8 @@ describe("useTrading hooks", () => {
       localStorage.setItem(
         "hyperliquid-wallet",
         JSON.stringify({
-          publicKey: "0xTestKey",
+          accountAddress: "0xTestAccountAddress",
+          apiWalletAddress: "0xTestApiWallet",
           privateKey: "0xTestSecret",
         }),
       )
@@ -197,7 +201,8 @@ describe("useTrading hooks", () => {
       localStorage.setItem(
         "hyperliquid-wallet",
         JSON.stringify({
-          publicKey: "0xTestKey",
+          accountAddress: "0xTestAccountAddress",
+          apiWalletAddress: "0xTestApiWallet",
           privateKey: "0xTestSecret",
         }),
       )
@@ -228,7 +233,8 @@ describe("useTrading hooks", () => {
       localStorage.setItem(
         "hyperliquid-wallet",
         JSON.stringify({
-          publicKey: "0xTestKey",
+          accountAddress: "0xTestAccountAddress",
+          apiWalletAddress: "0xTestApiWallet",
           privateKey: "0xTestSecret",
         }),
       )
@@ -276,7 +282,8 @@ describe("useTrading hooks", () => {
       localStorage.setItem(
         "hyperliquid-wallet",
         JSON.stringify({
-          publicKey: "0xTestKey",
+          accountAddress: "0xTestAccountAddress",
+          apiWalletAddress: "0xTestApiWallet",
           privateKey: "0xTestSecret",
         }),
       )
@@ -333,7 +340,8 @@ describe("useTrading hooks", () => {
       localStorage.setItem(
         "hyperliquid-wallet",
         JSON.stringify({
-          publicKey: "0xTestKey",
+          accountAddress: "0xTestAccountAddress",
+          apiWalletAddress: "0xTestApiWallet",
           privateKey: "0xTestSecret",
         }),
       )
@@ -391,7 +399,8 @@ describe("useTrading hooks", () => {
       localStorage.setItem(
         "hyperliquid-wallet",
         JSON.stringify({
-          publicKey: "0xMyPublicKey",
+          accountAddress: "0xMyAccountAddress",
+          apiWalletAddress: "0xMyApiWallet",
           privateKey: "0xMySecret",
         }),
       )
@@ -401,7 +410,7 @@ describe("useTrading hooks", () => {
         wrapper: createWrapper(),
       })
 
-      expect(result.current.data?.publicKey).toBe("0xMyPublicKey")
+      expect(result.current.data?.accountAddress).toBe("0xMyAccountAddress")
       expect(result.current.data?.isTestnet).toBe(true)
       expect(result.current.isConnected).toBe(true)
     })
@@ -410,7 +419,8 @@ describe("useTrading hooks", () => {
       localStorage.setItem(
         "hyperliquid-wallet",
         JSON.stringify({
-          publicKey: "0xMyPublicKey",
+          accountAddress: "0xMyAccountAddress",
+          apiWalletAddress: "0xMyApiWallet",
           privateKey: "0xMySecret",
         }),
       )

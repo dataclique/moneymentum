@@ -5,6 +5,7 @@ import { MemoryRouter } from "react-router-dom"
 import App from "./App"
 import { ThemeProvider } from "@/components/ui/theme-provider"
 import { NetworkProvider } from "@/contexts/NetworkContext"
+import { WalletProvider } from "@/contexts/WalletProvider"
 
 // Mock window.matchMedia for ThemeProvider
 Object.defineProperty(window, "matchMedia", {
@@ -116,11 +117,13 @@ const createWrapper = (initialRoute = "/") => {
   return ({ children }: { children: React.ReactNode }) => (
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
-        <NetworkProvider>
-          <MemoryRouter initialEntries={[initialRoute]}>
-            {children}
-          </MemoryRouter>
-        </NetworkProvider>
+        <WalletProvider>
+          <NetworkProvider>
+            <MemoryRouter initialEntries={[initialRoute]}>
+              {children}
+            </MemoryRouter>
+          </NetworkProvider>
+        </WalletProvider>
       </ThemeProvider>
     </QueryClientProvider>
   )

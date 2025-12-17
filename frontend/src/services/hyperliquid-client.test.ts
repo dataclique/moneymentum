@@ -41,7 +41,8 @@ import type { WalletCredentials } from "@/contexts/wallet-context"
 
 describe("HyperliquidClient", () => {
   const mockCredentials: WalletCredentials = {
-    publicKey: "0xTestPublicKey",
+    accountAddress: "0xTestAccountAddress",
+    apiWalletAddress: "0xTestApiWalletAddress",
     privateKey: "0xTestPrivateKey",
   }
 
@@ -56,7 +57,7 @@ describe("HyperliquidClient", () => {
   describe("constructor", () => {
     it("creates exchange with correct credentials", () => {
       client = new HyperliquidClient(mockCredentials, "testnet")
-      expect(client.getPublicKey()).toBe("0xTestWallet")
+      expect(client.getWalletAddress()).toBe("0xTestWallet")
     })
 
     it("sets sandbox mode for testnet", () => {
@@ -358,7 +359,11 @@ describe("HyperliquidClient", () => {
 
       await client.rebalancePositions(positions, 1000)
 
-      expect(mockExchange.setLeverage).toHaveBeenCalledWith(5, "BTC/USDC:USDC")
+      expect(mockExchange.setLeverage).toHaveBeenCalledWith(
+        5,
+        "BTC/USDC:USDC",
+        undefined,
+      )
     })
 
     it("handles leverage setting failure", async () => {
@@ -411,6 +416,7 @@ describe("HyperliquidClient", () => {
         "buy",
         0.01, // 500 / 50000
         52500, // 50000 * 1.05 (slippage)
+        undefined,
       )
     })
 

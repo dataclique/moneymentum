@@ -1,4 +1,10 @@
-import { useState, useCallback, useEffect, type ReactNode } from "react"
+import {
+  useState,
+  useCallback,
+  useEffect,
+  useMemo,
+  type ReactNode,
+} from "react"
 import {
   WalletContext,
   WALLET_STORAGE_KEY,
@@ -9,6 +15,7 @@ import {
   type WalletCredentials,
   type StoredWallet,
 } from "./wallet-context"
+import { HyperliquidClient } from "@/services/hyperliquid-client"
 
 export const WalletProvider = ({ children }: { children: ReactNode }) => {
   const [credentials, setCredentials] = useState<WalletCredentials | null>(() =>
@@ -19,6 +26,11 @@ export const WalletProvider = ({ children }: { children: ReactNode }) => {
   )
 
   const isConnected = credentials !== null
+
+  const client = useMemo(() => {
+    if (!credentials) return null
+    return new HyperliquidClient(credentials, networkMode)
+  }, [credentials, networkMode])
 
   const connect = useCallback((newCredentials: WalletCredentials) => {
     setCredentials(newCredentials)
@@ -43,7 +55,11 @@ export const WalletProvider = ({ children }: { children: ReactNode }) => {
         } else {
           try {
             const parsed = JSON.parse(event.newValue) as StoredWallet
-            if (parsed.publicKey && parsed.privateKey) {
+            if (
+              parsed.accountAddress &&
+              parsed.apiWalletAddress &&
+              parsed.privateKey
+            ) {
               setCredentials(parsed)
             }
           } catch {
@@ -70,6 +86,7 @@ export const WalletProvider = ({ children }: { children: ReactNode }) => {
         credentials,
         networkMode,
         isConnected,
+        client,
         connect,
         disconnect,
         setNetworkMode,

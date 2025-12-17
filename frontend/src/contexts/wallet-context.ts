@@ -1,16 +1,20 @@
 import { createContext } from "react"
+import type { HyperliquidClient } from "@/services/hyperliquid-client"
 
 export type NetworkMode = "testnet" | "mainnet"
 
 export interface WalletCredentials {
-  publicKey: string
-  privateKey: string
+  accountAddress: string // Main wallet where positions/funds are
+  apiWalletAddress: string // API wallet authorized to trade
+  privateKey: string // Private key of the API wallet
+  vaultAddress?: string // Optional vault to trade on behalf of
 }
 
 export interface WalletContextType {
   credentials: WalletCredentials | null
   networkMode: NetworkMode
   isConnected: boolean
+  client: HyperliquidClient | null
   connect: (credentials: WalletCredentials) => void
   disconnect: () => void
   setNetworkMode: (mode: NetworkMode) => void
@@ -24,8 +28,10 @@ export const WALLET_STORAGE_KEY = "hyperliquid-wallet"
 export const NETWORK_STORAGE_KEY = "hyperliquid-network"
 
 export interface StoredWallet {
-  publicKey: string
+  accountAddress: string
+  apiWalletAddress: string
   privateKey: string
+  vaultAddress?: string
 }
 
 export const getStoredWallet = (): WalletCredentials | null => {
@@ -33,7 +39,7 @@ export const getStoredWallet = (): WalletCredentials | null => {
   if (!stored) return null
   try {
     const parsed = JSON.parse(stored) as StoredWallet
-    if (parsed.publicKey && parsed.privateKey) {
+    if (parsed.accountAddress && parsed.apiWalletAddress && parsed.privateKey) {
       return parsed
     }
     return null

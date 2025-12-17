@@ -147,6 +147,21 @@ semicolons
 tests, pre-commit hooks, etc.) without explicitly asking the user first. Always
 fix the underlying issue rather than suppressing the warning/error.
 
+**IMPORTANT**: Write tests before changing any logic. When modifying existing
+code or adding new features, first write tests that define the expected behavior,
+then implement the changes to make those tests pass.
+
+## shadcn/ui Components
+
+**IMPORTANT**: Never manually create shadcn component files. Always use the CLI:
+
+```bash
+cd frontend && bunx shadcn@latest add <component-name>
+```
+
+This ensures components are properly configured with the project's theme and
+dependencies.
+
 ## Code Style Anti-Patterns
 
 The following patterns are **NOT ALLOWED** in this codebase:

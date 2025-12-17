@@ -1,5 +1,6 @@
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
+import { Skeleton } from "@/components/ui/skeleton"
 import { clsx } from "clsx"
 import { twMerge } from "tailwind-merge"
 import { useNetwork } from "@/hooks/useNetwork"
@@ -25,6 +26,8 @@ const PortfolioPage = () => {
     netExposure,
     disableSubmit,
     isRebalancing,
+    isBalanceLoading,
+    isPositionsLoading,
     handleAddToken,
     handleRemoveToken,
     handleUndoRemoveToken,
@@ -54,32 +57,43 @@ const PortfolioPage = () => {
                 <span className="text-sm font-semibold text-muted-foreground">
                   Total Budget:
                 </span>
-                <div className="w-40">
-                  <input
-                    type="number"
-                    min={MIN_USD}
-                    max={maxBudget}
-                    step="0.01"
-                    value={budgetInput}
-                    onChange={e => {
-                      handleBudgetInputChange(e.target.value)
-                    }}
-                    onBlur={handleBudgetInputBlur}
-                    aria-invalid={budgetError ? true : undefined}
-                    aria-describedby={budgetError ? "budget-error" : undefined}
-                    className={twMerge(
-                      clsx(
-                        "w-full rounded-md border border-border bg-background px-3 py-2 text-sm",
-                        budgetError && "border-rose-500",
-                      ),
+                {isBalanceLoading ? (
+                  <>
+                    <Skeleton className="h-9 w-40" />
+                    <Skeleton className="h-4 w-10" />
+                  </>
+                ) : (
+                  <>
+                    <div className="w-40">
+                      <input
+                        type="number"
+                        min={MIN_USD}
+                        max={maxBudget}
+                        step="0.01"
+                        value={budgetInput}
+                        onChange={e => {
+                          handleBudgetInputChange(e.target.value)
+                        }}
+                        onBlur={handleBudgetInputBlur}
+                        aria-invalid={budgetError ? true : undefined}
+                        aria-describedby={
+                          budgetError ? "budget-error" : undefined
+                        }
+                        className={twMerge(
+                          clsx(
+                            "w-full rounded-md border border-border bg-background px-3 py-2 text-sm",
+                            budgetError && "border-rose-500",
+                          ),
+                        )}
+                      />
+                    </div>
+                    <span className="text-sm text-muted-foreground">USDC</span>
+                    {budgetError && (
+                      <span id="budget-error" className="text-xs text-rose-400">
+                        {budgetError}
+                      </span>
                     )}
-                  />
-                </div>
-                <span className="text-sm text-muted-foreground">USDC</span>
-                {budgetError && (
-                  <span id="budget-error" className="text-xs text-rose-400">
-                    {budgetError}
-                  </span>
+                  </>
                 )}
               </div>
               <TokenPickerDialog
@@ -91,7 +105,34 @@ const PortfolioPage = () => {
 
           {/* Token Allocation Cards */}
           <div className="w-full space-y-2">
-            {selectedTokens.length === 0 ? (
+            {isPositionsLoading ? (
+              <>
+                {/* Skeleton column headers */}
+                <div className="flex items-center gap-2 px-3 text-xs font-semibold text-muted-foreground">
+                  <div className="w-32">COIN</div>
+                  <div className="w-24 text-center">PERCENTAGE</div>
+                  <div className="w-24 text-center">VALUE</div>
+                  <div className="w-24 text-center">SIDE</div>
+                  <div className="flex-1 px-2 text-center">ALLOCATION</div>
+                  <div className="w-16 text-right">ACTIONS</div>
+                </div>
+                {/* Skeleton token cards */}
+                <div className="space-y-2">
+                  {[1, 2, 3].map(i => (
+                    <Card key={i} className="gap-3 py-3">
+                      <CardContent className="flex items-center gap-2">
+                        <Skeleton className="h-8 w-32" />
+                        <Skeleton className="h-6 w-24" />
+                        <Skeleton className="h-6 w-24" />
+                        <Skeleton className="h-8 w-24" />
+                        <Skeleton className="h-4 flex-1" />
+                        <Skeleton className="h-8 w-16" />
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              </>
+            ) : selectedTokens.length === 0 ? (
               <Card className="gap-3 py-3">
                 <CardContent className="text-center text-sm text-muted-foreground">
                   Add tokens from the button on the top right to configure

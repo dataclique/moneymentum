@@ -5,7 +5,7 @@ import react from "@vitejs/plugin-react"
 import { defineConfig, type Plugin } from "vite"
 import nodePolyfills from "vite-plugin-node-stdlib-browser"
 
-function suppressUseClientWarning(): Plugin {
+const suppressUseClientWarning = (): Plugin => {
   return {
     name: "suppress-use-client-warning",
     apply: "build",

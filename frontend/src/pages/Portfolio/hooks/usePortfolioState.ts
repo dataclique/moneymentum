@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from "react"
 import {
-  useHyperliquidBalance,
+  useHyperliquidAccountSummary,
   useHyperliquidPositions,
   useHyperliquidLeverageLimits,
   useRebalanceHyperliquidPositions,
@@ -11,6 +11,7 @@ import { useWallet } from "@/hooks/useWallet"
 
 const STORAGE_KEY_PREFIX = "portfolio-allocation-state"
 export const MIN_USD = 11
+export const MIN_ORDER_SIZE = 10 // Minimum order size for exchange
 
 export type AllocationStatus =
   | OrderResult["status"]
@@ -29,10 +30,14 @@ export interface TokenAllocation {
   notional?: number
   lockedUsd?: number
   previousPercentage?: number
+  // Delta tracking for UI display
+  targetNotional?: number
+  currentNotional?: number
+  deltaInsufficient?: boolean
 }
 
 interface StoredPortfolioState {
-  budget: number
+  crossAccountLeverage: number
   tokens: Array<{
     symbol: string
     percentage: number
@@ -44,13 +49,17 @@ interface StoredPortfolioState {
   }>
 }
 
+const MIN_CROSS_ACCOUNT_LEVERAGE = 0.1
+const MAX_CROSS_ACCOUNT_LEVERAGE = 5
+const DEFAULT_CROSS_ACCOUNT_LEVERAGE = 1
+
 const getTokenUsdAllocation = (
   token: TokenAllocation,
-  currentBudget: number,
+  totalNotional: number,
 ) => {
   if (token.notional !== undefined && token.notional > 0) return token.notional
   if (token.lockedUsd !== undefined) return token.lockedUsd
-  if (currentBudget > 0) return (token.percentage / 100) * currentBudget
+  if (totalNotional > 0) return (token.percentage / 100) * totalNotional
   return 0
 }
 
@@ -73,8 +82,8 @@ export const usePortfolioState = () => {
   const { networkMode } = useWallet()
 
   // Exchange data queries
-  const { data: balanceData, isLoading: isBalanceLoading } =
-    useHyperliquidBalance()
+  const { data: accountSummaryData, isLoading: isBalanceLoading } =
+    useHyperliquidAccountSummary()
   const { data: positionsData, isLoading: isPositionsLoading } =
     useHyperliquidPositions()
   const { data: leverageLimitsData, isLoading: isLeverageLimitsLoading } =
@@ -85,14 +94,14 @@ export const usePortfolioState = () => {
 
   const [storedDataSnapshot] = useState(() => getStoredPortfolio(networkMode))
 
-  const [budget, setBudget] = useState(() => storedDataSnapshot?.budget ?? 0)
-  const [budgetInput, setBudgetInput] = useState(
-    () => storedDataSnapshot?.budget.toString() ?? "",
+  // crossAccountLeverage will be initialized from exchange data, default to 1 until then
+  const [crossAccountLeverage, setCrossAccountLeverage] = useState(
+    DEFAULT_CROSS_ACCOUNT_LEVERAGE,
   )
-  const [budgetError, setBudgetError] = useState<string | null>(null)
-  const [isBudgetInitialized, setIsBudgetInitialized] = useState(
-    () => typeof storedDataSnapshot?.budget === "number",
-  )
+
+  // Track if we've initialized leverage from exchange
+  const [leverageInitializedFromExchange, setLeverageInitializedFromExchange] =
+    useState(false)
   const [selectedTokens, setSelectedTokens] = useState<TokenAllocation[]>(
     () =>
       storedDataSnapshot?.tokens.map(token => ({
@@ -111,12 +120,40 @@ export const usePortfolioState = () => {
   )
   const [positionsLoadedFromExchange, setPositionsLoadedFromExchange] =
     useState(false)
-  const lastSufficientBudgetRef = useRef(0)
+
+  // Derive accountValue from account summary
+  const accountValue = useMemo(
+    () => accountSummaryData?.accountValue ?? 0,
+    [accountSummaryData],
+  )
+
+  // Initialize crossAccountLeverage from exchange on first load
+  // Always use exchange data as source of truth for current leverage
+  useEffect(() => {
+    if (leverageInitializedFromExchange) return
+    if (!accountSummaryData) return
+
+    const exchangeLeverage = accountSummaryData.crossAccountLeverage
+    if (exchangeLeverage > 0) {
+      const clampedLeverage = Math.max(
+        MIN_CROSS_ACCOUNT_LEVERAGE,
+        Math.min(MAX_CROSS_ACCOUNT_LEVERAGE, exchangeLeverage),
+      )
+      setCrossAccountLeverage(clampedLeverage)
+    }
+    setLeverageInitializedFromExchange(true)
+  }, [accountSummaryData, leverageInitializedFromExchange])
+
+  // Compute totalNotional = accountValue * crossAccountLeverage
+  const totalNotional = useMemo(
+    () => accountValue * crossAccountLeverage,
+    [accountValue, crossAccountLeverage],
+  )
 
   const persistStateToLocalStorage = useCallback(
-    (budgetVal: number, tokens: TokenAllocation[]) => {
+    (leverageVal: number, tokens: TokenAllocation[]) => {
       const payload = {
-        budget: budgetVal,
+        crossAccountLeverage: leverageVal,
         tokens: tokens.map(
           ({
             symbol,
@@ -142,9 +179,9 @@ export const usePortfolioState = () => {
     [networkMode],
   )
 
-  const latestBudgetRef = useRef(budget)
+  const latestCrossAccountLeverageRef = useRef(crossAccountLeverage)
   const latestSelectedTokensRef = useRef(selectedTokens)
-  latestBudgetRef.current = budget
+  latestCrossAccountLeverageRef.current = crossAccountLeverage
   latestSelectedTokensRef.current = selectedTokens
 
   const setSelectedTokensAndPersist = useCallback(
@@ -152,17 +189,27 @@ export const usePortfolioState = () => {
       setSelectedTokens(prev => {
         const newTokens =
           typeof updater === "function" ? updater(prev) : updater
-        persistStateToLocalStorage(latestBudgetRef.current, newTokens)
+        persistStateToLocalStorage(
+          latestCrossAccountLeverageRef.current,
+          newTokens,
+        )
         return newTokens
       })
     },
     [persistStateToLocalStorage],
   )
 
-  const setBudgetAndPersist = useCallback(
-    (newBudget: number) => {
-      setBudget(newBudget)
-      persistStateToLocalStorage(newBudget, latestSelectedTokensRef.current)
+  const setCrossAccountLeverageAndPersist = useCallback(
+    (newLeverage: number) => {
+      const clampedLeverage = Math.max(
+        MIN_CROSS_ACCOUNT_LEVERAGE,
+        Math.min(MAX_CROSS_ACCOUNT_LEVERAGE, newLeverage),
+      )
+      setCrossAccountLeverage(clampedLeverage)
+      persistStateToLocalStorage(
+        clampedLeverage,
+        latestSelectedTokensRef.current,
+      )
     },
     [persistStateToLocalStorage],
   )
@@ -229,12 +276,6 @@ export const usePortfolioState = () => {
     } else if (exchangeTokens.length > 0) {
       // No localStorage data, use exchange positions
       setSelectedTokens(exchangeTokens)
-      const totalSpent = positionsData.totalNotional
-      if (totalSpent > 0 && !isBudgetInitialized) {
-        setBudget(totalSpent)
-        setBudgetInput(totalSpent.toString())
-        setIsBudgetInitialized(true)
-      }
     }
 
     setPositionsLoadedFromExchange(true)
@@ -242,20 +283,8 @@ export const usePortfolioState = () => {
     positionsData,
     isPositionsLoading,
     storedDataSnapshot,
-    isBudgetInitialized,
     positionsLoadedFromExchange,
   ])
-
-  // Initialize budget from balance if not set from positions
-  useEffect(() => {
-    if (!isBudgetInitialized && positionsLoadedFromExchange) {
-      if (typeof balanceData === "number" && balanceData > 0) {
-        setBudget(balanceData)
-        setBudgetInput(balanceData.toString())
-        setIsBudgetInitialized(true)
-      }
-    }
-  }, [balanceData, isBudgetInitialized, positionsLoadedFromExchange])
 
   const tokensWithComputedStatus = useMemo(() => {
     // If no exchange data to compare against, treat "untouched" tokens as "idle"
@@ -316,45 +345,34 @@ export const usePortfolioState = () => {
     [tokensWithComputedStatus],
   )
 
-  const requiredBudgetForTokens = activeTokens.length * MIN_USD
-  const budgetIsPositive = budget > 0
-  const budgetBelowMinimum =
-    activeTokens.length > 0 && budgetIsPositive && budget < MIN_USD
-  const insufficientBudgetForTokens =
+  const requiredNotionalForTokens = activeTokens.length * MIN_USD
+  const notionalIsPositive = totalNotional > 0
+  const notionalBelowMinimum =
+    activeTokens.length > 0 && notionalIsPositive && totalNotional < MIN_USD
+  const insufficientNotionalForTokens =
     activeTokens.length > 0 &&
-    budgetIsPositive &&
-    requiredBudgetForTokens > budget
-  const maxBudget = (balanceData ?? 0) * 5
+    notionalIsPositive &&
+    requiredNotionalForTokens > totalNotional
 
-  const budgetForUi = useMemo(() => {
-    const isSufficientBudget = budget > 0 && budget >= requiredBudgetForTokens
-    if (isSufficientBudget) {
-      lastSufficientBudgetRef.current = budget
+  // displayNotional is totalNotional, falling back to a minimum if needed for UI
+  const displayNotional = useMemo(() => {
+    if (totalNotional > 0) {
+      return totalNotional
     }
-
     if (activeTokens.length === 0) {
-      return budget > 0 ? budget : lastSufficientBudgetRef.current || 0
+      return 0
     }
-    if (budget > 0 && budget >= requiredBudgetForTokens) {
-      return budget
-    }
-    if (lastSufficientBudgetRef.current > 0) {
-      return lastSufficientBudgetRef.current
-    }
-    if (budget > 0) {
-      return budget
-    }
-    return Math.max(requiredBudgetForTokens, MIN_USD)
-  }, [budget, requiredBudgetForTokens, activeTokens.length])
+    return Math.max(requiredNotionalForTokens, MIN_USD)
+  }, [totalNotional, requiredNotionalForTokens, activeTokens.length])
 
-  const minPercentOfBudget =
-    budgetForUi > 0 ? Math.min(100, (MIN_USD / budgetForUi) * 100) : 0
-  const minPercentFloor = budgetForUi >= MIN_USD ? minPercentOfBudget : 0
-  const hasBlockingBudgetIssue =
-    budgetBelowMinimum || insufficientBudgetForTokens
+  const minPercentOfNotional =
+    displayNotional > 0 ? Math.min(100, (MIN_USD / displayNotional) * 100) : 0
+  const minPercentFloor = displayNotional >= MIN_USD ? minPercentOfNotional : 0
+  const hasBlockingNotionalIssue =
+    notionalBelowMinimum || insufficientNotionalForTokens
 
   const tokensWithDerivedPercentages = useMemo(() => {
-    if (budgetForUi <= 0) return tokensWithComputedStatus
+    if (displayNotional <= 0) return tokensWithComputedStatus
 
     return tokensWithComputedStatus.map(token => {
       if (token.status === "deleted") return token
@@ -366,7 +384,7 @@ export const usePortfolioState = () => {
 
       if (referenceUsd !== undefined && referenceUsd >= 0) {
         const derivedPercent = parseFloat(
-          ((referenceUsd / budgetForUi) * 100).toFixed(2),
+          ((referenceUsd / displayNotional) * 100).toFixed(2),
         )
         if (
           Number.isFinite(derivedPercent) &&
@@ -377,11 +395,47 @@ export const usePortfolioState = () => {
       }
       return token
     })
-  }, [tokensWithComputedStatus, budgetForUi])
+  }, [tokensWithComputedStatus, displayNotional])
+
+  // Compute delta tracking for each token to show when adjustments are too small
+  const tokensWithDeltaTracking = useMemo(() => {
+    return tokensWithDerivedPercentages.map(token => {
+      if (token.status === "deleted") return token
+
+      // Current notional from exchange (what exists on exchange now)
+      // Look up from initialPortfolio to get the actual exchange position
+      const exchangePosition = initialPortfolio.find(
+        p => p.symbol === token.symbol,
+      )
+      const currentNotional = exchangePosition?.notional ?? 0
+
+      // Target notional based on percentage and total notional
+      const targetNotional =
+        displayNotional > 0 ? (token.percentage / 100) * displayNotional : 0
+
+      // Check if the delta is too small to execute
+      const delta = Math.abs(targetNotional - currentNotional)
+      // Delta is insufficient if:
+      // 1. There's a difference (not exactly matching)
+      // 2. The difference is below the minimum order size
+      // 3. This is a modification (not a new position or deletion)
+      const isExistingPosition = currentNotional > 0
+      const hasChanges = delta > 0.01 // Small tolerance for floating point
+      const deltaInsufficient =
+        isExistingPosition && hasChanges && delta < MIN_ORDER_SIZE
+
+      return {
+        ...token,
+        targetNotional,
+        currentNotional,
+        deltaInsufficient,
+      }
+    })
+  }, [tokensWithDerivedPercentages, displayNotional, initialPortfolio])
 
   const derivedActiveTokens = useMemo(
-    () => tokensWithDerivedPercentages.filter(t => t.status !== "deleted"),
-    [tokensWithDerivedPercentages],
+    () => tokensWithDeltaTracking.filter(t => t.status !== "deleted"),
+    [tokensWithDeltaTracking],
   )
   const derivedTotalPercent = derivedActiveTokens.reduce(
     (acc, token) => acc + token.percentage,
@@ -399,14 +453,14 @@ export const usePortfolioState = () => {
   }, [leverageLimitsData])
 
   const blockingReasons: string[] = []
-  if (budgetBelowMinimum) {
+  if (notionalBelowMinimum) {
     blockingReasons.push(
-      "Minimum portfolio budget is $11. Increase the amount to allocate capital.",
+      "Minimum total notional is $11. Increase leverage or add funds.",
     )
   }
-  if (insufficientBudgetForTokens) {
+  if (insufficientNotionalForTokens) {
     blockingReasons.push(
-      `Delete some tokens or make bigger budget (need at least $${String(requiredBudgetForTokens)}).`,
+      `Not enough notional for all positions. Need at least $${String(requiredNotionalForTokens)}.`,
     )
   }
   const derivedTotalPercentExceeds100 = derivedTotalPercent > 100
@@ -442,14 +496,14 @@ export const usePortfolioState = () => {
         return
       }
 
-      const baseBudget =
-        budgetForUi > 0
-          ? budgetForUi
+      const baseNotional =
+        displayNotional > 0
+          ? displayNotional
           : Math.max((selectedTokens.length + 1) * MIN_USD, MIN_USD)
       const initialUsd = MIN_USD
       const initialPercent =
-        baseBudget > 0
-          ? parseFloat(((initialUsd / baseBudget) * 100).toFixed(2))
+        baseNotional > 0
+          ? parseFloat(((initialUsd / baseNotional) * 100).toFixed(2))
           : 0
 
       setSelectedTokensAndPersist(prev => [
@@ -466,7 +520,12 @@ export const usePortfolioState = () => {
         },
       ])
     },
-    [selectedTokens, budgetForUi, minPercentFloor, setSelectedTokensAndPersist],
+    [
+      selectedTokens,
+      displayNotional,
+      minPercentFloor,
+      setSelectedTokensAndPersist,
+    ],
   )
 
   const handleRemoveToken = useCallback(
@@ -525,38 +584,38 @@ export const usePortfolioState = () => {
   )
 
   const handleSliderChange = useCallback(
-    (symbol: string, usdValue: number) => {
-      if (Number.isNaN(usdValue) || usdValue < 0) return
-      const sliderBudget = budgetForUi > 0 ? budgetForUi : MIN_USD
-      if (sliderBudget <= 0) return
+    (symbol: string, percentage: number) => {
+      if (Number.isNaN(percentage) || percentage < 0) return
 
       const targetToken = selectedTokens.find(token => token.symbol === symbol)
       if (!targetToken) return
 
-      const tokenUsdValue = getTokenUsdAllocation(targetToken, sliderBudget)
-      const totalLockedUsd = activeTokens.reduce(
-        (sum, token) => sum + getTokenUsdAllocation(token, sliderBudget),
-        0,
+      // Calculate other tokens' total percentage
+      const otherTokensPercent = activeTokens.reduce((sum, token) => {
+        if (token.symbol === symbol) return sum
+        return sum + token.percentage
+      }, 0)
+
+      // Max percentage for this token: 100% minus other tokens' allocations
+      const maxPercent = Math.max(0, 100 - otherTokensPercent)
+
+      // Clamp to valid range
+      const clampedPercent = Math.max(
+        minPercentFloor,
+        Math.min(percentage, maxPercent),
       )
-      const freeUsd = Math.max(sliderBudget - totalLockedUsd, 0)
-      const maxUsdForToken = Math.min(sliderBudget, tokenUsdValue + freeUsd)
-      const minAllowedUsd = Math.min(MIN_USD, sliderBudget)
-      const clampedUsd = Math.max(
-        minAllowedUsd,
-        Math.min(usdValue, maxUsdForToken),
-      )
-      const targetPercent = (clampedUsd / sliderBudget) * 100
 
       setSelectedTokensAndPersist(prev =>
         prev.map(token => {
           if (token.symbol !== symbol) return token
-          const nextValue = Math.max(minPercentFloor, targetPercent)
-          const finalPercent = parseFloat(Math.min(nextValue, 100).toFixed(2))
+          const finalPercent = parseFloat(
+            Math.max(0, clampedPercent).toFixed(2),
+          )
           return {
             ...token,
             percentage: finalPercent,
             notional: undefined,
-            lockedUsd: parseFloat(clampedUsd.toFixed(2)),
+            lockedUsd: undefined,
             message: null,
           }
         }),
@@ -565,7 +624,6 @@ export const usePortfolioState = () => {
     [
       selectedTokens,
       activeTokens,
-      budgetForUi,
       minPercentFloor,
       setSelectedTokensAndPersist,
     ],
@@ -595,64 +653,18 @@ export const usePortfolioState = () => {
     [leverageLimitsMap, setSelectedTokensAndPersist],
   )
 
-  const handleBudgetInputChange = useCallback(
-    (value: string) => {
-      setBudgetInput(value)
-      setBudgetError(null)
-
-      if (value === "") return
-
-      const numValue = Number(value)
-      if (Number.isNaN(numValue) || numValue < 0) {
-        setBudgetError("Budget must be a positive number")
-        return
-      }
-      if (maxBudget > 0 && numValue > maxBudget) {
-        setBudgetError(`Max budget: $${maxBudget.toFixed(2)}`)
-        return
-      }
-
-      setBudgetAndPersist(numValue)
-      setIsBudgetInitialized(true)
+  const handleCrossAccountLeverageChange = useCallback(
+    (value: number) => {
+      setCrossAccountLeverageAndPersist(value)
     },
-    [maxBudget, setBudgetAndPersist],
+    [setCrossAccountLeverageAndPersist],
   )
-
-  const handleBudgetInputBlur = useCallback(() => {
-    if (budgetInput === "") {
-      setBudgetError("Budget is required")
-      setBudgetInput(budget.toString())
-    } else {
-      const numValue = Number(budgetInput)
-      if (Number.isNaN(numValue) || numValue < 0) {
-        setBudgetError("Budget must be a positive number")
-        setBudgetInput(budget.toString())
-      } else if (maxBudget > 0 && numValue > maxBudget) {
-        setBudgetError(`Max budget: $${maxBudget.toFixed(2)}`)
-      } else if (
-        numValue < MIN_USD &&
-        tokensWithDerivedPercentages.length > 0
-      ) {
-        setBudgetError(`Budget must be at least $${String(MIN_USD)}`)
-      } else {
-        setBudgetAndPersist(numValue)
-        setIsBudgetInitialized(true)
-        setBudgetError(null)
-      }
-    }
-  }, [
-    budgetInput,
-    budget,
-    maxBudget,
-    tokensWithDerivedPercentages.length,
-    setBudgetAndPersist,
-  ])
 
   const handleOpenPositions = useCallback(() => {
     if (
-      !tokensWithDerivedPercentages.length ||
-      budget <= 0 ||
-      hasBlockingBudgetIssue ||
+      !tokensWithDeltaTracking.length ||
+      accountValue <= 0 ||
+      hasBlockingNotionalIssue ||
       (derivedTotalPercent <= 0 && !hasPendingDeletions) ||
       rebalancePositionsMutation.isPending
     ) {
@@ -667,8 +679,9 @@ export const usePortfolioState = () => {
     }
 
     const payload = {
-      budget,
-      positions: tokensWithDerivedPercentages.map(token => ({
+      accountValue,
+      crossAccountLeverage,
+      positions: tokensWithDeltaTracking.map(token => ({
         symbol: token.symbol,
         side: token.side,
         percentage: token.percentage / 100,
@@ -687,7 +700,7 @@ export const usePortfolioState = () => {
 
     rebalancePositionsMutation.mutate(payload, {
       onSuccess: data => {
-        const updatedTokens = tokensWithDerivedPercentages
+        const updatedTokens = tokensWithDeltaTracking
           .map(token => {
             const status = data.orders.find(
               order => order.symbol === token.symbol,
@@ -726,9 +739,10 @@ export const usePortfolioState = () => {
       },
     })
   }, [
-    tokensWithDerivedPercentages,
-    budget,
-    hasBlockingBudgetIssue,
+    tokensWithDeltaTracking,
+    accountValue,
+    crossAccountLeverage,
+    hasBlockingNotionalIssue,
     derivedTotalPercent,
     hasPendingDeletions,
     rebalancePositionsMutation,
@@ -736,27 +750,26 @@ export const usePortfolioState = () => {
   ])
 
   const netExposure = derivedActiveTokens.reduce((acc, token) => {
-    const usdValue = getTokenUsdAllocation(token, budgetForUi)
+    const usdValue = getTokenUsdAllocation(token, displayNotional)
     return acc + (token.side === "buy" ? usdValue : -usdValue)
   }, 0)
 
   const disableSubmit =
-    !tokensWithDerivedPercentages.length ||
-    budget <= 0 ||
+    !tokensWithDeltaTracking.length ||
+    accountValue <= 0 ||
     rebalancePositionsMutation.isPending ||
     (derivedTotalPercent <= 0 && !hasPendingDeletions) ||
-    hasBlockingBudgetIssue ||
+    hasBlockingNotionalIssue ||
     derivedTotalPercentExceeds100
 
   return {
     // State
-    budget,
-    budgetInput,
-    budgetError,
-    selectedTokens: tokensWithDerivedPercentages,
+    accountValue,
+    crossAccountLeverage,
+    totalNotional,
+    selectedTokens: tokensWithDeltaTracking,
     activeTokens: derivedActiveTokens,
-    budgetForUi,
-    maxBudget,
+    displayNotional,
     minPercentFloor,
     totalPercent: derivedTotalPercent,
     remainingPercent: derivedRemainingPercent,
@@ -779,8 +792,7 @@ export const usePortfolioState = () => {
     handleSliderChange,
     handleSideChange,
     handleLeverageChange,
-    handleBudgetInputChange,
-    handleBudgetInputBlur,
+    handleCrossAccountLeverageChange,
     handleOpenPositions,
   }
 }

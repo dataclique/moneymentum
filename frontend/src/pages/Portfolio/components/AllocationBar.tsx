@@ -9,17 +9,17 @@ const getSideColor = (side: OrderSide) =>
 
 interface AllocationBarTokenProps {
   token: TokenAllocation
-  budget: number
+  totalNotional: number
   isHovered: boolean
 }
 
 const AllocationBarToken = ({
   token,
-  budget,
+  totalNotional,
   isHovered,
 }: AllocationBarTokenProps) => {
   const isSmall = token.percentage < 4
-  const usdAmount = (token.percentage / 100) * budget
+  const usdAmount = (token.percentage / 100) * totalNotional
 
   return (
     <div
@@ -48,13 +48,13 @@ const AllocationBarToken = ({
 interface AllocationBarProps {
   tokens: TokenAllocation[]
   remainingPercent: number
-  budget: number
+  totalNotional: number
 }
 
 export const AllocationBar = ({
   tokens,
   remainingPercent,
-  budget,
+  totalNotional,
 }: AllocationBarProps) => {
   const [isHovered, setIsHovered] = useState(false)
   const longs = tokens.filter(t => t.side === "buy")
@@ -74,7 +74,7 @@ export const AllocationBar = ({
         <AllocationBarToken
           key={token.symbol}
           token={token}
-          budget={budget}
+          totalNotional={totalNotional}
           isHovered={isHovered}
         />
       ))}
@@ -84,7 +84,7 @@ export const AllocationBar = ({
           className="flex items-center justify-center text-center"
           style={{ height: `${remainingPercent.toFixed(2)}%` }}
         >
-          <span className="text-muted-foreground">Free</span>
+          <span className="text-muted-foreground">Unallocated</span>
         </div>
       )}
 
@@ -92,7 +92,7 @@ export const AllocationBar = ({
         <AllocationBarToken
           key={token.symbol}
           token={token}
-          budget={budget}
+          totalNotional={totalNotional}
           isHovered={isHovered}
         />
       ))}

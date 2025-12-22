@@ -32,13 +32,6 @@ const useAnalysisDataMock = vi.hoisted(() =>
   })),
 )
 
-const useBudgetPreferenceMock = vi.hoisted(() =>
-  vi.fn(() => ({
-    data: { budget: 0 },
-    isLoading: false,
-  })),
-)
-
 // Mock CCXT to prevent initialization errors
 vi.mock("ccxt", () => ({
   default: {
@@ -56,6 +49,7 @@ vi.mock("ccxt", () => ({
 // Mock the trading hooks
 vi.mock("@/hooks/useTrading", () => ({
   useHyperliquidBalance: vi.fn(() => ({ data: null, isLoading: true })),
+  useHyperliquidAccountSummary: vi.fn(() => ({ data: null, isLoading: true })),
   useHyperliquidPositions: vi.fn(() => ({ data: null, isLoading: true })),
   useHyperliquidTickers: vi.fn(() => ({ data: null, isLoading: true })),
   useHyperliquidLeverageLimits: vi.fn(() => ({ data: null, isLoading: true })),
@@ -81,10 +75,6 @@ vi.mock("@/hooks/useApi", () => ({
     isPending: false,
   })),
   useStopReload: vi.fn(() => ({
-    mutate: vi.fn(),
-  })),
-  useBudgetPreference: useBudgetPreferenceMock,
-  useSaveBudgetPreference: vi.fn(() => ({
     mutate: vi.fn(),
   })),
 }))
@@ -476,14 +466,12 @@ describe("App", () => {
       // Reset mocks
       useDateRangeMock.mockClear()
       useAnalysisDataMock.mockClear()
-      useBudgetPreferenceMock.mockClear()
 
       render(<App />, { wrapper: createWrapper("/portfolio") })
 
       // Portfolio page should not trigger backend API calls
       expect(useDateRangeMock).not.toHaveBeenCalled()
       expect(useAnalysisDataMock).not.toHaveBeenCalled()
-      expect(useBudgetPreferenceMock).not.toHaveBeenCalled()
     })
   })
 })

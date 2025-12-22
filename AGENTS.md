@@ -147,6 +147,18 @@ semicolons
 tests, pre-commit hooks, etc.) without explicitly asking the user first. Always
 fix the underlying issue rather than suppressing the warning/error.
 
+**IMPORTANT**: Never manually write version numbers for frontend dependencies.
+Always use bun commands (`bun add`, `bun remove`, etc.) to manage dependencies.
+LLMs hallucinate version numbers.
+
+**IMPORTANT**: Never bypass nix for dependency management in CI or development.
+All dependencies must be managed through the nix flake to ensure consistency
+across all environments. Do not use setup-bun, setup-node, pip install, or
+similar actions that bypass nix.
+
+**IMPORTANT**: If a fix doesn't work after three attempts, stop and look up the
+official documentation. Do not keep trying random variations.
+
 **IMPORTANT**: Write tests before changing any logic. When modifying existing
 code or adding new features, first write tests that define the expected behavior,
 then implement the changes to make those tests pass.

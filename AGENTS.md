@@ -143,6 +143,14 @@ semicolons
 
 ## Agent Rules
 
+### When issues are pointed out
+
+When the user points out an issue, bug, or problem - fix it immediately. Do not
+ask "Want me to fix this?" or "Should I address this?". The user never sends
+messages just for the sake of it; when they point out issues, they expect action
+(usually a fix, sometimes reproducing, opening a GitHub issue, etc. based on
+context).
+
 **IMPORTANT**: Never disable or relax any quality checks (lints, type checks,
 tests, pre-commit hooks, etc.) without explicitly asking the user first. Always
 fix the underlying issue rather than suppressing the warning/error.

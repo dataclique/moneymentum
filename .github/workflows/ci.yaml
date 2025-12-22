@@ -30,7 +30,7 @@ jobs:
         run: |
           nix develop .#frontend \
             --impure --accept-flake-config --show-trace \
-            --command bash -c "cd frontend && bun test --run"
+            --command bash -c "cd frontend && bun run test --run"
 
       # - name: Run tests
       #   run: |

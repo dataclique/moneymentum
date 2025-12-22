@@ -33,7 +33,7 @@
           eslint = {
             enable = true;
             files = "^frontend/.*\\.(ts|tsx|js|jsx)$";
-            entry = "bash -c 'cd frontend && npm run lint'";
+            entry = "${pkgs.bun}/bin/bun --cwd frontend run lint";
             pass_filenames = false;
           };
           prettier.enable = true;
@@ -60,11 +60,25 @@
           ]}";
         };
 
+        frontendShell = devenv.lib.mkShell {
+          inherit inputs pkgs;
+          modules = [{
+            languages.javascript = {
+              enable = true;
+              directory = "frontend";
+              bun = {
+                enable = true;
+                install.enable = true;
+              };
+            };
+          }];
+        };
+
         devShell = devenv.lib.mkShell {
           inherit inputs pkgs;
           modules = [{
             # https://devenv.sh/reference/options/
-            packages = with pkgs; deps ++ [ ruff mypy git-lfs nodejs ];
+            packages = with pkgs; deps ++ [ ruff mypy git-lfs ];
             # deps ++ [ ruff-lsp mypy git-lfs timescaledb-tune ];
 
             languages = {
@@ -76,6 +90,13 @@
                 venv.requirements = builtins.readFile ./requirements.txt;
                 libraries = deps
                   ++ [ pkgs.zlib pkgs.libffi pkgs.stdenv.cc.cc.lib ];
+              };
+              javascript = {
+                enable = true;
+                bun = {
+                  enable = true;
+                  install.enable = true;
+                };
               };
             };
 
@@ -102,6 +123,7 @@
 
       in {
         devShells.default = devShell;
+        devShells.frontend = frontendShell;
 
         checks.git-hooks = git-hooks.lib.${system}.run {
           inherit hooks;

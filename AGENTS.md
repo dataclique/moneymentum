@@ -19,11 +19,12 @@ repository.
 
 ### Frontend (React + Vite)
 
-- **Development server**: `cd frontend && npm run dev` (port 5173)
-- **Build frontend**: `cd frontend && npm run build`
-- **Lint frontend**: `cd frontend && npm run lint`
-- **Preview build**: `cd frontend && npm run preview`
-- **Serve production build**: `cd frontend && npm run serve:spa`
+- **Development server**: `bun --cwd frontend run dev` (port 5173)
+- **Build frontend**: `bun --cwd frontend run build`
+- **Lint frontend**: `bun --cwd frontend run lint`
+- **Run tests**: `bun --cwd frontend run test` (uses vitest)
+- **Preview build**: `bun --cwd frontend run preview`
+- **Serve production build**: `bun --cwd frontend run serve:spa`
 
 ### Environment Setup
 
@@ -31,7 +32,9 @@ repository.
 - **Python dependencies**: The nix flake automatically installs all pip
   dependencies from `requirements.txt` when entering the dev shell. Do not run
   `pip install` manually.
-- **Frontend dependencies**: `cd frontend && npm install`
+- **Frontend dependencies**: The nix flake automatically runs `bun install` in
+  the frontend directory when entering the dev shell. Do not run `bun install`
+  manually.
 
 ## Architecture Overview
 
@@ -119,7 +122,7 @@ Uses Nix flakes with devenv configured in `flake.nix`:
 
 - Python 3.11 with venv and automatic dependency installation from
   requirements.txt
-- Node.js for frontend development
+- Bun for frontend development (JavaScript runtime and package manager)
 - Java 17 and native libraries for PySpark (zlib, libffi, gcc)
 - Pre-commit hooks: ruff, ruff-format, prettier, nixfmt-classic
 - Environment variables: `JAVA_HOME`, `LD_LIBRARY_PATH` set automatically
@@ -140,9 +143,53 @@ semicolons
 
 ## Agent Rules
 
+### When issues are pointed out
+
+When the user points out an issue, bug, or problem - fix it immediately. Do not
+ask "Want me to fix this?" or "Should I address this?". The user never sends
+messages just for the sake of it; when they point out issues, they expect action
+(usually a fix, sometimes reproducing, opening a GitHub issue, etc. based on
+context).
+
+### No self-promotion
+
+Never add "Generated with [Tool Name]" or similar attribution to commits, PRs,
+or code.
+
+### PR descriptions
+
+Explain WHY the PR exists, not what changed. The diff shows what changed.
+
 **IMPORTANT**: Never disable or relax any quality checks (lints, type checks,
 tests, pre-commit hooks, etc.) without explicitly asking the user first. Always
 fix the underlying issue rather than suppressing the warning/error.
+
+**IMPORTANT**: Never manually write version numbers for frontend dependencies.
+Always use bun commands (`bun add`, `bun remove`, etc.) to manage dependencies.
+LLMs hallucinate version numbers.
+
+**IMPORTANT**: Never bypass nix for dependency management in CI or development.
+All dependencies must be managed through the nix flake to ensure consistency
+across all environments. Do not use setup-bun, setup-node, pip install, or
+similar actions that bypass nix.
+
+**IMPORTANT**: If a fix doesn't work after three attempts, stop and look up the
+official documentation. Do not keep trying random variations.
+
+**IMPORTANT**: Write tests before changing any logic. When modifying existing
+code or adding new features, first write tests that define the expected behavior,
+then implement the changes to make those tests pass.
+
+## shadcn/ui Components
+
+**IMPORTANT**: Never manually create shadcn component files. Always use the CLI:
+
+```bash
+cd frontend && bunx shadcn@latest add <component-name>
+```
+
+This ensures components are properly configured with the project's theme and
+dependencies.
 
 ## Code Style Anti-Patterns
 

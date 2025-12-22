@@ -28,9 +28,9 @@ jobs:
 
       - name: Run frontend tests
         run: |
-          nix develop \
+          nix develop .#frontend \
             --impure --accept-flake-config --show-trace \
-            --command bash -c "cd frontend && npm install && npm test -- --run"
+            --command bash -c "cd frontend && bun run test --run"
 
       # - name: Run tests
       #   run: |

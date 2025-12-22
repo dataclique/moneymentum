@@ -1,8 +1,20 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest"
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
 import { renderHook, act } from "@testing-library/react"
 import React from "react"
 import { useWallet } from "./useWallet"
 import { WalletProvider } from "@/contexts/WalletProvider"
+
+vi.mock("@/services/hyperliquid-client", () => ({
+  HyperliquidClient: class MockHyperliquidClient {
+    getBalance = vi.fn()
+    getCurrentPositions = vi.fn()
+    listPerpTickers = vi.fn()
+    getLeverageLimits = vi.fn()
+    rebalancePositions = vi.fn()
+    getNetworkMode = vi.fn()
+    getWalletAddress = vi.fn()
+  },
+}))
 
 const wrapper = ({ children }: { children: React.ReactNode }) => (
   <WalletProvider>{children}</WalletProvider>
@@ -33,7 +45,8 @@ describe("useWallet", () => {
 
     it("loads credentials from localStorage on mount", () => {
       const storedCredentials = {
-        publicKey: "0xStoredPublicKey",
+        accountAddress: "0xStoredAccountAddress",
+        apiWalletAddress: "0xStoredApiWalletAddress",
         privateKey: "0xStoredPrivateKey",
       }
       localStorage.setItem(
@@ -78,7 +91,8 @@ describe("useWallet", () => {
       const { result } = renderHook(() => useWallet(), { wrapper })
 
       const credentials = {
-        publicKey: "0xTestPublicKey",
+        accountAddress: "0xTestAccountAddress",
+        apiWalletAddress: "0xTestApiWalletAddress",
         privateKey: "0xTestPrivateKey",
       }
 
@@ -94,7 +108,8 @@ describe("useWallet", () => {
       const { result } = renderHook(() => useWallet(), { wrapper })
 
       const credentials = {
-        publicKey: "0xTestPublicKey",
+        accountAddress: "0xTestAccountAddress",
+        apiWalletAddress: "0xTestApiWalletAddress",
         privateKey: "0xTestPrivateKey",
       }
 
@@ -111,12 +126,14 @@ describe("useWallet", () => {
       const { result } = renderHook(() => useWallet(), { wrapper })
 
       const firstCredentials = {
-        publicKey: "0xFirstKey",
+        accountAddress: "0xFirstAccount",
+        apiWalletAddress: "0xFirstApiWallet",
         privateKey: "0xFirstSecret",
       }
 
       const secondCredentials = {
-        publicKey: "0xSecondKey",
+        accountAddress: "0xSecondAccount",
+        apiWalletAddress: "0xSecondApiWallet",
         privateKey: "0xSecondSecret",
       }
 
@@ -137,7 +154,8 @@ describe("useWallet", () => {
       const { result } = renderHook(() => useWallet(), { wrapper })
 
       const credentials = {
-        publicKey: "0xTestPublicKey",
+        accountAddress: "0xTestAccountAddress",
+        apiWalletAddress: "0xTestApiWalletAddress",
         privateKey: "0xTestPrivateKey",
       }
 
@@ -159,7 +177,8 @@ describe("useWallet", () => {
       const { result } = renderHook(() => useWallet(), { wrapper })
 
       const credentials = {
-        publicKey: "0xTestPublicKey",
+        accountAddress: "0xTestAccountAddress",
+        apiWalletAddress: "0xTestApiWalletAddress",
         privateKey: "0xTestPrivateKey",
       }
 
@@ -226,7 +245,8 @@ describe("useWallet", () => {
       const { result } = renderHook(() => useWallet(), { wrapper })
 
       const credentials = {
-        publicKey: "0xTestPublicKey",
+        accountAddress: "0xTestAccountAddress",
+        apiWalletAddress: "0xTestApiWalletAddress",
         privateKey: "0xTestPrivateKey",
       }
 
@@ -243,7 +263,8 @@ describe("useWallet", () => {
       const { result } = renderHook(() => useWallet(), { wrapper })
 
       const credentials = {
-        publicKey: "0xTestPublicKey",
+        accountAddress: "0xTestAccountAddress",
+        apiWalletAddress: "0xTestApiWalletAddress",
         privateKey: "0xTestPrivateKey",
       }
 
@@ -252,14 +273,17 @@ describe("useWallet", () => {
       })
 
       expect(result.current.credentials?.privateKey).toBe("0xTestPrivateKey")
-      expect(result.current.credentials?.publicKey).toBe("0xTestPublicKey")
+      expect(result.current.credentials?.accountAddress).toBe(
+        "0xTestAccountAddress",
+      )
     })
   })
 
   describe("persistence across sessions", () => {
     it("maintains wallet connection after remount", async () => {
       const credentials = {
-        publicKey: "0xTestPublicKey",
+        accountAddress: "0xTestAccountAddress",
+        apiWalletAddress: "0xTestApiWalletAddress",
         privateKey: "0xTestPrivateKey",
       }
 
@@ -318,7 +342,8 @@ describe("useWallet", () => {
       const { result } = renderHook(() => useWallet(), { wrapper })
 
       const credentials = {
-        publicKey: "0xTestPublicKey",
+        accountAddress: "0xTestAccountAddress",
+        apiWalletAddress: "0xTestApiWalletAddress",
         privateKey: "0xTestPrivateKey",
       }
 

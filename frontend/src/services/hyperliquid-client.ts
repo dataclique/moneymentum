@@ -68,7 +68,11 @@ interface HyperliquidExchange {
       leverage?: number | string
     }>
   >
-  setLeverage: (leverage: number, symbol: string) => Promise<void>
+  setLeverage: (
+    leverage: number,
+    symbol: string,
+    params?: Record<string, unknown>,
+  ) => Promise<void>
   createOrder: (
     symbol: string,
     type: string,
@@ -82,16 +86,23 @@ interface HyperliquidExchange {
 export class HyperliquidClient {
   private exchange: HyperliquidExchange
   private networkMode: NetworkMode
+  private vaultAddress: string | undefined
 
   constructor(credentials: WalletCredentials, networkMode: NetworkMode) {
     this.networkMode = networkMode
+    this.vaultAddress = credentials.vaultAddress
 
     const HyperliquidClass = ccxt.hyperliquid as unknown as new (
       config: Record<string, unknown>,
     ) => HyperliquidExchange
 
+    // walletAddress is used for info requests (fetching positions/balance)
+    // When trading on behalf of a vault, use vault address; otherwise use account address
+    const effectiveWalletAddress =
+      credentials.vaultAddress ?? credentials.accountAddress
+
     this.exchange = new HyperliquidClass({
-      walletAddress: credentials.publicKey,
+      walletAddress: effectiveWalletAddress,
       privateKey: credentials.privateKey,
       enableRateLimit: true,
     })
@@ -213,7 +224,11 @@ export class HyperliquidClient {
   }
 
   private async setLeverage(symbol: string, leverage: number): Promise<void> {
-    await this.exchange.setLeverage(leverage, symbol)
+    await this.exchange.setLeverage(leverage, symbol, this.vaultParams)
+  }
+
+  private get vaultParams(): Record<string, unknown> | undefined {
+    return this.vaultAddress ? { vaultAddress: this.vaultAddress } : undefined
   }
 
   private async closePosition(position: Position): Promise<OrderResult> {
@@ -258,6 +273,7 @@ export class HyperliquidClient {
         slippagePrice,
         {
           reduceOnly: true,
+          ...this.vaultParams,
         },
       )
 
@@ -308,6 +324,7 @@ export class HyperliquidClient {
         side,
         coinAmount,
         slippagePrice,
+        this.vaultParams,
       )
 
       return {
@@ -433,7 +450,7 @@ export class HyperliquidClient {
     return this.networkMode
   }
 
-  getPublicKey(): string {
+  getWalletAddress(): string {
     return this.exchange.walletAddress ?? ""
   }
 }

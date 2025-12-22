@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
 import { renderHook, waitFor, act } from "@testing-library/react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import React from "react"
-import { STORAGE_KEY, MIN_USD, usePortfolioState } from "./usePortfolioState"
+import { MIN_USD, usePortfolioState } from "./usePortfolioState"
 import {
   useHyperliquidBalance,
   useHyperliquidPositions,
@@ -32,6 +32,18 @@ vi.mock("@/hooks/useNetwork", () => ({
   })),
 }))
 
+// Mock useWallet hook
+vi.mock("@/hooks/useWallet", () => ({
+  useWallet: vi.fn(() => ({
+    networkMode: "testnet",
+    credentials: null,
+    isConnected: false,
+  })),
+}))
+
+// Storage key is network-aware, so use the testnet key for tests
+const STORAGE_KEY = "portfolio-allocation-state-testnet"
+
 const createWrapper = () => {
   const queryClient = new QueryClient({
     defaultOptions: {
@@ -56,10 +68,6 @@ describe("usePortfolioState", () => {
   })
 
   describe("constants", () => {
-    it("exports correct STORAGE_KEY", () => {
-      expect(STORAGE_KEY).toBe("portfolio-allocation-state")
-    })
-
     it("exports correct MIN_USD", () => {
       expect(MIN_USD).toBe(11)
     })
@@ -504,7 +512,7 @@ describe("usePortfolioState", () => {
       expect(result.current.budgetInput).toBe("500")
     })
 
-    it("initializes tokens from localStorage with untouched status", async () => {
+    it("initializes tokens from localStorage with idle status (can be submitted)", async () => {
       localStorage.setItem(
         STORAGE_KEY,
         JSON.stringify({
@@ -530,7 +538,8 @@ describe("usePortfolioState", () => {
         expect(result.current.selectedTokens).toHaveLength(1)
       })
       expect(result.current.selectedTokens[0].symbol).toBe("BTC/USDC:USDC")
-      expect(result.current.selectedTokens[0].status).toBe("untouched")
+      // Tokens from localStorage (no exchange data to compare) should be "idle" so they can be rebalanced
+      expect(result.current.selectedTokens[0].status).toBe("idle")
       expect(result.current.selectedTokens[0].leverage).toBe(2)
     })
 
@@ -864,6 +873,81 @@ describe("usePortfolioState", () => {
       // Should be completely removed
       expect(result.current.selectedTokens).toHaveLength(0)
     })
+
+    it("marks token as deleted when loaded from localStorage with notional (exchange position)", async () => {
+      // Simulate token loaded from localStorage that has a notional value
+      // This means it exists on the exchange and should be closed, not just removed from UI
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({
+          budget: 500,
+          tokens: [
+            {
+              symbol: "ASTER/USDC:USDC",
+              percentage: 10,
+              side: "buy",
+              leverage: 3,
+              lockedUsd: 50,
+              notional: 50, // Has exchange position
+              status: "idle",
+            },
+          ],
+        }),
+      )
+
+      const { result } = renderHook(() => usePortfolioState(), {
+        wrapper: createWrapper(),
+      })
+
+      await waitFor(() => {
+        expect(result.current.selectedTokens).toHaveLength(1)
+      })
+
+      await act(async () => {
+        result.current.handleRemoveToken("ASTER/USDC:USDC")
+      })
+
+      // Should be marked as deleted (not removed) so the exchange position gets closed
+      expect(result.current.selectedTokens).toHaveLength(1)
+      expect(result.current.selectedTokens[0].status).toBe("deleted")
+      expect(result.current.selectedTokens[0].percentage).toBe(0)
+    })
+
+    it("completely removes token from localStorage without notional (no exchange position)", async () => {
+      // Simulate a new token added locally but never synced to exchange
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({
+          budget: 500,
+          tokens: [
+            {
+              symbol: "NEW/USDC:USDC",
+              percentage: 10,
+              side: "buy",
+              leverage: 1,
+              lockedUsd: 50,
+              // No notional - doesn't exist on exchange
+              status: "idle",
+            },
+          ],
+        }),
+      )
+
+      const { result } = renderHook(() => usePortfolioState(), {
+        wrapper: createWrapper(),
+      })
+
+      await waitFor(() => {
+        expect(result.current.selectedTokens).toHaveLength(1)
+      })
+
+      await act(async () => {
+        result.current.handleRemoveToken("NEW/USDC:USDC")
+      })
+
+      // Should be completely removed since it doesn't exist on exchange
+      expect(result.current.selectedTokens).toHaveLength(0)
+    })
   })
 
   describe("handleUndoRemoveToken", () => {
@@ -1098,8 +1182,8 @@ describe("usePortfolioState", () => {
   })
 
   describe("initialization priority", () => {
-    it("prioritizes localStorage over exchange positions", async () => {
-      // Set up localStorage with existing data
+    it("merges localStorage with exchange positions, adding missing exchange positions", async () => {
+      // Set up localStorage with one token
       localStorage.setItem(
         STORAGE_KEY,
         JSON.stringify({
@@ -1111,13 +1195,14 @@ describe("usePortfolioState", () => {
               side: "sell",
               leverage: 3,
               lockedUsd: 480,
+              notional: 480,
               status: "idle",
             },
           ],
         }),
       )
 
-      // Mock exchange positions with different data
+      // Mock exchange positions with a DIFFERENT token (simulating position that was removed from localStorage)
       vi.mocked(useHyperliquidPositions).mockReturnValue({
         data: {
           positions: [
@@ -1138,12 +1223,63 @@ describe("usePortfolioState", () => {
         wrapper: createWrapper(),
       })
 
-      // Should load from localStorage, not exchange
+      // Should have BOTH localStorage token AND exchange position
+      await waitFor(() => {
+        expect(result.current.selectedTokens).toHaveLength(2)
+      })
+      const symbols = result.current.selectedTokens.map(t => t.symbol)
+      expect(symbols).toContain("ETH/USDC:USDC")
+      expect(symbols).toContain("BTC/USDC:USDC")
+    })
+
+    it("uses localStorage values for tokens that exist in both localStorage and exchange", async () => {
+      // Set up localStorage with customized values
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({
+          budget: 800,
+          tokens: [
+            {
+              symbol: "BTC/USDC:USDC",
+              percentage: 30,
+              side: "sell", // Different from exchange
+              leverage: 5, // Different from exchange
+              lockedUsd: 240,
+              notional: 500,
+              status: "idle",
+            },
+          ],
+        }),
+      )
+
+      // Mock exchange with same token but different values
+      vi.mocked(useHyperliquidPositions).mockReturnValue({
+        data: {
+          positions: [
+            {
+              symbol: "BTC/USDC:USDC",
+              percentage: 50,
+              side: "buy",
+              leverage: 2,
+              notional: 500,
+            },
+          ],
+          totalNotional: 500,
+        },
+        isLoading: false,
+      } as unknown as ReturnType<typeof useHyperliquidPositions>)
+
+      const { result } = renderHook(() => usePortfolioState(), {
+        wrapper: createWrapper(),
+      })
+
       await waitFor(() => {
         expect(result.current.selectedTokens).toHaveLength(1)
       })
-      expect(result.current.selectedTokens[0].symbol).toBe("ETH/USDC:USDC")
-      expect(result.current.budget).toBe(800)
+      // Should use localStorage values (user's customizations)
+      const btcToken = result.current.selectedTokens[0]
+      expect(btcToken.side).toBe("sell")
+      expect(btcToken.leverage).toBe(5)
     })
 
     it("uses exchange totalNotional as budget when loading positions", async () => {

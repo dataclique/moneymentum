@@ -7,8 +7,9 @@ import {
   type OrderSide,
   type OrderResult,
 } from "@/hooks/useTrading"
+import { useWallet } from "@/hooks/useWallet"
 
-export const STORAGE_KEY = "portfolio-allocation-state"
+const STORAGE_KEY_PREFIX = "portfolio-allocation-state"
 export const MIN_USD = 11
 
 export type AllocationStatus =
@@ -39,6 +40,7 @@ interface StoredPortfolioState {
     lockedUsd?: number
     leverage: number
     status: string
+    notional?: number
   }>
 }
 
@@ -52,8 +54,13 @@ const getTokenUsdAllocation = (
   return 0
 }
 
-const getStoredPortfolio = (): StoredPortfolioState | null => {
-  const stored = localStorage.getItem(STORAGE_KEY)
+const getStorageKey = (networkMode: string) =>
+  `${STORAGE_KEY_PREFIX}-${networkMode}`
+
+const getStoredPortfolio = (
+  networkMode: string,
+): StoredPortfolioState | null => {
+  const stored = localStorage.getItem(getStorageKey(networkMode))
   if (!stored) return null
   try {
     return JSON.parse(stored) as StoredPortfolioState
@@ -63,18 +70,20 @@ const getStoredPortfolio = (): StoredPortfolioState | null => {
 }
 
 export const usePortfolioState = () => {
+  const { networkMode } = useWallet()
+
   // Exchange data queries
-  const { data: balanceData } = useHyperliquidBalance()
+  const { data: balanceData, isLoading: isBalanceLoading } =
+    useHyperliquidBalance()
   const { data: positionsData, isLoading: isPositionsLoading } =
     useHyperliquidPositions()
-  const { data: leverageLimitsData } = useHyperliquidLeverageLimits()
+  const { data: leverageLimitsData, isLoading: isLeverageLimitsLoading } =
+    useHyperliquidLeverageLimits()
 
   // Mutations
   const rebalancePositionsMutation = useRebalanceHyperliquidPositions()
 
-  const [storedDataSnapshot] = useState(() => getStoredPortfolio())
-  const hasStoredTokens =
-    storedDataSnapshot?.tokens && storedDataSnapshot.tokens.length > 0
+  const [storedDataSnapshot] = useState(() => getStoredPortfolio(networkMode))
 
   const [budget, setBudget] = useState(() => storedDataSnapshot?.budget ?? 0)
   const [budgetInput, setBudgetInput] = useState(
@@ -101,7 +110,7 @@ export const usePortfolioState = () => {
     [],
   )
   const [positionsLoadedFromExchange, setPositionsLoadedFromExchange] =
-    useState(() => hasStoredTokens)
+    useState(false)
   const lastSufficientBudgetRef = useRef(0)
 
   const persistStateToLocalStorage = useCallback(
@@ -109,19 +118,28 @@ export const usePortfolioState = () => {
       const payload = {
         budget: budgetVal,
         tokens: tokens.map(
-          ({ symbol, percentage, side, lockedUsd, leverage, status }) => ({
+          ({
             symbol,
             percentage,
             side,
             lockedUsd,
             leverage,
             status,
+            notional,
+          }) => ({
+            symbol,
+            percentage,
+            side,
+            lockedUsd,
+            leverage,
+            status,
+            notional,
           }),
         ),
       }
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(payload))
+      localStorage.setItem(getStorageKey(networkMode), JSON.stringify(payload))
     },
-    [],
+    [networkMode],
   )
 
   const latestBudgetRef = useRef(budget)
@@ -150,58 +168,105 @@ export const usePortfolioState = () => {
   )
 
   useEffect(() => {
-    if (isBudgetInitialized && positionsLoadedFromExchange) return
+    if (positionsLoadedFromExchange) return
+    if (isPositionsLoading || !positionsData?.positions) return
 
-    if (
-      !isPositionsLoading &&
-      positionsData?.positions &&
-      !positionsLoadedFromExchange
-    ) {
-      const loadedTokens: TokenAllocation[] = positionsData.positions.map(
-        pos => ({
-          symbol: pos.symbol,
-          percentage: parseFloat(pos.percentage.toFixed(2)),
-          side: pos.side,
-          leverage: pos.leverage || 1,
+    const exchangeTokens: TokenAllocation[] = positionsData.positions.map(
+      pos => ({
+        symbol: pos.symbol,
+        percentage: parseFloat(pos.percentage.toFixed(2)),
+        side: pos.side,
+        leverage: pos.leverage || 1,
+        status: "untouched" as const,
+        message: null,
+        notional: pos.notional,
+        lockedUsd: pos.notional,
+      }),
+    )
+
+    // Always set initialPortfolio from exchange (source of truth for what exists on exchange)
+    setInitialPortfolio(exchangeTokens)
+
+    if (storedDataSnapshot && storedDataSnapshot.tokens.length > 0) {
+      // Merge localStorage with exchange positions
+      const storedSymbols = new Set(
+        storedDataSnapshot.tokens.map(t => t.symbol),
+      )
+
+      // Start with localStorage tokens (preserving user's customizations)
+      const mergedTokens: TokenAllocation[] = storedDataSnapshot.tokens.map(
+        token => ({
+          ...token,
+          leverage: token.leverage || 1,
+          lockedUsd:
+            token.lockedUsd === undefined || token.lockedUsd < MIN_USD
+              ? MIN_USD
+              : token.lockedUsd,
           status: "untouched" as const,
           message: null,
-          notional: pos.notional,
-          lockedUsd: pos.notional,
         }),
       )
 
-      if (loadedTokens.length > 0) {
-        setSelectedTokens(loadedTokens)
-        setInitialPortfolio(loadedTokens)
-        const totalSpent = positionsData.totalNotional
-        if (totalSpent > 0) {
-          setBudget(totalSpent)
-          setBudgetInput(totalSpent.toString())
-          setIsBudgetInitialized(true)
+      // Add exchange positions that are NOT in localStorage (e.g., positions removed from UI but still on exchange)
+      for (const exchangeToken of exchangeTokens) {
+        if (!storedSymbols.has(exchangeToken.symbol)) {
+          mergedTokens.push(exchangeToken)
+        } else {
+          // Update notional from exchange for existing tokens
+          const idx = mergedTokens.findIndex(
+            t => t.symbol === exchangeToken.symbol,
+          )
+          if (idx !== -1) {
+            mergedTokens[idx] = {
+              ...mergedTokens[idx],
+              notional: exchangeToken.notional,
+            }
+          }
         }
       }
-      setPositionsLoadedFromExchange(true)
-      return
+
+      setSelectedTokens(mergedTokens)
+    } else if (exchangeTokens.length > 0) {
+      // No localStorage data, use exchange positions
+      setSelectedTokens(exchangeTokens)
+      const totalSpent = positionsData.totalNotional
+      if (totalSpent > 0 && !isBudgetInitialized) {
+        setBudget(totalSpent)
+        setBudgetInput(totalSpent.toString())
+        setIsBudgetInitialized(true)
+      }
     }
 
-    // Initialize budget from balance if not set from positions
+    setPositionsLoadedFromExchange(true)
+  }, [
+    positionsData,
+    isPositionsLoading,
+    storedDataSnapshot,
+    isBudgetInitialized,
+    positionsLoadedFromExchange,
+  ])
+
+  // Initialize budget from balance if not set from positions
+  useEffect(() => {
     if (!isBudgetInitialized && positionsLoadedFromExchange) {
-      if (typeof balanceData === "number") {
+      if (typeof balanceData === "number" && balanceData > 0) {
         setBudget(balanceData)
         setBudgetInput(balanceData.toString())
         setIsBudgetInitialized(true)
       }
     }
-  }, [
-    positionsData,
-    isPositionsLoading,
-    balanceData,
-    isBudgetInitialized,
-    positionsLoadedFromExchange,
-  ])
+  }, [balanceData, isBudgetInitialized, positionsLoadedFromExchange])
 
   const tokensWithComputedStatus = useMemo(() => {
-    if (initialPortfolio.length === 0) return selectedTokens
+    // If no exchange data to compare against, treat "untouched" tokens as "idle"
+    // so they can be submitted for rebalancing
+    if (initialPortfolio.length === 0) {
+      return selectedTokens.map(token =>
+        token.status === "untouched"
+          ? { ...token, status: "idle" as const }
+          : token,
+      )
+    }
 
     return selectedTokens.map(currentToken => {
       const initialToken = initialPortfolio.find(
@@ -215,6 +280,10 @@ export const usePortfolioState = () => {
         currentToken.status !== "working"
 
       if (!shouldComputeStatus) {
+        // Token doesn't exist in initial portfolio - treat as new (idle)
+        if (!initialToken && currentToken.status === "untouched") {
+          return { ...currentToken, status: "idle" as const }
+        }
         return currentToken
       }
 
@@ -403,24 +472,29 @@ export const usePortfolioState = () => {
   const handleRemoveToken = useCallback(
     (symbol: string) => {
       setSelectedTokensAndPersist(prev => {
-        const wasInitiallyInPortfolio = initialPortfolio.some(
-          it => it.symbol === symbol,
-        )
+        const token = prev.find(t => t.symbol === symbol)
+        if (!token) return prev
 
-        if (!wasInitiallyInPortfolio) {
-          return prev.filter(token => token.symbol !== symbol)
+        const existsOnExchange =
+          initialPortfolio.some(it => it.symbol === symbol) ||
+          (token.notional !== undefined && token.notional > 0)
+
+        // If token exists on exchange, mark as deleted so it gets closed
+        // Otherwise, just remove it from the list
+        if (!existsOnExchange) {
+          return prev.filter(t => t.symbol !== symbol)
         }
 
-        return prev.map(token =>
-          token.symbol === symbol
+        return prev.map(t =>
+          t.symbol === symbol
             ? {
-                ...token,
+                ...t,
                 status: "deleted" as const,
-                previousPercentage: token.percentage,
+                previousPercentage: t.percentage,
                 percentage: 0,
                 message: null,
               }
-            : token,
+            : t,
         )
       })
     },
@@ -692,6 +766,11 @@ export const usePortfolioState = () => {
     netExposure,
     disableSubmit,
     isRebalancing: rebalancePositionsMutation.isPending,
+
+    // Loading states
+    isBalanceLoading,
+    isPositionsLoading,
+    isLeverageLimitsLoading,
 
     // Actions
     handleAddToken,

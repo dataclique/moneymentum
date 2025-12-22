@@ -1,13 +1,11 @@
-import { useMemo } from "react"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { useWallet } from "./useWallet"
-import {
-  HyperliquidClient,
-  type Position,
-  type OrderResult,
-  type CurrentPosition,
-  type LeverageLimit,
-  type OrderSide,
+import type {
+  Position,
+  OrderResult,
+  CurrentPosition,
+  LeverageLimit,
+  OrderSide,
 } from "@/services/hyperliquid-client"
 
 export type { OrderSide, OrderResult, CurrentPosition, LeverageLimit }
@@ -20,13 +18,7 @@ const QUERY_KEYS = {
 } as const
 
 export const useHyperliquidClient = () => {
-  const { credentials, networkMode, isConnected } = useWallet()
-
-  const client = useMemo(() => {
-    if (!isConnected || !credentials) return null
-    return new HyperliquidClient(credentials, networkMode)
-  }, [credentials, networkMode, isConnected])
-
+  const { client, networkMode, isConnected } = useWallet()
   return { client, isConnected, networkMode }
 }
 
@@ -40,7 +32,7 @@ export const useHyperliquidBalance = () => {
       return client.getBalance()
     },
     enabled: isConnected && client !== null,
-    staleTime: 10000,
+    staleTime: 30000,
   })
 }
 
@@ -67,7 +59,7 @@ export const useHyperliquidPositions = () => {
       }
     },
     enabled: isConnected && client !== null,
-    staleTime: 10000,
+    staleTime: 30000,
   })
 }
 
@@ -142,7 +134,7 @@ export const useWalletSettings = () => {
   return {
     data: isConnected
       ? {
-          publicKey: credentials?.publicKey ?? "",
+          accountAddress: credentials?.accountAddress ?? "",
           isTestnet: networkMode === "testnet",
         }
       : null,

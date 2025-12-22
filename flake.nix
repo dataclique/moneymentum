@@ -65,6 +65,7 @@
           modules = [{
             languages.javascript = {
               enable = true;
+              directory = "frontend";
               bun = {
                 enable = true;
                 install.enable = true;

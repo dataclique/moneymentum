@@ -151,6 +151,15 @@ messages just for the sake of it; when they point out issues, they expect action
 (usually a fix, sometimes reproducing, opening a GitHub issue, etc. based on
 context).
 
+### No self-promotion
+
+Never add "Generated with [Tool Name]" or similar attribution to commits, PRs,
+or code.
+
+### PR descriptions
+
+Explain WHY the PR exists, not what changed. The diff shows what changed.
+
 **IMPORTANT**: Never disable or relax any quality checks (lints, type checks,
 tests, pre-commit hooks, etc.) without explicitly asking the user first. Always
 fix the underlying issue rather than suppressing the warning/error.

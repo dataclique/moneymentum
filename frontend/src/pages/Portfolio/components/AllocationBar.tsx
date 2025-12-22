@@ -84,7 +84,7 @@ export const AllocationBar = ({
           className="flex items-center justify-center text-center"
           style={{ height: `${remainingPercent.toFixed(2)}%` }}
         >
-          <span className="text-muted-foreground">Free</span>
+          <span className="text-muted-foreground">Unallocated</span>
         </div>
       )}
 

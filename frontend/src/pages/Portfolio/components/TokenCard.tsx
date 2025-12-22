@@ -1,4 +1,4 @@
-import { Trash2, Undo2 } from "lucide-react"
+import { Trash2, Undo2, AlertCircle } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import {
@@ -9,28 +9,38 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog"
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
 import { Slider } from "@/components/ui/slider"
 import { clsx } from "clsx"
 import { twMerge } from "tailwind-merge"
 import type { OrderSide } from "@/hooks/useTrading"
-import { type TokenAllocation, MIN_USD } from "../hooks/usePortfolioState"
+import {
+  type TokenAllocation,
+  MIN_USD,
+  MIN_ORDER_SIZE,
+} from "../hooks/usePortfolioState"
 
 const getSideColor = (side: OrderSide) =>
   side === "buy" ? "rgba(34, 197, 94, 0.8)" : "rgba(239, 68, 68, 0.8)"
 
-const getTokenUsdAllocation = (
-  token: TokenAllocation,
-  currentBudget: number,
-) => {
+const MAX_CROSS_ACCOUNT_LEVERAGE = 5
+
+const getTokenUsdAllocation = (token: TokenAllocation) => {
+  if (token.lockedUsd !== undefined && token.lockedUsd > 0)
+    return token.lockedUsd
   if (token.notional !== undefined && token.notional > 0) return token.notional
-  if (token.lockedUsd !== undefined) return token.lockedUsd
-  if (currentBudget > 0) return (token.percentage / 100) * currentBudget
   return 0
 }
 
 interface TokenCardProps {
   token: TokenAllocation
   budgetForUi: number
+  accountValue: number
   activeTokens: TokenAllocation[]
   maxLeverage: number | undefined
   onRemove: (symbol: string) => void
@@ -43,6 +53,7 @@ interface TokenCardProps {
 export const TokenCard = ({
   token,
   budgetForUi,
+  accountValue,
   activeTokens,
   maxLeverage,
   onRemove,
@@ -51,7 +62,7 @@ export const TokenCard = ({
   onSideChange,
   onLeverageChange,
 }: TokenCardProps) => {
-  const tokenUsdValue = getTokenUsdAllocation(token, budgetForUi)
+  const tokenUsdValue = getTokenUsdAllocation(token)
   const effectivePercent =
     budgetForUi > 0 ? (tokenUsdValue / budgetForUi) * 100 : token.percentage
   const sideColor = getSideColor(token.side)
@@ -59,21 +70,25 @@ export const TokenCard = ({
   const usdAmount = Number.isFinite(tokenUsdValue)
     ? tokenUsdValue.toFixed(2)
     : "0.00"
-  const sliderMaxValue =
-    budgetForUi > 0 ? budgetForUi : Math.max(tokenUsdValue, MIN_USD)
-  const sliderMinValue = Math.min(MIN_USD, sliderMaxValue)
-  const sliderValue = Math.min(
-    sliderMaxValue,
-    Math.max(tokenUsdValue, sliderMinValue),
-  )
 
+  // Max total notional is 5x account value (max leverage constraint)
+  const maxTotalNotional = accountValue * MAX_CROSS_ACCOUNT_LEVERAGE
+  const sliderMaxValue = Math.max(maxTotalNotional, MIN_USD)
+  const sliderMinValue = MIN_USD
+  const sliderValue = Math.max(tokenUsdValue, sliderMinValue)
+
+  // Sum of other tokens' allocations
   const otherTokensAllocatedUsd = activeTokens.reduce((acc, t) => {
     if (t.symbol === token.symbol) {
       return acc
     }
-    return acc + getTokenUsdAllocation(t, budgetForUi)
+    return acc + getTokenUsdAllocation(t)
   }, 0)
-  const maxUsdForToken = Math.max(0, budgetForUi - otherTokensAllocatedUsd)
+  // Max for this token is what's left under the 5x limit
+  const maxUsdForToken = Math.max(
+    MIN_USD,
+    maxTotalNotional - otherTokensAllocatedUsd,
+  )
 
   return (
     <Card
@@ -171,12 +186,34 @@ export const TokenCard = ({
           <div
             className={twMerge(
               clsx(
-                "w-24 text-center",
+                "w-24 text-center flex items-center justify-center gap-1",
                 token.status === "deleted" && "opacity-50",
               ),
             )}
           >
             <span className="text-sm">${usdAmount}</span>
+            {token.deltaInsufficient && (
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <AlertCircle className="h-3.5 w-3.5 text-amber-500" />
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p className="text-xs">
+                      Delta $
+                      {Math.abs(
+                        (token.targetNotional ?? 0) -
+                          (token.currentNotional ?? 0),
+                      ).toFixed(2)}{" "}
+                      is below ${MIN_ORDER_SIZE} minimum.
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      This position won&apos;t be adjusted.
+                    </p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            )}
           </div>
 
           {/* Long/Short Select */}

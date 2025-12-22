@@ -56,6 +56,7 @@ vi.mock("ccxt", () => ({
 // Mock the trading hooks
 vi.mock("@/hooks/useTrading", () => ({
   useHyperliquidBalance: vi.fn(() => ({ data: null, isLoading: true })),
+  useHyperliquidAccountSummary: vi.fn(() => ({ data: null, isLoading: true })),
   useHyperliquidPositions: vi.fn(() => ({ data: null, isLoading: true })),
   useHyperliquidTickers: vi.fn(() => ({ data: null, isLoading: true })),
   useHyperliquidLeverageLimits: vi.fn(() => ({ data: null, isLoading: true })),

@@ -1,11 +1,12 @@
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
+import { Slider } from "@/components/ui/slider"
 import { clsx } from "clsx"
 import { twMerge } from "tailwind-merge"
 import { useNetwork } from "@/hooks/useNetwork"
 
-import { usePortfolioState, MIN_USD } from "./hooks/usePortfolioState"
+import { usePortfolioState } from "./hooks/usePortfolioState"
 import { AllocationBar } from "./components/AllocationBar"
 import { TokenCard } from "./components/TokenCard"
 import { TokenPickerDialog } from "./components/TokenPickerDialog"
@@ -14,12 +15,12 @@ const PortfolioPage = () => {
   const { isNetworkSwitching } = useNetwork()
 
   const {
-    budgetInput,
-    budgetError,
+    accountValue,
+    crossAccountLeverage,
+    effectiveBudget,
     selectedTokens,
     activeTokens,
     budgetForUi,
-    maxBudget,
     remainingPercent,
     blockingReasons,
     leverageLimitsMap,
@@ -34,8 +35,7 @@ const PortfolioPage = () => {
     handleSliderChange,
     handleSideChange,
     handleLeverageChange,
-    handleBudgetInputChange,
-    handleBudgetInputBlur,
+    handleCrossAccountLeverageChange,
     handleOpenPositions,
   } = usePortfolioState()
 
@@ -50,49 +50,33 @@ const PortfolioPage = () => {
         )}
       >
         <div className="flex flex-col gap-4">
-          {/* Budget Controls */}
+          {/* Account Summary & Add Position */}
           <Card>
             <CardContent className="flex flex-wrap items-center justify-between gap-4">
-              <div className="flex flex-wrap items-center gap-3">
-                <span className="text-sm font-semibold text-muted-foreground">
-                  Total Budget:
-                </span>
+              <div className="flex flex-wrap items-center gap-6">
                 {isBalanceLoading ? (
                   <>
-                    <Skeleton className="h-9 w-40" />
-                    <Skeleton className="h-4 w-10" />
+                    <Skeleton className="h-6 w-40" />
+                    <Skeleton className="h-6 w-40" />
                   </>
                 ) : (
                   <>
-                    <div className="w-40">
-                      <input
-                        type="number"
-                        min={MIN_USD}
-                        max={maxBudget}
-                        step="0.01"
-                        value={budgetInput}
-                        onChange={e => {
-                          handleBudgetInputChange(e.target.value)
-                        }}
-                        onBlur={handleBudgetInputBlur}
-                        aria-invalid={budgetError ? true : undefined}
-                        aria-describedby={
-                          budgetError ? "budget-error" : undefined
-                        }
-                        className={twMerge(
-                          clsx(
-                            "w-full rounded-md border border-border bg-background px-3 py-2 text-sm",
-                            budgetError && "border-rose-500",
-                          ),
-                        )}
-                      />
-                    </div>
-                    <span className="text-sm text-muted-foreground">USDC</span>
-                    {budgetError && (
-                      <span id="budget-error" className="text-xs text-rose-400">
-                        {budgetError}
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-semibold text-muted-foreground">
+                        Account Value:
                       </span>
-                    )}
+                      <span className="text-sm font-medium">
+                        ${accountValue.toFixed(2)}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-semibold text-muted-foreground">
+                        Total Notional:
+                      </span>
+                      <span className="text-sm font-medium">
+                        ${effectiveBudget.toFixed(2)}
+                      </span>
+                    </div>
                   </>
                 )}
               </div>
@@ -109,11 +93,11 @@ const PortfolioPage = () => {
               <>
                 {/* Skeleton column headers */}
                 <div className="flex items-center gap-2 px-3 text-xs font-semibold text-muted-foreground">
-                  <div className="w-32">COIN</div>
-                  <div className="w-24 text-center">PERCENTAGE</div>
-                  <div className="w-24 text-center">VALUE</div>
+                  <div className="w-32">MARKET</div>
+                  <div className="w-24 text-center">WEIGHT</div>
+                  <div className="w-24 text-center">NOTIONAL</div>
                   <div className="w-24 text-center">SIDE</div>
-                  <div className="flex-1 px-2 text-center">ALLOCATION</div>
+                  <div className="flex-1 px-2 text-center">SIZE</div>
                   <div className="w-16 text-right">ACTIONS</div>
                 </div>
                 {/* Skeleton token cards */}
@@ -135,19 +119,19 @@ const PortfolioPage = () => {
             ) : selectedTokens.length === 0 ? (
               <Card className="gap-3 py-3">
                 <CardContent className="text-center text-sm text-muted-foreground">
-                  Add tokens from the button on the top right to configure
-                  allocations.
+                  Add positions using the button above to configure your
+                  portfolio.
                 </CardContent>
               </Card>
             ) : (
               <>
                 {/* Column Headers */}
                 <div className="flex items-center gap-2 px-3 text-xs font-semibold text-muted-foreground">
-                  <div className="w-32">COIN</div>
-                  <div className="w-24 text-center">PERCENTAGE</div>
-                  <div className="w-24 text-center">VALUE</div>
+                  <div className="w-32">MARKET</div>
+                  <div className="w-24 text-center">WEIGHT</div>
+                  <div className="w-24 text-center">NOTIONAL</div>
                   <div className="w-24 text-center">SIDE</div>
-                  <div className="flex-1 px-2 text-center">ALLOCATION</div>
+                  <div className="flex-1 px-2 text-center">SIZE</div>
                   <div className="w-16 text-right">ACTIONS</div>
                 </div>
                 <div className="space-y-2">
@@ -156,6 +140,7 @@ const PortfolioPage = () => {
                       key={token.symbol}
                       token={token}
                       budgetForUi={budgetForUi}
+                      accountValue={accountValue}
                       activeTokens={activeTokens}
                       maxLeverage={leverageLimitsMap[token.symbol]}
                       onRemove={handleRemoveToken}
@@ -196,9 +181,36 @@ const PortfolioPage = () => {
                 ${netExposure.toFixed(2)}
               </span>
             </div>
-            <Button onClick={handleOpenPositions} disabled={disableSubmit}>
-              {isRebalancing ? "Sending..." : "Rebalance"}
-            </Button>
+            <div className="flex items-center gap-4">
+              {/* Cross Account Leverage Slider */}
+              <div className="flex items-center gap-3">
+                <span className="text-sm font-semibold text-muted-foreground whitespace-nowrap">
+                  Leverage:
+                </span>
+                {isBalanceLoading ? (
+                  <Skeleton className="h-4 w-32" />
+                ) : (
+                  <>
+                    <Slider
+                      value={[crossAccountLeverage]}
+                      onValueChange={([value]: number[]) => {
+                        handleCrossAccountLeverageChange(value)
+                      }}
+                      min={0.1}
+                      max={5}
+                      step={0.1}
+                      className="w-32"
+                    />
+                    <span className="w-10 text-center text-sm font-medium">
+                      {crossAccountLeverage.toFixed(1)}x
+                    </span>
+                  </>
+                )}
+              </div>
+              <Button onClick={handleOpenPositions} disabled={disableSubmit}>
+                {isRebalancing ? "Sending..." : "Rebalance"}
+              </Button>
+            </div>
           </div>
         </div>
       </div>

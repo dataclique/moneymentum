@@ -47,7 +47,10 @@ interface HyperliquidExchange {
   options: Record<string, unknown>
   walletAddress?: string
   loadMarkets: () => Promise<Record<string, unknown>>
-  fetchBalance: () => Promise<{ total: Record<string, unknown> }>
+  fetchBalance: () => Promise<{
+    total: Record<string, unknown>
+    info?: Record<string, unknown>
+  }>
   fetchTickers: (
     symbols?: string[],
   ) => Promise<
@@ -123,6 +126,41 @@ export class HyperliquidClient {
     if (typeof usdc === "number") return usdc
     if (typeof usdc === "string") return parseFloat(usdc)
     return 0
+  }
+
+  async getAccountSummary(): Promise<{
+    accountValue: number
+    totalNotionalPosition: number
+    withdrawable: number
+  }> {
+    const balance = await this.exchange.fetchBalance()
+    const info = balance.info
+
+    let accountValue = 0
+    let totalNotionalPosition = 0
+    let withdrawable = 0
+
+    if (info?.marginSummary) {
+      const marginSummary = info.marginSummary as Record<string, unknown>
+      accountValue = this.parseNumericValue(marginSummary.accountValue, 0)
+      totalNotionalPosition = this.parseNumericValue(
+        marginSummary.totalNtlPos,
+        0,
+      )
+    }
+
+    if (info?.withdrawable !== undefined) {
+      withdrawable = this.parseNumericValue(info.withdrawable, 0)
+    }
+
+    return { accountValue, totalNotionalPosition, withdrawable }
+  }
+
+  private parseNumericValue(value: unknown, fallback: number): number {
+    if (value === undefined || value === null) return fallback
+    if (typeof value === "number") return value
+    if (typeof value === "string") return parseFloat(value)
+    return fallback
   }
 
   async listPerpTickers(): Promise<string[]> {
@@ -346,11 +384,14 @@ export class HyperliquidClient {
 
   async rebalancePositions(
     positions: Position[],
-    budget: number,
+    accountValue: number,
+    crossAccountLeverage: number = 1,
   ): Promise<OrderResult[]> {
-    if (budget <= 0) {
+    if (accountValue <= 0) {
       throw new Error("Budget must be positive")
     }
+
+    const effectiveBudget = accountValue * crossAccountLeverage
 
     const results: OrderResult[] = []
 
@@ -392,12 +433,12 @@ export class HyperliquidClient {
       return results
     }
 
-    // 4. Build target notional values
+    // 4. Build target notional values using effectiveBudget
     const targetNotional: Record<string, number> = {}
     for (const position of successfulPositions) {
       targetNotional[position.symbol] = this.signedNotional(
         position.side,
-        position.percentage * budget,
+        position.percentage * effectiveBudget,
       )
     }
 

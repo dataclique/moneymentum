@@ -12,6 +12,7 @@ export type { OrderSide, OrderResult, CurrentPosition, LeverageLimit }
 
 const QUERY_KEYS = {
   balance: ["hyperliquid", "balance"],
+  accountSummary: ["hyperliquid", "account-summary"],
   positions: ["hyperliquid", "positions"],
   tickers: ["hyperliquid", "tickers"],
   leverageLimits: ["hyperliquid", "leverage-limits"],
@@ -30,6 +31,32 @@ export const useHyperliquidBalance = () => {
     queryFn: async () => {
       if (!client) throw new Error("Wallet not connected")
       return client.getBalance()
+    },
+    enabled: isConnected && client !== null,
+    staleTime: 30000,
+  })
+}
+
+export interface AccountSummary {
+  accountValue: number
+  totalNotionalPosition: number
+  withdrawable: number
+  crossAccountLeverage: number
+}
+
+export const useHyperliquidAccountSummary = () => {
+  const { client, isConnected } = useHyperliquidClient()
+
+  return useQuery({
+    queryKey: QUERY_KEYS.accountSummary,
+    queryFn: async (): Promise<AccountSummary> => {
+      if (!client) throw new Error("Wallet not connected")
+      const summary = await client.getAccountSummary()
+      const crossAccountLeverage =
+        summary.accountValue > 0
+          ? summary.totalNotionalPosition / summary.accountValue
+          : 0
+      return { ...summary, crossAccountLeverage }
     },
     enabled: isConnected && client !== null,
     staleTime: 30000,
@@ -92,7 +119,8 @@ export const useHyperliquidLeverageLimits = () => {
 }
 
 export interface RebalanceParams {
-  budget: number
+  accountValue: number
+  crossAccountLeverage: number
   positions: Array<{
     symbol: string
     percentage: number
@@ -118,7 +146,11 @@ export const useRebalanceHyperliquidPositions = () => {
         status: pos.status === "working" ? "idle" : pos.status,
       }))
 
-      const results = await client.rebalancePositions(positions, params.budget)
+      const results = await client.rebalancePositions(
+        positions,
+        params.accountValue,
+        params.crossAccountLeverage,
+      )
       return { orders: results }
     },
     onSuccess: () => {

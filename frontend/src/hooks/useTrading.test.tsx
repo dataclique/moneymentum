@@ -266,7 +266,8 @@ describe("useTrading hooks", () => {
 
       await act(async () => {
         result.current.mutate({
-          budget: 1000,
+          accountValue: 1000,
+          crossAccountLeverage: 1,
           positions: [],
         })
       })
@@ -302,7 +303,8 @@ describe("useTrading hooks", () => {
 
       await act(async () => {
         result.current.mutate({
-          budget: 1000,
+          accountValue: 1000,
+          crossAccountLeverage: 2,
           positions: [
             {
               symbol: "BTC/USDC:USDC",
@@ -330,6 +332,7 @@ describe("useTrading hooks", () => {
           },
         ],
         1000,
+        2,
       )
 
       expect(result.current.data?.orders).toHaveLength(1)
@@ -353,7 +356,8 @@ describe("useTrading hooks", () => {
 
       await act(async () => {
         result.current.mutate({
-          budget: 1000,
+          accountValue: 1000,
+          crossAccountLeverage: 1,
           positions: [
             {
               symbol: "BTC/USDC:USDC",
@@ -381,6 +385,7 @@ describe("useTrading hooks", () => {
           },
         ],
         1000,
+        1,
       )
     })
   })

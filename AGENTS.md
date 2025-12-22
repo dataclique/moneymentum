@@ -191,6 +191,17 @@ cd frontend && bunx shadcn@latest add <component-name>
 This ensures components are properly configured with the project's theme and
 dependencies.
 
+## Code Style Preferences
+
+### Prefer Functional Programming Style
+
+Write code in functional programming style where practical:
+
+- Prefer `map`, `filter`, `reduce` over imperative loops
+- Use pure functions without side effects
+- Prefer immutable data transformations over mutation
+- Use declarative patterns over imperative ones
+
 ## Code Style Anti-Patterns
 
 The following patterns are **NOT ALLOWED** in this codebase:

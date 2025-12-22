@@ -60,6 +60,19 @@
           ]}";
         };
 
+        frontendShell = devenv.lib.mkShell {
+          inherit inputs pkgs;
+          modules = [{
+            languages.javascript = {
+              enable = true;
+              bun = {
+                enable = true;
+                install.enable = true;
+              };
+            };
+          }];
+        };
+
         devShell = devenv.lib.mkShell {
           inherit inputs pkgs;
           modules = [{
@@ -109,6 +122,7 @@
 
       in {
         devShells.default = devShell;
+        devShells.frontend = frontendShell;
 
         checks.git-hooks = git-hooks.lib.${system}.run {
           inherit hooks;

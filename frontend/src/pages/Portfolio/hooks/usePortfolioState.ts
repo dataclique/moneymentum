@@ -1,23 +1,18 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from "react"
-import { useQueryClient } from "@tanstack/react-query"
 import {
   useHyperliquidBalance,
   useHyperliquidPositions,
   useHyperliquidLeverageLimits,
-  useBudgetPreference,
-  useSaveBudgetPreference,
   useRebalanceHyperliquidPositions,
-  refreshAllData,
   type OrderSide,
-  type OrderStatus,
-} from "@/hooks/useApi"
-import { useNetwork } from "@/hooks/useNetwork"
+  type OrderResult,
+} from "@/hooks/useTrading"
 
 export const STORAGE_KEY = "portfolio-allocation-state"
 export const MIN_USD = 11
 
 export type AllocationStatus =
-  | OrderStatus["status"]
+  | OrderResult["status"]
   | "idle"
   | "untouched"
   | "deleted"
@@ -68,19 +63,13 @@ const getStoredPortfolio = (): StoredPortfolioState | null => {
 }
 
 export const usePortfolioState = () => {
-  const { setIsNetworkSwitching } = useNetwork()
-  const queryClient = useQueryClient()
-
-  // Server data queries
+  // Exchange data queries
   const { data: balanceData } = useHyperliquidBalance()
   const { data: positionsData, isLoading: isPositionsLoading } =
     useHyperliquidPositions()
   const { data: leverageLimitsData } = useHyperliquidLeverageLimits()
-  const { data: budgetPreferenceData, isLoading: isBudgetPreferenceLoading } =
-    useBudgetPreference()
 
   // Mutations
-  const { mutate: saveBudgetPreference } = useSaveBudgetPreference()
   const rebalancePositionsMutation = useRebalanceHyperliquidPositions()
 
   const [storedDataSnapshot] = useState(() => getStoredPortfolio())
@@ -114,22 +103,6 @@ export const usePortfolioState = () => {
   const [positionsLoadedFromExchange, setPositionsLoadedFromExchange] =
     useState(() => hasStoredTokens)
   const lastSufficientBudgetRef = useRef(0)
-
-  const budgetSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
-    null,
-  )
-
-  const debouncedSaveBudgetPreference = useCallback(
-    (newBudget: number) => {
-      if (budgetSaveTimeoutRef.current) {
-        clearTimeout(budgetSaveTimeoutRef.current)
-      }
-      budgetSaveTimeoutRef.current = setTimeout(() => {
-        saveBudgetPreference({ budget: newBudget })
-      }, 3000)
-    },
-    [saveBudgetPreference],
-  )
 
   const persistStateToLocalStorage = useCallback(
     (budgetVal: number, tokens: TokenAllocation[]) => {
@@ -172,9 +145,8 @@ export const usePortfolioState = () => {
     (newBudget: number) => {
       setBudget(newBudget)
       persistStateToLocalStorage(newBudget, latestSelectedTokensRef.current)
-      debouncedSaveBudgetPreference(newBudget)
     },
-    [persistStateToLocalStorage, debouncedSaveBudgetPreference],
+    [persistStateToLocalStorage],
   )
 
   useEffect(() => {
@@ -201,32 +173,22 @@ export const usePortfolioState = () => {
       if (loadedTokens.length > 0) {
         setSelectedTokens(loadedTokens)
         setInitialPortfolio(loadedTokens)
-        const totalSpent = positionsData.total_notional
+        const totalSpent = positionsData.totalNotional
         if (totalSpent > 0) {
           setBudget(totalSpent)
           setBudgetInput(totalSpent.toString())
           setIsBudgetInitialized(true)
-          saveBudgetPreference({ budget: totalSpent })
         }
       }
       setPositionsLoadedFromExchange(true)
       return
     }
 
-    const shouldInitializeBudgetFromServer =
-      !isBudgetInitialized && positionsLoadedFromExchange
-    if (shouldInitializeBudgetFromServer) {
-      if (
-        !isBudgetPreferenceLoading &&
-        typeof budgetPreferenceData?.budget === "number" &&
-        budgetPreferenceData.budget > 0
-      ) {
-        setBudget(budgetPreferenceData.budget)
-        setBudgetInput(budgetPreferenceData.budget.toString())
-        setIsBudgetInitialized(true)
-      } else if (typeof balanceData?.perp_usdc_balance === "number") {
-        setBudget(balanceData.perp_usdc_balance)
-        setBudgetInput(balanceData.perp_usdc_balance.toString())
+    // Initialize budget from balance if not set from positions
+    if (!isBudgetInitialized && positionsLoadedFromExchange) {
+      if (typeof balanceData === "number") {
+        setBudget(balanceData)
+        setBudgetInput(balanceData.toString())
         setIsBudgetInitialized(true)
       }
     }
@@ -234,11 +196,8 @@ export const usePortfolioState = () => {
     positionsData,
     isPositionsLoading,
     balanceData,
-    budgetPreferenceData,
     isBudgetInitialized,
-    isBudgetPreferenceLoading,
     positionsLoadedFromExchange,
-    saveBudgetPreference,
   ])
 
   const tokensWithComputedStatus = useMemo(() => {
@@ -296,7 +255,7 @@ export const usePortfolioState = () => {
     activeTokens.length > 0 &&
     budgetIsPositive &&
     requiredBudgetForTokens > budget
-  const maxBudget = (balanceData?.perp_usdc_balance ?? 0) * 5
+  const maxBudget = (balanceData ?? 0) * 5
 
   const budgetForUi = useMemo(() => {
     const isSufficientBudget = budget > 0 && budget >= requiredBudgetForTokens
@@ -363,9 +322,9 @@ export const usePortfolioState = () => {
 
   const leverageLimitsMap = useMemo(() => {
     const map: Record<string, number> = {}
-    if (!leverageLimitsData?.data) return map
-    for (const item of leverageLimitsData.data) {
-      map[item.symbol] = item.max_leverage
+    if (!leverageLimitsData) return map
+    for (const item of leverageLimitsData) {
+      map[item.symbol] = item.maxLeverage
     }
     return map
   }, [leverageLimitsData])
@@ -674,20 +633,6 @@ export const usePortfolioState = () => {
           .filter((t): t is TokenAllocation => t !== null)
 
         setSelectedTokensAndPersist(updatedTokens)
-
-        const allFilled = data.orders.every(order => order.status === "filled")
-        const hasFailures = data.orders.some(order => order.status === "failed")
-
-        if (allFilled && !hasFailures) {
-          setIsNetworkSwitching(true)
-          refreshAllData(queryClient)
-            .catch((error: unknown) => {
-              console.error("Failed to refresh after positions filled:", error)
-            })
-            .finally(() => {
-              setIsNetworkSwitching(false)
-            })
-        }
       },
       onError: error => {
         const symbolMatch = error.message.match(/([A-Z0-9-]+\/[A-Z]+:[A-Z]+)/)
@@ -713,8 +658,6 @@ export const usePortfolioState = () => {
     derivedTotalPercent,
     hasPendingDeletions,
     rebalancePositionsMutation,
-    setIsNetworkSwitching,
-    queryClient,
     setSelectedTokensAndPersist,
   ])
 

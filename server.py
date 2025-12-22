@@ -6,8 +6,7 @@ import sys
 from collections.abc import Iterator
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from threading import Lock
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any
 
 import numpy as np
 import pandas as pd
@@ -18,8 +17,6 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from backtest import PipelineRunMode
-from hyperliquid.main import Position, Trader
-from hyperliquid.settings import UserSettings
 from yang.util import Timeframe, get_spark
 
 app = FastAPI()
@@ -141,56 +138,6 @@ class DateRange(BaseModel):
     end_date: str
 
 
-class PositionPayload(BaseModel):
-    symbol: str
-    percentage: float
-    side: Literal["buy", "sell"]
-    leverage: int
-    status: Literal["untouched", "modified", "deleted", "idle"]
-
-
-class OpenPositionsPayload(BaseModel):
-    budget: float
-    positions: list[PositionPayload]
-
-
-class LeverageInfo(BaseModel):
-    symbol: str
-    max_leverage: float
-
-
-class OrderStatusResponse(BaseModel):
-    symbol: str
-    side: str
-    percentage: float
-    status: str
-    message: str | None = None
-
-
-_trader_lock = Lock()
-_trader_instance: Trader | None = None
-
-
-def get_trader() -> Trader:
-    global _trader_instance  # noqa: PLW0603
-    with _trader_lock:
-        if _trader_instance is None:
-            settings = UserSettings()
-            _trader_instance = Trader(settings)
-        return _trader_instance
-
-
-def reload_trader() -> None:
-    """Reload trader instance with new settings."""
-    global _trader_instance  # noqa: PLW0603
-    with _trader_lock:
-        _trader_instance = None
-        # Reload dotenv
-        from dotenv import load_dotenv  # type: ignore[import]
-
-        load_dotenv(override=True)
-
-
 @app.get("/api/date-range")
 async def get_date_range(
     timeframe: Annotated[Timeframe, Query(enum=TIME_FRAMES)] = "1h",
@@ -207,63 +154,11 @@ async def get_date_range(
     return {"min_date": date_range["min_date"], "max_date": date_range["max_date"]}
 
 
-@app.get("/api/hyperliquid/tickers")
-async def get_perp_tickers() -> dict[str, Any]:
-    try:
-        trader = get_trader()
-        return {"data": trader.list_perp_tickers()}
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-
-@app.get("/api/hyperliquid/balance")
-async def get_hyperliquid_balance() -> dict[str, Any]:
-    try:
-        trader = get_trader()
-        return {"perp_usdc_balance": trader.get_available_budget()}
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-
-@app.get("/api/hyperliquid/positions")
-async def get_hyperliquid_positions() -> dict[str, Any]:
-    try:
-        trader = get_trader()
-        positions = trader.get_current_positions()
-        # Calculate total notional value
-        total_notional = sum(pos["notional"] for pos in positions)
-        # Add percentage for each position
-        for pos in positions:
-            pos["percentage"] = (
-                (pos["notional"] / total_notional * 100) if total_notional > 0 else 0.0
-            )
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-    else:
-        return {"positions": positions, "total_notional": total_notional}
-
-
-@app.get("/api/hyperliquid/leverage-limits")
-async def get_hyperliquid_leverage_limits() -> dict[str, Any]:
-    """Return max leverage limits for all perpetual symbols."""
-    try:
-        trader = get_trader()
-        data = [LeverageInfo(**item).model_dump() for item in trader.get_perp_max_leverage()]
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-    else:
-        return {"data": data}
-
-
 BUDGET_PREFERENCE_FILE = Path("data/budget_preference.json")
 
 
 class BudgetPreferencePayload(BaseModel):
     budget: float
-
-
-class NetworkSettingsPayload(BaseModel):
-    is_testnet: bool
 
 
 @app.get("/api/hyperliquid/budget-preference")
@@ -294,65 +189,6 @@ async def save_budget_preference(payload: BudgetPreferencePayload) -> dict[str, 
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     else:
         return {"success": True}
-
-
-@app.post("/api/hyperliquid/open_positions")
-async def open_hyperliquid_positions(payload: OpenPositionsPayload) -> dict[str, Any]:
-    """Open positions on Hyperliquid based on the provided allocation."""
-    if payload.budget <= 0:
-        raise HTTPException(status_code=400, detail="Budget must be positive")
-    if not payload.positions:
-        raise HTTPException(status_code=400, detail="At least one position is required")
-
-    try:
-        trader = get_trader()
-        parsed_positions = [
-            Position(
-                symbol=item.symbol,
-                percentage=item.percentage,
-                side=item.side,
-                leverage=item.leverage,
-                status=item.status,
-            )
-            for item in payload.positions
-        ]
-        order_results = trader.open_positions(parsed_positions, payload.budget)
-        allowed_fields = {"symbol", "side", "percentage", "status", "message"}
-        response = [
-            OrderStatusResponse(
-                **{field: result.get(field) for field in allowed_fields}  # type: ignore[arg-type]
-            )
-            for result in order_results
-        ]
-        return {"orders": [resp.model_dump() for resp in response]}
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-
-@app.post("/api/hyperliquid/rebalance_positions")
-async def rebalance_hyperliquid_positions(payload: OpenPositionsPayload) -> dict[str, Any]:
-    if payload.budget <= 0:
-        raise HTTPException(status_code=400, detail="Budget must be positive")
-
-    try:
-        trader = get_trader()
-        parsed_positions = [
-            Position(
-                symbol=item.symbol,
-                percentage=item.percentage,
-                side=item.side,
-                leverage=item.leverage,
-                status=item.status,
-            )
-            for item in payload.positions
-        ]
-        order_results = trader.rebalance_positions(parsed_positions, payload.budget)
-        response = [OrderStatusResponse(**result) for result in order_results]
-        return {"orders": [resp.model_dump() for resp in response]}
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.post("/api/data")
@@ -507,44 +343,6 @@ def _run_backtest_script(mode: PipelineRunMode) -> Iterator[str]:
 def reload_data_stream(params: BacktestRequest) -> StreamingResponse:
     """Stream logs while running backtest.py"""
     return StreamingResponse(_run_backtest_script(params.mode), media_type="text/plain")
-
-
-@app.get("/api/hyperliquid/wallet-settings")
-async def get_wallet_settings() -> dict[str, Any]:
-    """Get current wallet settings (public key and testnet/mainnet status)."""
-    try:
-        settings = UserSettings()
-        is_testnet = os.getenv("PROD", "").lower() != "true"
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-    else:
-        return {
-            "public_key": settings.public_key,
-            "is_testnet": is_testnet,
-        }
-
-
-@app.post("/api/hyperliquid/network")
-async def switch_network(payload: NetworkSettingsPayload) -> dict[str, Any]:
-    """Switch between testnet and mainnet by setting PROD environment variable."""
-    try:
-        # Set PROD env var (PROD=true means mainnet, PROD=false/unset means testnet)
-        os.environ["PROD"] = "false" if payload.is_testnet else "true"
-
-        # Reload trader instance to pick up the new network
-        reload_trader()
-
-        is_testnet_after = os.getenv("PROD", "").lower() != "true"
-        logger.info(
-            "Network switched. is_testnet=%s, PROD=%s",
-            is_testnet_after,
-            os.getenv("PROD", "not set"),
-        )
-    except Exception as exc:  # noqa: BLE001
-        logger.exception("Error switching network")
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-    else:
-        return {"success": True, "is_testnet": is_testnet_after}
 
 
 if __name__ == "__main__":

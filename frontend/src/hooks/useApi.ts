@@ -1,9 +1,4 @@
-import {
-  QueryClient,
-  useMutation,
-  useQuery,
-  useQueryClient,
-} from "@tanstack/react-query"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import type { Timeframe } from "@/components/ui/timeframe-select"
 
 export type TradingData = {
@@ -34,50 +29,6 @@ interface ApiError {
   detail?: string
 }
 
-/**
- * Refresh all data in the application.
- * Invalidates and refetches all queries to ensure UI is up-to-date.
- */
-export const refreshAllData = async (queryClient: QueryClient) => {
-  // First, invalidate and refetch wallet settings
-  await queryClient.invalidateQueries({
-    queryKey: ["hyperliquid", "wallet-settings"],
-  })
-  await queryClient.refetchQueries({
-    queryKey: ["hyperliquid", "wallet-settings"],
-  })
-
-  // Force refetch critical queries
-  await Promise.all([
-    queryClient.refetchQueries({
-      queryKey: ["hyperliquid", "positions"],
-      exact: false,
-    }),
-    queryClient.refetchQueries({
-      queryKey: ["hyperliquid", "balance"],
-      exact: false,
-    }),
-    queryClient.refetchQueries({
-      queryKey: ["hyperliquid", "tickers"],
-      exact: false,
-    }),
-    queryClient.refetchQueries({
-      queryKey: ["hyperliquid", "budget-preference"],
-      exact: false,
-    }),
-  ])
-
-  // Invalidate other queries in parallel (they'll refetch when components need them)
-  await Promise.all([
-    queryClient.invalidateQueries({ queryKey: ["analysisData"] }),
-    queryClient.invalidateQueries({ queryKey: ["tokenData"] }),
-    queryClient.invalidateQueries({ queryKey: ["dateRange"] }),
-    queryClient.invalidateQueries({ queryKey: ["hyperliquid"] }),
-  ])
-}
-
-export type OrderSide = "buy" | "sell"
-
 export interface DateRange {
   min_date: string
   max_date: string
@@ -88,25 +39,6 @@ export interface AnalysisDataParams {
   startDate: string
   endDate: string
   timeframe: Timeframe
-}
-
-export interface OpenPositionsParams {
-  budget: number
-  positions: Array<{
-    symbol: string
-    percentage: number
-    side: OrderSide
-    leverage: number
-    status: "untouched" | "modified" | "idle" | "deleted" | "working"
-  }>
-}
-
-export interface OrderStatus {
-  symbol: string
-  side: OrderSide
-  percentage: number
-  status: "working" | "filled" | "failed"
-  message?: string | null
 }
 
 export const useDateRange = (timeframe: Timeframe) => {
@@ -230,7 +162,6 @@ export const useReloadData = () => {
           const readResult = await reader.read()
           done = readResult.done
           if (readResult.value) {
-            // Log streaming output for debugging
             // eslint-disable-next-line no-console
             console.log(decoder.decode(readResult.value, { stream: true }))
           }
@@ -257,122 +188,6 @@ export const useStopReload = () => {
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${String(response.status)}`)
       }
-    },
-  })
-}
-
-export const useHyperliquidTickers = () => {
-  return useQuery<{ data: string[] }>({
-    queryKey: ["hyperliquid", "tickers"],
-    queryFn: async () => {
-      const response = await fetch("/api/hyperliquid/tickers")
-      if (!response.ok) {
-        const errorData = (await response.json().catch(() => ({}))) as ApiError
-        throw new Error(errorData.detail ?? "Unable to fetch tickers")
-      }
-      return response.json() as Promise<{ data: string[] }>
-    },
-  })
-}
-
-export const useHyperliquidBalance = () => {
-  return useQuery<{ perp_usdc_balance: number }>({
-    queryKey: ["hyperliquid", "balance"],
-    queryFn: async () => {
-      const response = await fetch("/api/hyperliquid/balance")
-      if (!response.ok) {
-        const errorData = (await response.json().catch(() => ({}))) as ApiError
-        throw new Error(errorData.detail ?? "Unable to fetch balance")
-      }
-      return response.json() as Promise<{ perp_usdc_balance: number }>
-    },
-  })
-}
-
-export const useOpenHyperliquidPositions = () => {
-  return useMutation<{ orders: OrderStatus[] }, Error, OpenPositionsParams>({
-    mutationFn: async payload => {
-      const response = await fetch("/api/hyperliquid/open_positions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(payload),
-      })
-
-      if (!response.ok) {
-        const errorData = (await response.json().catch(() => ({}))) as ApiError
-        throw new Error(errorData.detail ?? "Unable to open positions")
-      }
-
-      return response.json() as Promise<{ orders: OrderStatus[] }>
-    },
-  })
-}
-
-export const useRebalanceHyperliquidPositions = () => {
-  return useMutation<{ orders: OrderStatus[] }, Error, OpenPositionsParams>({
-    mutationFn: async payload => {
-      const response = await fetch("/api/hyperliquid/rebalance_positions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(payload),
-      })
-
-      if (!response.ok) {
-        const errorData = (await response.json().catch(() => ({}))) as ApiError
-        throw new Error(errorData.detail ?? "Unable to rebalance positions")
-      }
-
-      return response.json() as Promise<{ orders: OrderStatus[] }>
-    },
-  })
-}
-
-export interface CurrentPosition {
-  symbol: string
-  side: OrderSide
-  notional: number
-  entryPrice: number
-  unrealizedPnl: number
-  percentage: number
-  leverage: number
-}
-
-export interface LeverageLimit {
-  symbol: string
-  max_leverage: number
-}
-
-export const useHyperliquidPositions = () => {
-  return useQuery<{ positions: CurrentPosition[]; total_notional: number }>({
-    queryKey: ["hyperliquid", "positions"],
-    queryFn: async () => {
-      const response = await fetch("/api/hyperliquid/positions")
-      if (!response.ok) {
-        const errorData = (await response.json().catch(() => ({}))) as ApiError
-        throw new Error(errorData.detail ?? "Unable to fetch positions")
-      }
-      return response.json() as Promise<{
-        positions: CurrentPosition[]
-        total_notional: number
-      }>
-    },
-  })
-}
-
-export const useHyperliquidLeverageLimits = () => {
-  return useQuery<{ data: LeverageLimit[] }>({
-    queryKey: ["hyperliquid", "leverage-limits"],
-    queryFn: async () => {
-      const response = await fetch("/api/hyperliquid/leverage-limits")
-      if (!response.ok) {
-        const errorData = (await response.json().catch(() => ({}))) as ApiError
-        throw new Error(errorData.detail ?? "Unable to fetch leverage limits")
-      }
-      return response.json() as Promise<{ data: LeverageLimit[] }>
     },
   })
 }
@@ -406,45 +221,6 @@ export const useSaveBudgetPreference = () => {
         const errorData = (await response.json().catch(() => ({}))) as ApiError
         throw new Error(errorData.detail ?? "Unable to save budget preference")
       }
-    },
-  })
-}
-
-export interface WalletSettings {
-  public_key: string
-  is_testnet: boolean
-}
-
-export const useWalletSettings = () => {
-  return useQuery<WalletSettings>({
-    queryKey: ["hyperliquid", "wallet-settings"],
-    queryFn: async () => {
-      const response = await fetch("/api/hyperliquid/wallet-settings")
-      if (!response.ok) {
-        const errorData = (await response.json().catch(() => ({}))) as ApiError
-        throw new Error(errorData.detail ?? "Unable to fetch wallet settings")
-      }
-      return response.json() as Promise<WalletSettings>
-    },
-  })
-}
-
-export const useSwitchNetwork = () => {
-  return useMutation<{ is_testnet: boolean }, Error, { is_testnet: boolean }>({
-    mutationFn: async payload => {
-      const response = await fetch("/api/hyperliquid/network", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(payload),
-      })
-
-      if (!response.ok) {
-        const errorData = (await response.json().catch(() => ({}))) as ApiError
-        throw new Error(errorData.detail ?? "Unable to switch network")
-      }
-      return response.json() as Promise<{ is_testnet: boolean }>
     },
   })
 }

@@ -31,6 +31,42 @@ const useAnalysisDataMock = vi.hoisted(() =>
   })),
 )
 
+const useBudgetPreferenceMock = vi.hoisted(() =>
+  vi.fn(() => ({
+    data: { budget: 0 },
+    isLoading: false,
+  })),
+)
+
+// Mock CCXT to prevent initialization errors
+vi.mock("ccxt", () => ({
+  default: {
+    hyperliquid: class MockHyperliquid {
+      setSandboxMode = vi.fn()
+      fetchBalance = vi.fn()
+      fetchPositions = vi.fn()
+      fetchTickers = vi.fn()
+      fetchMarkets = vi.fn()
+      createOrder = vi.fn()
+    },
+  },
+}))
+
+// Mock the trading hooks
+vi.mock("@/hooks/useTrading", () => ({
+  useHyperliquidBalance: vi.fn(() => ({ data: null, isLoading: true })),
+  useHyperliquidPositions: vi.fn(() => ({ data: null, isLoading: true })),
+  useHyperliquidTickers: vi.fn(() => ({ data: null, isLoading: true })),
+  useHyperliquidLeverageLimits: vi.fn(() => ({ data: null, isLoading: true })),
+  useRebalanceHyperliquidPositions: vi.fn(() => ({
+    mutate: vi.fn(),
+    isPending: false,
+  })),
+  useWalletSettings: vi.fn(() => ({ data: null, isLoading: true })),
+  useSwitchNetwork: vi.fn(() => ({ mutate: vi.fn(), isPending: false })),
+  refreshClientData: vi.fn(),
+}))
+
 // Mock the API hooks
 vi.mock("@/hooks/useApi", () => ({
   useDateRange: vi.fn(() => ({
@@ -44,6 +80,10 @@ vi.mock("@/hooks/useApi", () => ({
     isPending: false,
   })),
   useStopReload: vi.fn(() => ({
+    mutate: vi.fn(),
+  })),
+  useBudgetPreference: useBudgetPreferenceMock,
+  useSaveBudgetPreference: vi.fn(() => ({
     mutate: vi.fn(),
   })),
 }))
@@ -65,7 +105,7 @@ vi.mock("./components/ui/data-table", () => ({
   DataTable: () => <div data-testid="data-table">DataTable</div>,
 }))
 
-const createWrapper = () => {
+const createWrapper = (initialRoute = "/") => {
   const queryClient = new QueryClient({
     defaultOptions: {
       queries: {
@@ -77,7 +117,9 @@ const createWrapper = () => {
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
         <NetworkProvider>
-          <MemoryRouter>{children}</MemoryRouter>
+          <MemoryRouter initialEntries={[initialRoute]}>
+            {children}
+          </MemoryRouter>
         </NetworkProvider>
       </ThemeProvider>
     </QueryClientProvider>
@@ -420,6 +462,25 @@ describe("App", () => {
         endDate: "",
         timeframe: "1h",
       })
+    })
+  })
+
+  describe("route isolation", () => {
+    it("does not call backend API hooks on /portfolio route", async () => {
+      const useApiModule = await import("@/hooks/useApi")
+      const useDateRangeMock = vi.mocked(useApiModule.useDateRange)
+
+      // Reset mocks
+      useDateRangeMock.mockClear()
+      useAnalysisDataMock.mockClear()
+      useBudgetPreferenceMock.mockClear()
+
+      render(<App />, { wrapper: createWrapper("/portfolio") })
+
+      // Portfolio page should not trigger backend API calls
+      expect(useDateRangeMock).not.toHaveBeenCalled()
+      expect(useAnalysisDataMock).not.toHaveBeenCalled()
+      expect(useBudgetPreferenceMock).not.toHaveBeenCalled()
     })
   })
 })

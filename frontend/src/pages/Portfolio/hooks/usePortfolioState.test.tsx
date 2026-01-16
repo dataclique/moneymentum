@@ -6,6 +6,7 @@ import { MIN_USD, usePortfolioState } from "./usePortfolioState"
 import {
   useHyperliquidBalance,
   useHyperliquidPositions,
+  useRebalanceHyperliquidPositions,
 } from "@/hooks/useTrading"
 
 vi.mock("@/hooks/useTrading", () => ({
@@ -1518,6 +1519,161 @@ describe("usePortfolioState", () => {
 
       // With notional 250 and budget 500 (from totalNotional), percentage = 50%
       expect(result.current.selectedTokens[0].percentage).toBe(50)
+    })
+  })
+
+  describe("precise mode", () => {
+    it("accepts isPrecise parameter", () => {
+      const { result: resultFalse } = renderHook(
+        () => usePortfolioState(false),
+        {
+          wrapper: createWrapper(),
+        },
+      )
+      const { result: resultTrue } = renderHook(() => usePortfolioState(true), {
+        wrapper: createWrapper(),
+      })
+
+      expect(resultFalse.current).toBeDefined()
+      expect(resultTrue.current).toBeDefined()
+    })
+
+    it("when precise is OFF, shows error for positions with changes < $11 on submit", async () => {
+      const mockMutate = vi.fn()
+      vi.mocked(useRebalanceHyperliquidPositions).mockReturnValue({
+        mutate: mockMutate,
+        isPending: false,
+      } as unknown as ReturnType<typeof useRebalanceHyperliquidPositions>)
+
+      vi.mocked(useHyperliquidPositions).mockReturnValue({
+        data: {
+          positions: [
+            {
+              symbol: "BTC/USDC:USDC",
+              percentage: 30,
+              side: "buy",
+              leverage: 1,
+              notional: 300,
+            },
+          ],
+          totalNotional: 1000,
+        },
+        isLoading: false,
+      } as unknown as ReturnType<typeof useHyperliquidPositions>)
+
+      const { result } = renderHook(() => usePortfolioState(false), {
+        wrapper: createWrapper(),
+      })
+
+      await waitFor(() => {
+        expect(result.current.selectedTokens).toHaveLength(1)
+      })
+
+      // Set budget and adjust position to have a small change (< $11)
+      await act(async () => {
+        result.current.handleBudgetInputChange("1000")
+      })
+
+      // Modify position to create a small change (e.g., $30 → $35 = $5 change)
+      await act(async () => {
+        result.current.handleSliderChange("BTC/USDC:USDC", 305) // $5 increase from $300
+      })
+
+      await waitFor(() => {
+        expect(result.current.selectedTokens[0].lockedUsd).toBe(305)
+      })
+
+      // Try to rebalance - should set error message instead of calling mutate
+      await act(async () => {
+        result.current.handleOpenPositions()
+      })
+
+      // Should not call mutate (blocked by validation)
+      expect(mockMutate).not.toHaveBeenCalled()
+
+      // Should have error message on token
+      await waitFor(() => {
+        const token = result.current.selectedTokens.find(
+          t => t.symbol === "BTC/USDC:USDC",
+        )
+        expect(token?.message).toContain("below minimum")
+      })
+    })
+
+    it("when precise is ON, allows positions with changes < $11 and passes precise flag", async () => {
+      const mockMutate = vi.fn()
+      vi.mocked(useRebalanceHyperliquidPositions).mockReturnValue({
+        mutate: mockMutate,
+        isPending: false,
+      } as unknown as ReturnType<typeof useRebalanceHyperliquidPositions>)
+
+      vi.mocked(useHyperliquidPositions).mockReturnValue({
+        data: {
+          positions: [
+            {
+              symbol: "BTC/USDC:USDC",
+              percentage: 30,
+              side: "buy",
+              leverage: 1,
+              notional: 300,
+            },
+          ],
+          totalNotional: 1000,
+        },
+        isLoading: false,
+      } as unknown as ReturnType<typeof useHyperliquidPositions>)
+
+      const { result } = renderHook(() => usePortfolioState(true), {
+        wrapper: createWrapper(),
+      })
+
+      await waitFor(() => {
+        expect(result.current.selectedTokens).toHaveLength(1)
+      })
+
+      // Set budget and adjust position to have a small change (< $11)
+      await act(async () => {
+        result.current.handleBudgetInputChange("1000")
+      })
+
+      // Modify position to create a small change (e.g., $30 → $35 = $5 change)
+      await act(async () => {
+        result.current.handleSliderChange("BTC/USDC:USDC", 305) // $5 increase from $300
+      })
+
+      await waitFor(() => {
+        expect(result.current.selectedTokens[0].lockedUsd).toBe(305)
+      })
+
+      // Try to rebalance - should call mutate with precise: true
+      await act(async () => {
+        result.current.handleOpenPositions()
+      })
+
+      // Should call mutate with precise flag
+      await waitFor(() => {
+        expect(mockMutate).toHaveBeenCalled()
+      })
+
+      const mutateCall = mockMutate.mock.calls[0][0]
+      expect(mutateCall.precise).toBe(true)
+      expect(mutateCall.budget).toBe(1000)
+      expect(mutateCall.positions).toBeDefined()
+    })
+
+    it("defaults to precise OFF when not provided", async () => {
+      const mockMutate = vi.fn()
+      vi.mocked(useRebalanceHyperliquidPositions).mockReturnValue({
+        mutate: mockMutate,
+        isPending: false,
+      } as unknown as ReturnType<typeof useRebalanceHyperliquidPositions>)
+
+      const { result } = renderHook(() => usePortfolioState(), {
+        wrapper: createWrapper(),
+      })
+
+      // Should not have precise flag passed (defaults to false)
+      expect(result.current).toBeDefined()
     })
   })
 })

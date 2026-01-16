@@ -11,6 +11,7 @@ import { useWallet } from "@/hooks/useWallet"
 
 const STORAGE_KEY_PREFIX = "portfolio-allocation-state"
 export const MIN_USD = 11
+const MIN_CHANGE_DELTA = 11.0 // Minimum change in USD to trigger a rebalance
 
 export type AllocationStatus =
   | OrderResult["status"]
@@ -69,7 +70,7 @@ const getStoredPortfolio = (
   }
 }
 
-export const usePortfolioState = () => {
+export const usePortfolioState = (isPrecise: boolean = false) => {
   const { networkMode } = useWallet()
 
   // Exchange data queries
@@ -350,8 +351,6 @@ export const usePortfolioState = () => {
   const minPercentOfBudget =
     budgetForUi > 0 ? Math.min(100, (MIN_USD / budgetForUi) * 100) : 0
   const minPercentFloor = budgetForUi >= MIN_USD ? minPercentOfBudget : 0
-  const hasBlockingBudgetIssue =
-    budgetBelowMinimum || insufficientBudgetForTokens
 
   const tokensWithDerivedPercentages = useMemo(() => {
     if (budgetForUi <= 0) return tokensWithComputedStatus
@@ -364,6 +363,8 @@ export const usePortfolioState = () => {
           ? token.notional
           : token.lockedUsd
 
+      let updatedToken = { ...token }
+
       if (referenceUsd !== undefined && referenceUsd >= 0) {
         const derivedPercent = parseFloat(
           ((referenceUsd / budgetForUi) * 100).toFixed(2),
@@ -372,10 +373,11 @@ export const usePortfolioState = () => {
           Number.isFinite(derivedPercent) &&
           Math.abs(derivedPercent - token.percentage) > 0.01
         ) {
-          return { ...token, percentage: derivedPercent }
+          updatedToken = { ...updatedToken, percentage: derivedPercent }
         }
       }
-      return token
+
+      return updatedToken
     })
   }, [tokensWithComputedStatus, budgetForUi])
 
@@ -398,6 +400,25 @@ export const usePortfolioState = () => {
     return map
   }, [leverageLimitsData])
 
+  const tokensBelowMinimum = useMemo(() => {
+    if (budgetForUi <= 0) return []
+    return derivedActiveTokens
+      .filter(token => {
+        const usdValue = getTokenUsdAllocation(token, budgetForUi)
+        return usdValue > 0 && usdValue < MIN_USD
+      })
+      .map(token => ({
+        symbol: token.symbol,
+        usdValue: getTokenUsdAllocation(token, budgetForUi),
+      }))
+  }, [derivedActiveTokens, budgetForUi])
+
+  const hasPositionsBelowMinimum = tokensBelowMinimum.length > 0
+  const hasBlockingBudgetIssue =
+    budgetBelowMinimum ||
+    insufficientBudgetForTokens ||
+    hasPositionsBelowMinimum
+
   const blockingReasons: string[] = []
   if (budgetBelowMinimum) {
     blockingReasons.push(
@@ -407,6 +428,14 @@ export const usePortfolioState = () => {
   if (insufficientBudgetForTokens) {
     blockingReasons.push(
       `Delete some tokens or make bigger budget (need at least $${String(requiredBudgetForTokens)}).`,
+    )
+  }
+  if (hasPositionsBelowMinimum) {
+    const tokensList = tokensBelowMinimum
+      .map(t => `${t.symbol} ($${t.usdValue.toFixed(2)})`)
+      .join(", ")
+    blockingReasons.push(
+      `Each position must be at least $${String(MIN_USD)}. Positions below minimum: ${tokensList}`,
     )
   }
   const derivedTotalPercentExceeds100 = derivedTotalPercent > 100
@@ -659,6 +688,76 @@ export const usePortfolioState = () => {
       return
     }
 
+    // Check for positions with changes less than $11 (only if precise is off)
+    if (!isPrecise) {
+      const tokensWithSmallChangesOnSubmit =
+        tokensWithDerivedPercentages.filter(token => {
+          // Only check tokens that would be modified (not deleted, not untouched)
+          if (token.status === "deleted" || token.status === "untouched") {
+            return false
+          }
+
+          const targetValue = getTokenUsdAllocation(token, budgetForUi)
+          const initialToken = initialPortfolio.find(
+            it => it.symbol === token.symbol,
+          )
+
+          if (!initialToken) {
+            // New position - check if target value is at least MIN_CHANGE_DELTA
+            return targetValue > 0 && targetValue < MIN_CHANGE_DELTA
+          }
+
+          // Existing position - check if change delta is too small
+          const currentValue = getTokenUsdAllocation(initialToken, budgetForUi)
+          const delta = Math.abs(targetValue - currentValue)
+
+          // Also check if side or leverage changed (those would require action)
+          const sideChanged = token.side !== initialToken.side
+          const leverageChanged = token.leverage !== initialToken.leverage
+
+          // If side or leverage changed, we need to act regardless of delta
+          if (sideChanged || leverageChanged) {
+            return false
+          }
+
+          // If delta is too small, mark as error
+          return delta > 0 && delta < MIN_CHANGE_DELTA
+        })
+
+      // If there are positions with small changes, set error messages and return
+      if (tokensWithSmallChangesOnSubmit.length > 0) {
+        setSelectedTokensAndPersist(prev =>
+          prev.map(token => {
+            const hasSmallChange = tokensWithSmallChangesOnSubmit.some(
+              t => t.symbol === token.symbol,
+            )
+            if (!hasSmallChange) return token
+
+            const targetValue = getTokenUsdAllocation(token, budgetForUi)
+            const initialToken = initialPortfolio.find(
+              it => it.symbol === token.symbol,
+            )
+            const currentValue = initialToken
+              ? getTokenUsdAllocation(initialToken, budgetForUi)
+              : 0
+            const delta = Math.abs(targetValue - currentValue)
+
+            if (currentValue === 0) {
+              return {
+                ...token,
+                message: `New position value ($${targetValue.toFixed(2)}) is below minimum change of $${MIN_CHANGE_DELTA.toFixed(2)}`,
+              }
+            }
+            return {
+              ...token,
+              message: `Change ($${delta.toFixed(2)}) is below minimum of $${MIN_CHANGE_DELTA.toFixed(2)}`,
+            }
+          }),
+        )
+        return
+      }
+    }
+
     const mapStatusForApi = (
       status: AllocationStatus,
     ): "untouched" | "modified" | "idle" | "deleted" | "working" => {
@@ -668,6 +767,7 @@ export const usePortfolioState = () => {
 
     const payload = {
       budget,
+      precise: isPrecise,
       positions: tokensWithDerivedPercentages.map(token => ({
         symbol: token.symbol,
         side: token.side,
@@ -728,9 +828,12 @@ export const usePortfolioState = () => {
   }, [
     tokensWithDerivedPercentages,
     budget,
+    budgetForUi,
     hasBlockingBudgetIssue,
     derivedTotalPercent,
     hasPendingDeletions,
+    initialPortfolio,
+    isPrecise,
     rebalancePositionsMutation,
     setSelectedTokensAndPersist,
   ])

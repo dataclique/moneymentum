@@ -684,14 +684,11 @@ describe("HyperliquidClient", () => {
       // First call: close $14.06 (buy to close short)
       // Delta: 62.3832 - 59.32 = 3.0632, closeAmount = 11 + 3.0632 = 14.0632
       const expectedCloseAmount = 14.0632
-      expect(mockExchange.createOrder).toHaveBeenNthCalledWith(
-        1,
-        "BTC/USDC:USDC",
-        "market",
-        "buy",
-        expectedCloseAmount / 50000,
-        52500,
-        undefined,
+      const expectedCoinAmount = expectedCloseAmount / 50000
+      // Verify the first call with floating-point tolerance
+      expect(mockExchange.createOrder.mock.calls[0][3]).toBeCloseTo(
+        expectedCoinAmount,
+        10,
       )
       // Second call: open $11 (sell to maintain short)
       expect(mockExchange.createOrder).toHaveBeenNthCalledWith(

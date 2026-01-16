@@ -737,17 +737,18 @@ describe("HyperliquidClient", () => {
         {
           symbol: "BTC/USDC:USDC",
           side: "long",
-          notional: 10, // $10 long
-          contracts: 0.0002,
+          notional: 11, // $11 long (minimum, so closeAmount = 11 >= 11 = true)
+          contracts: 0.00022,
         },
       ])
 
-      // Current: $10, target: $18 (delta = +$8, which is < $11, so precise mode applies)
-      // closeAmount = $11 > current $10, so close entire position and open target
+      // Current: $11, target: $20 (delta = +$9, which is < $11, so precise mode applies)
+      // closeAmount = $11, currentNotionalAbs = $11, so 11 >= 11 = true
+      // This should close the entire $11 position and open the $20 target
       const positions = [
         {
           symbol: "BTC/USDC:USDC",
-          percentage: 0.018, // 1.8% of 1000 = $18
+          percentage: 0.02, // 2% of 1000 = $20
           side: "buy" as const,
           leverage: 1,
           status: "modified" as const,
@@ -758,23 +759,23 @@ describe("HyperliquidClient", () => {
 
       expect(results).toHaveLength(2)
       expect(mockExchange.createOrder).toHaveBeenCalledTimes(2)
-      // First call: close entire $10 position
+      // First call: close entire $11 position
       expect(mockExchange.createOrder).toHaveBeenNthCalledWith(
         1,
         "BTC/USDC:USDC",
         "market",
         "sell",
-        0.0002, // 10 / 50000
+        0.00022, // 11 / 50000
         47500,
         undefined,
       )
-      // Second call: open target $18
+      // Second call: open target $20
       expect(mockExchange.createOrder).toHaveBeenNthCalledWith(
         2,
         "BTC/USDC:USDC",
         "market",
         "buy",
-        0.00036, // 18 / 50000
+        0.0004, // 20 / 50000
         52500,
         undefined,
       )

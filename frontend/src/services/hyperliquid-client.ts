@@ -559,6 +559,7 @@ export class HyperliquidClient {
             if (openResult) {
               results.push(openResult)
             }
+            continue
           } else {
             // Increasing position: close $11, open ($11 + delta)
             // Example: current $30 long, target $35 long, delta = +$5

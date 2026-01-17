@@ -4,6 +4,7 @@ import { twMerge } from "tailwind-merge"
 import MainPage from "./pages/MainPage"
 import TokenPage from "./pages/TokenPage"
 import PortfolioPage from "./pages/Portfolio"
+import PrototypePage from "./pages/Prototype"
 import { ModeToggle } from "./components/ui/mode-toggle"
 import { WalletHeader } from "./components/wallet-header"
 import { useNetwork } from "@/hooks/useNetwork"
@@ -14,6 +15,16 @@ const App = () => {
   const { networkMode } = useWallet()
   const location = useLocation()
   const isPortfolioPage = location.pathname === "/portfolio"
+  const isPrototypePage = location.pathname.startsWith("/prototype")
+
+  // Prototype page has its own full-screen layout
+  if (isPrototypePage) {
+    return (
+      <Routes>
+        <Route path="/prototype/*" element={<PrototypePage />} />
+      </Routes>
+    )
+  }
 
   return (
     <div

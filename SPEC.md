@@ -554,21 +554,28 @@ For each asset and portfolio, compute:
 flowchart LR
     R[Asset Returns] --> REG[Regression]
     F[Factor Returns] --> REG
-    REG --> L[Loadings<br/>βi]
-    REG --> C[Contributions<br/>βi² × σf²]
-    REG --> RS[R²]
-    REG --> RES[Residual<br/>1 - R²]
+    REG --> L[Loadings]
+    REG --> C[Contributions]
+    REG --> RS[R-squared]
+    REG --> RES[Residual]
 ```
+
+Where:
+
+- **Loadings**: $\beta_i$ coefficients
+- **Contributions**: $\beta_i^2 \times \sigma_f^2$
+- **R-squared**: explained variance
+- **Residual**: $1 - R^2$ (idiosyncratic risk)
 
 ### 4.3 Risk Engine
 
 #### VaR/CVaR Methods
 
-| Method      | Description                      | Use Case                               |
-| ----------- | -------------------------------- | -------------------------------------- |
-| Historical  | Percentile of historical returns | Simple, no distribution assumptions    |
-| Parametric  | Assumes normal, uses μ and σ     | Fast, works for normal-ish returns     |
-| Monte Carlo | Simulate using factor model      | Captures fat tails, complex portfolios |
+| Method      | Description                             | Use Case                               |
+| ----------- | --------------------------------------- | -------------------------------------- |
+| Historical  | Percentile of historical returns        | Simple, no distribution assumptions    |
+| Parametric  | Assumes normal, uses $\mu$ and $\sigma$ | Fast, works for normal-ish returns     |
+| Monte Carlo | Simulate using factor model             | Captures fat tails, complex portfolios |
 
 #### Correlation Matrix
 
@@ -580,12 +587,11 @@ flowchart LR
 
 Measures true diversification accounting for correlations:
 
-```
-ENB = (Σ wi)² / Σ wi²  (simplified)
+$$ENB = \frac{(\sum w_i)^2}{\sum w_i^2}$$
 
-or with correlations:
-ENB = 1 / Σᵢ Σⱼ (wi × wj × ρij × σi × σj) / σp²
-```
+With correlations:
+
+$$ENB = \frac{1}{\sum_i \sum_j \frac{w_i \cdot w_j \cdot \rho_{ij} \cdot \sigma_i \cdot \sigma_j}{\sigma_p^2}}$$
 
 #### Stress Testing
 
@@ -609,31 +615,41 @@ flowchart LR
 
 For options, calculate using Black-Scholes:
 
-| Greek     | Definition | Interpretation                  |
-| --------- | ---------- | ------------------------------- |
-| Delta (Δ) | ∂V/∂S      | Price sensitivity to underlying |
-| Gamma (Γ) | ∂²V/∂S²    | Delta sensitivity to underlying |
-| Theta (Θ) | ∂V/∂t      | Time decay per day              |
-| Vega (ν)  | ∂V/∂σ      | Sensitivity to volatility       |
+| Greek | Definition                     | Interpretation                  |
+| ----- | ------------------------------ | ------------------------------- |
+| Delta | $\partial V / \partial S$      | Price sensitivity to underlying |
+| Gamma | $\partial^2 V / \partial S^2$  | Delta sensitivity to underlying |
+| Theta | $\partial V / \partial t$      | Time decay per day              |
+| Vega  | $\partial V / \partial \sigma$ | Sensitivity to volatility       |
 
 #### Aggregation by Underlying
 
 ```mermaid
 flowchart TB
     subgraph BTC["BTC Underlying"]
-        SPOT[BTC Spot<br/>Δ=1.0, Γ=0]
-        PERP[BTC-PERP<br/>Δ=1.0, Γ=0]
-        OPT1[BTC-28MAR-50K-C<br/>Δ=0.45, Γ=0.02]
-        OPT2[BTC-28MAR-45K-P<br/>Δ=-0.30, Γ=0.015]
+        SPOT[BTC Spot]
+        PERP[BTC-PERP]
+        OPT1[BTC Call]
+        OPT2[BTC Put]
     end
 
-    AGG[Aggregated Greeks<br/>Δ=2.15, Γ=0.035<br/>Θ=-25.5, ν=45.2]
+    AGG[Aggregated Greeks]
 
     SPOT --> AGG
     PERP --> AGG
     OPT1 --> AGG
     OPT2 --> AGG
 ```
+
+Example aggregation:
+
+| Instrument      | Delta    | Gamma     |
+| --------------- | -------- | --------- |
+| BTC Spot        | 1.0      | 0         |
+| BTC-PERP        | 1.0      | 0         |
+| BTC-28MAR-50K-C | 0.45     | 0.02      |
+| BTC-28MAR-45K-P | -0.30    | 0.015     |
+| **Aggregated**  | **2.15** | **0.035** |
 
 ---
 
@@ -797,7 +813,7 @@ flowchart LR
     end
 
     AGG[Aggregator]
-    UV[Unified View<br/>BTC: Δ=2.2, $180k]
+    UV[Unified View]
 
     FE_HL --> AGG
     FE_DRV --> AGG

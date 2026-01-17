@@ -850,6 +850,217 @@ describe("HyperliquidClient", () => {
       expect(mockExchange.createOrder).toHaveBeenCalledTimes(1)
       // Should try to close and open normally (delta is large enough)
     })
+
+    it("handles multiple tokens with small changes in precise mode", async () => {
+      client = new HyperliquidClient(mockCredentials, "testnet")
+      mockExchange.fetchPositions.mockResolvedValue([
+        {
+          symbol: "BTC/USDC:USDC",
+          side: "long",
+          notional: 30,
+          contracts: 0.0006,
+        },
+        {
+          symbol: "ETH/USDC:USDC",
+          side: "short",
+          notional: 40,
+          contracts: 0.01,
+        },
+      ])
+      mockExchange.fetchTickers.mockResolvedValue({
+        "BTC/USDC:USDC": { last: 50000 },
+        "ETH/USDC:USDC": { last: 4000 },
+      })
+
+      // BTC: $30 long → $35 long (+$5), ETH: $40 short → $45 short (+$5)
+      const positions = [
+        {
+          symbol: "BTC/USDC:USDC",
+          percentage: 0.035, // $35
+          side: "buy" as const,
+          leverage: 1,
+          status: "modified" as const,
+        },
+        {
+          symbol: "ETH/USDC:USDC",
+          percentage: 0.045, // $45
+          side: "sell" as const,
+          leverage: 1,
+          status: "modified" as const,
+        },
+      ]
+
+      const results = await client.rebalancePositions(positions, 1000, true)
+
+      // Each token should have 2 orders (close $11, open $16)
+      expect(results).toHaveLength(4)
+      expect(mockExchange.createOrder).toHaveBeenCalledTimes(4)
+    })
+
+    it("handles precise mode with leverage change", async () => {
+      client = new HyperliquidClient(mockCredentials, "testnet")
+      mockExchange.fetchPositions.mockResolvedValue([
+        {
+          symbol: "BTC/USDC:USDC",
+          side: "long",
+          notional: 30,
+          contracts: 0.0006,
+        },
+      ])
+
+      // Same position size but different leverage
+      const positions = [
+        {
+          symbol: "BTC/USDC:USDC",
+          percentage: 0.035, // $35 (small change of $5)
+          side: "buy" as const,
+          leverage: 5, // Changed leverage
+          status: "modified" as const,
+        },
+      ]
+
+      const results = await client.rebalancePositions(positions, 1000, true)
+
+      // Should set leverage first
+      expect(mockExchange.setLeverage).toHaveBeenCalledWith(
+        5,
+        "BTC/USDC:USDC",
+        undefined,
+      )
+      // Then apply precise mode for small position change
+      expect(results).toHaveLength(2)
+      expect(mockExchange.createOrder).toHaveBeenCalledTimes(2)
+    })
+
+    it("handles boundary: position exactly $11, target exactly $11 (no change needed)", async () => {
+      client = new HyperliquidClient(mockCredentials, "testnet")
+      mockExchange.fetchPositions.mockResolvedValue([
+        {
+          symbol: "BTC/USDC:USDC",
+          side: "long",
+          notional: 11,
+          contracts: 0.00022,
+        },
+      ])
+
+      // Current: $11, target: $11 (delta = 0)
+      const positions = [
+        {
+          symbol: "BTC/USDC:USDC",
+          percentage: 0.011, // 1.1% of 1000 = $11
+          side: "buy" as const,
+          leverage: 1,
+          status: "modified" as const,
+        },
+      ]
+
+      const results = await client.rebalancePositions(positions, 1000, true)
+
+      // Delta is 0, which is < 1.0, so it should be skipped as negligible
+      expect(results).toHaveLength(1)
+      expect(results[0].message).toBe("No action taken: change is negligible.")
+      expect(mockExchange.createOrder).not.toHaveBeenCalled()
+    })
+
+    it("handles boundary: target exactly $11 for new position", async () => {
+      client = new HyperliquidClient(mockCredentials, "testnet")
+      mockExchange.fetchPositions.mockResolvedValue([])
+
+      // New position with target exactly $11
+      const positions = [
+        {
+          symbol: "BTC/USDC:USDC",
+          percentage: 0.011, // 1.1% of 1000 = $11
+          side: "buy" as const,
+          leverage: 1,
+          status: "idle" as const,
+        },
+      ]
+
+      const results = await client.rebalancePositions(positions, 1000, true)
+
+      expect(results).toHaveLength(1)
+      expect(results[0].status).toBe("filled")
+      expect(mockExchange.createOrder).toHaveBeenCalledTimes(1)
+      expect(mockExchange.createOrder).toHaveBeenCalledWith(
+        "BTC/USDC:USDC",
+        "market",
+        "buy",
+        0.00022, // 11 / 50000
+        52500,
+        undefined,
+      )
+    })
+
+    it("handles error during close phase in precise mode", async () => {
+      client = new HyperliquidClient(mockCredentials, "testnet")
+      mockExchange.fetchPositions.mockResolvedValue([
+        {
+          symbol: "BTC/USDC:USDC",
+          side: "long",
+          notional: 30,
+          contracts: 0.0006,
+        },
+      ])
+      // First order (close) fails, second order (open) should still be attempted
+      mockExchange.createOrder
+        .mockRejectedValueOnce(new Error("Close order failed"))
+        .mockResolvedValueOnce({})
+
+      const positions = [
+        {
+          symbol: "BTC/USDC:USDC",
+          percentage: 0.035, // $35 (small change of $5)
+          side: "buy" as const,
+          leverage: 1,
+          status: "modified" as const,
+        },
+      ]
+
+      const results = await client.rebalancePositions(positions, 1000, true)
+
+      // Should have 2 results: failed close, filled open
+      expect(results).toHaveLength(2)
+      expect(results[0].status).toBe("failed")
+      expect(results[0].message).toBe("Close order failed")
+      expect(results[1].status).toBe("filled")
+      expect(mockExchange.createOrder).toHaveBeenCalledTimes(2)
+    })
+
+    it("handles error during open phase in precise mode", async () => {
+      client = new HyperliquidClient(mockCredentials, "testnet")
+      mockExchange.fetchPositions.mockResolvedValue([
+        {
+          symbol: "BTC/USDC:USDC",
+          side: "long",
+          notional: 30,
+          contracts: 0.0006,
+        },
+      ])
+      // First order (close) succeeds, second order (open) fails
+      mockExchange.createOrder
+        .mockResolvedValueOnce({})
+        .mockRejectedValueOnce(new Error("Open order failed"))
+
+      const positions = [
+        {
+          symbol: "BTC/USDC:USDC",
+          percentage: 0.035, // $35 (small change of $5)
+          side: "buy" as const,
+          leverage: 1,
+          status: "modified" as const,
+        },
+      ]
+
+      const results = await client.rebalancePositions(positions, 1000, true)
+
+      // Should have 2 results: filled close, failed open
+      expect(results).toHaveLength(2)
+      expect(results[0].status).toBe("filled")
+      expect(results[1].status).toBe("failed")
+      expect(results[1].message).toBe("Open order failed")
+      expect(mockExchange.createOrder).toHaveBeenCalledTimes(2)
+    })
   })
 
   describe("getNetworkMode", () => {

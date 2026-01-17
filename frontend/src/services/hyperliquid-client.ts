@@ -435,18 +435,9 @@ export class HyperliquidClient {
 
       // If precise mode is on and change is less than $11, adjust to make it exactly $11
       if (precise && Math.abs(notionalDelta) < MIN_ORDER_VALUE) {
-        console.log(`[PRECISE MODE] ${symbol}:`, {
-          currentValue,
-          targetValue,
-          notionalDelta,
-          currentValueAbs: Math.abs(currentValue),
-          targetValueAbs: Math.abs(targetValue),
-        })
-
         const currentPosition = currentPositions.find(p => p.symbol === symbol)
         if (!currentPosition) {
           // New position - open exactly $11
-          console.log(`[PRECISE MODE] ${symbol}: New position, opening $11`)
           const orderResult = await this.placeOrder(
             symbol,
             price,
@@ -463,12 +454,6 @@ export class HyperliquidClient {
         const currentSide = currentPosition.side
         const targetSide = position.side
         const sidesMatch = currentSide === targetSide
-
-        console.log(`[PRECISE MODE] ${symbol}:`, {
-          currentSide,
-          targetSide,
-          sidesMatch,
-        })
 
         if (!sidesMatch) {
           // Side changed - close entire position and open target
@@ -510,16 +495,6 @@ export class HyperliquidClient {
         // Determine if we're increasing or decreasing based on absolute values
         const isIncreasing = targetNotionalAbs > currentNotionalAbs
 
-        console.log(`[PRECISE MODE] ${symbol}: Same side adjustment`, {
-          currentNotionalAbs,
-          targetNotionalAbs,
-          notionalDelta,
-          currentSide,
-          targetSide,
-          isIncreasing,
-          isShort: currentValue < 0,
-        })
-
         if (isIncreasing) {
           // Increasing position: close $11, open ($11 + delta)
           // Example: current $30 long, target $35 long, delta = +$5
@@ -528,13 +503,6 @@ export class HyperliquidClient {
           const deltaAbs = Math.abs(notionalDelta)
           const closeAmount = MIN_ORDER_VALUE
           const openAmount = MIN_ORDER_VALUE + deltaAbs
-
-          console.log(`[PRECISE MODE] ${symbol}: INCREASING`, {
-            deltaAbs,
-            closeAmount,
-            openAmount,
-            expectedResult: currentNotionalAbs - closeAmount + openAmount,
-          })
 
           // Check if close amount exceeds position size
           if (closeAmount >= currentNotionalAbs) {
@@ -599,19 +567,6 @@ export class HyperliquidClient {
           const closeAmount = MIN_ORDER_VALUE + deltaAbs
           const openAmount = MIN_ORDER_VALUE
 
-          console.log(`[PRECISE MODE] ${symbol}: DECREASING`, {
-            deltaAbs,
-            closeAmount,
-            openAmount,
-            currentNotionalAbs,
-            targetNotionalAbs,
-            willCloseEntirePosition: closeAmount >= currentNotionalAbs,
-            expectedResult:
-              closeAmount >= currentNotionalAbs
-                ? targetNotionalAbs
-                : currentNotionalAbs - closeAmount + openAmount,
-          })
-
           // Check if close amount exceeds position size
           if (closeAmount >= currentNotionalAbs) {
             // Close entire position
@@ -645,14 +600,6 @@ export class HyperliquidClient {
             const closeSide: OrderSide = currentSide === "buy" ? "sell" : "buy"
             const closeNotional =
               closeSide === "buy" ? closeAmount : -closeAmount
-            console.log(`[PRECISE MODE] ${symbol}: Placing DECREASE orders`, {
-              closeSide,
-              closeAmount,
-              closeNotional,
-              openAmount,
-              openNotional: targetSide === "buy" ? openAmount : -openAmount,
-              calculation: `${currentNotionalAbs} - ${closeAmount} + ${openAmount} = ${currentNotionalAbs - closeAmount + openAmount}`,
-            })
             const closeResult = await this.placeOrder(
               symbol,
               price,
@@ -660,10 +607,6 @@ export class HyperliquidClient {
               position.percentage,
             )
             if (closeResult) {
-              console.log(
-                `[PRECISE MODE] ${symbol}: Close order result`,
-                closeResult,
-              )
               results.push(closeResult)
             }
 
@@ -676,10 +619,6 @@ export class HyperliquidClient {
               position.percentage,
             )
             if (openResult) {
-              console.log(
-                `[PRECISE MODE] ${symbol}: Open order result`,
-                openResult,
-              )
               results.push(openResult)
             }
           }

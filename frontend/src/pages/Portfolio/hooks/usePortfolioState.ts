@@ -363,21 +363,19 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
           ? token.notional
           : token.lockedUsd
 
-      let updatedToken = { ...token }
+      if (referenceUsd === undefined || referenceUsd < 0) return token
 
-      if (referenceUsd !== undefined && referenceUsd >= 0) {
-        const derivedPercent = parseFloat(
-          ((referenceUsd / budgetForUi) * 100).toFixed(2),
-        )
-        if (
-          Number.isFinite(derivedPercent) &&
-          Math.abs(derivedPercent - token.percentage) > 0.01
-        ) {
-          updatedToken = { ...updatedToken, percentage: derivedPercent }
-        }
+      const derivedPercent = parseFloat(
+        ((referenceUsd / budgetForUi) * 100).toFixed(2),
+      )
+      if (
+        !Number.isFinite(derivedPercent) ||
+        Math.abs(derivedPercent - token.percentage) <= 0.01
+      ) {
+        return token
       }
 
-      return updatedToken
+      return { ...token, percentage: derivedPercent }
     })
   }, [tokensWithComputedStatus, budgetForUi])
 

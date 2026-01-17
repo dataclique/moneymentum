@@ -48,41 +48,33 @@ The trader expresses intent in terms of **exposures** (factors, Greeks, notional
 3. Which venues to execute on
 
 ```mermaid
-flowchart TB
-    subgraph Trader["Trader Intent"]
-        T[/"I want 30% momentum exposure<br/>with zero SPY beta"/]
+flowchart LR
+    T[/"Trader: I want<br/>+0.5 BTC delta"/]
+
+    subgraph Backend["Backend (No Credentials)"]
+        direction TB
+        DATA[(Data from<br/>Many Sources)]
+        ANAL[Analytics]
+        PLAN[Plan<br/>Generator]
+        DATA --> ANAL --> PLAN
     end
 
-    subgraph Core["Core System"]
-        AN[Analytics Engine]
-        PS[Position Sizing]
-        OR[Order Router]
+    subgraph Frontend["Frontend (Holds Credentials)"]
+        direction TB
+        UI[Review Plan]
+        EX[Execute]
+        UI --> EX
     end
 
-    subgraph DataLayer["Data Layer (Abstracted)"]
-        D1[Hyperliquid]
-        D2[Yahoo]
-        D3[Derive]
-        D4[...]
-    end
+    V1[Hyperliquid]
+    V2[Derive]
+    V3[Other Venues]
 
-    subgraph ExecLayer["Execution Layer (Abstracted)"]
-        E1[Hyperliquid<br/>Perps]
-        E2[Binance<br/>Spot]
-        E3[Derive<br/>Options]
-        E4[st0x<br/>Equities]
-        E5[...]
-    end
-
-    T --> AN
-    DataLayer --> AN
-    AN --> PS
-    PS --> OR
-    OR --> E1
-    OR --> E2
-    OR --> E3
-    OR --> E4
-    OR --> E5
+    T --> PLAN
+    PLAN -->|execution plan| UI
+    EX --> V1
+    EX --> V2
+    EX --> V3
 ```
 
 This means:
@@ -112,70 +104,43 @@ This means:
 ### 1.1 High-Level Architecture
 
 ```mermaid
-flowchart TB
-    subgraph DataSources["Data Sources"]
-        HL_D[Hyperliquid]
-        DRV_D[Derive]
-        YF[Yahoo Finance]
-        PY[Pyth]
+flowchart LR
+    subgraph Sources["Data Sources"]
+        S1[Exchanges]
+        S2[Oracles]
+        S3[TradFi]
     end
 
-    subgraph Ingestion["Data Ingestion (Python)"]
-        DA[CCXT Adapters]
-        IW[Iceberg Writer]
-        DA --> IW
-    end
+    subgraph Backend
+        ING[Ingestion<br/>Python]
+        ICE[(Iceberg)]
+        SPARK[Analytics<br/>Scala 2 + Spark]
+        API[API Server<br/>Scala 3]
 
-    subgraph Storage["Storage (Iceberg)"]
-        RAW[(Raw Tables)]
-        COMP[(Computed Tables)]
-    end
-
-    subgraph Analytics["Analytics Engine (Scala 2 + Spark)"]
-        FEN[Factor Engine]
-        REN[Risk Engine]
-        GEN[Greeks Engine]
-    end
-
-    subgraph Shared["Shared Domain (Scala 3)"]
-        DT[Domain Types]
-        TL[Tldr Facade]
-    end
-
-    subgraph API["API Server (Scala 3)"]
-        REST[Analytics API]
-        PLAN[Plan Generator]
-        WS[WebSocket]
+        ING --> ICE
+        ICE --> SPARK
+        SPARK --> ICE
+        ICE --> API
     end
 
     subgraph Frontend["Frontend (TypeScript)"]
         UI[Portfolio UI]
         EX[Execution Engine]
-        CRED[Credentials]
     end
 
-    subgraph ExecVenues["Execution Venues"]
-        HL_E[Hyperliquid]
-        DRV_E[Derive]
-        ST[st0x]
+    subgraph Venues["Execution Venues"]
+        V[Hyperliquid<br/>Derive<br/>st0x]
     end
 
-    DataSources --> Ingestion
-    IW --> RAW
-    RAW --> Analytics
-    Analytics --> COMP
-    Shared -.-> Analytics
-    Shared -.-> API
-    COMP --> API
-    API <-->|analytics + plans| Frontend
-    EX -->|direct API calls| ExecVenues
-    CRED --> EX
+    Sources --> ING
+    API <-->|analytics + plans| UI
+    EX -->|credentials stay<br/>in browser| V
 ```
 
-The architecture has two main flows:
+**Two main flows:**
 
-1. **Data flow**: Sources → Ingestion → Storage → Analytics → API → Frontend
-2. **Execution flow**: Frontend generates plans via API, then executes directly to venues (credentials never leave browser)
+1. **Data flow**: Sources → Ingestion → Iceberg → Analytics → API → Frontend
+2. **Execution flow**: Frontend requests plan from API, then executes directly to venues (credentials never leave browser)
 
 ### 1.2 Module Boundaries
 
@@ -1235,29 +1200,23 @@ lazy val api = (project in file("api"))
 Since only `/portfolio` is in production use (and it's self-contained), we can rebuild everything else without disruption.
 
 ```mermaid
-flowchart TB
+flowchart LR
     subgraph Current["Current State"]
-        PORT["/portfolio page<br/>(keep working)"]
-        PY[PySpark Analytics<br/>(inactive)"]
-        CSV[CSV Storage<br/>(legacy)"]
+        PORT["/portfolio page"]
+        PY[PySpark - inactive]
+        CSV[CSV Storage]
     end
 
     subgraph New["New Architecture"]
-        ING[Python Ingestion]
-        ICE[(Iceberg Tables)]
-        ANA[Scala Spark Analytics]
-        API[Scala 3 API]
-        NEW[New Frontend Pages]
+        ING[Ingestion] --> ICE[(Iceberg)]
+        ICE <--> ANA[Spark Analytics]
+        ICE --> API[API Server]
+        API --> FE[New Frontend]
     end
 
-    PORT -.->|unchanged until<br/>replacement ready| PORT
-    PY -->|port logic| ANA
-    CSV -->|migrate data| ICE
-    ING --> ICE
-    ICE --> ANA
-    ANA --> ICE
-    ICE --> API
-    API --> NEW
+    PY -.->|port logic| ANA
+    CSV -.->|migrate| ICE
+    PORT -.->|keep until ready| PORT
 ```
 
 ### 9.3 Phases

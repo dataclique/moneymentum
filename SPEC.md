@@ -34,31 +34,62 @@ Transform moneymentum from a momentum-based trading bot into an **institutional-
 
 ### Core Architectural Principle
 
-**Data source abstraction**: The analytics layer is completely agnostic to where data originates. Adding a new exchange or data provider means writing one adapter—no changes to analytics, API, or frontend.
+**Dual abstraction**: The system abstracts away both **data sources** and **execution venues**, allowing the trader to focus purely on desired exposures.
+
+| Layer         | Abstraction               | Trader Thinks           | System Handles                                                                            |
+| ------------- | ------------------------- | ----------------------- | ----------------------------------------------------------------------------------------- |
+| **Data**      | Source-agnostic analytics | "What's my BTC beta?"   | Aggregating data from Hyperliquid, Deribit, Yahoo, etc.                                   |
+| **Execution** | Venue-agnostic routing    | "I want +0.5 BTC delta" | Routing to correct venue (spot on Binance, perps on Hyperliquid, options on Derive, etc.) |
+
+The trader expresses intent in terms of **exposures** (factors, Greeks, notional). The system determines:
+
+1. Where to source data for analysis
+2. Which instruments achieve the desired exposure
+3. Which venues to execute on
 
 ```mermaid
-flowchart LR
-    subgraph Sources["Data Sources"]
-        S1[CCXT]
-        S2[Yahoo]
-        S3[Pyth]
-        S4[Derive]
+flowchart TB
+    subgraph Trader["Trader Intent"]
+        T[/"I want 30% momentum exposure<br/>with zero SPY beta"/]
     end
 
-    subgraph Normalized["Normalized Schema"]
-        I[(Iceberg Tables)]
+    subgraph Core["Core System"]
+        AN[Analytics Engine]
+        PS[Position Sizing]
+        OR[Order Router]
     end
 
-    subgraph Analytics["Analytics Engine"]
-        A[Source-Agnostic Processing]
+    subgraph DataLayer["Data Layer (Abstracted)"]
+        D1[Hyperliquid]
+        D2[Yahoo]
+        D3[Derive]
+        D4[...]
     end
 
-    S1 --> I
-    S2 --> I
-    S3 --> I
-    S4 --> I
-    I --> A
+    subgraph ExecLayer["Execution Layer (Abstracted)"]
+        E1[Hyperliquid<br/>Perps]
+        E2[Binance<br/>Spot]
+        E3[Derive<br/>Options]
+        E4[st0x<br/>Equities]
+        E5[...]
+    end
+
+    T --> AN
+    DataLayer --> AN
+    AN --> PS
+    PS --> OR
+    OR --> E1
+    OR --> E2
+    OR --> E3
+    OR --> E4
+    OR --> E5
 ```
+
+This means:
+
+- Adding a new data source = one adapter, no analytics changes
+- Adding a new execution venue = one adapter, no portfolio logic changes
+- Trader never thinks about venue routing—system handles it transparently
 
 ---
 
@@ -68,10 +99,11 @@ flowchart LR
 2. [Data Model](#2-data-model)
 3. [Data Ingestion Layer](#3-data-ingestion-layer)
 4. [Analytics Engine](#4-analytics-engine)
-5. [API Layer](#5-api-layer)
-6. [Technology Decisions](#6-technology-decisions)
-7. [Scala 2/3 Interop Pattern](#7-scala-23-interop-pattern)
-8. [Migration Strategy](#8-migration-strategy)
+5. [Execution Layer](#5-execution-layer)
+6. [API Layer](#6-api-layer)
+7. [Technology Decisions](#7-technology-decisions)
+8. [Scala 2/3 Interop Pattern](#8-scala-23-interop-pattern)
+9. [Migration Strategy](#9-migration-strategy)
 
 ---
 
@@ -82,36 +114,21 @@ flowchart LR
 ```mermaid
 flowchart TB
     subgraph DataSources["Data Sources"]
-        HL[Hyperliquid<br/>Perps]
-        DRB[Deribit<br/>Options]
-        DRV[Derive<br/>Options]
-        YF[Yahoo Finance<br/>Equities]
-        PY[Pyth<br/>Oracle]
+        HL_D[Hyperliquid]
+        DRV_D[Derive]
+        YF[Yahoo Finance]
+        PY[Pyth]
     end
 
-    subgraph Ingestion["Data Ingestion Layer (Python)"]
-        AD[Source Adapters]
-        VL[Validator]
-        DD[Deduper]
+    subgraph Ingestion["Data Ingestion (Python)"]
+        DA[CCXT Adapters]
         IW[Iceberg Writer]
-
-        AD --> VL --> DD --> IW
+        DA --> IW
     end
 
-    subgraph Storage["Storage Layer"]
-        subgraph RawTables["Raw Tables"]
-            OHLCV[(ohlcv)]
-            FR[(funding_rates)]
-            OC[(options_chain)]
-            YLD[(yields)]
-        end
-
-        subgraph ComputedTables["Computed Tables"]
-            FE[(factor_exposures)]
-            RM[(risk_metrics)]
-            GK[(greeks)]
-            CR[(correlations)]
-        end
+    subgraph Storage["Storage (Iceberg)"]
+        RAW[(Raw Tables)]
+        COMP[(Computed Tables)]
     end
 
     subgraph Analytics["Analytics Engine (Scala 2 + Spark)"]
@@ -120,66 +137,78 @@ flowchart TB
         GEN[Greeks Engine]
     end
 
-    subgraph Shared["Shared Domain Library (Scala 3)"]
+    subgraph Shared["Shared Domain (Scala 3)"]
         DT[Domain Types]
         TL[Tldr Facade]
-        SC[Schema Definitions]
     end
 
-    subgraph API["API Server (Scala 3 + http4s)"]
-        REST[REST Endpoints]
-        WS[WebSocket Streams]
+    subgraph API["API Server (Scala 3)"]
+        REST[Analytics API]
+        PLAN[Plan Generator]
+        WS[WebSocket]
     end
 
-    subgraph Frontend["Frontend (React + TypeScript)"]
-        PC[Portfolio Composer]
-        FA[Factor Analysis]
-        RD[Risk Dashboard]
-        AS[Asset Screener]
+    subgraph Frontend["Frontend (TypeScript)"]
+        UI[Portfolio UI]
+        EX[Execution Engine]
+        CRED[Credentials]
+    end
+
+    subgraph ExecVenues["Execution Venues"]
+        HL_E[Hyperliquid]
+        DRV_E[Derive]
+        ST[st0x]
     end
 
     DataSources --> Ingestion
-    IW --> RawTables
-    RawTables --> Analytics
-    Analytics --> ComputedTables
-    Shared -.->|consumed by| Analytics
-    Shared -.->|consumed by| API
-    ComputedTables --> API
-    API --> Frontend
+    IW --> RAW
+    RAW --> Analytics
+    Analytics --> COMP
+    Shared -.-> Analytics
+    Shared -.-> API
+    COMP --> API
+    API <-->|analytics + plans| Frontend
+    EX -->|direct API calls| ExecVenues
+    CRED --> EX
 ```
+
+The architecture has two main flows:
+
+1. **Data flow**: Sources → Ingestion → Storage → Analytics → API → Frontend
+2. **Execution flow**: Frontend generates plans via API, then executes directly to venues (credentials never leave browser)
 
 ### 1.2 Module Boundaries
 
-| Module       | Language   | Responsibility                                           | Dependencies             |
-| ------------ | ---------- | -------------------------------------------------------- | ------------------------ |
-| `ingestion/` | Python     | Fetch data from sources, normalize, write to Iceberg     | CCXT, PyIceberg          |
-| `shared/`    | Scala 3    | Domain types, pure calculation functions (Tldr), schemas | cats-core, circe         |
-| `analytics/` | Scala 2    | Spark jobs for factor/risk/Greeks computation            | Spark, Frameless, shared |
-| `api/`       | Scala 3    | HTTP server exposing analytics to frontend               | http4s, shared           |
-| `frontend/`  | TypeScript | User interface                                           | React, existing code     |
+| Module       | Language   | Responsibility                                                         | Dependencies              |
+| ------------ | ---------- | ---------------------------------------------------------------------- | ------------------------- |
+| `ingestion/` | Python     | Thin CCXT wrappers for data fetching where no Scala alternative exists | CCXT, PyIceberg           |
+| `shared/`    | Scala 3    | Domain types, pure calculation functions (Tldr), schemas               | cats-core, circe          |
+| `analytics/` | Scala 2    | Spark jobs for factor/risk/Greeks computation                          | Spark, Frameless, shared  |
+| `api/`       | Scala 3    | HTTP server: analytics, execution plan generation                      | http4s, shared            |
+| `frontend/`  | TypeScript | UI + **execution engine** (venue adapters, order placement)            | React, CCXT-TS, ethers.js |
+
+**Key architectural decisions:**
+
+1. **Python minimization**: Python only for thin CCXT data wrappers. All business logic in Scala.
+2. **Serverless execution**: Actual order placement happens in frontend. Backend generates plans but never touches credentials.
+3. **Credential safety**: User credentials stay in browser storage. Zero backend liability.
 
 ### 1.3 Module Structure
 
 ```
 quant-toolkit/
-├── ingestion/                    # Python data collectors
-│   ├── collectors/
-│   │   ├── hyperliquid.py       # Port from yang/dataloader/
-│   │   ├── yahoo_finance.py     # Equities (SPY, TLT)
-│   │   ├── derive.py            # Options data
-│   │   └── base.py              # Adapter interface
-│   ├── writers/
-│   │   └── iceberg_writer.py
-│   └── schemas/
-│       └── canonical.py         # Pydantic models
+├── ingestion/                    # Thin Python CCXT wrappers (minimal)
+│   ├── ccxt_bridge.py           # Fetch OHLCV, funding rates via CCXT
+│   └── iceberg_writer.py        # Write to Iceberg tables
 │
 ├── shared/                       # Scala 3 domain library
 │   └── src/main/scala/
 │       ├── domain/
 │       │   ├── Instrument.scala # ADT: Spot, Perp, Option, LSD, PendlePT
 │       │   ├── Position.scala
-│       │   ├── Greeks.scala     # Delta, Gamma, Theta, Vega
-│       │   └── Factor.scala     # Factor exposures
+│       │   ├── Greeks.scala
+│       │   ├── Factor.scala
+│       │   └── Order.scala      # Order types for execution
 │       ├── tldr/
 │       │   └── Tldr.scala       # Pure function facade for Scala 2
 │       └── schema/
@@ -206,12 +235,28 @@ quant-toolkit/
 │       │   ├── PortfolioRoutes.scala
 │       │   ├── FactorRoutes.scala
 │       │   ├── RiskRoutes.scala
-│       │   └── ScreenerRoutes.scala
+│       │   ├── ScreenerRoutes.scala
+│       │   └── PlanRoutes.scala       # Generate execution plans
+│       ├── planner/
+│       │   ├── ExecutionPlanner.scala # Plan generation logic
+│       │   └── VenueSelector.scala    # Optimal venue selection
 │       ├── streaming/
 │       │   └── WebSocketHandler.scala
 │       └── Server.scala
 │
-├── frontend/                     # Existing React app
+├── frontend/                     # React + TypeScript
+│   └── src/
+│       ├── execution/                 # Frontend execution engine
+│       │   ├── adapters/
+│       │   │   ├── VenueAdapter.ts    # Interface
+│       │   │   ├── HyperliquidAdapter.ts
+│       │   │   ├── DeriveAdapter.ts
+│       │   │   └── St0xAdapter.ts
+│       │   ├── ExecutionEngine.ts     # Execute plans
+│       │   └── PositionAggregator.ts  # Unified position view
+│       ├── pages/
+│       ├── components/
+│       └── ...
 ├── build.sbt
 └── flake.nix
 ```
@@ -627,9 +672,183 @@ flowchart TB
 
 ---
 
-## 5. API Layer
+## 5. Execution Layer
 
-### 5.1 API Overview
+### 5.1 Serverless Execution Model
+
+**Critical security principle**: The backend never stores or handles user credentials. All actual order placement happens client-side. This eliminates credential storage liability entirely.
+
+```mermaid
+flowchart TB
+    subgraph Backend["Backend (No Credentials)"]
+        AN[Analytics Engine]
+        PP[Plan Generator]
+        SIM[Simulator]
+        WS[Price Aggregator]
+    end
+
+    subgraph Frontend["Frontend (Holds Credentials)"]
+        UI[Portfolio UI]
+        EX[Execution Engine<br/>TypeScript/CCXT]
+        CRED[User Credentials<br/>Browser storage]
+    end
+
+    subgraph Venues["Execution Venues"]
+        HL[Hyperliquid]
+        DRV[Derive]
+        ST[st0x]
+    end
+
+    AN -->|factor exposures| PP
+    PP -->|execution plan| UI
+    UI -->|user approves| EX
+    CRED --> EX
+    EX -->|direct API calls| Venues
+    EX -->|execution report| Backend
+```
+
+**Responsibility split:**
+
+| Responsibility              | Location     | Rationale                              |
+| --------------------------- | ------------ | -------------------------------------- |
+| Data collection             | Backend      | Inefficient for each client to collect |
+| Factor analysis             | Backend      | Computationally intensive              |
+| Real-time price aggregation | Backend      | Single WebSocket serves all clients    |
+| Simulation / backtesting    | Backend      | Requires historical data + compute     |
+| Execution plan construction | Backend      | Needs analytics context                |
+| **Actual order placement**  | **Frontend** | **Credentials stay client-side**       |
+| Credential storage          | Frontend     | Zero backend liability                 |
+
+### 5.2 Execution Plan
+
+The backend produces an **execution plan**—a structured description of what trades to make—but does not execute them.
+
+```typescript
+interface ExecutionPlan {
+  id: string
+  createdAt: Timestamp
+  targetExposure: FactorExposure[]
+  orders: PlannedOrder[]
+}
+
+interface PlannedOrder {
+  venue: "hyperliquid" | "derive" | "st0x" | ...
+  instrument: Instrument
+  side: "buy" | "sell"
+  size: Decimal
+  notional: Decimal
+  rationale: string           // "Cheapest venue for BTC perp"
+  estimatedCost: CostEstimate
+  alternativeVenues?: AlternativeVenue[]
+}
+```
+
+### 5.3 Frontend Execution Engine
+
+The frontend receives execution plans and handles actual order placement:
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant UI as Frontend UI
+    participant BE as Backend API
+    participant EX as Frontend Executor
+    participant V as Venue (Hyperliquid)
+
+    U->>UI: "I want +0.5 BTC delta"
+    UI->>BE: Request execution plan
+    BE->>BE: Analyze current portfolio
+    BE->>BE: Generate optimal plan
+    BE-->>UI: ExecutionPlan
+    UI->>U: Display plan for review
+    U->>UI: Approve execution
+    UI->>EX: Execute plan
+
+    loop For each order
+        EX->>V: Place order (client credentials)
+        V-->>EX: Order result
+    end
+
+    EX-->>UI: Execution report
+    UI->>BE: Report results (for tracking)
+```
+
+### 5.4 Venue Adapters (Frontend TypeScript)
+
+```typescript
+interface VenueAdapter {
+  readonly venueName: string;
+  readonly supportedInstruments: InstrumentType[];
+
+  // Read operations
+  getPositions(): Promise<Position[]>;
+  getOrderBook(symbol: string): Promise<OrderBook>;
+
+  // Write operations (credentials never leave browser)
+  placeOrder(order: Order, credentials: Credentials): Promise<OrderResult>;
+  cancelOrder(orderId: string, credentials: Credentials): Promise<void>;
+}
+```
+
+Venue adapters implemented in TypeScript:
+
+- **Hyperliquid**: CCXT TypeScript or direct REST/WebSocket
+- **Derive**: ethers.js for on-chain execution
+- **st0x**: Custom TypeScript SDK
+- **Binance**: CCXT TypeScript
+
+### 5.5 Instrument-to-Venue Routing
+
+The backend plan generator uses this routing table:
+
+| Instrument Type    | Primary Venue | Fallback | Selection Criteria      |
+| ------------------ | ------------- | -------- | ----------------------- |
+| Crypto Perps       | Hyperliquid   | Binance  | Funding rate, liquidity |
+| Crypto Options     | Derive        | Deribit  | DeFi-native preferred   |
+| Tokenized Equities | st0x          | —        | Single venue            |
+| Crypto Spot        | Binance       | Kraken   | Liquidity, fees         |
+| LSDs (stETH)       | Lido          | Curve    | Direct vs DEX           |
+
+### 5.6 Execution Algorithms
+
+For larger orders, the plan specifies an algorithm. The **frontend** implements these:
+
+| Algorithm   | Description          | Frontend Behavior                   |
+| ----------- | -------------------- | ----------------------------------- |
+| **Market**  | Immediate execution  | Single order                        |
+| **TWAP**    | Time-weighted slices | Frontend schedules orders over time |
+| **Iceberg** | Hidden size          | Frontend places partial orders      |
+
+### 5.7 Position Aggregation
+
+Positions aggregated from multiple venues into unified view:
+
+```mermaid
+flowchart LR
+    subgraph Frontend["Frontend (Real-time)"]
+        FE_HL[Hyperliquid]
+        FE_DRV[Derive]
+        FE_ST[st0x]
+    end
+
+    AGG[Aggregator]
+    UV[Unified View<br/>BTC: Δ=2.2, $180k]
+
+    FE_HL --> AGG
+    FE_DRV --> AGG
+    FE_ST --> AGG
+    AGG --> UV
+    UV -->|report positions| Backend
+```
+
+- **Real-time view**: Frontend aggregates directly from venues
+- **Analytics**: Backend receives position reports for factor/risk calculations
+
+---
+
+## 6. API Layer
+
+### 6.1 API Overview
 
 ```mermaid
 flowchart LR
@@ -799,9 +1018,9 @@ sequenceDiagram
 
 ---
 
-## 6. Technology Decisions
+## 7. Technology Decisions
 
-### 6.1 Why Python for Ingestion?
+### 7.1 Why Python for Ingestion?
 
 | Reason              | Details                                            |
 | ------------------- | -------------------------------------------------- |
@@ -810,7 +1029,7 @@ sequenceDiagram
 | **PyIceberg**       | Native Iceberg support for writing tables          |
 | **Existing code**   | Can port `yang/dataloader/` with minimal changes   |
 
-### 6.2 Why Scala 2 for Spark Analytics?
+### 7.2 Why Scala 2 for Spark Analytics?
 
 | Reason                  | Details                                                        |
 | ----------------------- | -------------------------------------------------------------- |
@@ -819,7 +1038,7 @@ sequenceDiagram
 | **Performance**         | JVM optimizations, no Python serialization overhead            |
 | **Type safety**         | Catch errors at compile time, not runtime                      |
 
-### 6.3 Why Scala 3 for Domain Library and API?
+### 7.3 Why Scala 3 for Domain Library and API?
 
 | Reason                 | Details                                                  |
 | ---------------------- | -------------------------------------------------------- |
@@ -828,7 +1047,7 @@ sequenceDiagram
 | **Interop**            | TASTy reader allows Scala 2 to consume Scala 3 libraries |
 | **http4s ecosystem**   | Purely functional HTTP, cats-effect                      |
 
-### 6.4 Why Apache Iceberg?
+### 7.4 Why Apache Iceberg?
 
 | Feature                 | Benefit                                             |
 | ----------------------- | --------------------------------------------------- |
@@ -838,7 +1057,7 @@ sequenceDiagram
 | **Multi-engine**        | Same tables readable by Spark, Trino, DuckDB        |
 | **No vendor lock-in**   | Open specification, unlike Delta Lake               |
 
-### 6.5 Why Nix?
+### 7.5 Why Nix?
 
 | Reason                   | Details                                        |
 | ------------------------ | ---------------------------------------------- |
@@ -849,15 +1068,15 @@ sequenceDiagram
 
 ---
 
-## 7. Scala 2/3 Interop Pattern
+## 8. Scala 2/3 Interop Pattern
 
-### 7.1 The Challenge
+### 8.1 The Challenge
 
 - Spark 3.x only supports Scala 2.13
 - We want domain types and business logic in Scala 3
 - Analytics (Spark jobs) need to use domain logic
 
-### 7.2 The Solution: Tldr Facade + TASTy Reader
+### 8.2 The Solution: Tldr Facade + TASTy Reader
 
 ```mermaid
 flowchart TB
@@ -879,7 +1098,7 @@ flowchart TB
     SP --> FR
 ```
 
-### 7.3 Tldr Facade Pattern
+### 8.3 Tldr Facade Pattern
 
 The Tldr object exposes pure functions with simple signatures that Scala 2 can consume:
 
@@ -938,7 +1157,7 @@ class BetaCalculator(spark: SparkSession) {
 }
 ```
 
-### 7.4 Build Configuration
+### 8.4 Build Configuration
 
 ```scala
 // build.sbt
@@ -1000,9 +1219,9 @@ lazy val api = (project in file("api"))
 
 ---
 
-## 8. Migration Strategy
+## 9. Migration Strategy
 
-### 8.1 Current State
+### 9.1 Current State
 
 | Component         | Status     | Notes                                              |
 | ----------------- | ---------- | -------------------------------------------------- |
@@ -1011,7 +1230,7 @@ lazy val api = (project in file("api"))
 | FastAPI server    | Inactive   | Only serves backtest data                          |
 | CSV storage       | Legacy     | Will be replaced by Iceberg                        |
 
-### 8.2 Migration Approach: Clean Break
+### 9.2 Migration Approach: Clean Break
 
 Since only `/portfolio` is in production use (and it's self-contained), we can rebuild everything else without disruption.
 
@@ -1041,7 +1260,7 @@ flowchart TB
     API --> NEW
 ```
 
-### 8.3 Phases
+### 9.3 Phases
 
 | Phase                 | Scope                               | Deliverable               | Dependencies |
 | --------------------- | ----------------------------------- | ------------------------- | ------------ |
@@ -1052,7 +1271,7 @@ flowchart TB
 | **5. API**            | http4s server, REST + WebSocket     | Backend serving data      | Phases 3, 4  |
 | **6. Frontend**       | New analytics UI                    | Replace existing pages    | Phase 5      |
 
-### 8.4 Constraints
+### 9.4 Constraints
 
 - `/portfolio` page must remain functional until replacement is ready
 - No changes to Hyperliquid execution until new system is proven

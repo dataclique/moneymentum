@@ -26,6 +26,7 @@ export interface PositionsByUnderlying {
   positions: Array<{
     symbol: string
     side: "long" | "short"
+    weight: number
     notional: number
     percentage: number
   }>
@@ -33,22 +34,32 @@ export interface PositionsByUnderlying {
 
 export const usePrototypeData = () => {
   const [stagedTrades, setStagedTrades] = useState<StagedTrade[]>([])
+  const [leverage, setLeverage] = useState(1.0)
 
   const nav = 250000
 
+  // Derive notional from weight and leverage: notional = nav × weight × leverage
   const positionsByUnderlying = useMemo((): PositionsByUnderlying[] => {
     const grouped = new Map<string, PositionsByUnderlying["positions"]>()
+
+    // Calculate total weight for percentage calculation
+    const totalWeight = MOCK_POSITIONS.reduce((sum, p) => sum + p.weight, 0)
 
     for (const position of MOCK_POSITIONS) {
       if (!grouped.has(position.underlying)) {
         grouped.set(position.underlying, [])
       }
 
+      const notional = nav * position.weight * leverage
+      const percentage =
+        totalWeight > 0 ? (position.weight / totalWeight) * 100 : 0
+
       grouped.get(position.underlying)?.push({
         symbol: position.symbol,
         side: position.side,
-        notional: position.notional,
-        percentage: position.percentage,
+        weight: position.weight,
+        notional,
+        percentage,
       })
     }
 
@@ -59,11 +70,18 @@ export const usePrototypeData = () => {
         const bTotal = b.positions.reduce((sum, p) => sum + p.notional, 0)
         return bTotal - aTotal
       })
-  }, [])
+  }, [nav, leverage])
 
   const totalNotional = useMemo(() => {
-    return MOCK_POSITIONS.reduce((sum, p) => sum + p.notional, 0)
-  }, [])
+    const totalWeight = MOCK_POSITIONS.reduce((sum, p) => sum + p.weight, 0)
+    return nav * totalWeight * leverage
+  }, [nav, leverage])
+
+  // Effective leverage = total notional / NAV
+  const effectiveLeverage = useMemo(
+    () => totalNotional / nav,
+    [totalNotional, nav],
+  )
 
   const addStagedTrade = useCallback((symbol: string, side: "buy" | "sell") => {
     const newTrade: StagedTrade = {
@@ -90,6 +108,9 @@ export const usePrototypeData = () => {
 
   return {
     nav,
+    leverage,
+    setLeverage,
+    effectiveLeverage,
     isLoading: false,
 
     positionsByUnderlying,

@@ -43,35 +43,30 @@ export const HelpOverlay = ({ onClose }: HelpOverlayProps) => {
           <ShortcutGroup
             title="Panel Navigation"
             shortcuts={[
-              { key: "1", description: "Screener" },
-              { key: "2", description: "Positions" },
-              { key: "Esc", description: "Unfocus / Close" },
+              { key: "1", description: "Focus Screener" },
+              { key: "2", description: "Focus Positions" },
+              { key: "h/l", description: "Switch panels" },
+              { key: "Esc", description: "Clear selection / Unfocus" },
               { key: "?", description: "Toggle this help" },
             ]}
           />
           <ShortcutGroup
-            title="Vim Navigation"
+            title="List Navigation"
             shortcuts={[
-              { key: "h", description: "Move left" },
-              { key: "j", description: "Move down" },
-              { key: "k", description: "Move up" },
-              { key: "l", description: "Move right" },
-            ]}
-          />
-          <ShortcutGroup
-            title="Analysis Tabs"
-            shortcuts={[
-              { key: "P", description: "Performance tab" },
-              { key: "F", description: "Factors tab" },
-              { key: "R", description: "Risk tab" },
+              { key: "j", description: "Select next row" },
+              { key: "k", description: "Select previous row" },
             ]}
           />
           <ShortcutGroup
             title="Trading"
             shortcuts={[
-              { key: "+", description: "Add long position (click)" },
-              { key: "-", description: "Add short position (click)" },
+              { key: "+", description: "Stage buy for selected" },
+              { key: "-", description: "Stage sell for selected" },
             ]}
+          />
+          <ShortcutGroup
+            title="General"
+            shortcuts={[{ key: "F1", description: "Toggle help" }]}
           />
         </div>
         <div className="p-3 border-t border-border bg-muted/30 text-xs text-muted-foreground">

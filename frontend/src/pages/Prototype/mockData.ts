@@ -74,149 +74,45 @@ export interface MockPosition {
   symbol: string
   underlying: string
   side: "long" | "short"
-  notional: number
-  percentage: number
+  weight: number // Portfolio weight (0-1), notional derived from NAV × weight × leverage
 }
 
 // Realistic portfolio with multiple instruments per underlying
+// Weights are designed for ~0.8x leverage at NAV=250000
 export const MOCK_POSITIONS: MockPosition[] = [
   // BTC - perp + spot (core long)
-  {
-    symbol: "BTC/USDC:USDC",
-    underlying: "BTC",
-    side: "long",
-    notional: 35000,
-    percentage: 17.5,
-  },
-  {
-    symbol: "BTC-SPOT",
-    underlying: "BTC",
-    side: "long",
-    notional: 10000,
-    percentage: 5.0,
-  },
+  { symbol: "BTC/USDC:USDC", underlying: "BTC", side: "long", weight: 0.175 },
+  { symbol: "BTC-SPOT", underlying: "BTC", side: "long", weight: 0.05 },
 
   // ETH - perp + spot + put hedge
-  {
-    symbol: "ETH/USDC:USDC",
-    underlying: "ETH",
-    side: "long",
-    notional: 22000,
-    percentage: 11.0,
-  },
-  {
-    symbol: "ETH-SPOT",
-    underlying: "ETH",
-    side: "long",
-    notional: 8000,
-    percentage: 4.0,
-  },
-  {
-    symbol: "ETH-PUT-2800",
-    underlying: "ETH",
-    side: "long",
-    notional: 2000,
-    percentage: 1.0,
-  },
+  { symbol: "ETH/USDC:USDC", underlying: "ETH", side: "long", weight: 0.11 },
+  { symbol: "ETH-SPOT", underlying: "ETH", side: "long", weight: 0.04 },
+  { symbol: "ETH-PUT-2800", underlying: "ETH", side: "long", weight: 0.01 },
 
   // SOL - perp + spot
-  {
-    symbol: "SOL/USDC:USDC",
-    underlying: "SOL",
-    side: "long",
-    notional: 12000,
-    percentage: 6.0,
-  },
-  {
-    symbol: "SOL-SPOT",
-    underlying: "SOL",
-    side: "long",
-    notional: 6000,
-    percentage: 3.0,
-  },
+  { symbol: "SOL/USDC:USDC", underlying: "SOL", side: "long", weight: 0.06 },
+  { symbol: "SOL-SPOT", underlying: "SOL", side: "long", weight: 0.03 },
 
   // DOGE - short perp + spot
-  {
-    symbol: "DOGE/USDC:USDC",
-    underlying: "DOGE",
-    side: "short",
-    notional: 10000,
-    percentage: 5.0,
-  },
-  {
-    symbol: "DOGE-SPOT",
-    underlying: "DOGE",
-    side: "short",
-    notional: 5000,
-    percentage: 2.5,
-  },
+  { symbol: "DOGE/USDC:USDC", underlying: "DOGE", side: "short", weight: 0.05 },
+  { symbol: "DOGE-SPOT", underlying: "DOGE", side: "short", weight: 0.025 },
 
   // XRP - short perp + spot
-  {
-    symbol: "XRP/USDC:USDC",
-    underlying: "XRP",
-    side: "short",
-    notional: 8000,
-    percentage: 4.0,
-  },
-  {
-    symbol: "XRP-SPOT",
-    underlying: "XRP",
-    side: "short",
-    notional: 4000,
-    percentage: 2.0,
-  },
+  { symbol: "XRP/USDC:USDC", underlying: "XRP", side: "short", weight: 0.04 },
+  { symbol: "XRP-SPOT", underlying: "XRP", side: "short", weight: 0.02 },
+
+  // Basis trade (delta-neutral): long spot + short perp to collect funding
+  { symbol: "AAVE-SPOT", underlying: "AAVE", side: "long", weight: 0.04 },
+  { symbol: "AAVE/USDC:USDC", underlying: "AAVE", side: "short", weight: 0.04 },
 
   // Single-instrument positions
-  {
-    symbol: "HYPE/USDC:USDC",
-    underlying: "HYPE",
-    side: "long",
-    notional: 12000,
-    percentage: 6.0,
-  },
-  {
-    symbol: "ARB/USDC:USDC",
-    underlying: "ARB",
-    side: "long",
-    notional: 8000,
-    percentage: 4.0,
-  },
-  {
-    symbol: "LTC/USDC:USDC",
-    underlying: "LTC",
-    side: "short",
-    notional: 6000,
-    percentage: 3.0,
-  },
-  {
-    symbol: "LINK/USDC:USDC",
-    underlying: "LINK",
-    side: "long",
-    notional: 5000,
-    percentage: 2.5,
-  },
-  {
-    symbol: "AVAX/USDC:USDC",
-    underlying: "AVAX",
-    side: "long",
-    notional: 4000,
-    percentage: 2.0,
-  },
-  {
-    symbol: "BCH/USDC:USDC",
-    underlying: "BCH",
-    side: "short",
-    notional: 3500,
-    percentage: 1.75,
-  },
-  {
-    symbol: "APE/USDC:USDC",
-    underlying: "APE",
-    side: "short",
-    notional: 3000,
-    percentage: 1.5,
-  },
+  { symbol: "HYPE/USDC:USDC", underlying: "HYPE", side: "long", weight: 0.06 },
+  { symbol: "ARB/USDC:USDC", underlying: "ARB", side: "long", weight: 0.04 },
+  { symbol: "LTC/USDC:USDC", underlying: "LTC", side: "short", weight: 0.03 },
+  { symbol: "LINK/USDC:USDC", underlying: "LINK", side: "long", weight: 0.025 },
+  { symbol: "AVAX/USDC:USDC", underlying: "AVAX", side: "long", weight: 0.02 },
+  { symbol: "BCH/USDC:USDC", underlying: "BCH", side: "short", weight: 0.0175 },
+  { symbol: "APE/USDC:USDC", underlying: "APE", side: "short", weight: 0.015 },
 ]
 
 export const MOCK_GREEKS: Greeks[] = [
@@ -262,11 +158,11 @@ export const MOCK_GREEKS: Greeks[] = [
 ]
 
 export const MOCK_FACTOR_EXPOSURES: FactorExposure[] = [
-  { name: "Market Beta", value: 0.85, color: "hsl(var(--chart-1))" },
-  { name: "Momentum", value: 0.42, color: "hsl(var(--chart-2))" },
-  { name: "Carry", value: -0.15, color: "hsl(var(--chart-3))" },
-  { name: "Volatility", value: 0.28, color: "hsl(var(--chart-4))" },
-  { name: "Size", value: -0.12, color: "hsl(var(--chart-5))" },
+  { name: "β to BTC", value: 0.85, color: "hsl(var(--chart-1))" },
+  { name: "β to SPY", value: 0.42, color: "hsl(var(--chart-2))" },
+  { name: "Momentum", value: 0.28, color: "hsl(var(--chart-3))" },
+  { name: "Carry", value: -0.15, color: "hsl(var(--chart-4))" },
+  { name: "Volatility", value: 0.12, color: "hsl(var(--chart-5))" },
 ]
 
 const CORRELATION_ASSETS = ["BTC", "ETH", "SOL", "SPY", "USD"]
@@ -790,14 +686,14 @@ export const MOCK_FACTOR_HISTORICAL_RETURNS: FactorHistoricalReturn[] =
   generateFactorHistoricalReturns()
 
 export const MOCK_FACTOR_ATTRIBUTION: FactorAttribution[] = [
-  { factor: "Market Beta", contribution: 0.156, color: "hsl(var(--chart-1))" },
-  { factor: "Momentum", contribution: 0.098, color: "hsl(var(--chart-2))" },
-  { factor: "Carry", contribution: -0.023, color: "hsl(var(--chart-3))" },
-  { factor: "Volatility", contribution: 0.045, color: "hsl(var(--chart-4))" },
-  { factor: "Size", contribution: -0.012, color: "hsl(var(--chart-5))" },
+  { factor: "β to BTC", contribution: 0.156, color: "hsl(var(--chart-1))" },
+  { factor: "β to SPY", contribution: 0.042, color: "hsl(var(--chart-2))" },
+  { factor: "Momentum", contribution: 0.098, color: "hsl(var(--chart-3))" },
+  { factor: "Carry", contribution: -0.023, color: "hsl(var(--chart-4))" },
+  { factor: "Volatility", contribution: 0.025, color: "hsl(var(--chart-5))" },
   {
     factor: "Idiosyncratic",
-    contribution: 0.078,
+    contribution: 0.044,
     color: "hsl(var(--muted-foreground))",
   },
 ]

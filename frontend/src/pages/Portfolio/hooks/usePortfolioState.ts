@@ -493,13 +493,15 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
           ? parseFloat(((initialUsd / baseBudget) * 100).toFixed(2))
           : 0
 
+      const maxLeverageForSymbol = leverageLimitsMap[symbol] || 1
+
       setSelectedTokensAndPersist(prev => [
         ...prev,
         {
           symbol,
           percentage: initialPercent,
           side: "buy",
-          leverage: 1,
+          leverage: maxLeverageForSymbol,
           status: "idle",
           message: null,
           notional: undefined,
@@ -507,7 +509,13 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
         },
       ])
     },
-    [selectedTokens, budgetForUi, minPercentFloor, setSelectedTokensAndPersist],
+    [
+      selectedTokens,
+      budgetForUi,
+      minPercentFloor,
+      leverageLimitsMap,
+      setSelectedTokensAndPersist,
+    ],
   )
 
   const handleRemoveToken = useCallback(

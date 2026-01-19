@@ -114,7 +114,7 @@ describe("usePortfolioState", () => {
       expect(result.current.selectedTokens).toHaveLength(1)
       expect(result.current.selectedTokens[0].symbol).toBe("BTC/USDC:USDC")
       expect(result.current.selectedTokens[0].side).toBe("buy")
-      expect(result.current.selectedTokens[0].leverage).toBe(1)
+      expect(result.current.selectedTokens[0].leverage).toBe(50) // Defaults to max leverage
       expect(result.current.selectedTokens[0].status).toBe("idle")
     })
 
@@ -185,7 +185,7 @@ describe("usePortfolioState", () => {
         result.current.handleAddToken("BTC/USDC:USDC")
       })
 
-      expect(result.current.selectedTokens[0].leverage).toBe(1)
+      expect(result.current.selectedTokens[0].leverage).toBe(50) // Defaults to max leverage
 
       await act(async () => {
         result.current.handleLeverageChange("BTC/USDC:USDC", 5)
@@ -537,10 +537,10 @@ describe("usePortfolioState", () => {
 
       await waitFor(() => {
         expect(result.current.selectedTokens).toHaveLength(1)
+        // Tokens from localStorage (no exchange data to compare) should be "idle" so they can be rebalanced
+        expect(result.current.selectedTokens[0].status).toBe("idle")
       })
       expect(result.current.selectedTokens[0].symbol).toBe("BTC/USDC:USDC")
-      // Tokens from localStorage (no exchange data to compare) should be "idle" so they can be rebalanced
-      expect(result.current.selectedTokens[0].status).toBe("idle")
       expect(result.current.selectedTokens[0].leverage).toBe(2)
     })
 
@@ -947,7 +947,9 @@ describe("usePortfolioState", () => {
       })
 
       // Should be completely removed since it doesn't exist on exchange
-      expect(result.current.selectedTokens).toHaveLength(0)
+      await waitFor(() => {
+        expect(result.current.selectedTokens).toHaveLength(0)
+      })
     })
   })
 
@@ -1791,6 +1793,21 @@ describe("usePortfolioState", () => {
       await act(async () => {
         resultTrue.current.handleSliderChange("BTC/USDC:USDC", 305) // $5 change
       })
+
+      // Wait for status to be computed (token should be "modified")
+      // The status computation compares lockedUsd: 305 (current) vs 300 (initial)
+      await waitFor(
+        () => {
+          const token = resultTrue.current.selectedTokens.find(
+            t => t.symbol === "BTC/USDC:USDC",
+          )
+          // Verify the lockedUsd was updated
+          expect(token?.lockedUsd).toBe(305)
+          // Then verify status is computed as modified
+          expect(token?.status).toBe("modified")
+        },
+        { timeout: 3000 },
+      )
 
       await act(async () => {
         resultTrue.current.handleOpenPositions()

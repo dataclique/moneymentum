@@ -224,8 +224,16 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
       }
 
       setSelectedTokens(mergedTokens)
-      // Baseline portfolio = what the user sees initially in the UI
-      setInitialPortfolio(mergedTokens)
+      // Baseline portfolio = only tokens that exist on exchange (for comparison)
+      // Tokens only in localStorage will be treated as "idle" (new tokens)
+      // But we need to match lockedUsd values from mergedTokens for accurate comparison
+      const initialPortfolioTokens = exchangeTokens.map(exchangeToken => {
+        const mergedToken = mergedTokens.find(
+          t => t.symbol === exchangeToken.symbol,
+        )
+        return mergedToken ?? exchangeToken
+      })
+      setInitialPortfolio(initialPortfolioTokens)
     } else if (exchangeTokens.length > 0) {
       // No localStorage data, use exchange positions
       setSelectedTokens(exchangeTokens)
@@ -289,10 +297,15 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
         return currentToken
       }
 
+      // Use getTokenUsdAllocation to compare actual USD values
+      // This handles tokens with notional vs lockedUsd correctly
+      // Use budget directly (budgetForUi isn't available yet in this useMemo)
+      const comparisonBudget = budget > 0 ? budget : MIN_USD
+      const currentUsd = getTokenUsdAllocation(currentToken, comparisonBudget)
+      const initialUsd = getTokenUsdAllocation(initialToken, comparisonBudget)
+
       const isModified =
-        Math.abs(
-          (currentToken.lockedUsd ?? 0) - (initialToken.lockedUsd ?? 0),
-        ) > 0.01 ||
+        Math.abs(currentUsd - initialUsd) > 0.01 ||
         currentToken.side !== initialToken.side ||
         currentToken.leverage !== initialToken.leverage
 
@@ -302,10 +315,9 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
 
       console.log("[Portfolio] status computation", {
         symbol: currentToken.symbol,
-        initialLockedUsd: initialToken.lockedUsd,
-        currentLockedUsd: currentToken.lockedUsd,
-        lockedUsdDelta:
-          (currentToken.lockedUsd ?? 0) - (initialToken.lockedUsd ?? 0),
+        initialUsd,
+        currentUsd,
+        usdDelta: currentUsd - initialUsd,
         sideChanged: currentToken.side !== initialToken.side,
         leverageChanged: currentToken.leverage !== initialToken.leverage,
         isModified,
@@ -319,7 +331,7 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
 
       return currentToken
     })
-  }, [selectedTokens, initialPortfolio])
+  }, [selectedTokens, initialPortfolio, budget])
 
   const activeTokens = useMemo(
     () => tokensWithComputedStatus.filter(t => t.status !== "deleted"),

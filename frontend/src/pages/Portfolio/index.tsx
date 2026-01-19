@@ -215,25 +215,30 @@ const PortfolioPage = () => {
                 ${netExposure.toFixed(2)}
               </span>
             </div>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="outline" size="icon">
-                  <ChevronUp className="h-4 w-4" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem
-                  className="flex items-center justify-between gap-2"
-                  onSelect={e => e.preventDefault()}
-                >
-                  <span>Precise</span>
-                  <Switch checked={isPrecise} onCheckedChange={setIsPrecise} />
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-            <Button onClick={handleOpenPositions} disabled={disableSubmit}>
-              {isRebalancing ? "Sending..." : "Rebalance"}
-            </Button>
+            <div className="flex gap-4">
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" size="icon">
+                    <ChevronUp className="h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem
+                    className="flex items-center justify-between gap-2"
+                    onSelect={e => e.preventDefault()}
+                  >
+                    <span>Precise</span>
+                    <Switch
+                      checked={isPrecise}
+                      onCheckedChange={setIsPrecise}
+                    />
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+              <Button onClick={handleOpenPositions} disabled={disableSubmit}>
+                {isRebalancing ? "Sending..." : "Rebalance"}
+              </Button>
+            </div>
           </div>
         </div>
       </div>

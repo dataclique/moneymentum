@@ -345,6 +345,50 @@ export class HyperliquidClient {
     }
   }
 
+  private async closeReduceOnlyNotional(
+    symbol: string,
+    price: number,
+    notionalToClose: number,
+    closeSide: OrderSide,
+    resultSide: OrderSide,
+    percentage: number,
+  ): Promise<OrderResult> {
+    const usdAmount = Math.abs(notionalToClose)
+    const coinAmount = usdAmount / price
+
+    try {
+      const slippagePrice =
+        closeSide === "buy" ? price * (1 + SLIPPAGE) : price * (1 - SLIPPAGE)
+
+      await this.exchange.createOrder(
+        symbol,
+        "market",
+        closeSide,
+        coinAmount,
+        slippagePrice,
+        {
+          reduceOnly: true,
+          ...this.vaultParams,
+        },
+      )
+
+      return {
+        symbol,
+        side: resultSide,
+        percentage,
+        status: "filled",
+      }
+    } catch (error) {
+      return {
+        symbol,
+        side: resultSide,
+        percentage,
+        status: "failed",
+        message: error instanceof Error ? error.message : String(error),
+      }
+    }
+  }
+
   async rebalancePositions(
     positions: Position[],
     budget: number,
@@ -460,11 +504,13 @@ export class HyperliquidClient {
           const closeSide: OrderSide = currentSide === "buy" ? "sell" : "buy"
           const currentNotionalAbs = Math.abs(currentNotional[symbol] ?? 0)
 
-          // Close entire position
-          const closeResult = await this.placeOrder(
+          // Close entire existing position, even if it is below the minimum order size
+          const closeResult = await this.closeReduceOnlyNotional(
             symbol,
             price,
-            closeSide === "buy" ? currentNotionalAbs : -currentNotionalAbs,
+            currentNotionalAbs,
+            closeSide,
+            position.side,
             position.percentage,
           )
           if (closeResult) {
@@ -504,24 +550,46 @@ export class HyperliquidClient {
           const closeAmount = MIN_ORDER_VALUE
           const openAmount = MIN_ORDER_VALUE + deltaAbs
 
-          // Check if close amount exceeds position size
+          // If close amount exceeds or equals position size, close fully and open target
           if (closeAmount >= currentNotionalAbs) {
             // Close entire position and open target
             const closeSide: OrderSide = currentSide === "buy" ? "sell" : "buy"
-            const closeResult = await this.placeOrder(
-              symbol,
-              price,
-              closeSide === "buy" ? currentNotionalAbs : -currentNotionalAbs,
-              position.percentage,
-            )
+            const actualCloseAmount = Math.min(closeAmount, currentNotionalAbs)
+            const closeResult =
+              actualCloseAmount < MIN_ORDER_VALUE
+                ? await this.closeReduceOnlyNotional(
+                    symbol,
+                    price,
+                    actualCloseAmount,
+                    closeSide,
+                    position.side,
+                    position.percentage,
+                  )
+                : await this.placeOrder(
+                    symbol,
+                    price,
+                    closeSide === "buy"
+                      ? actualCloseAmount
+                      : -actualCloseAmount,
+                    position.percentage,
+                  )
             if (closeResult) {
               results.push(closeResult)
             }
 
+            // Open target amount (ensure it's at least $11 if target is >= $11)
+            const openNotional =
+              targetNotionalAbs >= MIN_ORDER_VALUE
+                ? targetSide === "buy"
+                  ? targetNotionalAbs
+                  : -targetNotionalAbs
+                : targetSide === "buy"
+                  ? MIN_ORDER_VALUE
+                  : -MIN_ORDER_VALUE
             const openResult = await this.placeOrder(
               symbol,
               price,
-              targetSide === "buy" ? targetNotionalAbs : -targetNotionalAbs,
+              openNotional,
               position.percentage,
             )
             if (openResult) {
@@ -571,12 +639,25 @@ export class HyperliquidClient {
           if (closeAmount >= currentNotionalAbs) {
             // Close entire position
             const closeSide: OrderSide = currentSide === "buy" ? "sell" : "buy"
-            const closeResult = await this.placeOrder(
-              symbol,
-              price,
-              closeSide === "buy" ? currentNotionalAbs : -currentNotionalAbs,
-              position.percentage,
-            )
+            const actualCloseAmount = Math.min(closeAmount, currentNotionalAbs)
+            const closeResult =
+              actualCloseAmount < MIN_ORDER_VALUE
+                ? await this.closeReduceOnlyNotional(
+                    symbol,
+                    price,
+                    actualCloseAmount,
+                    closeSide,
+                    position.side,
+                    position.percentage,
+                  )
+                : await this.placeOrder(
+                    symbol,
+                    price,
+                    closeSide === "buy"
+                      ? actualCloseAmount
+                      : -actualCloseAmount,
+                    position.percentage,
+                  )
             if (closeResult) {
               results.push(closeResult)
             }

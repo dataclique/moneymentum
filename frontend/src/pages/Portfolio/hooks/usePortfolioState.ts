@@ -185,9 +185,6 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
       }),
     )
 
-    // Always set initialPortfolio from exchange (source of truth for what exists on exchange)
-    setInitialPortfolio(exchangeTokens)
-
     if (storedDataSnapshot && storedDataSnapshot.tokens.length > 0) {
       // Merge localStorage with exchange positions
       const storedSymbols = new Set(
@@ -227,9 +224,13 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
       }
 
       setSelectedTokens(mergedTokens)
+      // Baseline portfolio = what the user sees initially in the UI
+      setInitialPortfolio(mergedTokens)
     } else if (exchangeTokens.length > 0) {
       // No localStorage data, use exchange positions
       setSelectedTokens(exchangeTokens)
+      // Baseline portfolio = what the user sees initially in the UI
+      setInitialPortfolio(exchangeTokens)
       const totalSpent = positionsData.totalNotional
       if (totalSpent > 0 && !isBudgetInitialized) {
         setBudget(totalSpent)
@@ -298,6 +299,19 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
       const computedStatus: "modified" | "untouched" = isModified
         ? "modified"
         : "untouched"
+
+      console.log("[Portfolio] status computation", {
+        symbol: currentToken.symbol,
+        initialLockedUsd: initialToken.lockedUsd,
+        currentLockedUsd: currentToken.lockedUsd,
+        lockedUsdDelta:
+          (currentToken.lockedUsd ?? 0) - (initialToken.lockedUsd ?? 0),
+        sideChanged: currentToken.side !== initialToken.side,
+        leverageChanged: currentToken.leverage !== initialToken.leverage,
+        isModified,
+        previousStatus: currentToken.status,
+        computedStatus,
+      })
 
       if (currentToken.status !== computedStatus) {
         return { ...currentToken, status: computedStatus }
@@ -676,6 +690,17 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
   ])
 
   const handleOpenPositions = useCallback(() => {
+    console.log("[Portfolio] handleOpenPositions called", {
+      budget,
+      isPrecise,
+      hasBlockingBudgetIssue,
+      derivedTotalPercent,
+      hasPendingDeletions,
+      isPending: rebalancePositionsMutation.isPending,
+      tokensWithDerivedPercentages,
+      initialPortfolio,
+    })
+
     if (
       !tokensWithDerivedPercentages.length ||
       budget <= 0 ||
@@ -683,6 +708,7 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
       (derivedTotalPercent <= 0 && !hasPendingDeletions) ||
       rebalancePositionsMutation.isPending
     ) {
+      console.log("[Portfolio] handleOpenPositions: early return guard hit")
       return
     }
 
@@ -721,6 +747,10 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
           // If delta is too small, mark as error
           return delta > 0 && delta < MIN_CHANGE_DELTA
         })
+
+      console.log("[Portfolio] handleOpenPositions: small-change check", {
+        tokensWithSmallChangesOnSubmit,
+      })
 
       // If there are positions with small changes, set error messages and return
       if (tokensWithSmallChangesOnSubmit.length > 0) {
@@ -763,10 +793,25 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
       return status
     }
 
+    // Only send tokens that actually changed compared to the initial portfolio state
+    const tokensForApi = tokensWithDerivedPercentages.filter(token => {
+      const inInitial = initialPortfolio.find(it => it.symbol === token.symbol)
+      return token.status !== "untouched" || !inInitial
+    })
+
+    console.log("[Portfolio] handleOpenPositions: tokensForApi", {
+      tokensForApi,
+    })
+
+    // Nothing to do: no modifications, creations, or deletions
+    if (!tokensForApi.length) {
+      return
+    }
+
     const payload = {
       budget,
       precise: isPrecise,
-      positions: tokensWithDerivedPercentages.map(token => ({
+      positions: tokensForApi.map(token => ({
         symbol: token.symbol,
         side: token.side,
         percentage: token.percentage / 100,
@@ -775,16 +820,29 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
       })),
     }
 
+    console.log("[Portfolio] handleOpenPositions: payload", payload)
+
     setSelectedTokensAndPersist(prev =>
-      prev.map(token => ({
-        ...token,
-        status: token.status === "deleted" ? "deleted" : "working",
-        message: null,
-      })),
+      prev.map(token => {
+        const isInPayload = tokensForApi.some(t => t.symbol === token.symbol)
+        if (!isInPayload) {
+          return token
+        }
+
+        return {
+          ...token,
+          status: token.status === "deleted" ? "deleted" : "working",
+          message: null,
+        }
+      }),
     )
 
     rebalancePositionsMutation.mutate(payload, {
       onSuccess: data => {
+        console.log("[Portfolio] handleOpenPositions: success", {
+          orders: data.orders,
+        })
+
         const updatedTokens = tokensWithDerivedPercentages
           .map(token => {
             const status = data.orders.find(
@@ -807,6 +865,8 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
         setSelectedTokensAndPersist(updatedTokens)
       },
       onError: error => {
+        console.error("[Portfolio] handleOpenPositions: error", error)
+
         const symbolMatch = error.message.match(/([A-Z0-9-]+\/[A-Z]+:[A-Z]+)/)
         const failedSymbol = symbolMatch ? symbolMatch[0] : null
 

@@ -300,7 +300,7 @@ export class HyperliquidClient {
     price: number,
     notionalDelta: number,
     percentage: number,
-  ): Promise<OrderResult | null> {
+  ): Promise<OrderResult> {
     const side: OrderSide = notionalDelta > 0 ? "buy" : "sell"
     const usdAmount = Math.abs(notionalDelta)
     const coinAmount = usdAmount / price
@@ -398,15 +398,8 @@ export class HyperliquidClient {
       throw new Error("Budget must be positive")
     }
 
-    const results: OrderResult[] = []
-
     // 1. Process deletions first
-    for (const position of positions) {
-      if (position.status === "deleted") {
-        const closeResult = await this.closePosition(position)
-        results.push(closeResult)
-      }
-    }
+    const deletionResults = await this.processDeletions(positions)
 
     // 2. Filter for positions that need rebalancing
     const positionsToRebalance = positions.filter(
@@ -414,17 +407,67 @@ export class HyperliquidClient {
     )
 
     if (positionsToRebalance.length === 0) {
-      return results
+      return deletionResults
     }
 
-    // 3. Set leverages
-    const successfulPositions: Position[] = []
-    for (const position of positionsToRebalance) {
+    // 3. Set leverages and collect results
+    const { successful: successfulPositions, failed: leverageFailures } =
+      await this.setLeveragesWithResults(positionsToRebalance)
+
+    if (successfulPositions.length === 0) {
+      return [...deletionResults, ...leverageFailures]
+    }
+
+    // 4. Build notional maps
+    const targetNotional = this.buildTargetNotionalMap(
+      successfulPositions,
+      budget,
+    )
+    const currentPositions = await this.getCurrentPositions()
+    const currentNotional = this.buildCurrentNotionalMap(currentPositions)
+
+    // 5. Fetch prices and process positions
+    const prices = await this.fetchSymbolPrices(
+      successfulPositions.map(p => p.symbol),
+    )
+
+    const orderResults = await this.processPositions(
+      successfulPositions,
+      prices,
+      targetNotional,
+      currentNotional,
+      currentPositions,
+      precise,
+    )
+
+    return [...deletionResults, ...leverageFailures, ...orderResults]
+  }
+
+  private async processDeletions(
+    positions: Position[],
+  ): Promise<OrderResult[]> {
+    const deletedPositions = positions.filter(p => p.status === "deleted")
+    const results: OrderResult[] = []
+    for (const position of deletedPositions) {
+      const result = await this.closePosition(position)
+      results.push(result)
+    }
+    return results
+  }
+
+  private async setLeveragesWithResults(positions: Position[]): Promise<{
+    successful: Position[]
+    failed: OrderResult[]
+  }> {
+    const successful: Position[] = []
+    const failed: OrderResult[] = []
+
+    for (const position of positions) {
       try {
         await this.setLeverage(position.symbol, position.leverage)
-        successfulPositions.push(position)
+        successful.push(position)
       } catch (error) {
-        results.push({
+        failed.push({
           symbol: position.symbol,
           side: position.side,
           percentage: position.percentage,
@@ -434,292 +477,320 @@ export class HyperliquidClient {
       }
     }
 
-    if (successfulPositions.length === 0) {
-      return results
-    }
+    return { successful, failed }
+  }
 
-    // 4. Build target notional values
-    const targetNotional: Record<string, number> = {}
-    for (const position of successfulPositions) {
-      targetNotional[position.symbol] = this.signedNotional(
-        position.side,
-        position.percentage * budget,
+  private buildTargetNotionalMap(
+    positions: Position[],
+    budget: number,
+  ): Record<string, number> {
+    return Object.fromEntries(
+      positions.map(p => [
+        p.symbol,
+        this.signedNotional(p.side, p.percentage * budget),
+      ]),
+    )
+  }
+
+  private buildCurrentNotionalMap(
+    positions: CurrentPosition[],
+  ): Record<string, number> {
+    return Object.fromEntries(
+      positions.map(p => [p.symbol, this.signedNotional(p.side, p.notional)]),
+    )
+  }
+
+  private async processPositions(
+    positions: Position[],
+    prices: Record<string, number>,
+    targetNotional: Record<string, number>,
+    currentNotional: Record<string, number>,
+    currentPositions: CurrentPosition[],
+    precise: boolean,
+  ): Promise<OrderResult[]> {
+    const results: OrderResult[] = []
+
+    for (const position of positions) {
+      const positionResults = await this.processPosition(
+        position,
+        prices[position.symbol],
+        targetNotional[position.symbol] ?? 0,
+        currentNotional[position.symbol] ?? 0,
+        currentPositions.find(p => p.symbol === position.symbol),
+        currentNotional,
+        precise,
       )
-    }
-
-    // 5. Fetch current positions
-    const currentPositions = await this.getCurrentPositions()
-    const currentNotional: Record<string, number> = {}
-    for (const pos of currentPositions) {
-      currentNotional[pos.symbol] = this.signedNotional(pos.side, pos.notional)
-    }
-
-    // 6. Fetch prices and place orders
-    const symbolsToRebalance = successfulPositions.map(p => p.symbol)
-    const prices = await this.fetchSymbolPrices(symbolsToRebalance)
-
-    for (const position of successfulPositions) {
-      const symbol = position.symbol
-      const price = prices[symbol]
-
-      const targetValue = targetNotional[symbol] ?? 0
-      const currentValue = currentNotional[symbol] ?? 0
-      const notionalDelta = targetValue - currentValue
-
-      if (Math.abs(notionalDelta) < 1.0) {
-        results.push({
-          symbol,
-          side: position.side,
-          percentage: position.percentage,
-          status: "filled",
-          message: "No action taken: change is negligible.",
-        })
-        continue
-      }
-
-      // If precise mode is on and change is less than $11, adjust to make it exactly $11
-      if (precise && Math.abs(notionalDelta) < MIN_ORDER_VALUE) {
-        const currentPosition = currentPositions.find(p => p.symbol === symbol)
-        if (!currentPosition) {
-          // New position - open exactly $11
-          const orderResult = await this.placeOrder(
-            symbol,
-            price,
-            position.side === "buy" ? MIN_ORDER_VALUE : -MIN_ORDER_VALUE,
-            position.percentage,
-          )
-          if (orderResult) {
-            results.push(orderResult)
-          }
-          continue
-        }
-
-        // Check if sides match
-        const currentSide = currentPosition.side
-        const targetSide = position.side
-        const sidesMatch = currentSide === targetSide
-
-        if (!sidesMatch) {
-          // Side changed - close entire position and open target
-          const closeSide: OrderSide = currentSide === "buy" ? "sell" : "buy"
-          const currentNotionalAbs = Math.abs(currentNotional[symbol] ?? 0)
-
-          // Close entire existing position, even if it is below the minimum order size
-          const closeResult = await this.closeReduceOnlyNotional(
-            symbol,
-            price,
-            currentNotionalAbs,
-            closeSide,
-            position.side,
-            position.percentage,
-          )
-          if (closeResult) {
-            results.push(closeResult)
-          }
-
-          // Open target amount (at least $11)
-          const targetNotionalAbs = Math.abs(targetValue)
-          const openAmount = Math.max(targetNotionalAbs, MIN_ORDER_VALUE)
-          const openResult = await this.placeOrder(
-            symbol,
-            price,
-            targetSide === "buy" ? openAmount : -openAmount,
-            position.percentage,
-          )
-          if (openResult) {
-            results.push(openResult)
-          }
-          continue
-        }
-
-        // Same side - adjust using precise mode logic
-        const currentNotionalAbs = Math.abs(currentValue)
-        const targetNotionalAbs = Math.abs(targetValue)
-
-        // For SHORT positions (negative values), positive delta means CLOSING (decreasing)
-        // For LONG positions (positive values), positive delta means OPENING (increasing)
-        // Determine if we're increasing or decreasing based on absolute values
-        const isIncreasing = targetNotionalAbs > currentNotionalAbs
-
-        if (isIncreasing) {
-          // Increasing position: close $11, open ($11 + delta)
-          // Example: current $30 long, target $35 long, delta = +$5
-          // Close $11 → position becomes $19, open $16 → final $35
-          // For increasing: delta = targetAbs - currentAbs
-          const deltaAbs = Math.abs(notionalDelta)
-          const closeAmount = MIN_ORDER_VALUE
-          const openAmount = MIN_ORDER_VALUE + deltaAbs
-
-          // If close amount exceeds or equals position size, close fully and open target
-          if (closeAmount >= currentNotionalAbs) {
-            // Close entire position and open target
-            const closeSide: OrderSide = currentSide === "buy" ? "sell" : "buy"
-            const actualCloseAmount = Math.min(closeAmount, currentNotionalAbs)
-            const closeResult =
-              actualCloseAmount < MIN_ORDER_VALUE
-                ? await this.closeReduceOnlyNotional(
-                    symbol,
-                    price,
-                    actualCloseAmount,
-                    closeSide,
-                    position.side,
-                    position.percentage,
-                  )
-                : await this.placeOrder(
-                    symbol,
-                    price,
-                    closeSide === "buy"
-                      ? actualCloseAmount
-                      : -actualCloseAmount,
-                    position.percentage,
-                  )
-            if (closeResult) {
-              results.push(closeResult)
-            }
-
-            // Open target amount (ensure it's at least $11 if target is >= $11)
-            const openNotional =
-              targetNotionalAbs >= MIN_ORDER_VALUE
-                ? targetSide === "buy"
-                  ? targetNotionalAbs
-                  : -targetNotionalAbs
-                : targetSide === "buy"
-                  ? MIN_ORDER_VALUE
-                  : -MIN_ORDER_VALUE
-            const openResult = await this.placeOrder(
-              symbol,
-              price,
-              openNotional,
-              position.percentage,
-            )
-            if (openResult) {
-              results.push(openResult)
-            }
-            continue
-          } else {
-            // Increasing position: close $11, open ($11 + delta)
-            // Example: current $30 long, target $35 long, delta = +$5
-            // Close $11 → position becomes $19, open $16 → final $35
-            // To close a long position, we sell (negative notional)
-            // To close a short position, we buy (positive notional)
-            const closeSide: OrderSide = currentSide === "buy" ? "sell" : "buy"
-            const closeNotional =
-              closeSide === "buy" ? closeAmount : -closeAmount
-            const closeResult = await this.placeOrder(
-              symbol,
-              price,
-              closeNotional,
-              position.percentage,
-            )
-            if (closeResult) {
-              results.push(closeResult)
-            }
-
-            // Open ($11 + delta) in target direction to reach final position
-            const openNotional = targetSide === "buy" ? openAmount : -openAmount
-            const openResult = await this.placeOrder(
-              symbol,
-              price,
-              openNotional,
-              position.percentage,
-            )
-            if (openResult) {
-              results.push(openResult)
-            }
-          }
-        } else {
-          // Decreasing position: close ($11 + |delta|), open $11
-          // Example: current $54 long, target $50 long, delta = -$4
-          // Close $15 → position becomes $39, open $11 → final $50
-          const deltaAbs = Math.abs(notionalDelta)
-          const closeAmount = MIN_ORDER_VALUE + deltaAbs
-          const openAmount = MIN_ORDER_VALUE
-
-          // Check if close amount exceeds position size
-          if (closeAmount >= currentNotionalAbs) {
-            // Close entire position
-            const closeSide: OrderSide = currentSide === "buy" ? "sell" : "buy"
-            const actualCloseAmount = Math.min(closeAmount, currentNotionalAbs)
-            const closeResult =
-              actualCloseAmount < MIN_ORDER_VALUE
-                ? await this.closeReduceOnlyNotional(
-                    symbol,
-                    price,
-                    actualCloseAmount,
-                    closeSide,
-                    position.side,
-                    position.percentage,
-                  )
-                : await this.placeOrder(
-                    symbol,
-                    price,
-                    closeSide === "buy"
-                      ? actualCloseAmount
-                      : -actualCloseAmount,
-                    position.percentage,
-                  )
-            if (closeResult) {
-              results.push(closeResult)
-            }
-
-            // Only open if target is >= $11
-            if (targetNotionalAbs >= MIN_ORDER_VALUE) {
-              const openResult = await this.placeOrder(
-                symbol,
-                price,
-                targetSide === "buy" ? targetNotionalAbs : -targetNotionalAbs,
-                position.percentage,
-              )
-              if (openResult) {
-                results.push(openResult)
-              }
-            }
-          } else {
-            // Close ($11 + |delta|) to reduce position
-            // To close a long position, we sell (negative notional)
-            // To close a short position, we buy (positive notional)
-            const closeSide: OrderSide = currentSide === "buy" ? "sell" : "buy"
-            const closeNotional =
-              closeSide === "buy" ? closeAmount : -closeAmount
-            const closeResult = await this.placeOrder(
-              symbol,
-              price,
-              closeNotional,
-              position.percentage,
-            )
-            if (closeResult) {
-              results.push(closeResult)
-            }
-
-            // Open $11 in target direction to reach final position
-            const openNotional = targetSide === "buy" ? openAmount : -openAmount
-            const openResult = await this.placeOrder(
-              symbol,
-              price,
-              openNotional,
-              position.percentage,
-            )
-            if (openResult) {
-              results.push(openResult)
-            }
-          }
-        }
-        continue
-      }
-
-      const orderResult = await this.placeOrder(
-        symbol,
-        price,
-        notionalDelta,
-        position.percentage,
-      )
-
-      if (orderResult) {
-        results.push(orderResult)
-      }
+      results.push(...positionResults)
     }
 
     return results
+  }
+
+  private async processPosition(
+    position: Position,
+    price: number,
+    targetValue: number,
+    currentValue: number,
+    currentPosition: CurrentPosition | undefined,
+    currentNotional: Record<string, number>,
+    precise: boolean,
+  ): Promise<OrderResult[]> {
+    const { symbol, side, percentage } = position
+    const notionalDelta = targetValue - currentValue
+
+    // Negligible change
+    if (Math.abs(notionalDelta) < 1.0) {
+      return [
+        {
+          symbol,
+          side,
+          percentage,
+          status: "filled",
+          message: "No action taken: change is negligible.",
+        },
+      ]
+    }
+
+    // Precise mode for small changes
+    if (precise && Math.abs(notionalDelta) < MIN_ORDER_VALUE) {
+      const currentNotionalAbs = Math.abs(currentNotional[symbol] ?? 0)
+      return this.processPositionPreciseMode(
+        position,
+        price,
+        targetValue,
+        currentValue,
+        currentPosition,
+        currentNotionalAbs,
+      )
+    }
+
+    // Normal order
+    const result = await this.placeOrder(
+      symbol,
+      price,
+      notionalDelta,
+      percentage,
+    )
+    return [result]
+  }
+
+  private async processPositionPreciseMode(
+    position: Position,
+    price: number,
+    targetValue: number,
+    currentValue: number,
+    currentPosition: CurrentPosition | undefined,
+    currentNotionalAbs: number,
+  ): Promise<OrderResult[]> {
+    const { symbol, side: targetSide, percentage } = position
+
+    // New position - open exactly $11
+    if (!currentPosition) {
+      const result = await this.placeOrder(
+        symbol,
+        price,
+        targetSide === "buy" ? MIN_ORDER_VALUE : -MIN_ORDER_VALUE,
+        percentage,
+      )
+      return [result]
+    }
+
+    const currentSide = currentPosition.side
+    const sidesMatch = currentSide === targetSide
+
+    // Side changed - close entire position and open target
+    if (!sidesMatch) {
+      const closeSide: OrderSide = currentSide === "buy" ? "sell" : "buy"
+      const closeResult = await this.closeReduceOnlyNotional(
+        symbol,
+        price,
+        currentNotionalAbs,
+        closeSide,
+        targetSide,
+        percentage,
+      )
+
+      const targetNotionalAbs = Math.abs(targetValue)
+      const openAmount = Math.max(targetNotionalAbs, MIN_ORDER_VALUE)
+      const openResult = await this.placeOrder(
+        symbol,
+        price,
+        targetSide === "buy" ? openAmount : -openAmount,
+        percentage,
+      )
+
+      return [closeResult, openResult]
+    }
+
+    // Same side - adjust using precise mode logic
+    const currentNotionalAbsValue = Math.abs(currentValue)
+    const targetNotionalAbs = Math.abs(targetValue)
+    const notionalDelta = targetValue - currentValue
+    const deltaAbs = Math.abs(notionalDelta)
+    const isIncreasing = targetNotionalAbs > currentNotionalAbsValue
+    const closeSide: OrderSide = currentSide === "buy" ? "sell" : "buy"
+
+    if (isIncreasing) {
+      return this.handlePreciseModeIncreasing(
+        symbol,
+        price,
+        percentage,
+        targetSide,
+        closeSide,
+        currentNotionalAbsValue,
+        targetNotionalAbs,
+        deltaAbs,
+      )
+    }
+
+    return this.handlePreciseModeDecreasing(
+      symbol,
+      price,
+      percentage,
+      targetSide,
+      closeSide,
+      currentNotionalAbsValue,
+      targetNotionalAbs,
+      deltaAbs,
+    )
+  }
+
+  private async handlePreciseModeIncreasing(
+    symbol: string,
+    price: number,
+    percentage: number,
+    targetSide: OrderSide,
+    closeSide: OrderSide,
+    currentNotionalAbs: number,
+    targetNotionalAbs: number,
+    deltaAbs: number,
+  ): Promise<OrderResult[]> {
+    const closeAmount = MIN_ORDER_VALUE
+    const openAmount = MIN_ORDER_VALUE + deltaAbs
+
+    // Close amount exceeds or equals position size - close fully and open target
+    if (closeAmount >= currentNotionalAbs) {
+      const actualCloseAmount = Math.min(closeAmount, currentNotionalAbs)
+      const closeResult =
+        actualCloseAmount < MIN_ORDER_VALUE
+          ? await this.closeReduceOnlyNotional(
+              symbol,
+              price,
+              actualCloseAmount,
+              closeSide,
+              targetSide,
+              percentage,
+            )
+          : await this.placeOrder(
+              symbol,
+              price,
+              closeSide === "buy" ? actualCloseAmount : -actualCloseAmount,
+              percentage,
+            )
+
+      const openNotional =
+        targetNotionalAbs >= MIN_ORDER_VALUE
+          ? targetSide === "buy"
+            ? targetNotionalAbs
+            : -targetNotionalAbs
+          : targetSide === "buy"
+            ? MIN_ORDER_VALUE
+            : -MIN_ORDER_VALUE
+      const openResult = await this.placeOrder(
+        symbol,
+        price,
+        openNotional,
+        percentage,
+      )
+
+      return [closeResult, openResult]
+    }
+
+    // Normal increasing: close $11, open ($11 + delta)
+    const closeNotional = closeSide === "buy" ? closeAmount : -closeAmount
+    const closeResult = await this.placeOrder(
+      symbol,
+      price,
+      closeNotional,
+      percentage,
+    )
+
+    const openNotional = targetSide === "buy" ? openAmount : -openAmount
+    const openResult = await this.placeOrder(
+      symbol,
+      price,
+      openNotional,
+      percentage,
+    )
+
+    return [closeResult, openResult]
+  }
+
+  private async handlePreciseModeDecreasing(
+    symbol: string,
+    price: number,
+    percentage: number,
+    targetSide: OrderSide,
+    closeSide: OrderSide,
+    currentNotionalAbs: number,
+    targetNotionalAbs: number,
+    deltaAbs: number,
+  ): Promise<OrderResult[]> {
+    const closeAmount = MIN_ORDER_VALUE + deltaAbs
+    const openAmount = MIN_ORDER_VALUE
+
+    // Close amount exceeds position size - close entire position
+    if (closeAmount >= currentNotionalAbs) {
+      const actualCloseAmount = Math.min(closeAmount, currentNotionalAbs)
+      const closeResult =
+        actualCloseAmount < MIN_ORDER_VALUE
+          ? await this.closeReduceOnlyNotional(
+              symbol,
+              price,
+              actualCloseAmount,
+              closeSide,
+              targetSide,
+              percentage,
+            )
+          : await this.placeOrder(
+              symbol,
+              price,
+              closeSide === "buy" ? actualCloseAmount : -actualCloseAmount,
+              percentage,
+            )
+
+      // Only open if target >= $11
+      if (targetNotionalAbs >= MIN_ORDER_VALUE) {
+        const openResult = await this.placeOrder(
+          symbol,
+          price,
+          targetSide === "buy" ? targetNotionalAbs : -targetNotionalAbs,
+          percentage,
+        )
+        return [closeResult, openResult]
+      }
+
+      return [closeResult]
+    }
+
+    // Normal decreasing: close ($11 + |delta|), open $11
+    const closeNotional = closeSide === "buy" ? closeAmount : -closeAmount
+    const closeResult = await this.placeOrder(
+      symbol,
+      price,
+      closeNotional,
+      percentage,
+    )
+
+    const openNotional = targetSide === "buy" ? openAmount : -openAmount
+    const openResult = await this.placeOrder(
+      symbol,
+      price,
+      openNotional,
+      percentage,
+    )
+
+    return [closeResult, openResult]
   }
 
   getNetworkMode(): NetworkMode {

@@ -26,6 +26,12 @@ jobs:
       - name: Nix Flake check
         run: nix flake check --impure --accept-flake-config --show-trace
 
+      - name: Lint frontend
+        run: |
+          nix develop .#frontend \
+            --impure --accept-flake-config --show-trace \
+            --command bash -c "cd frontend && bun run lint"
+
       - name: Run frontend tests
         run: |
           nix develop .#frontend \

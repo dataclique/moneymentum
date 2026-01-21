@@ -313,18 +313,6 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
         ? "modified"
         : "untouched"
 
-      console.log("[Portfolio] status computation", {
-        symbol: currentToken.symbol,
-        initialUsd,
-        currentUsd,
-        usdDelta: currentUsd - initialUsd,
-        sideChanged: currentToken.side !== initialToken.side,
-        leverageChanged: currentToken.leverage !== initialToken.leverage,
-        isModified,
-        previousStatus: currentToken.status,
-        computedStatus,
-      })
-
       if (currentToken.status !== computedStatus) {
         return { ...currentToken, status: computedStatus }
       }
@@ -429,6 +417,9 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
     return derivedActiveTokens
       .filter(token => {
         const usdValue = getTokenUsdAllocation(token, budgetForUi)
+        if (token.status === "untouched") {
+          return false
+        }
         return usdValue > 0 && usdValue < MIN_USD
       })
       .map(token => ({
@@ -710,17 +701,6 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
   ])
 
   const handleOpenPositions = useCallback(() => {
-    console.log("[Portfolio] handleOpenPositions called", {
-      budget,
-      isPrecise,
-      hasBlockingBudgetIssue,
-      derivedTotalPercent,
-      hasPendingDeletions,
-      isPending: rebalancePositionsMutation.isPending,
-      tokensWithDerivedPercentages,
-      initialPortfolio,
-    })
-
     if (
       !tokensWithDerivedPercentages.length ||
       budget <= 0 ||
@@ -728,7 +708,6 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
       (derivedTotalPercent <= 0 && !hasPendingDeletions) ||
       rebalancePositionsMutation.isPending
     ) {
-      console.log("[Portfolio] handleOpenPositions: early return guard hit")
       return
     }
 
@@ -768,10 +747,6 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
           return delta > 0 && delta < MIN_CHANGE_DELTA
         })
 
-      console.log("[Portfolio] handleOpenPositions: small-change check", {
-        tokensWithSmallChangesOnSubmit,
-      })
-
       // If there are positions with small changes, set error messages and return
       if (tokensWithSmallChangesOnSubmit.length > 0) {
         setSelectedTokensAndPersist(prev =>
@@ -798,7 +773,7 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
             }
             return {
               ...token,
-              message: `Change ($${delta.toFixed(2)}) is below minimum of $${MIN_CHANGE_DELTA.toFixed(2)}`,
+              message: `Change ($${delta.toFixed(2)}) is below minimum of $${MIN_CHANGE_DELTA.toFixed(2)}. Use precise mode to open this position.`,
             }
           }),
         )
@@ -819,10 +794,6 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
       return token.status !== "untouched" || !inInitial
     })
 
-    console.log("[Portfolio] handleOpenPositions: tokensForApi", {
-      tokensForApi,
-    })
-
     // Nothing to do: no modifications, creations, or deletions
     if (!tokensForApi.length) {
       return
@@ -839,8 +810,6 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
         status: mapStatusForApi(token.status),
       })),
     }
-
-    console.log("[Portfolio] handleOpenPositions: payload", payload)
 
     setSelectedTokensAndPersist(prev =>
       prev.map(token => {
@@ -859,10 +828,6 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
 
     rebalancePositionsMutation.mutate(payload, {
       onSuccess: data => {
-        console.log("[Portfolio] handleOpenPositions: success", {
-          orders: data.orders,
-        })
-
         const updatedTokens = tokensWithDerivedPercentages
           .map(token => {
             const status = data.orders.find(

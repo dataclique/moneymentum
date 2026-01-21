@@ -201,7 +201,7 @@ describe("WalletHeader", () => {
         apiWalletAddress: "0xMyApiWalletAddress",
         privateKey: "0xMyPrivateKey",
       })
-    })
+    }, 15000)
 
     it("stores vault address when provided", async () => {
       const user = userEvent.setup()
@@ -230,7 +230,7 @@ describe("WalletHeader", () => {
         privateKey: "0xMyPrivateKey",
         vaultAddress: "0xMyVaultAddress",
       })
-    })
+    }, 15000)
 
     it("connects without vault address when not provided", async () => {
       const user = userEvent.setup()

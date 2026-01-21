@@ -429,6 +429,9 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
     return derivedActiveTokens
       .filter(token => {
         const usdValue = getTokenUsdAllocation(token, budgetForUi)
+        if (token.status === "untouched") {
+          return false
+        }
         return usdValue > 0 && usdValue < MIN_USD
       })
       .map(token => ({
@@ -798,7 +801,7 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
             }
             return {
               ...token,
-              message: `Change ($${delta.toFixed(2)}) is below minimum of $${MIN_CHANGE_DELTA.toFixed(2)}`,
+              message: `Change ($${delta.toFixed(2)}) is below minimum of $${MIN_CHANGE_DELTA.toFixed(2)}. Use precise mode to open this position.`,
             }
           }),
         )

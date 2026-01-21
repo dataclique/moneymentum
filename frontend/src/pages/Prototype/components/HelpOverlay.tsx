@@ -45,16 +45,34 @@ export const HelpOverlay = ({ onClose }: HelpOverlayProps) => {
             shortcuts={[
               { key: "1", description: "Focus Screener" },
               { key: "2", description: "Focus Positions" },
-              { key: "h/l", description: "Switch panels" },
+              { key: "3", description: "Focus Performance" },
+              { key: "4", description: "Focus Staged Changes" },
+              { key: "h/←", description: "Switch to Screener" },
+              { key: "l/→", description: "Switch to Positions" },
               { key: "Esc", description: "Clear selection / Unfocus" },
-              { key: "?", description: "Toggle this help" },
             ]}
           />
           <ShortcutGroup
             title="List Navigation"
             shortcuts={[
-              { key: "j", description: "Select next row" },
-              { key: "k", description: "Select previous row" },
+              { key: "j/↓", description: "Select next item" },
+              { key: "k/↑", description: "Select previous item" },
+              { key: "o/⏎/␣", description: "Expand/collapse underlying" },
+            ]}
+          />
+          <ShortcutGroup
+            title="Instrument Weights"
+            shortcuts={[
+              { key: "⇧+", description: "Increase selected weight +5%" },
+              { key: "⇧-", description: "Decrease selected weight -5%" },
+            ]}
+          />
+          <ShortcutGroup
+            title="Leverage (when focused)"
+            shortcuts={[
+              { key: "h/←/[", description: "Decrease leverage" },
+              { key: "l/→/]", description: "Increase leverage" },
+              { key: "⇧", description: "Hold for ±0.5x step" },
             ]}
           />
           <ShortcutGroup
@@ -62,11 +80,22 @@ export const HelpOverlay = ({ onClose }: HelpOverlayProps) => {
             shortcuts={[
               { key: "+", description: "Stage buy for selected" },
               { key: "-", description: "Stage sell for selected" },
+              { key: "x", description: "Execute staged trades" },
+            ]}
+          />
+          <ShortcutGroup
+            title="Configuration"
+            shortcuts={[
+              { key: "m", description: "Open metric selector" },
+              { key: "f", description: "Toggle factor config panel" },
             ]}
           />
           <ShortcutGroup
             title="General"
-            shortcuts={[{ key: "F1", description: "Toggle help" }]}
+            shortcuts={[
+              { key: "?", description: "Toggle this help" },
+              { key: "F1", description: "Toggle help (Bloomberg)" },
+            ]}
           />
         </div>
         <div className="p-3 border-t border-border bg-muted/30 text-xs text-muted-foreground">

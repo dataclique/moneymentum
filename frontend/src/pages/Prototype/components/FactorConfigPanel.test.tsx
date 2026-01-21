@@ -24,38 +24,30 @@ describe("FactorConfigPanel", () => {
     expect(screen.getByText("Momentum")).toBeInTheDocument()
   })
 
-  it("shows available benchmarks to add", () => {
+  it("shows all benchmarks as toggles with active state", () => {
     render(<FactorConfigPanel {...defaultProps} />)
 
-    expect(screen.getByText("ETH")).toBeInTheDocument()
-    expect(screen.getByText("QQQ")).toBeInTheDocument()
-    expect(screen.queryByText("BTC")).not.toBeInTheDocument() // Already in factors
-    expect(screen.queryByText("SPY")).not.toBeInTheDocument() // Already in factors
+    // All benchmarks should be visible as toggles
+    expect(screen.getByRole("button", { name: /BTC/ })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: /SPY/ })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: /ETH/ })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: /QQQ/ })).toBeInTheDocument()
   })
 
-  it("calls onClose when Cancel clicked", () => {
-    const onClose = vi.fn()
-    render(<FactorConfigPanel {...defaultProps} onClose={onClose} />)
-
-    fireEvent.click(screen.getByText("Cancel"))
-    expect(onClose).toHaveBeenCalled()
-  })
-
-  it("calls onSave with current factors when Save clicked", () => {
+  it("calls onSave and onClose when Done clicked", () => {
     const onSave = vi.fn()
     const onClose = vi.fn()
     render(
       <FactorConfigPanel {...defaultProps} onSave={onSave} onClose={onClose} />,
     )
 
-    fireEvent.click(screen.getByText("Save"))
+    fireEvent.click(screen.getByText("Done"))
     expect(onSave).toHaveBeenCalledWith(mockFactors)
     expect(onClose).toHaveBeenCalled()
   })
 
   it("removes factor when X clicked", () => {
-    const onSave = vi.fn()
-    render(<FactorConfigPanel {...defaultProps} onSave={onSave} />)
+    render(<FactorConfigPanel {...defaultProps} />)
 
     // Find the remove buttons (X icons) in the factor list
     const factorRow = screen.getByText("β to BTC").closest("div")
@@ -64,16 +56,21 @@ describe("FactorConfigPanel", () => {
       fireEvent.click(removeButton)
     }
 
-    // After removing, BTC should now be available to add
+    // After removing, the factor should no longer be in the list
     expect(screen.queryByText("β to BTC")).not.toBeInTheDocument()
-    expect(screen.getByRole("button", { name: /BTC/ })).toBeInTheDocument()
   })
 
-  it("adds new factor when benchmark clicked", () => {
+  it("toggles benchmark when quick toggle button clicked", () => {
     render(<FactorConfigPanel {...defaultProps} />)
 
+    // ETH is not in the initial factors, click to add
     fireEvent.click(screen.getByRole("button", { name: /ETH/ }))
 
+    // Now β to ETH should be in the factors list
     expect(screen.getByText("β to ETH")).toBeInTheDocument()
+
+    // Click again to remove
+    fireEvent.click(screen.getByRole("button", { name: /ETH/ }))
+    expect(screen.queryByText("β to ETH")).not.toBeInTheDocument()
   })
 })

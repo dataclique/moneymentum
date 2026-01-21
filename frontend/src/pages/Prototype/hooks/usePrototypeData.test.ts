@@ -131,88 +131,296 @@ describe("usePrototypeData", () => {
       expect(result.current.stagedTrades).toEqual([])
     })
 
-    it("addStagedTrade creates unique IDs for different symbols", () => {
+    it("generates staged trades when weight changes", () => {
       const { result } = renderHook(() => usePrototypeData())
 
-      // Use different symbols/sides to ensure unique IDs even in same ms
+      const btcGroup = result.current.positionsByUnderlying.find(
+        g => g.underlying === "BTC",
+      )
+      const btcPerp = btcGroup?.positions.find(p =>
+        p.symbol.includes("/USDC:USDC"),
+      )
+      expect(btcPerp).toBeDefined()
+
       act(() => {
-        result.current.addStagedTrade("BTC", "buy")
-        result.current.addStagedTrade("ETH", "sell")
-        result.current.addStagedTrade("SOL", "buy")
+        result.current.updateInstrumentWeight(btcPerp!.symbol, 0.3)
       })
 
-      const ids = result.current.stagedTrades.map(t => t.id)
-      expect(new Set(ids).size).toBe(3) // All IDs are unique
+      // Should have staged trades generated from the weight change
+      expect(result.current.stagedTrades.length).toBeGreaterThan(0)
+      expect(
+        result.current.stagedTrades.some(t => t.source === "weight_edit"),
+      ).toBe(true)
     })
 
-    it("addStagedTrade sets correct symbol and side", () => {
+    it("generates staged trades when leverage changes", () => {
       const { result } = renderHook(() => usePrototypeData())
 
       act(() => {
-        result.current.addStagedTrade("ETH", "sell")
+        result.current.setLeverage(1.5)
       })
 
-      expect(result.current.stagedTrades).toHaveLength(1)
-      expect(result.current.stagedTrades[0].symbol).toBe("ETH")
-      expect(result.current.stagedTrades[0].side).toBe("sell")
+      // All positions should have leverage_change trades
+      expect(result.current.stagedTrades.length).toBeGreaterThan(0)
+      expect(
+        result.current.stagedTrades.every(t => t.source === "leverage_change"),
+      ).toBe(true)
     })
 
-    it("removeStagedTrade removes correct trade", () => {
+    it("clearStagedTrades reverts to committed state", () => {
       const { result } = renderHook(() => usePrototypeData())
 
+      // Make changes
       act(() => {
-        result.current.addStagedTrade("BTC", "buy")
-        result.current.addStagedTrade("ETH", "sell")
+        result.current.setLeverage(2.0)
       })
 
-      const btcTrade = result.current.stagedTrades.find(t => t.symbol === "BTC")
-      const ethTrade = result.current.stagedTrades.find(t => t.symbol === "ETH")
-      expect(btcTrade).toBeDefined()
-      expect(ethTrade).toBeDefined()
+      expect(result.current.stagedTrades.length).toBeGreaterThan(0)
 
-      if (btcTrade && ethTrade) {
-        act(() => {
-          result.current.removeStagedTrade(btcTrade.id)
-        })
-
-        expect(result.current.stagedTrades).toHaveLength(1)
-        expect(result.current.stagedTrades[0].id).toBe(ethTrade.id)
-      }
-    })
-
-    it("clearStagedTrades empties array", () => {
-      const { result } = renderHook(() => usePrototypeData())
-
-      act(() => {
-        result.current.addStagedTrade("BTC", "buy")
-        result.current.addStagedTrade("ETH", "sell")
-        result.current.addStagedTrade("SOL", "buy")
-      })
-
-      expect(result.current.stagedTrades).toHaveLength(3)
-
+      // Clear
       act(() => {
         result.current.clearStagedTrades()
       })
 
       expect(result.current.stagedTrades).toEqual([])
+      expect(result.current.leverage).toBe(1.0) // Reverted to committed
     })
 
-    it("executeStagedTrades clears trades", () => {
+    it("executeStagedTrades commits changes", () => {
       const { result } = renderHook(() => usePrototypeData())
 
+      const btcGroup = result.current.positionsByUnderlying.find(
+        g => g.underlying === "BTC",
+      )
+      const btcPerp = btcGroup?.positions.find(p =>
+        p.symbol.includes("/USDC:USDC"),
+      )
+      expect(btcPerp).toBeDefined()
+
+      const newWeight = 0.3
       act(() => {
-        result.current.addStagedTrade("BTC", "buy")
-        result.current.addStagedTrade("ETH", "sell")
+        result.current.updateInstrumentWeight(btcPerp!.symbol, newWeight)
       })
 
-      expect(result.current.stagedTrades).toHaveLength(2)
+      expect(result.current.stagedTrades.length).toBeGreaterThan(0)
 
       act(() => {
         result.current.executeStagedTrades()
       })
 
+      // Staged trades should be cleared
       expect(result.current.stagedTrades).toEqual([])
+
+      // Weight should remain at the new value (now committed)
+      const updatedGroup = result.current.positionsByUnderlying.find(
+        g => g.underlying === "BTC",
+      )
+      const updatedPerp = updatedGroup?.positions.find(p =>
+        p.symbol.includes("/USDC:USDC"),
+      )
+      expect(updatedPerp!.weight).toBeCloseTo(newWeight)
+    })
+  })
+
+  describe("adjustPositionWeight", () => {
+    it("increases weight by positive delta", () => {
+      const { result } = renderHook(() => usePrototypeData())
+
+      const btcGroup = result.current.positionsByUnderlying.find(
+        g => g.underlying === "BTC",
+      )
+      const btcPerp = btcGroup?.positions.find(p =>
+        p.symbol.includes("/USDC:USDC"),
+      )
+      expect(btcPerp).toBeDefined()
+
+      const initialWeight = btcPerp!.weight
+
+      act(() => {
+        result.current.adjustPositionWeight(btcPerp!.symbol, 0.01)
+      })
+
+      const updatedGroup = result.current.positionsByUnderlying.find(
+        g => g.underlying === "BTC",
+      )
+      const updatedPerp = updatedGroup?.positions.find(p =>
+        p.symbol.includes("/USDC:USDC"),
+      )
+      expect(updatedPerp!.weight).toBeCloseTo(initialWeight + 0.01)
+    })
+
+    it("decreases weight by negative delta", () => {
+      const { result } = renderHook(() => usePrototypeData())
+
+      const btcGroup = result.current.positionsByUnderlying.find(
+        g => g.underlying === "BTC",
+      )
+      const btcPerp = btcGroup?.positions.find(p =>
+        p.symbol.includes("/USDC:USDC"),
+      )
+      expect(btcPerp).toBeDefined()
+
+      const initialWeight = btcPerp!.weight
+
+      act(() => {
+        result.current.adjustPositionWeight(btcPerp!.symbol, -0.01)
+      })
+
+      const updatedGroup = result.current.positionsByUnderlying.find(
+        g => g.underlying === "BTC",
+      )
+      const updatedPerp = updatedGroup?.positions.find(p =>
+        p.symbol.includes("/USDC:USDC"),
+      )
+      expect(updatedPerp!.weight).toBeCloseTo(initialWeight - 0.01)
+    })
+
+    it("clamps weight to minimum of 0", () => {
+      const { result } = renderHook(() => usePrototypeData())
+
+      // Find a position with small weight
+      const apeGroup = result.current.positionsByUnderlying.find(
+        g => g.underlying === "APE",
+      )
+      const apePerp = apeGroup?.positions.find(p =>
+        p.symbol.includes("/USDC:USDC"),
+      )
+      expect(apePerp).toBeDefined()
+
+      act(() => {
+        result.current.adjustPositionWeight(apePerp!.symbol, -1.0) // Try to go negative
+      })
+
+      const updatedGroup = result.current.positionsByUnderlying.find(
+        g => g.underlying === "APE",
+      )
+      const updatedPerp = updatedGroup?.positions.find(p =>
+        p.symbol.includes("/USDC:USDC"),
+      )
+      expect(updatedPerp!.weight).toBe(0)
+    })
+
+    it("clamps weight to maximum of 1", () => {
+      const { result } = renderHook(() => usePrototypeData())
+
+      const btcGroup = result.current.positionsByUnderlying.find(
+        g => g.underlying === "BTC",
+      )
+      const btcPerp = btcGroup?.positions.find(p =>
+        p.symbol.includes("/USDC:USDC"),
+      )
+      expect(btcPerp).toBeDefined()
+
+      act(() => {
+        result.current.adjustPositionWeight(btcPerp!.symbol, 10.0) // Try to exceed 1
+      })
+
+      const updatedGroup = result.current.positionsByUnderlying.find(
+        g => g.underlying === "BTC",
+      )
+      const updatedPerp = updatedGroup?.positions.find(p =>
+        p.symbol.includes("/USDC:USDC"),
+      )
+      expect(updatedPerp!.weight).toBe(1)
+    })
+
+    it("rebalances other weights proportionally when one weight increases", () => {
+      const { result } = renderHook(() => usePrototypeData())
+
+      // Get total weight before change
+      const totalWeightBefore = result.current.positionsByUnderlying
+        .flatMap(g => g.positions)
+        .reduce((sum, p) => sum + p.weight, 0)
+
+      const btcGroup = result.current.positionsByUnderlying.find(
+        g => g.underlying === "BTC",
+      )
+      const btcPerp = btcGroup?.positions.find(p =>
+        p.symbol.includes("/USDC:USDC"),
+      )
+      expect(btcPerp).toBeDefined()
+
+      act(() => {
+        result.current.updateInstrumentWeight(btcPerp!.symbol, 0.5)
+      })
+
+      // Total weight should remain approximately the same (rebalanced)
+      const totalWeightAfter = result.current.positionsByUnderlying
+        .flatMap(g => g.positions)
+        .reduce((sum, p) => sum + p.weight, 0)
+
+      expect(totalWeightAfter).toBeCloseTo(totalWeightBefore)
+    })
+
+    it("updates notional after weight change", () => {
+      const { result } = renderHook(() => usePrototypeData())
+
+      const btcGroup = result.current.positionsByUnderlying.find(
+        g => g.underlying === "BTC",
+      )
+      const btcPerp = btcGroup?.positions.find(p =>
+        p.symbol.includes("/USDC:USDC"),
+      )
+      expect(btcPerp).toBeDefined()
+
+      act(() => {
+        result.current.adjustPositionWeight(btcPerp!.symbol, 0.05)
+      })
+
+      const updatedGroup = result.current.positionsByUnderlying.find(
+        g => g.underlying === "BTC",
+      )
+      const updatedPerp = updatedGroup?.positions.find(p =>
+        p.symbol.includes("/USDC:USDC"),
+      )
+
+      // notional = nav × weight × leverage
+      const expectedNotional =
+        result.current.nav * updatedPerp!.weight * result.current.leverage
+      expect(updatedPerp!.notional).toBeCloseTo(expectedNotional)
+    })
+  })
+
+  describe("instrument costs", () => {
+    it("includes funding rate for perp positions", () => {
+      const { result } = renderHook(() => usePrototypeData())
+
+      const btcGroup = result.current.positionsByUnderlying.find(
+        g => g.underlying === "BTC",
+      )
+      const btcPerp = btcGroup?.positions.find(p =>
+        p.symbol.includes("/USDC:USDC"),
+      )
+
+      expect(btcPerp).toBeDefined()
+      expect(btcPerp!.fundingRate).toBeDefined()
+      expect(typeof btcPerp!.fundingRate).toBe("number")
+    })
+
+    it("includes carry rate for spot positions", () => {
+      const { result } = renderHook(() => usePrototypeData())
+
+      const btcGroup = result.current.positionsByUnderlying.find(
+        g => g.underlying === "BTC",
+      )
+      const btcSpot = btcGroup?.positions.find(p => p.symbol.includes("-SPOT"))
+
+      expect(btcSpot).toBeDefined()
+      expect(btcSpot!.carryRate).toBeDefined()
+      expect(typeof btcSpot!.carryRate).toBe("number")
+    })
+
+    it("includes theta for option positions", () => {
+      const { result } = renderHook(() => usePrototypeData())
+
+      const ethGroup = result.current.positionsByUnderlying.find(
+        g => g.underlying === "ETH",
+      )
+      const ethPut = ethGroup?.positions.find(p => p.symbol.includes("-PUT"))
+
+      expect(ethPut).toBeDefined()
+      expect(ethPut!.theta).toBeDefined()
+      expect(typeof ethPut!.theta).toBe("number")
     })
   })
 
@@ -255,6 +463,47 @@ describe("usePrototypeData", () => {
       expect(result.current.backtestData).toBeDefined()
       expect(result.current.performanceStats).toBeDefined()
       expect(result.current.monteCarloData).toBeDefined()
+    })
+  })
+
+  describe("committed vs target state", () => {
+    it("exposes hasUnsavedChanges flag", () => {
+      const { result } = renderHook(() => usePrototypeData())
+
+      expect(result.current.hasUnsavedChanges).toBe(false)
+
+      act(() => {
+        result.current.setLeverage(2.0)
+      })
+
+      expect(result.current.hasUnsavedChanges).toBe(true)
+
+      act(() => {
+        result.current.clearStagedTrades()
+      })
+
+      expect(result.current.hasUnsavedChanges).toBe(false)
+    })
+
+    it("exposes committedLeverage and targetLeverage", () => {
+      const { result } = renderHook(() => usePrototypeData())
+
+      expect(result.current.committedLeverage).toBe(1.0)
+      expect(result.current.targetLeverage).toBe(1.0)
+
+      act(() => {
+        result.current.setLeverage(2.0)
+      })
+
+      expect(result.current.committedLeverage).toBe(1.0) // Unchanged
+      expect(result.current.targetLeverage).toBe(2.0) // Changed
+
+      act(() => {
+        result.current.executeStagedTrades()
+      })
+
+      expect(result.current.committedLeverage).toBe(2.0) // Now committed
+      expect(result.current.targetLeverage).toBe(2.0)
     })
   })
 })

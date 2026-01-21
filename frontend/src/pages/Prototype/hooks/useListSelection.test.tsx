@@ -4,6 +4,7 @@ import { useListSelection } from "./useListSelection"
 
 describe("useListSelection", () => {
   const mockOnAddTrade = vi.fn()
+  const mockOnAdjustWeight = vi.fn()
 
   const defaultConfig = {
     screenerItems: [
@@ -13,15 +14,30 @@ describe("useListSelection", () => {
       { symbol: "DOGE" },
     ],
     positionItems: [
-      { underlying: "BTC" },
-      { underlying: "ETH" },
-      { underlying: "SOL" },
+      {
+        underlying: "BTC",
+        instruments: [{ symbol: "BTC/USDC:USDC" }, { symbol: "BTC-SPOT" }],
+      },
+      {
+        underlying: "ETH",
+        instruments: [
+          { symbol: "ETH/USDC:USDC" },
+          { symbol: "ETH-SPOT" },
+          { symbol: "ETH-PUT-2800" },
+        ],
+      },
+      {
+        underlying: "SOL",
+        instruments: [{ symbol: "SOL/USDC:USDC" }],
+      },
     ],
     onAddTrade: mockOnAddTrade,
+    onAdjustWeight: mockOnAdjustWeight,
   }
 
   beforeEach(() => {
     mockOnAddTrade.mockClear()
+    mockOnAdjustWeight.mockClear()
   })
 
   describe("panel focus", () => {
@@ -247,8 +263,15 @@ describe("useListSelection", () => {
       act(() => {
         result.current.focusPanel("positions")
       })
+      // BTC is selected and expanded. Navigate through its instruments to reach ETH.
       act(() => {
-        result.current.moveSelection("down") // select ETH (index 1)
+        result.current.moveSelection("down") // BTC first instrument
+      })
+      act(() => {
+        result.current.moveSelection("down") // BTC second instrument
+      })
+      act(() => {
+        result.current.moveSelection("down") // ETH underlying
       })
 
       act(() => {
@@ -420,8 +443,18 @@ describe("useListSelection", () => {
       act(() => {
         result.current.focusPanel("positions")
       })
+      // BTC is expanded (multi-instrument), ETH is expanded (multi-instrument), SOL is collapsed (single)
+      // Navigation: BTC -> BTC inst 0 -> BTC inst 1 -> ETH -> ETH inst 0 -> ETH inst 1 -> ETH inst 2 -> SOL
+      // But we just need to reach SOL underlying level
+      // First collapse BTC and ETH to navigate directly between underlyings
       act(() => {
-        result.current.moveSelection("down")
+        result.current.toggleExpand() // Collapse BTC
+      })
+      act(() => {
+        result.current.moveSelection("down") // ETH
+      })
+      act(() => {
+        result.current.toggleExpand() // Collapse ETH
       })
       act(() => {
         result.current.moveSelection("down") // SOL
@@ -449,6 +482,189 @@ describe("useListSelection", () => {
       })
 
       expect(result.current.getSelectedSymbol()).toBeNull()
+    })
+  })
+
+  describe("nested selection (expand/collapse)", () => {
+    it("starts with all underlyings collapsed", () => {
+      const { result } = renderHook(() => useListSelection(defaultConfig))
+
+      act(() => {
+        result.current.focusPanel("positions")
+      })
+
+      // Multi-instrument positions start expanded
+      expect(result.current.isExpanded("BTC")).toBe(true)
+      expect(result.current.isExpanded("ETH")).toBe(true)
+      // Single-instrument positions start collapsed
+      expect(result.current.isExpanded("SOL")).toBe(false)
+    })
+
+    it("collapses expanded underlying on toggleExpand", () => {
+      const { result } = renderHook(() => useListSelection(defaultConfig))
+
+      act(() => {
+        result.current.focusPanel("positions")
+      })
+
+      // BTC starts expanded
+      expect(result.current.isExpanded("BTC")).toBe(true)
+
+      act(() => {
+        result.current.toggleExpand() // BTC is selected (index 0)
+      })
+
+      // Now collapsed
+      expect(result.current.isExpanded("BTC")).toBe(false)
+    })
+
+    it("expands collapsed underlying on toggleExpand", () => {
+      const { result } = renderHook(() => useListSelection(defaultConfig))
+
+      act(() => {
+        result.current.focusPanel("positions")
+      })
+
+      // First collapse BTC (which starts expanded)
+      act(() => {
+        result.current.toggleExpand()
+      })
+      expect(result.current.isExpanded("BTC")).toBe(false)
+
+      // Now expand it again
+      act(() => {
+        result.current.toggleExpand()
+      })
+      expect(result.current.isExpanded("BTC")).toBe(true)
+    })
+
+    it("navigates to instruments within expanded group with j/k", () => {
+      const { result } = renderHook(() => useListSelection(defaultConfig))
+
+      act(() => {
+        result.current.focusPanel("positions")
+      })
+
+      // BTC starts expanded - just move down into instruments
+      act(() => {
+        result.current.moveSelection("down")
+      })
+
+      expect(result.current.getSelectedInstrument()).toBe("BTC/USDC:USDC")
+    })
+
+    it("moves through all instruments in expanded group", () => {
+      const { result } = renderHook(() => useListSelection(defaultConfig))
+
+      act(() => {
+        result.current.focusPanel("positions")
+      })
+
+      // BTC starts expanded (has 2 instruments)
+      act(() => {
+        result.current.moveSelection("down") // First instrument
+      })
+      expect(result.current.getSelectedInstrument()).toBe("BTC/USDC:USDC")
+
+      act(() => {
+        result.current.moveSelection("down") // Second instrument
+      })
+      expect(result.current.getSelectedInstrument()).toBe("BTC-SPOT")
+
+      act(() => {
+        result.current.moveSelection("down") // Move to next underlying (ETH)
+      })
+      expect(result.current.getSelectedSymbol()).toBe("ETH")
+      expect(result.current.getSelectedInstrument()).toBeNull()
+    })
+
+    it("returns to underlying when navigating up from first instrument", () => {
+      const { result } = renderHook(() => useListSelection(defaultConfig))
+
+      act(() => {
+        result.current.focusPanel("positions")
+      })
+
+      // BTC starts expanded
+      act(() => {
+        result.current.moveSelection("down") // First instrument
+      })
+      expect(result.current.getSelectedInstrument()).toBe("BTC/USDC:USDC")
+
+      act(() => {
+        result.current.moveSelection("up") // Back to underlying
+      })
+      expect(result.current.getSelectedSymbol()).toBe("BTC")
+      expect(result.current.getSelectedInstrument()).toBeNull()
+    })
+  })
+
+  describe("weight adjustment with +/-", () => {
+    it("calls onAdjustWeight with positive delta on +", () => {
+      const { result } = renderHook(() => useListSelection(defaultConfig))
+
+      act(() => {
+        result.current.focusPanel("positions")
+      })
+
+      // BTC starts expanded (multi-instrument), navigate to first instrument
+      act(() => {
+        result.current.moveSelection("down")
+      })
+
+      act(() => {
+        result.current.adjustWeight(0.01)
+      })
+
+      expect(mockOnAdjustWeight).toHaveBeenCalledWith("BTC/USDC:USDC", 0.01)
+    })
+
+    it("calls onAdjustWeight with negative delta on -", () => {
+      const { result } = renderHook(() => useListSelection(defaultConfig))
+
+      act(() => {
+        result.current.focusPanel("positions")
+      })
+
+      // BTC starts expanded (multi-instrument), navigate to first instrument
+      act(() => {
+        result.current.moveSelection("down")
+      })
+
+      act(() => {
+        result.current.adjustWeight(-0.01)
+      })
+
+      expect(mockOnAdjustWeight).toHaveBeenCalledWith("BTC/USDC:USDC", -0.01)
+    })
+
+    it("does nothing when no instrument is selected", () => {
+      const { result } = renderHook(() => useListSelection(defaultConfig))
+
+      act(() => {
+        result.current.focusPanel("positions")
+      })
+
+      // BTC underlying is selected but not expanded
+      act(() => {
+        result.current.adjustWeight(0.01)
+      })
+
+      expect(mockOnAdjustWeight).not.toHaveBeenCalled()
+    })
+
+    it("does nothing when on screener panel", () => {
+      const { result } = renderHook(() => useListSelection(defaultConfig))
+
+      act(() => {
+        result.current.focusPanel("screener")
+      })
+
+      act(() => {
+        result.current.adjustWeight(0.01)
+      })
+
+      expect(mockOnAdjustWeight).not.toHaveBeenCalled()
     })
   })
 })

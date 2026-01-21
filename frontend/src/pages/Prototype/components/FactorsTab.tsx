@@ -55,6 +55,8 @@ export const FactorsTab = ({
     })
   }
 
+  // useEffect justified: LightweightCharts requires imperative DOM manipulation
+  // and cleanup. No React wrapper exists that provides equivalent functionality.
   useEffect(() => {
     const container = chartRef.current
     if (!container || viewMode !== "performance") return

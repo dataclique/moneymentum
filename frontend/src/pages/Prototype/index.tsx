@@ -4,11 +4,10 @@ import { twMerge } from "tailwind-merge"
 import { clsx } from "clsx"
 import {
   Search,
-  Plus,
-  Minus,
   ChevronDown,
   ChevronRight,
   Settings,
+  Columns,
 } from "lucide-react"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
@@ -20,9 +19,18 @@ import {
 import { HelpOverlay } from "./components/HelpOverlay"
 import { StagedTradesPanel } from "./components/StagedTradesPanel"
 import { FactorConfigPanel } from "./components/FactorConfigPanel"
+import { EditableCell } from "./components/EditableCell"
+import { AddPositionModal } from "./components/AddPositionModal"
 import type { FactorExposure } from "./mockData"
+import { MOCK_INSTRUMENT_COSTS, getInstrumentsForAsset } from "./mockData"
 import { usePrototypeData } from "./hooks/usePrototypeData"
 import { useListSelection } from "./hooks/useListSelection"
+import { getDirection } from "./utils/keys"
+import {
+  useScreenerConfig,
+  SCREENER_COLUMN_LABELS,
+  ALL_SCREENER_COLUMNS,
+} from "./hooks/useScreenerConfig"
 import { MetricSelector } from "./components/MetricSelector"
 import { getMetricById, WINDOW_OPTIONS } from "./metrics/registry"
 import { formatNum, formatPct, formatUsd } from "./utils/formatters"
@@ -32,8 +40,6 @@ import {
   calculateGroupNotional,
   calculateNetSide,
   calculatePositionWeight,
-  filterAssetsByQuery,
-  sortAssetsBySharpe,
   lookupCorrelation,
   getCorrelationColor,
   calculateTotalAttribution,
@@ -47,21 +53,41 @@ import {
   type Time,
 } from "lightweight-charts"
 
+type SecondaryFocus = "performance" | "staged" | "none"
+
 const PrototypePage = () => {
   const data = usePrototypeData()
   const [showHelp, setShowHelp] = useState(false)
-  const [searchQuery, setSearchQuery] = useState("")
+  // Single-instrument underlyings start collapsed, multi-instrument start expanded
   const [collapsedUnderlyings, setCollapsedUnderlyings] = useState<Set<string>>(
-    new Set(),
+    () =>
+      new Set(
+        data.positionsByUnderlying
+          .filter(group => group.positions.length === 1)
+          .map(group => group.underlying),
+      ),
   )
   const [selectedMetricIds, setSelectedMetricIds] = useState<string[]>([
     "equity",
   ])
   const [selectedWindowId, setSelectedWindowId] = useState("30d")
+  const [isMetricSelectorOpen, setIsMetricSelectorOpen] = useState(false)
   const [showFactorConfig, setShowFactorConfig] = useState(false)
   const [customFactors, setCustomFactors] = useState<FactorExposure[] | null>(
     null,
   )
+  const [addPositionModal, setAddPositionModal] = useState<{
+    isOpen: boolean
+    underlying: string | null
+  }>({ isOpen: false, underlying: null })
+  const [columnConfigVisible, setColumnConfigVisible] = useState(false)
+  const closeColumnConfig = useCallback(() => {
+    setColumnConfigVisible(false)
+  }, [])
+  const toggleColumnConfig = useCallback(() => {
+    setColumnConfigVisible(prev => !prev)
+  }, [])
+  const [secondaryFocus, setSecondaryFocus] = useState<SecondaryFocus>("none")
   const performanceChartRef = useRef<HTMLDivElement>(null)
 
   const {
@@ -78,6 +104,8 @@ const PrototypePage = () => {
     removeStagedTrade,
     clearStagedTrades,
     executeStagedTrades,
+    updateInstrumentWeight,
+    updateInstrumentNotional,
     riskMetrics,
     stressTests,
     monteCarloData,
@@ -91,13 +119,45 @@ const PrototypePage = () => {
 
   const factorExposures = customFactors ?? defaultFactorExposures
 
+  const screenerConfig = useScreenerConfig({ assets: assetAnalysis })
+  const {
+    sortColumn,
+    sortDirection,
+    setSortColumn,
+    searchQuery,
+    setSearchQuery,
+    sortedAssets,
+    visibleColumns,
+    toggleColumn,
+    isExpanded: isScreenerExpanded,
+    toggleExpanded: toggleScreenerExpanded,
+  } = screenerConfig
+
   // Prepare items for keyboard selection
   const screenerItems = useMemo(
     () => assetAnalysis.map(a => ({ symbol: a.ticker })),
     [assetAnalysis],
   )
+
+  // Extract asset factors for staged trades impact preview
+  const assetFactors = useMemo(
+    () =>
+      assetAnalysis.map(a => ({
+        ticker: a.ticker,
+        beta: a.beta,
+        momentum: a.momentum,
+        volatility: a.volatility,
+        spyBeta: a.beta * 0.4, // Approximate SPY beta from BTC beta
+        carry: 0, // Would come from funding rates, approximated here
+      })),
+    [assetAnalysis],
+  )
   const positionItems = useMemo(
-    () => positionsByUnderlying.map(p => ({ underlying: p.underlying })),
+    () =>
+      positionsByUnderlying.map(p => ({
+        underlying: p.underlying,
+        instruments: p.positions.map(pos => ({ symbol: pos.symbol })),
+      })),
     [positionsByUnderlying],
   )
 
@@ -105,6 +165,7 @@ const PrototypePage = () => {
     screenerItems,
     positionItems,
     onAddTrade: addStagedTrade,
+    onAdjustWeight: data.adjustPositionWeight,
   })
 
   const {
@@ -114,6 +175,10 @@ const PrototypePage = () => {
     moveSelection,
     triggerTrade,
     handleEscape,
+    toggleExpand,
+    getSelectedInstrument,
+    getSelectedSymbol,
+    adjustWeight,
   } = listSelection
 
   // Compute chart data using metric registry
@@ -138,7 +203,8 @@ const PrototypePage = () => {
     return result
   }, [selectedMetrics, backtestData, selectedWindow])
 
-  // Performance chart using metric registry
+  // useEffect justified: LightweightCharts requires imperative DOM manipulation
+  // and cleanup. No React wrapper exists that provides equivalent functionality.
   useEffect(() => {
     const container = performanceChartRef.current
     if (!container || !selectedMetrics.length) return
@@ -221,12 +287,6 @@ const PrototypePage = () => {
     }
   }, [chartDataByMetric, selectedMetrics])
 
-  const analysisMap = useMemo(() => {
-    const map = new Map<string, (typeof assetAnalysis)[0]>()
-    for (const a of assetAnalysis) map.set(a.ticker, a)
-    return map
-  }, [assetAnalysis])
-
   const greeksMap = useMemo(() => {
     const map = new Map<string, (typeof greeks)[0]>()
     for (const g of greeks) map.set(g.symbol, g)
@@ -240,26 +300,86 @@ const PrototypePage = () => {
     [positionsByUnderlying],
   )
 
-  const filteredAssets = useMemo(
-    () => sortAssetsBySharpe(filterAssetsByQuery(assetAnalysis, searchQuery)),
-    [assetAnalysis, searchQuery],
-  )
-
-  const toggleUnderlying = (underlying: string) => {
+  const toggleUnderlying = useCallback((underlying: string) => {
     setCollapsedUnderlyings(prev => {
       const next = new Set(prev)
       if (next.has(underlying)) next.delete(underlying)
       else next.add(underlying)
       return next
     })
-  }
+  }, [])
 
   const toggleHelp = useCallback(() => {
     setShowHelp(prev => !prev)
   }, [])
 
-  // Keyboard navigation
+  const openAddPositionModal = useCallback((underlying: string) => {
+    setAddPositionModal({ isOpen: true, underlying })
+  }, [])
+
+  const closeAddPositionModal = useCallback(() => {
+    setAddPositionModal({ isOpen: false, underlying: null })
+  }, [])
+
+  // Get instruments for the selected underlying in the modal
+  const getInstrumentsForUnderlying = useCallback((underlying: string) => {
+    const perpSymbol = `${underlying}/USDC:USDC`
+    const spotSymbol = `${underlying}-SPOT`
+
+    const instruments: Array<{
+      symbol: string
+      type: "perp" | "spot" | "call" | "put"
+      rate: number
+      rateLabel: string
+    }> = []
+
+    // Add perp if it has cost data
+    const perpCost = MOCK_INSTRUMENT_COSTS.find(c => c.symbol === perpSymbol)
+    if (perpCost) {
+      instruments.push({
+        symbol: perpSymbol,
+        type: "perp",
+        rate: perpCost.fundingRate ?? 0,
+        rateLabel: "funding",
+      })
+    }
+
+    // Add spot
+    const spotCost = MOCK_INSTRUMENT_COSTS.find(c => c.symbol === spotSymbol)
+    instruments.push({
+      symbol: spotSymbol,
+      type: "spot",
+      rate: spotCost?.carryRate ?? 0,
+      rateLabel: "carry",
+    })
+
+    return instruments
+  }, [])
+
+  const handleAddPosition = useCallback(
+    (params: {
+      symbol: string
+      direction: "long" | "short"
+      weight: number
+    }) => {
+      // For now, just add as a staged trade
+      addStagedTrade(
+        params.symbol,
+        params.direction === "long" ? "buy" : "sell",
+      )
+    },
+    [addStagedTrade],
+  )
+
+  // useEffect justified: Global keyboard shortcuts must listen on window/document
+  // since they work regardless of which element has focus. Cannot use component-level onKeyDown.
   useEffect(() => {
+    const blurLeverageControl = () => {
+      document
+        .querySelector<HTMLElement>('[data-testid="leverage-control"]')
+        ?.blur()
+    }
+
     const handleKeyDown = (event: KeyboardEvent) => {
       if (
         event.target instanceof HTMLInputElement ||
@@ -280,6 +400,10 @@ const PrototypePage = () => {
         event.preventDefault()
         if (showHelp) {
           setShowHelp(false)
+        } else if (columnConfigVisible) {
+          closeColumnConfig()
+        } else if (secondaryFocus !== "none") {
+          setSecondaryFocus("none")
         } else {
           handleEscape()
         }
@@ -287,46 +411,185 @@ const PrototypePage = () => {
       }
 
       // Number keys for direct panel access
+      // Use stopImmediatePropagation to prevent EditableCell's directEdit from capturing these
       if (event.key === "1") {
         event.preventDefault()
+        event.stopImmediatePropagation()
+        if (secondaryFocus === "staged") blurLeverageControl()
+        setSecondaryFocus("none")
         focusPanel("screener")
         return
       }
       if (event.key === "2") {
         event.preventDefault()
+        event.stopImmediatePropagation()
+        if (secondaryFocus === "staged") blurLeverageControl()
+        setSecondaryFocus("none")
+        focusPanel("positions")
+        return
+      }
+      if (event.key === "3") {
+        event.preventDefault()
+        event.stopImmediatePropagation()
+        if (secondaryFocus === "staged") blurLeverageControl()
+        focusPanel(null) // unfocus screener/positions
+        setSecondaryFocus("performance")
+        return
+      }
+      if (event.key === "4") {
+        event.preventDefault()
+        event.stopImmediatePropagation()
+        focusPanel(null) // unfocus screener/positions
+        setSecondaryFocus("staged")
+        // Focus the leverage control so keyboard events work in real browsers
+        const leverageControl = document.querySelector<HTMLElement>(
+          '[data-testid="leverage-control"]',
+        )
+        leverageControl?.focus()
+        return
+      }
+
+      // Navigation using vim keys (h/j/k/l) or arrow keys
+      const direction = getDirection(event.key)
+
+      // Horizontal: switch between panels (h/l or left/right arrows)
+      if (focusedPanel && direction === "left") {
+        event.preventDefault()
+        focusPanel("screener")
+        return
+      }
+      if (focusedPanel && direction === "right") {
+        event.preventDefault()
         focusPanel("positions")
         return
       }
 
-      // h/l to switch between panels
-      if (focusedPanel && ["h", "l"].includes(key)) {
+      // Vertical: navigate within lists (j/k or up/down arrows)
+      // When hitting boundary, navigate to adjacent panel
+      if (focusedPanel && direction === "down") {
         event.preventDefault()
-        if (key === "h") focusPanel("screener")
-        if (key === "l") focusPanel("positions")
+        const result = moveSelection("down")
+        if (result === "boundary" && focusedPanel === "positions") {
+          // At bottom of positions list, move to staged changes
+          focusPanel(null)
+          setSecondaryFocus("staged")
+          const leverageControl = document.querySelector<HTMLElement>(
+            '[data-testid="leverage-control"]',
+          )
+          leverageControl?.focus()
+        }
         return
       }
-
-      // j/k to navigate within lists
-      if (focusedPanel && key === "j") {
-        event.preventDefault()
-        moveSelection("down")
-        return
-      }
-      if (focusedPanel && key === "k") {
+      if (focusedPanel && direction === "up") {
         event.preventDefault()
         moveSelection("up")
         return
       }
 
-      // +/- to stage trades
+      // Navigate from staged changes back to positions with up
+      if (secondaryFocus === "staged" && direction === "up") {
+        event.preventDefault()
+        blurLeverageControl()
+        setSecondaryFocus("none")
+        focusPanel("positions")
+        return
+      }
+
+      // o, Space, or Enter to toggle expand/collapse in positions panel
+      if (
+        focusedPanel === "positions" &&
+        (key === "o" || key === " " || key === "enter")
+      ) {
+        event.preventDefault()
+        const selectedUnderlying = getSelectedSymbol()
+        if (selectedUnderlying) {
+          toggleUnderlying(selectedUnderlying)
+        }
+        toggleExpand()
+        return
+      }
+      if (focusedPanel === "screener" && key === "o") {
+        event.preventDefault()
+        const selectedIdx = getSelectedIndex("screener")
+        const asset = sortedAssets[selectedIdx] as
+          | { ticker: string }
+          | undefined
+        if (asset) {
+          toggleScreenerExpanded(asset.ticker)
+        }
+        return
+      }
+
+      // Enter to open add position modal from screener
+      if (focusedPanel === "screener" && event.key === "Enter") {
+        event.preventDefault()
+        const selectedIdx = getSelectedIndex("screener")
+        const asset = sortedAssets[selectedIdx] as
+          | { ticker: string }
+          | undefined
+        if (asset) {
+          openAddPositionModal(asset.ticker)
+        }
+        return
+      }
+
+      // +/- to stage trades (without shift) or adjust weight (with shift)
       if (focusedPanel && (key === "+" || key === "=")) {
         event.preventDefault()
-        triggerTrade("buy")
+        if (event.shiftKey) {
+          adjustWeight(0.05) // +5%
+        } else {
+          triggerTrade("buy")
+        }
         return
       }
       if (focusedPanel && key === "-") {
         event.preventDefault()
-        triggerTrade("sell")
+        if (event.shiftKey) {
+          adjustWeight(-0.05) // -5%
+        } else {
+          triggerTrade("sell")
+        }
+        return
+      }
+
+      // m to open metric selector
+      if (key === "m") {
+        event.preventDefault()
+        setIsMetricSelectorOpen(prev => !prev)
+        return
+      }
+
+      // f to toggle factor config panel
+      if (key === "f") {
+        event.preventDefault()
+        setShowFactorConfig(prev => !prev)
+        return
+      }
+
+      // c to toggle screener column config
+      if (key === "c") {
+        event.preventDefault()
+        toggleColumnConfig()
+        return
+      }
+
+      // [ and ] for global leverage adjustment (works from any panel)
+      if (event.key === "[") {
+        event.preventDefault()
+        setLeverage(prev => Math.max(0.1, Math.round((prev - 0.1) * 10) / 10))
+        return
+      }
+      if (event.key === "]") {
+        event.preventDefault()
+        setLeverage(prev => Math.min(5, Math.round((prev + 0.1) * 10) / 10))
+        return
+      }
+
+      // x to execute staged trades
+      if (key === "x") {
+        event.preventDefault()
+        executeStagedTrades()
         return
       }
 
@@ -343,16 +606,31 @@ const PrototypePage = () => {
     }
   }, [
     focusedPanel,
+    secondaryFocus,
     showHelp,
+    columnConfigVisible,
+    closeColumnConfig,
+    toggleColumnConfig,
     focusPanel,
     toggleHelp,
     handleEscape,
     moveSelection,
     triggerTrade,
+    toggleExpand,
+    adjustWeight,
+    getSelectedSymbol,
+    getSelectedIndex,
+    toggleUnderlying,
+    toggleScreenerExpanded,
+    sortedAssets,
+    openAddPositionModal,
+    setLeverage,
+    executeStagedTrades,
   ])
 
   const maxFreq = Math.max(...monteCarloData.map(d => d.frequency))
   const totalAttribution = calculateTotalAttribution(factorAttribution)
+  const selectedInstrumentSymbol = getSelectedInstrument()
 
   const getCorrelation = (a1: string, a2: string): number =>
     lookupCorrelation(correlationMatrix, a1, a2)
@@ -361,6 +639,20 @@ const PrototypePage = () => {
     <TooltipProvider delayDuration={200}>
       <div className="h-screen flex flex-col bg-background overflow-hidden text-[11px]">
         {showHelp && <HelpOverlay onClose={toggleHelp} />}
+
+        {addPositionModal.underlying && (
+          <AddPositionModal
+            isOpen={addPositionModal.isOpen}
+            underlying={addPositionModal.underlying}
+            instruments={getInstrumentsForUnderlying(
+              addPositionModal.underlying,
+            )}
+            nav={data.nav}
+            currentLeverage={leverage}
+            onClose={closeAddPositionModal}
+            onAddPosition={handleAddPosition}
+          />
+        )}
 
         {/* Header */}
         <header className="flex items-center justify-between px-3 py-1.5 border-b border-border shrink-0 bg-muted/30">
@@ -415,14 +707,52 @@ const PrototypePage = () => {
               ),
             )}
             onClick={() => {
+              setSecondaryFocus("none")
               focusPanel("screener")
             }}
           >
-            <div className="px-2 py-1.5 border-b border-border bg-muted/30 flex items-center gap-2">
+            <div className="px-2 py-1.5 border-b border-border bg-muted/30 flex items-center justify-between relative">
+              <div className="flex items-center gap-2">
+                <span className="font-medium">SCREENER</span>
+                <button
+                  onClick={e => {
+                    e.stopPropagation()
+                    toggleColumnConfig()
+                  }}
+                  className="text-muted-foreground hover:text-foreground"
+                  title="Configure columns (c)"
+                >
+                  <Columns className="h-3 w-3" />
+                </button>
+              </div>
               <kbd className="px-1.5 py-0.5 text-[10px] font-mono bg-muted rounded">
                 1
               </kbd>
-              <span className="font-medium">SCREENER</span>
+              {columnConfigVisible && (
+                <div className="absolute top-full left-0 mt-1 z-20 bg-background border border-border rounded shadow-lg p-2 min-w-[120px]">
+                  <div className="text-[10px] text-muted-foreground font-medium mb-1">
+                    Columns
+                  </div>
+                  {ALL_SCREENER_COLUMNS.map(col => (
+                    <label
+                      key={col}
+                      className="flex items-center gap-2 py-0.5 cursor-pointer hover:bg-muted/30 px-1 rounded"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={visibleColumns.includes(col)}
+                        onChange={() => {
+                          toggleColumn(col)
+                        }}
+                        className="h-3 w-3"
+                      />
+                      <span className="text-[11px]">
+                        {SCREENER_COLUMN_LABELS[col]}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              )}
             </div>
             <div className="p-1.5 border-b border-border">
               <div className="relative">
@@ -442,62 +772,141 @@ const PrototypePage = () => {
               <table className="w-full">
                 <thead className="sticky top-0 bg-muted/90 z-10">
                   <tr className="text-muted-foreground text-[10px]">
+                    <th className="px-1 py-1 w-4"></th>
                     <th className="px-2 py-1 text-left font-medium">Symbol</th>
-                    <th className="px-2 py-1 text-right font-medium">Sharpe</th>
-                    <th className="w-12"></th>
+                    {visibleColumns.map(col => (
+                      <th
+                        key={col}
+                        className="px-2 py-1 text-right font-medium cursor-pointer hover:text-foreground"
+                        onClick={() => {
+                          setSortColumn(col)
+                        }}
+                      >
+                        {SCREENER_COLUMN_LABELS[col]}
+                        {sortColumn === col && (
+                          <span className="ml-0.5">
+                            {sortDirection === "asc" ? "↑" : "↓"}
+                          </span>
+                        )}
+                      </th>
+                    ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredAssets.map((asset, index) => {
+                  {sortedAssets.map((asset, index) => {
                     const isSelected =
                       focusedPanel === "screener" &&
                       getSelectedIndex("screener") === index
+                    const isExpanded = isScreenerExpanded(asset.ticker)
+                    const instruments = getInstrumentsForAsset(asset.ticker)
                     return (
-                      <tr
-                        key={asset.ticker}
-                        className={twMerge(
-                          clsx(
-                            "border-b border-border/20 hover:bg-muted/30",
-                            isSelected && "ring-1 ring-primary/50 bg-muted/40",
-                          ),
-                        )}
-                      >
-                        <td className="px-2 py-1 font-medium">
-                          {asset.ticker}
-                        </td>
-                        <td
+                      <React.Fragment key={asset.ticker}>
+                        <tr
                           className={twMerge(
                             clsx(
-                              "px-2 py-1 text-right font-mono",
-                              asset.sharpe > 0
-                                ? "text-green-500"
-                                : "text-red-500",
+                              "border-b border-border/20 hover:bg-muted/30 cursor-pointer",
+                              isSelected &&
+                                "ring-1 ring-primary/50 bg-muted/40",
                             ),
                           )}
                         >
-                          {asset.sharpe.toFixed(2)}
-                        </td>
-                        <td className="px-1 py-1 text-right">
-                          <button
-                            className="text-green-500 hover:text-green-400 p-0.5"
+                          <td
+                            className="px-1 py-1 text-muted-foreground"
                             onClick={e => {
                               e.stopPropagation()
-                              addStagedTrade(asset.ticker, "buy")
+                              toggleScreenerExpanded(asset.ticker)
                             }}
                           >
-                            <Plus className="h-3 w-3" />
-                          </button>
-                          <button
-                            className="text-red-500 hover:text-red-400 p-0.5"
-                            onClick={e => {
-                              e.stopPropagation()
-                              addStagedTrade(asset.ticker, "sell")
+                            {isExpanded ? (
+                              <ChevronDown className="h-3 w-3" />
+                            ) : (
+                              <ChevronRight className="h-3 w-3" />
+                            )}
+                          </td>
+                          <td
+                            className="px-2 py-1 font-medium"
+                            onClick={() => {
+                              openAddPositionModal(asset.ticker)
                             }}
                           >
-                            <Minus className="h-3 w-3" />
-                          </button>
-                        </td>
-                      </tr>
+                            {asset.ticker}
+                          </td>
+                          {visibleColumns.map(col => {
+                            const value = asset[col]
+                            const isRate = col === "fundingRate"
+                            const formatted = isRate
+                              ? `${(value * 100).toFixed(0)}%`
+                              : value.toFixed(2)
+                            return (
+                              <td
+                                key={col}
+                                className={twMerge(
+                                  clsx(
+                                    "px-2 py-1 text-right font-mono",
+                                    value > 0
+                                      ? "text-green-500"
+                                      : value < 0
+                                        ? "text-red-500"
+                                        : "text-muted-foreground",
+                                  ),
+                                )}
+                                onClick={() => {
+                                  openAddPositionModal(asset.ticker)
+                                }}
+                              >
+                                {formatted}
+                              </td>
+                            )
+                          })}
+                        </tr>
+                        {isExpanded &&
+                          instruments.map(inst => (
+                            <tr
+                              key={inst.symbol}
+                              className="border-b border-border/10 text-muted-foreground bg-muted/10 hover:bg-muted/20 cursor-pointer"
+                              onClick={() => {
+                                openAddPositionModal(asset.ticker)
+                              }}
+                            >
+                              <td></td>
+                              <td className="px-2 py-0.5 pl-5">
+                                <span className="text-muted-foreground/60 mr-1">
+                                  └
+                                </span>
+                                {inst.type.toUpperCase()}
+                              </td>
+                              {visibleColumns.map(col => {
+                                if (col === "fundingRate") {
+                                  return (
+                                    <td
+                                      key={col}
+                                      className={twMerge(
+                                        clsx(
+                                          "px-2 py-0.5 text-right font-mono",
+                                          inst.rate > 0
+                                            ? "text-green-500"
+                                            : inst.rate < 0
+                                              ? "text-red-500"
+                                              : "text-muted-foreground",
+                                        ),
+                                      )}
+                                    >
+                                      {`${(inst.rate * 100).toFixed(0)}%`}
+                                    </td>
+                                  )
+                                }
+                                return (
+                                  <td
+                                    key={col}
+                                    className="px-2 py-0.5 text-right font-mono text-muted-foreground/50"
+                                  >
+                                    —
+                                  </td>
+                                )
+                              })}
+                            </tr>
+                          ))}
+                      </React.Fragment>
                     )
                   })}
                 </tbody>
@@ -516,19 +925,20 @@ const PrototypePage = () => {
               ),
             )}
             onClick={() => {
+              setSecondaryFocus("none")
               focusPanel("positions")
             }}
           >
             <div className="px-2 py-1.5 border-b border-border bg-muted/30 flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <kbd className="px-1.5 py-0.5 text-[10px] font-mono bg-muted rounded">
-                  2
-                </kbd>
                 <span className="font-medium">POSITIONS</span>
+                <span className="text-muted-foreground">
+                  {positionsByUnderlying.length} underlying assets
+                </span>
               </div>
-              <span className="text-muted-foreground">
-                {positionsByUnderlying.length} assets
-              </span>
+              <kbd className="px-1.5 py-0.5 text-[10px] font-mono bg-muted rounded">
+                2
+              </kbd>
             </div>
 
             {/* Positions table */}
@@ -547,16 +957,25 @@ const PrototypePage = () => {
                       <th className="px-2 py-1 text-left font-medium">Asset</th>
                       <th className="px-2 py-1 text-left font-medium">Side</th>
                       <th className="px-2 py-1 text-right font-medium">
-                        Notional
+                        <span className="inline-flex items-center gap-1">
+                          Weight
+                          <kbd className="px-1 py-0.5 text-[8px] bg-muted/60 rounded font-mono opacity-60">
+                            w
+                          </kbd>
+                        </span>
                       </th>
-                      <th className="px-2 py-1 text-right font-medium">%</th>
+                      <th className="px-2 py-1 text-right font-medium">
+                        <span className="inline-flex items-center gap-1">
+                          Notional
+                          <kbd className="px-1 py-0.5 text-[8px] bg-muted/60 rounded font-mono opacity-60">
+                            n
+                          </kbd>
+                        </span>
+                      </th>
+                      <th className="px-2 py-1 text-right font-medium">Rate</th>
                       <th className="px-2 py-1 text-right font-medium">Δ</th>
                       <th className="px-2 py-1 text-right font-medium">Γ</th>
                       <th className="px-2 py-1 text-right font-medium">Θ</th>
-                      <th className="px-2 py-1 text-right font-medium">
-                        Sharpe
-                      </th>
-                      <th className="px-1 py-1 w-14"></th>
                     </tr>
                   </thead>
                   <tbody>
@@ -564,7 +983,6 @@ const PrototypePage = () => {
                       const isExpanded = !collapsedUnderlyings.has(
                         group.underlying,
                       )
-                      const analysis = analysisMap.get(group.underlying)
                       const greekData = greeksMap.get(group.underlying)
                       const groupNotional = calculateGroupNotional(
                         group.positions,
@@ -574,6 +992,28 @@ const PrototypePage = () => {
                         0,
                       )
                       const netSide = calculateNetSide(group.positions)
+
+                      // Calculate weighted average rate for the underlying
+                      const groupWeightedRate =
+                        groupNotional > 0
+                          ? group.positions.reduce((sum, pos) => {
+                              let posRate = 0
+                              if (pos.fundingRate !== undefined) {
+                                posRate =
+                                  pos.side === "short"
+                                    ? -pos.fundingRate
+                                    : pos.fundingRate
+                              } else if (pos.theta !== undefined) {
+                                posRate = pos.theta * 365
+                              } else {
+                                posRate = pos.carryRate ?? 0
+                              }
+                              return (
+                                sum + posRate * (pos.notional / groupNotional)
+                              )
+                            }, 0)
+                          : 0
+
                       const isSelected =
                         focusedPanel === "positions" &&
                         getSelectedIndex("positions") === index
@@ -593,13 +1033,11 @@ const PrototypePage = () => {
                             }}
                           >
                             <td className="px-1 py-1 text-muted-foreground">
-                              {group.positions.length > 1 ? (
-                                isExpanded ? (
-                                  <ChevronDown className="h-3 w-3" />
-                                ) : (
-                                  <ChevronRight className="h-3 w-3" />
-                                )
-                              ) : null}
+                              {isExpanded ? (
+                                <ChevronDown className="h-3 w-3" />
+                              ) : (
+                                <ChevronRight className="h-3 w-3" />
+                              )}
                             </td>
                             <td className="px-2 py-1 font-medium">
                               {group.underlying}
@@ -624,11 +1062,25 @@ const PrototypePage = () => {
                                     : "NEUTRAL"}
                               </span>
                             </td>
+                            <td className="px-2 py-1 text-right font-mono font-medium">
+                              {groupPct.toFixed(1)}%
+                            </td>
                             <td className="px-2 py-1 text-right font-mono">
                               {formatUsd(groupNotional)}
                             </td>
-                            <td className="px-2 py-1 text-right text-muted-foreground">
-                              {groupPct.toFixed(1)}%
+                            <td
+                              className={twMerge(
+                                clsx(
+                                  "px-2 py-1 text-right font-mono",
+                                  groupWeightedRate > 0
+                                    ? "text-green-500"
+                                    : groupWeightedRate < 0
+                                      ? "text-red-500"
+                                      : "text-muted-foreground",
+                                ),
+                              )}
+                            >
+                              {`${groupWeightedRate > 0 ? "+" : ""}${(groupWeightedRate * 100).toFixed(1)}%`}
                             </td>
                             <td className="px-2 py-1 text-right font-mono">
                               {formatNum(greekData?.delta, 2)}
@@ -639,44 +1091,8 @@ const PrototypePage = () => {
                             <td className="px-2 py-1 text-right font-mono text-muted-foreground">
                               {formatNum(greekData?.theta, 3)}
                             </td>
-                            <td
-                              className={twMerge(
-                                clsx(
-                                  "px-2 py-1 text-right font-mono",
-                                  analysis?.sharpe && analysis.sharpe > 0
-                                    ? "text-green-500"
-                                    : "text-red-500",
-                                ),
-                              )}
-                            >
-                              {formatNum(analysis?.sharpe)}
-                            </td>
-                            <td
-                              className="px-1 py-1 text-right"
-                              onClick={e => {
-                                e.stopPropagation()
-                              }}
-                            >
-                              <button
-                                className="text-green-500 hover:text-green-400 p-0.5"
-                                onClick={() => {
-                                  addStagedTrade(group.underlying, "buy")
-                                }}
-                              >
-                                <Plus className="h-3 w-3" />
-                              </button>
-                              <button
-                                className="text-red-500 hover:text-red-400 p-0.5"
-                                onClick={() => {
-                                  addStagedTrade(group.underlying, "sell")
-                                }}
-                              >
-                                <Minus className="h-3 w-3" />
-                              </button>
-                            </td>
                           </tr>
                           {isExpanded &&
-                            group.positions.length > 1 &&
                             group.positions.map(pos => {
                               const underlyingGreeks = greeksMap.get(
                                 group.underlying,
@@ -698,28 +1114,64 @@ const PrototypePage = () => {
                                 instrumentType === "CALL"
                               const isLong = pos.side === "long"
 
-                              // For options: explain the portfolio effect
-                              // Long call = profits when underlying rises
-                              // Short call = profits when underlying falls/flat
-                              // Long put = profits when underlying falls
-                              // Short put = profits when underlying rises/flat
                               const getOptionHint = () => {
                                 if (!isOption) return null
                                 if (instrumentType === "CALL") {
                                   return isLong
-                                    ? "Profits if underlying rises"
-                                    : "Profits if underlying falls or stays flat"
+                                    ? "Long call: Unlimited upside potential. Maximum loss is the premium paid. Profits when underlying rises above strike + premium."
+                                    : "Short call: Collects premium upfront. Unlimited loss potential if underlying rises. Profits when underlying stays below strike."
                                 }
                                 return isLong
-                                  ? "Profits if underlying falls"
-                                  : "Profits if underlying rises or stays flat"
+                                  ? "Long put: Profits when underlying falls below strike minus premium paid. Maximum loss is limited to the premium. Common uses: (1) Portfolio hedge against downside moves, (2) Bearish directional bet with limited risk, (3) Pairs with long stock for protective put strategy."
+                                  : "Short put: Collects premium upfront in exchange for obligation to buy at strike. Maximum loss occurs if underlying goes to zero (strike × contracts). Profits when underlying stays above strike. Common uses: (1) Generate income on assets you're willing to own, (2) Bullish bet that underlying won't fall, (3) Cash-secured put strategy for potential entry."
                               }
                               const optionHint = getOptionHint()
+
+                              // Get rate: funding for perps, 0 for spots, theta (annualized) for options
+                              const getRate = (): {
+                                value: number
+                                label: string
+                              } => {
+                                if (pos.fundingRate !== undefined) {
+                                  // For shorts, you receive funding when rate is positive
+                                  const effectiveRate =
+                                    pos.side === "short"
+                                      ? -pos.fundingRate
+                                      : pos.fundingRate
+                                  return {
+                                    value: effectiveRate,
+                                    label: "funding",
+                                  }
+                                }
+                                if (pos.theta !== undefined) {
+                                  return {
+                                    value: pos.theta * 365,
+                                    label: "theta",
+                                  }
+                                }
+                                // Spots and any other instruments default to 0% rate
+                                return {
+                                  value: pos.carryRate ?? 0,
+                                  label: "carry",
+                                }
+                              }
+                              const rate = getRate()
+
+                              const isInstrumentSelected =
+                                focusedPanel === "positions" &&
+                                selectedInstrumentSymbol === pos.symbol
 
                               return (
                                 <tr
                                   key={pos.symbol}
-                                  className="bg-muted/10 border-b border-border/10 text-muted-foreground"
+                                  className={twMerge(
+                                    clsx(
+                                      "border-b border-border/10 text-muted-foreground",
+                                      isInstrumentSelected
+                                        ? "bg-primary/20 ring-1 ring-primary/50"
+                                        : "bg-muted/10",
+                                    ),
+                                  )}
                                 >
                                   <td></td>
                                   <td className="px-2 py-0.5 pl-6 whitespace-nowrap">
@@ -749,7 +1201,10 @@ const PrototypePage = () => {
                                               ?
                                             </span>
                                           </TooltipTrigger>
-                                          <TooltipContent side="top">
+                                          <TooltipContent
+                                            side="top"
+                                            className="max-w-[280px]"
+                                          >
                                             {optionHint}
                                           </TooltipContent>
                                         </Tooltip>
@@ -757,10 +1212,47 @@ const PrototypePage = () => {
                                     </span>
                                   </td>
                                   <td className="px-2 py-0.5 text-right font-mono">
-                                    {formatUsd(pos.notional)}
+                                    <EditableCell
+                                      value={pos.weight}
+                                      format="percent"
+                                      onCommit={newWeight => {
+                                        updateInstrumentWeight(
+                                          pos.symbol,
+                                          newWeight,
+                                        )
+                                      }}
+                                      isSelected={isInstrumentSelected}
+                                      editKey="w"
+                                      directEdit
+                                    />
                                   </td>
-                                  <td className="px-2 py-0.5 text-right">
-                                    {pos.percentage.toFixed(1)}%
+                                  <td className="px-2 py-0.5 text-right font-mono">
+                                    <EditableCell
+                                      value={pos.notional}
+                                      format="currency"
+                                      onCommit={newNotional => {
+                                        updateInstrumentNotional(
+                                          pos.symbol,
+                                          newNotional,
+                                        )
+                                      }}
+                                      isSelected={isInstrumentSelected}
+                                      editKey="n"
+                                    />
+                                  </td>
+                                  <td
+                                    className={twMerge(
+                                      clsx(
+                                        "px-2 py-0.5 text-right font-mono",
+                                        rate.value > 0
+                                          ? "text-green-500"
+                                          : rate.value < 0
+                                            ? "text-red-500"
+                                            : "",
+                                      ),
+                                    )}
+                                  >
+                                    {`${rate.value > 0 ? "+" : ""}${(rate.value * 100).toFixed(1)}%`}
                                   </td>
                                   <td className="px-2 py-0.5 text-right font-mono">
                                     {underlyingGreeks
@@ -786,7 +1278,6 @@ const PrototypePage = () => {
                                         )
                                       : "—"}
                                   </td>
-                                  <td colSpan={2}></td>
                                 </tr>
                               )
                             })}
@@ -802,6 +1293,10 @@ const PrototypePage = () => {
               stagedTrades={stagedTrades}
               leverage={leverage}
               effectiveLeverage={effectiveLeverage}
+              nav={data.nav}
+              positions={positionsByUnderlying}
+              assetFactors={assetFactors}
+              isFocused={secondaryFocus === "staged"}
               onLeverageChange={setLeverage}
               onRemoveTrade={removeStagedTrade}
               onClearAll={clearStagedTrades}
@@ -813,11 +1308,19 @@ const PrototypePage = () => {
           <div className="flex-1 flex flex-col gap-1 min-w-0">
             {/* Top row: Performance */}
             <div
-              className="border border-border rounded flex flex-col"
+              className={twMerge(
+                clsx(
+                  "border border-border rounded flex flex-col",
+                  secondaryFocus === "performance" && "ring-1 ring-primary/50",
+                ),
+              )}
               style={{ height: "45%" }}
             >
-              <div className="px-2 py-1 border-b border-border bg-muted/30 font-medium">
-                PERFORMANCE
+              <div className="px-2 py-1 border-b border-border bg-muted/30 font-medium flex justify-between items-center">
+                <span>PERFORMANCE</span>
+                <kbd className="px-1.5 py-0.5 text-[10px] font-mono bg-muted rounded">
+                  3
+                </kbd>
               </div>
               <div className="flex-1 flex min-h-0">
                 {/* Metrics on the left - single column with breathing room */}
@@ -833,6 +1336,9 @@ const PrototypePage = () => {
                       )
                     }}
                     onWindowChange={setSelectedWindowId}
+                    isOpen={isMetricSelectorOpen}
+                    onOpenChange={setIsMetricSelectorOpen}
+                    isFocused={secondaryFocus === "performance"}
                   />
                   <div className="flex justify-between pb-2 border-b border-border/30">
                     <span className="text-muted-foreground">Total Return</span>
@@ -921,15 +1427,20 @@ const PrototypePage = () => {
               <div className="flex-1 border border-border rounded flex flex-col min-w-0 relative">
                 <div className="px-2 py-1 border-b border-border bg-muted/30 font-medium flex items-center justify-between">
                   <span>FACTORS</span>
-                  <button
-                    onClick={() => {
-                      setShowFactorConfig(true)
-                    }}
-                    className="text-muted-foreground hover:text-foreground"
-                    title="Configure factors"
-                  >
-                    <Settings className="h-3 w-3" />
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => {
+                        setShowFactorConfig(true)
+                      }}
+                      className="text-muted-foreground hover:text-foreground"
+                      title="Configure factors (f)"
+                    >
+                      <Settings className="h-3 w-3" />
+                    </button>
+                    <kbd className="px-1.5 py-0.5 text-[10px] font-mono bg-muted rounded">
+                      f
+                    </kbd>
+                  </div>
                 </div>
                 {showFactorConfig && (
                   <FactorConfigPanel
@@ -1170,25 +1681,60 @@ const PrototypePage = () => {
         </main>
 
         {/* Footer */}
-        <footer className="px-3 py-1 border-t border-border bg-muted/30 text-[10px] text-muted-foreground flex justify-between items-center">
-          <div className="flex gap-4">
-            <span>
+        <footer className="px-3 py-1.5 border-t border-border bg-muted/30 text-[10px] text-muted-foreground flex justify-between items-center">
+          <div className="flex gap-3">
+            <span className={focusedPanel === "screener" ? "text-primary" : ""}>
               <kbd className="px-1.5 py-0.5 bg-muted rounded font-mono">1</kbd>{" "}
               Screener
-              <kbd className="px-1.5 py-0.5 bg-muted rounded font-mono ml-3">
-                2
-              </kbd>{" "}
+            </span>
+            <span
+              className={focusedPanel === "positions" ? "text-primary" : ""}
+            >
+              <kbd className="px-1.5 py-0.5 bg-muted rounded font-mono">2</kbd>{" "}
               Positions
             </span>
-            <span className="border-l border-border pl-4">
-              <kbd className="px-1.5 py-0.5 bg-muted rounded font-mono">h</kbd>/
-              <kbd className="px-1.5 py-0.5 bg-muted rounded font-mono">l</kbd>{" "}
-              Navigate
+            <span className="border-l border-border pl-3">
+              <kbd className="px-1.5 py-0.5 bg-muted rounded font-mono">j</kbd>/
+              <kbd className="px-1.5 py-0.5 bg-muted rounded font-mono">k</kbd>{" "}
+              navigate
             </span>
+            <span>
+              <kbd className="px-1.5 py-0.5 bg-muted rounded font-mono">o</kbd>{" "}
+              expand
+            </span>
+            {focusedPanel === "positions" && (
+              <>
+                <span className="border-l border-border pl-3">
+                  <kbd className="px-1.5 py-0.5 bg-muted rounded font-mono">
+                    w
+                  </kbd>{" "}
+                  weight
+                </span>
+                <span>
+                  <kbd className="px-1.5 py-0.5 bg-muted rounded font-mono">
+                    n
+                  </kbd>{" "}
+                  notional
+                </span>
+              </>
+            )}
+            <span className="border-l border-border pl-3">
+              <kbd className="px-1.5 py-0.5 bg-muted rounded font-mono">[</kbd>/
+              <kbd className="px-1.5 py-0.5 bg-muted rounded font-mono">]</kbd>{" "}
+              leverage
+            </span>
+            {stagedTrades.length > 0 && (
+              <span className="text-primary">
+                <kbd className="px-1.5 py-0.5 bg-muted rounded font-mono">
+                  x
+                </kbd>{" "}
+                execute
+              </span>
+            )}
           </div>
           <span>
             <kbd className="px-1.5 py-0.5 bg-muted rounded font-mono">?</kbd>{" "}
-            All shortcuts
+            all shortcuts
           </span>
         </footer>
       </div>

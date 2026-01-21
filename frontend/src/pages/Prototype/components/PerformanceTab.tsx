@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useRef, useState, useCallback } from "react"
 import { twMerge } from "tailwind-merge"
 import { clsx } from "clsx"
 import {
@@ -18,12 +18,17 @@ type ChartType = "equity" | "drawdown" | "distribution"
 type Period = "1M" | "3M" | "6M" | "1Y" | "All"
 type ComparisonMode = "current" | "target" | "compare"
 
+const CHART_TYPES: ChartType[] = ["equity", "drawdown", "distribution"]
+const PERIODS: Period[] = ["1M", "3M", "6M", "1Y", "All"]
+const COMPARISON_MODES: ComparisonMode[] = ["current", "target", "compare"]
+
 interface PerformanceTabProps {
   backtestData: BacktestPoint[]
   drawdownData: DrawdownPoint[]
   returnDistribution: ReturnDistributionBucket[]
   performanceStats: PerformanceStats
   hasStagedTrades: boolean
+  isFocused?: boolean
 }
 
 const formatPct = (n: number): string =>
@@ -43,13 +48,81 @@ export const PerformanceTab = ({
   returnDistribution,
   performanceStats,
   hasStagedTrades,
+  isFocused = false,
 }: PerformanceTabProps) => {
   const chartRef = useRef<HTMLDivElement>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
   const [chartType, setChartType] = useState<ChartType>("equity")
   const [period, setPeriod] = useState<Period>("All")
   const [comparisonMode, setComparisonMode] =
     useState<ComparisonMode>("current")
 
+  const handleKeyDown = useCallback(
+    (event: KeyboardEvent) => {
+      if (!isFocused) return
+
+      // Number keys 1-3 for chart type
+      if (event.key >= "1" && event.key <= "3") {
+        const index = parseInt(event.key) - 1
+        if (index < CHART_TYPES.length) {
+          setChartType(CHART_TYPES[index])
+        }
+        return
+      }
+
+      // q/w/e for periods (first 3), r/t for last 2
+      const periodKeyMap: Record<string, number> = {
+        q: 0, // 1M
+        w: 1, // 3M
+        e: 2, // 6M
+        r: 3, // 1Y
+        t: 4, // All
+      }
+      if (event.key in periodKeyMap) {
+        setPeriod(PERIODS[periodKeyMap[event.key]])
+        return
+      }
+
+      // Arrow left/right for period navigation
+      if (event.key === "ArrowLeft" || event.key === "h") {
+        const currentIndex = PERIODS.indexOf(period)
+        if (currentIndex > 0) {
+          setPeriod(PERIODS[currentIndex - 1])
+        }
+        return
+      }
+      if (event.key === "ArrowRight" || event.key === "l") {
+        const currentIndex = PERIODS.indexOf(period)
+        if (currentIndex < PERIODS.length - 1) {
+          setPeriod(PERIODS[currentIndex + 1])
+        }
+        return
+      }
+
+      // c for cycling comparison mode (when staged trades exist)
+      if (event.key === "c" && hasStagedTrades) {
+        const currentIndex = COMPARISON_MODES.indexOf(comparisonMode)
+        const nextIndex = (currentIndex + 1) % COMPARISON_MODES.length
+        setComparisonMode(COMPARISON_MODES[nextIndex])
+        return
+      }
+    },
+    [isFocused, period, comparisonMode, hasStagedTrades],
+  )
+
+  // useEffect justified: Global keyboard listener needed for keyboard navigation
+  // when this panel is focused. Cannot be handled via onKeyDown since focus may
+  // not be on this DOM element while it's logically "focused" in the app state.
+  useEffect(() => {
+    if (!isFocused) return
+    window.addEventListener("keydown", handleKeyDown)
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown)
+    }
+  }, [isFocused, handleKeyDown])
+
+  // useEffect justified: LightweightCharts requires imperative DOM manipulation
+  // and cleanup. No React wrapper exists that provides equivalent functionality.
   useEffect(() => {
     const container = chartRef.current
     if (!container) return
@@ -139,10 +212,19 @@ export const PerformanceTab = ({
   const calmar = Math.abs(displayStats.totalReturn / displayStats.maxDrawdown)
 
   return (
-    <div className="flex flex-col h-full">
+    <div
+      ref={containerRef}
+      className={twMerge(
+        clsx(
+          "flex flex-col h-full",
+          isFocused && "ring-1 ring-primary/50 ring-inset",
+        ),
+      )}
+      data-testid="performance-tab"
+    >
       <div className="flex items-center justify-between px-2 py-1 border-b border-border/50 shrink-0">
         <div className="flex gap-1">
-          {(["equity", "drawdown", "distribution"] as const).map(type => (
+          {CHART_TYPES.map((type, index) => (
             <button
               key={type}
               onClick={() => {
@@ -157,6 +239,11 @@ export const PerformanceTab = ({
                 ),
               )}
             >
+              {isFocused && (
+                <span className="text-[8px] opacity-60 mr-0.5">
+                  {index + 1}
+                </span>
+              )}
               {type === "equity"
                 ? "Equity"
                 : type === "drawdown"
@@ -166,7 +253,12 @@ export const PerformanceTab = ({
           ))}
         </div>
         <div className="flex gap-1">
-          {(["1M", "3M", "6M", "1Y", "All"] as const).map(p => (
+          {isFocused && (
+            <span className="text-[8px] text-muted-foreground self-center mr-0.5">
+              ←→
+            </span>
+          )}
+          {PERIODS.map(p => (
             <button
               key={p}
               onClick={() => {
@@ -276,7 +368,12 @@ export const PerformanceTab = ({
 
       {hasStagedTrades && (
         <div className="flex gap-1 px-2 py-1 border-t border-border/50 shrink-0">
-          {(["current", "target", "compare"] as const).map(mode => (
+          {isFocused && (
+            <span className="text-[8px] text-muted-foreground self-center mr-0.5">
+              c
+            </span>
+          )}
+          {COMPARISON_MODES.map(mode => (
             <button
               key={mode}
               onClick={() => {

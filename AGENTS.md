@@ -225,6 +225,108 @@ Code must be self-explaining through good names and clean architecture.
 If you find yourself writing a comment to explain complex logic, first try to
 refactor the code to be self-explanatory.
 
+### Avoid Boolean Blindness
+
+Raw booleans obscure meaning at call sites. When you see `doThing(true)`, what
+does `true` mean? You have to look at the function signature to understand.
+
+**Prefer discriminated unions over booleans:**
+
+```typescript
+// Bad - boolean blindness
+const [isOpen, setIsOpen] = useState(false);
+setIsOpen(true); // What does true mean here?
+setIsOpen(false);
+
+// Good - explicit state
+type ModalState = "open" | "closed";
+const [modalState, setModalState] = useState<ModalState>("closed");
+setModalState("open");
+setModalState("closed");
+
+// Also good - named functions wrapping the boolean
+const [isOpen, setIsOpen] = useState(false);
+const openModal = () => setIsOpen(true);
+const closeModal = () => setIsOpen(false);
+const toggleModal = () => setIsOpen((prev) => !prev);
+// Usage: openModal(), closeModal(), toggleModal()
+```
+
+This applies especially to:
+
+- UI state (open/closed, expanded/collapsed, visible/hidden)
+- Function parameters that are booleans
+- Toggle operations
+
+### Prefer Functional Programming
+
+Avoid mutability and always prefer FP when there are options to choose from:
+
+- **Immutable data**: Use spread operators, `map`, `filter`, `reduce` instead of
+  mutating arrays/objects
+- **Pure functions**: Prefer functions without side effects
+- **No `let` when `const` works**: Use `const` by default, `let` only when
+  reassignment is truly necessary
+- **Declarative over imperative**: Prefer `array.map()` over `for` loops,
+  `array.filter()` over manual filtering
+- **Avoid mutation methods**: Use `[...arr, item]` instead of `arr.push(item)`,
+  `{ ...obj, key: value }` instead of `obj.key = value`
+- **Build collections declaratively**: Use filter/map chains instead of loops
+  that mutate a collection
+
+```typescript
+// Bad - imperative with mutation
+const collapsed = new Set<string>();
+for (const group of groups) {
+  if (group.items.length === 1) {
+    collapsed.add(group.id);
+  }
+}
+
+// Good - declarative with filter/map
+new Set(
+  groups.filter((group) => group.items.length === 1).map((group) => group.id),
+);
+```
+
+### Avoid useEffect When Better Alternatives Exist
+
+Before adding `useEffect`, always consider whether there's a better alternative:
+
+- **Data fetching**: Use TanStack Query (`@tanstack/react-query`) instead of
+  `useEffect` + `fetch` + loading/error state
+- **Local storage**: Use `use-local-storage-state` instead of manual
+  `useEffect` + `localStorage.getItem/setItem`
+- **Derived state**: Use `useMemo` instead of `useEffect` + `setState` to
+  compute values from other state
+- **Event listeners**: Consider if the event can be handled declaratively in JSX
+  (`onClick`, `onKeyDown`) before using `useEffect` for global listeners
+- **Subscriptions**: Use libraries designed for the specific subscription type
+  (WebSocket libraries, RxJS, etc.)
+- **Refs for DOM measurement**: Use `ResizeObserver` via a dedicated hook or
+  library rather than raw `useEffect`
+
+`useEffect` is appropriate for:
+
+- Synchronizing with external systems that have no React-specific library
+- Global keyboard shortcuts that can't be handled by focused elements
+- Chart libraries that need imperative DOM manipulation
+
+**When useEffect IS the right tool, add a comment explaining why:**
+
+```typescript
+// useEffect justified: LightweightCharts requires imperative DOM manipulation
+// and has no React wrapper. No better alternative exists.
+useEffect(() => {
+  const chart = createChart(container, options);
+  // ...
+}, []);
+```
+
+This requirement exists because useEffect has many footguns (stale closures,
+missing dependencies, race conditions). Requiring justification ensures
+developers have considered alternatives before reaching for useEffect.
+
 ### Test-Driven Development
 
 When writing tests for existing code, do NOT assume the current behavior is

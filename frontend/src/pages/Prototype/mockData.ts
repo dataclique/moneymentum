@@ -1,3 +1,20 @@
+export type InstrumentType = "perp" | "spot" | "call" | "put"
+
+export interface Instrument {
+  symbol: string
+  underlying: string
+  type: InstrumentType
+  strike?: number
+  expiry?: number
+}
+
+export interface InstrumentCosts {
+  symbol: string
+  fundingRate?: number // Perps: annualized 8h funding
+  carryRate?: number // Spots: opportunity cost
+  theta?: number // Options: daily decay
+}
+
 export interface Greeks {
   symbol: string
   delta: number
@@ -70,6 +87,19 @@ export interface StagedTrade {
   leverage: number
 }
 
+export type TradeSource = "weight_edit" | "leverage_change" | "manual"
+
+export interface ComputedTrade {
+  id: string
+  symbol: string
+  underlying: string
+  side: "buy" | "sell"
+  notional: number
+  source: TradeSource
+  previousWeight?: number
+  newWeight?: number
+}
+
 export interface MockPosition {
   symbol: string
   underlying: string
@@ -113,6 +143,45 @@ export const MOCK_POSITIONS: MockPosition[] = [
   { symbol: "AVAX/USDC:USDC", underlying: "AVAX", side: "long", weight: 0.02 },
   { symbol: "BCH/USDC:USDC", underlying: "BCH", side: "short", weight: 0.0175 },
   { symbol: "APE/USDC:USDC", underlying: "APE", side: "short", weight: 0.015 },
+]
+
+// Instrument costs: funding rates (perps), carry rates (spots), theta (options)
+// Funding rates are annualized based on 8h funding
+// Spots have 0% rate (no funding cost)
+export const MOCK_INSTRUMENT_COSTS: InstrumentCosts[] = [
+  // BTC instruments
+  { symbol: "BTC/USDC:USDC", fundingRate: 0.12 }, // 12% annualized funding
+  { symbol: "BTC-SPOT", carryRate: 0 }, // Spots: 0% rate
+
+  // ETH instruments
+  { symbol: "ETH/USDC:USDC", fundingRate: 0.15 },
+  { symbol: "ETH-SPOT", carryRate: 0 },
+  { symbol: "ETH-PUT-2800", theta: -0.002 }, // Daily theta decay
+
+  // SOL instruments
+  { symbol: "SOL/USDC:USDC", fundingRate: 0.18 },
+  { symbol: "SOL-SPOT", carryRate: 0 },
+
+  // DOGE instruments
+  { symbol: "DOGE/USDC:USDC", fundingRate: 0.08 },
+  { symbol: "DOGE-SPOT", carryRate: 0 },
+
+  // XRP instruments
+  { symbol: "XRP/USDC:USDC", fundingRate: 0.06 },
+  { symbol: "XRP-SPOT", carryRate: 0 },
+
+  // AAVE instruments (basis trade)
+  { symbol: "AAVE-SPOT", carryRate: 0 },
+  { symbol: "AAVE/USDC:USDC", fundingRate: 0.22 },
+
+  // Single-instrument positions
+  { symbol: "HYPE/USDC:USDC", fundingRate: 0.35 },
+  { symbol: "ARB/USDC:USDC", fundingRate: 0.14 },
+  { symbol: "LTC/USDC:USDC", fundingRate: 0.04 },
+  { symbol: "LINK/USDC:USDC", fundingRate: 0.1 },
+  { symbol: "AVAX/USDC:USDC", fundingRate: 0.12 },
+  { symbol: "BCH/USDC:USDC", fundingRate: 0.05 },
+  { symbol: "APE/USDC:USDC", fundingRate: 0.08 },
 ]
 
 export const MOCK_GREEKS: Greeks[] = [
@@ -298,8 +367,15 @@ export interface MockAssetAnalysis {
   beta: number
   sharpe: number
   sortino: number
-  autocorrelation: number
   volatility: number
+  momentum: number
+}
+
+export interface ScreenerInstrument {
+  symbol: string
+  type: "perp" | "spot" | "call" | "put"
+  rate: number
+  rateLabel: string
 }
 
 export const MOCK_ASSET_ANALYSIS: MockAssetAnalysis[] = [
@@ -308,7 +384,7 @@ export const MOCK_ASSET_ANALYSIS: MockAssetAnalysis[] = [
     beta: 1.0,
     sharpe: 1.2,
     sortino: 1.8,
-    autocorrelation: 0.12,
+    momentum: 0.12,
     volatility: 0.65,
   },
   {
@@ -316,7 +392,7 @@ export const MOCK_ASSET_ANALYSIS: MockAssetAnalysis[] = [
     beta: 1.25,
     sharpe: 0.95,
     sortino: 1.4,
-    autocorrelation: 0.08,
+    momentum: 0.08,
     volatility: 0.78,
   },
   {
@@ -324,7 +400,7 @@ export const MOCK_ASSET_ANALYSIS: MockAssetAnalysis[] = [
     beta: 1.8,
     sharpe: 1.45,
     sortino: 2.1,
-    autocorrelation: 0.15,
+    momentum: 0.15,
     volatility: 0.92,
   },
   {
@@ -332,7 +408,7 @@ export const MOCK_ASSET_ANALYSIS: MockAssetAnalysis[] = [
     beta: 1.5,
     sharpe: 0.72,
     sortino: 1.1,
-    autocorrelation: 0.05,
+    momentum: 0.05,
     volatility: 0.85,
   },
   {
@@ -340,7 +416,7 @@ export const MOCK_ASSET_ANALYSIS: MockAssetAnalysis[] = [
     beta: 1.3,
     sharpe: 0.35,
     sortino: 0.5,
-    autocorrelation: -0.02,
+    momentum: -0.02,
     volatility: 1.1,
   },
   {
@@ -348,7 +424,7 @@ export const MOCK_ASSET_ANALYSIS: MockAssetAnalysis[] = [
     beta: 0.9,
     sharpe: 0.55,
     sortino: 0.8,
-    autocorrelation: 0.03,
+    momentum: 0.03,
     volatility: 0.72,
   },
   {
@@ -356,7 +432,7 @@ export const MOCK_ASSET_ANALYSIS: MockAssetAnalysis[] = [
     beta: 1.4,
     sharpe: 0.42,
     sortino: 0.6,
-    autocorrelation: 0.01,
+    momentum: 0.01,
     volatility: 0.88,
   },
   {
@@ -364,7 +440,7 @@ export const MOCK_ASSET_ANALYSIS: MockAssetAnalysis[] = [
     beta: 1.2,
     sharpe: 0.85,
     sortino: 1.2,
-    autocorrelation: 0.09,
+    momentum: 0.09,
     volatility: 0.82,
   },
   {
@@ -372,7 +448,7 @@ export const MOCK_ASSET_ANALYSIS: MockAssetAnalysis[] = [
     beta: 1.6,
     sharpe: 0.62,
     sortino: 0.9,
-    autocorrelation: 0.04,
+    momentum: 0.04,
     volatility: 0.95,
   },
   {
@@ -380,7 +456,7 @@ export const MOCK_ASSET_ANALYSIS: MockAssetAnalysis[] = [
     beta: 1.35,
     sharpe: 0.48,
     sortino: 0.7,
-    autocorrelation: 0.02,
+    momentum: 0.02,
     volatility: 0.88,
   },
   {
@@ -388,7 +464,7 @@ export const MOCK_ASSET_ANALYSIS: MockAssetAnalysis[] = [
     beta: 1.1,
     sharpe: 0.78,
     sortino: 1.1,
-    autocorrelation: 0.07,
+    momentum: 0.07,
     volatility: 0.75,
   },
   {
@@ -396,7 +472,7 @@ export const MOCK_ASSET_ANALYSIS: MockAssetAnalysis[] = [
     beta: 0.85,
     sharpe: 0.38,
     sortino: 0.55,
-    autocorrelation: 0.01,
+    momentum: 0.01,
     volatility: 0.68,
   },
   {
@@ -404,7 +480,7 @@ export const MOCK_ASSET_ANALYSIS: MockAssetAnalysis[] = [
     beta: 0.92,
     sharpe: 0.25,
     sortino: 0.35,
-    autocorrelation: -0.01,
+    momentum: -0.01,
     volatility: 0.7,
   },
   {
@@ -412,7 +488,7 @@ export const MOCK_ASSET_ANALYSIS: MockAssetAnalysis[] = [
     beta: 1.7,
     sharpe: 1.1,
     sortino: 1.6,
-    autocorrelation: 0.11,
+    momentum: 0.11,
     volatility: 0.98,
   },
   {
@@ -420,7 +496,7 @@ export const MOCK_ASSET_ANALYSIS: MockAssetAnalysis[] = [
     beta: 1.65,
     sharpe: 0.92,
     sortino: 1.35,
-    autocorrelation: 0.08,
+    momentum: 0.08,
     volatility: 0.95,
   },
   {
@@ -428,7 +504,7 @@ export const MOCK_ASSET_ANALYSIS: MockAssetAnalysis[] = [
     beta: 1.55,
     sharpe: 0.32,
     sortino: 0.45,
-    autocorrelation: -0.03,
+    momentum: -0.03,
     volatility: 1.05,
   },
   {
@@ -436,7 +512,7 @@ export const MOCK_ASSET_ANALYSIS: MockAssetAnalysis[] = [
     beta: 1.45,
     sharpe: 0.28,
     sortino: 0.4,
-    autocorrelation: 0.02,
+    momentum: 0.02,
     volatility: 0.98,
   },
   {
@@ -444,7 +520,7 @@ export const MOCK_ASSET_ANALYSIS: MockAssetAnalysis[] = [
     beta: 1.38,
     sharpe: 0.65,
     sortino: 0.92,
-    autocorrelation: 0.06,
+    momentum: 0.06,
     volatility: 0.88,
   },
   {
@@ -452,7 +528,7 @@ export const MOCK_ASSET_ANALYSIS: MockAssetAnalysis[] = [
     beta: 1.32,
     sharpe: 0.58,
     sortino: 0.82,
-    autocorrelation: 0.04,
+    momentum: 0.04,
     volatility: 0.85,
   },
   {
@@ -460,7 +536,7 @@ export const MOCK_ASSET_ANALYSIS: MockAssetAnalysis[] = [
     beta: 1.05,
     sharpe: 0.42,
     sortino: 0.6,
-    autocorrelation: 0.01,
+    momentum: 0.01,
     volatility: 0.75,
   },
   {
@@ -468,7 +544,7 @@ export const MOCK_ASSET_ANALYSIS: MockAssetAnalysis[] = [
     beta: 1.28,
     sharpe: 0.52,
     sortino: 0.75,
-    autocorrelation: 0.03,
+    momentum: 0.03,
     volatility: 0.82,
   },
   {
@@ -476,7 +552,7 @@ export const MOCK_ASSET_ANALYSIS: MockAssetAnalysis[] = [
     beta: 1.52,
     sharpe: 0.68,
     sortino: 0.98,
-    autocorrelation: 0.07,
+    momentum: 0.07,
     volatility: 0.92,
   },
   {
@@ -484,7 +560,7 @@ export const MOCK_ASSET_ANALYSIS: MockAssetAnalysis[] = [
     beta: 1.42,
     sharpe: 0.55,
     sortino: 0.78,
-    autocorrelation: 0.05,
+    momentum: 0.05,
     volatility: 0.88,
   },
   {
@@ -492,7 +568,7 @@ export const MOCK_ASSET_ANALYSIS: MockAssetAnalysis[] = [
     beta: 0.85,
     sharpe: 0.75,
     sortino: 1.05,
-    autocorrelation: 0.08,
+    momentum: 0.08,
     volatility: 0.62,
   },
   {
@@ -500,7 +576,7 @@ export const MOCK_ASSET_ANALYSIS: MockAssetAnalysis[] = [
     beta: 1.58,
     sharpe: 0.72,
     sortino: 1.02,
-    autocorrelation: 0.06,
+    momentum: 0.06,
     volatility: 0.95,
   },
   {
@@ -508,7 +584,7 @@ export const MOCK_ASSET_ANALYSIS: MockAssetAnalysis[] = [
     beta: 1.48,
     sharpe: 0.45,
     sortino: 0.65,
-    autocorrelation: 0.02,
+    momentum: 0.02,
     volatility: 0.9,
   },
   {
@@ -516,7 +592,7 @@ export const MOCK_ASSET_ANALYSIS: MockAssetAnalysis[] = [
     beta: 1.62,
     sharpe: 0.82,
     sortino: 1.15,
-    autocorrelation: 0.09,
+    momentum: 0.09,
     volatility: 0.98,
   },
   {
@@ -524,7 +600,7 @@ export const MOCK_ASSET_ANALYSIS: MockAssetAnalysis[] = [
     beta: 1.68,
     sharpe: 0.88,
     sortino: 1.25,
-    autocorrelation: 0.1,
+    momentum: 0.1,
     volatility: 1.02,
   },
   {
@@ -532,7 +608,7 @@ export const MOCK_ASSET_ANALYSIS: MockAssetAnalysis[] = [
     beta: 1.72,
     sharpe: 0.95,
     sortino: 1.35,
-    autocorrelation: 0.11,
+    momentum: 0.11,
     volatility: 1.05,
   },
   {
@@ -540,7 +616,7 @@ export const MOCK_ASSET_ANALYSIS: MockAssetAnalysis[] = [
     beta: 1.22,
     sharpe: 0.62,
     sortino: 0.88,
-    autocorrelation: 0.05,
+    momentum: 0.05,
     volatility: 0.78,
   },
   {
@@ -548,7 +624,7 @@ export const MOCK_ASSET_ANALYSIS: MockAssetAnalysis[] = [
     beta: 1.35,
     sharpe: 0.58,
     sortino: 0.82,
-    autocorrelation: 0.04,
+    momentum: 0.04,
     volatility: 0.85,
   },
   {
@@ -556,7 +632,7 @@ export const MOCK_ASSET_ANALYSIS: MockAssetAnalysis[] = [
     beta: 1.78,
     sharpe: 1.02,
     sortino: 1.45,
-    autocorrelation: 0.12,
+    momentum: 0.12,
     volatility: 1.1,
   },
   {
@@ -564,7 +640,7 @@ export const MOCK_ASSET_ANALYSIS: MockAssetAnalysis[] = [
     beta: 1.55,
     sharpe: 0.68,
     sortino: 0.95,
-    autocorrelation: 0.06,
+    momentum: 0.06,
     volatility: 0.92,
   },
   {
@@ -572,7 +648,7 @@ export const MOCK_ASSET_ANALYSIS: MockAssetAnalysis[] = [
     beta: 1.82,
     sharpe: 0.35,
     sortino: 0.5,
-    autocorrelation: -0.02,
+    momentum: -0.02,
     volatility: 1.15,
   },
   {
@@ -580,7 +656,7 @@ export const MOCK_ASSET_ANALYSIS: MockAssetAnalysis[] = [
     beta: 1.6,
     sharpe: 0.52,
     sortino: 0.72,
-    autocorrelation: 0.03,
+    momentum: 0.03,
     volatility: 0.95,
   },
   {
@@ -588,7 +664,7 @@ export const MOCK_ASSET_ANALYSIS: MockAssetAnalysis[] = [
     beta: 1.45,
     sharpe: 0.78,
     sortino: 1.1,
-    autocorrelation: 0.08,
+    momentum: 0.08,
     volatility: 0.88,
   },
   {
@@ -596,7 +672,7 @@ export const MOCK_ASSET_ANALYSIS: MockAssetAnalysis[] = [
     beta: 1.18,
     sharpe: 0.85,
     sortino: 1.2,
-    autocorrelation: 0.09,
+    momentum: 0.09,
     volatility: 0.75,
   },
   {
@@ -604,7 +680,7 @@ export const MOCK_ASSET_ANALYSIS: MockAssetAnalysis[] = [
     beta: 0.92,
     sharpe: 0.45,
     sortino: 0.65,
-    autocorrelation: 0.02,
+    momentum: 0.02,
     volatility: 0.68,
   },
   {
@@ -612,10 +688,33 @@ export const MOCK_ASSET_ANALYSIS: MockAssetAnalysis[] = [
     beta: 0.88,
     sharpe: 0.38,
     sortino: 0.55,
-    autocorrelation: 0.01,
+    momentum: 0.01,
     volatility: 0.65,
   },
 ]
+
+export const getInstrumentsForAsset = (
+  ticker: string,
+): ScreenerInstrument[] => {
+  const perpSymbol = `${ticker}/USDC:USDC`
+  const spotSymbol = `${ticker}-SPOT`
+  const perpCost = MOCK_INSTRUMENT_COSTS.find(c => c.symbol === perpSymbol)
+
+  return [
+    {
+      symbol: perpSymbol,
+      type: "perp",
+      rate: perpCost?.fundingRate ?? 0.1,
+      rateLabel: "funding",
+    },
+    {
+      symbol: spotSymbol,
+      type: "spot",
+      rate: 0,
+      rateLabel: "carry",
+    },
+  ]
+}
 
 export interface FactorHistoricalReturn {
   factor: string

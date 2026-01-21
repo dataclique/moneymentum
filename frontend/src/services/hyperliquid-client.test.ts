@@ -1061,6 +1061,150 @@ describe("HyperliquidClient", () => {
       expect(results[1].message).toBe("Open order failed")
       expect(mockExchange.createOrder).toHaveBeenCalledTimes(2)
     })
+
+    it("handles side change with small delta in precise mode", async () => {
+      client = new HyperliquidClient(mockCredentials, "testnet")
+      mockExchange.fetchPositions.mockResolvedValue([
+        {
+          symbol: "BTC/USDC:USDC",
+          side: "long",
+          notional: 5, // $5 long
+          contracts: 0.0001,
+        },
+      ])
+
+      // Current: $5 long, target: $5 short
+      // Delta: -5 - 5 = -10, |delta| = 10 < 11, so precise mode applies
+      // Sides don't match, so we close entire position and open target (at least $11)
+      const positions = [
+        {
+          symbol: "BTC/USDC:USDC",
+          percentage: 0.005, // 0.5% of 1000 = $5 short
+          side: "sell" as const,
+          leverage: 1,
+          status: "modified" as const,
+        },
+      ]
+
+      const results = await client.rebalancePositions(positions, 1000, true)
+
+      expect(results).toHaveLength(2)
+      expect(mockExchange.createOrder).toHaveBeenCalledTimes(2)
+      // First call: close $5 long using reduceOnly (below min order size)
+      expect(mockExchange.createOrder).toHaveBeenNthCalledWith(
+        1,
+        "BTC/USDC:USDC",
+        "market",
+        "sell",
+        0.0001, // 5 / 50000
+        47500,
+        { reduceOnly: true },
+      )
+      // Second call: open at least $11 short (target was $5 but minimum is $11)
+      expect(mockExchange.createOrder).toHaveBeenNthCalledWith(
+        2,
+        "BTC/USDC:USDC",
+        "market",
+        "sell",
+        0.00022, // 11 / 50000
+        47500,
+        undefined,
+      )
+    })
+
+    it("handles small position (< $11) being increased in precise mode", async () => {
+      client = new HyperliquidClient(mockCredentials, "testnet")
+      mockExchange.fetchPositions.mockResolvedValue([
+        {
+          symbol: "BTC/USDC:USDC",
+          side: "long",
+          notional: 8, // $8 long (below $11 minimum)
+          contracts: 0.00016,
+        },
+      ])
+
+      // Current: $8 long, target: $15 long
+      // Delta: 15 - 8 = +7, |delta| = 7 < 11, so precise mode applies
+      // isIncreasing = true, closeAmount = $11 >= currentNotionalAbs = $8
+      // actualCloseAmount = min(11, 8) = 8 < MIN_ORDER_VALUE
+      // So we use closeReduceOnlyNotional to close the $8 position
+      const positions = [
+        {
+          symbol: "BTC/USDC:USDC",
+          percentage: 0.015, // 1.5% of 1000 = $15
+          side: "buy" as const,
+          leverage: 1,
+          status: "modified" as const,
+        },
+      ]
+
+      const results = await client.rebalancePositions(positions, 1000, true)
+
+      expect(results).toHaveLength(2)
+      expect(mockExchange.createOrder).toHaveBeenCalledTimes(2)
+      // First call: close $8 using reduceOnly (below min order size)
+      expect(mockExchange.createOrder).toHaveBeenNthCalledWith(
+        1,
+        "BTC/USDC:USDC",
+        "market",
+        "sell",
+        0.00016, // 8 / 50000
+        47500,
+        { reduceOnly: true },
+      )
+      // Second call: open target $15
+      expect(mockExchange.createOrder).toHaveBeenNthCalledWith(
+        2,
+        "BTC/USDC:USDC",
+        "market",
+        "buy",
+        0.0003, // 15 / 50000
+        52500,
+        undefined,
+      )
+    })
+
+    it("handles small position (< $11) being decreased in precise mode", async () => {
+      client = new HyperliquidClient(mockCredentials, "testnet")
+      mockExchange.fetchPositions.mockResolvedValue([
+        {
+          symbol: "BTC/USDC:USDC",
+          side: "long",
+          notional: 8, // $8 long (below $11 minimum)
+          contracts: 0.00016,
+        },
+      ])
+
+      // Current: $8 long, target: $5 long
+      // Delta: 5 - 8 = -3, |delta| = 3 < 11, so precise mode applies
+      // isIncreasing = false (5 < 8), closeAmount = 11 + 3 = $14 >= currentNotionalAbs = $8
+      // actualCloseAmount = min(14, 8) = 8 < MIN_ORDER_VALUE
+      // So we use closeReduceOnlyNotional to close the $8 position
+      // Target $5 < $11, so no open order
+      const positions = [
+        {
+          symbol: "BTC/USDC:USDC",
+          percentage: 0.005, // 0.5% of 1000 = $5
+          side: "buy" as const,
+          leverage: 1,
+          status: "modified" as const,
+        },
+      ]
+
+      const results = await client.rebalancePositions(positions, 1000, true)
+
+      expect(results).toHaveLength(1)
+      expect(mockExchange.createOrder).toHaveBeenCalledTimes(1)
+      // Only close $8 using reduceOnly (below min order size), no open (target < $11)
+      expect(mockExchange.createOrder).toHaveBeenCalledWith(
+        "BTC/USDC:USDC",
+        "market",
+        "sell",
+        0.00016, // 8 / 50000
+        47500,
+        { reduceOnly: true },
+      )
+    })
   })
 
   describe("getNetworkMode", () => {

@@ -513,9 +513,7 @@ export class HyperliquidClient {
             position.side,
             position.percentage,
           )
-          if (closeResult) {
-            results.push(closeResult)
-          }
+          results.push(closeResult)
 
           // Open target amount (at least $11)
           const targetNotionalAbs = Math.abs(targetValue)

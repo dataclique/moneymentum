@@ -225,7 +225,9 @@ const PortfolioPage = () => {
                 <DropdownMenuContent align="end">
                   <DropdownMenuItem
                     className="flex items-center justify-between gap-2"
-                    onSelect={e => e.preventDefault()}
+                    onSelect={e => {
+                      e.preventDefault()
+                    }}
                   >
                     <span>Precise</span>
                     <Switch

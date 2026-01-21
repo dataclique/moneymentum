@@ -303,6 +303,7 @@ describe("useTrading hooks", () => {
       await act(async () => {
         result.current.mutate({
           budget: 1000,
+          precise: false,
           positions: [
             {
               symbol: "BTC/USDC:USDC",
@@ -330,6 +331,7 @@ describe("useTrading hooks", () => {
           },
         ],
         1000,
+        false, // precise parameter defaults to false
       )
 
       expect(result.current.data?.orders).toHaveLength(1)
@@ -354,6 +356,7 @@ describe("useTrading hooks", () => {
       await act(async () => {
         result.current.mutate({
           budget: 1000,
+          precise: false,
           positions: [
             {
               symbol: "BTC/USDC:USDC",
@@ -381,6 +384,7 @@ describe("useTrading hooks", () => {
           },
         ],
         1000,
+        false, // precise parameter defaults to false
       )
     })
   })

@@ -6,6 +6,7 @@ import { MIN_USD, usePortfolioState } from "./usePortfolioState"
 import {
   useHyperliquidBalance,
   useHyperliquidPositions,
+  useRebalanceHyperliquidPositions,
 } from "@/hooks/useTrading"
 
 vi.mock("@/hooks/useTrading", () => ({
@@ -113,7 +114,7 @@ describe("usePortfolioState", () => {
       expect(result.current.selectedTokens).toHaveLength(1)
       expect(result.current.selectedTokens[0].symbol).toBe("BTC/USDC:USDC")
       expect(result.current.selectedTokens[0].side).toBe("buy")
-      expect(result.current.selectedTokens[0].leverage).toBe(1)
+      expect(result.current.selectedTokens[0].leverage).toBe(50) // Defaults to max leverage
       expect(result.current.selectedTokens[0].status).toBe("idle")
     })
 
@@ -184,7 +185,7 @@ describe("usePortfolioState", () => {
         result.current.handleAddToken("BTC/USDC:USDC")
       })
 
-      expect(result.current.selectedTokens[0].leverage).toBe(1)
+      expect(result.current.selectedTokens[0].leverage).toBe(50) // Defaults to max leverage
 
       await act(async () => {
         result.current.handleLeverageChange("BTC/USDC:USDC", 5)
@@ -536,10 +537,10 @@ describe("usePortfolioState", () => {
 
       await waitFor(() => {
         expect(result.current.selectedTokens).toHaveLength(1)
+        // Tokens from localStorage (no exchange data to compare) should be "idle" so they can be rebalanced
+        expect(result.current.selectedTokens[0].status).toBe("idle")
       })
       expect(result.current.selectedTokens[0].symbol).toBe("BTC/USDC:USDC")
-      // Tokens from localStorage (no exchange data to compare) should be "idle" so they can be rebalanced
-      expect(result.current.selectedTokens[0].status).toBe("idle")
       expect(result.current.selectedTokens[0].leverage).toBe(2)
     })
 
@@ -946,7 +947,9 @@ describe("usePortfolioState", () => {
       })
 
       // Should be completely removed since it doesn't exist on exchange
-      expect(result.current.selectedTokens).toHaveLength(0)
+      await waitFor(() => {
+        expect(result.current.selectedTokens).toHaveLength(0)
+      })
     })
   })
 
@@ -1518,6 +1521,376 @@ describe("usePortfolioState", () => {
 
       // With notional 250 and budget 500 (from totalNotional), percentage = 50%
       expect(result.current.selectedTokens[0].percentage).toBe(50)
+    })
+  })
+
+  describe("precise mode", () => {
+    it("accepts isPrecise parameter", () => {
+      const { result: resultFalse } = renderHook(
+        () => usePortfolioState(false),
+        {
+          wrapper: createWrapper(),
+        },
+      )
+      const { result: resultTrue } = renderHook(() => usePortfolioState(true), {
+        wrapper: createWrapper(),
+      })
+
+      expect(resultFalse.current).toBeDefined()
+      expect(resultTrue.current).toBeDefined()
+    })
+
+    it("when precise is OFF, shows error for positions with changes < $11 on submit", async () => {
+      const mockMutate = vi.fn()
+      vi.mocked(useRebalanceHyperliquidPositions).mockReturnValue({
+        mutate: mockMutate,
+        isPending: false,
+      } as unknown as ReturnType<typeof useRebalanceHyperliquidPositions>)
+
+      vi.mocked(useHyperliquidPositions).mockReturnValue({
+        data: {
+          positions: [
+            {
+              symbol: "BTC/USDC:USDC",
+              percentage: 30,
+              side: "buy",
+              leverage: 1,
+              notional: 300,
+            },
+          ],
+          totalNotional: 1000,
+        },
+        isLoading: false,
+      } as unknown as ReturnType<typeof useHyperliquidPositions>)
+
+      const { result } = renderHook(() => usePortfolioState(false), {
+        wrapper: createWrapper(),
+      })
+
+      await waitFor(() => {
+        expect(result.current.selectedTokens).toHaveLength(1)
+      })
+
+      // Set budget and adjust position to have a small change (< $11)
+      await act(async () => {
+        result.current.handleBudgetInputChange("1000")
+      })
+
+      // Modify position to create a small change (e.g., $30 → $35 = $5 change)
+      await act(async () => {
+        result.current.handleSliderChange("BTC/USDC:USDC", 305) // $5 increase from $300
+      })
+
+      await waitFor(() => {
+        expect(result.current.selectedTokens[0].lockedUsd).toBe(305)
+      })
+
+      // Try to rebalance - should set error message instead of calling mutate
+      await act(async () => {
+        result.current.handleOpenPositions()
+      })
+
+      // Should not call mutate (blocked by validation)
+      expect(mockMutate).not.toHaveBeenCalled()
+
+      // Should have error message on token
+      await waitFor(() => {
+        const token = result.current.selectedTokens.find(
+          t => t.symbol === "BTC/USDC:USDC",
+        )
+        expect(token?.message).toContain("below minimum")
+      })
+    })
+
+    it("when precise is ON, allows positions with changes < $11 and passes precise flag", async () => {
+      const mockMutate = vi.fn()
+      vi.mocked(useRebalanceHyperliquidPositions).mockReturnValue({
+        mutate: mockMutate,
+        isPending: false,
+      } as unknown as ReturnType<typeof useRebalanceHyperliquidPositions>)
+
+      vi.mocked(useHyperliquidPositions).mockReturnValue({
+        data: {
+          positions: [
+            {
+              symbol: "BTC/USDC:USDC",
+              percentage: 30,
+              side: "buy",
+              leverage: 1,
+              notional: 300,
+            },
+          ],
+          totalNotional: 1000,
+        },
+        isLoading: false,
+      } as unknown as ReturnType<typeof useHyperliquidPositions>)
+
+      const { result } = renderHook(() => usePortfolioState(true), {
+        wrapper: createWrapper(),
+      })
+
+      await waitFor(() => {
+        expect(result.current.selectedTokens).toHaveLength(1)
+      })
+
+      // Set budget and adjust position to have a small change (< $11)
+      await act(async () => {
+        result.current.handleBudgetInputChange("1000")
+      })
+
+      // Modify position to create a small change (e.g., $30 → $35 = $5 change)
+      await act(async () => {
+        result.current.handleSliderChange("BTC/USDC:USDC", 305) // $5 increase from $300
+      })
+
+      await waitFor(() => {
+        expect(result.current.selectedTokens[0].lockedUsd).toBe(305)
+      })
+
+      // Try to rebalance - should call mutate with precise: true
+      await act(async () => {
+        result.current.handleOpenPositions()
+      })
+
+      // Should call mutate with precise flag
+      await waitFor(() => {
+        expect(mockMutate).toHaveBeenCalled()
+      })
+
+      const mutateCall = mockMutate.mock.calls[0][0]
+      expect(mutateCall.precise).toBe(true)
+      expect(mutateCall.budget).toBe(1000)
+      expect(mutateCall.positions).toBeDefined()
+    })
+
+    it("defaults to precise OFF when not provided", async () => {
+      const mockMutate = vi.fn()
+      vi.mocked(useRebalanceHyperliquidPositions).mockReturnValue({
+        mutate: mockMutate,
+        isPending: false,
+      } as unknown as ReturnType<typeof useRebalanceHyperliquidPositions>)
+
+      // Set up positions with a large enough change (>= $11 delta) so it can be submitted
+      vi.mocked(useHyperliquidPositions).mockReturnValue({
+        data: {
+          positions: [
+            {
+              symbol: "BTC/USDC:USDC",
+              percentage: 30,
+              side: "buy",
+              leverage: 1,
+              notional: 300,
+            },
+          ],
+          totalNotional: 1000,
+        },
+        isLoading: false,
+      } as unknown as ReturnType<typeof useHyperliquidPositions>)
+
+      const { result } = renderHook(() => usePortfolioState(), {
+        wrapper: createWrapper(),
+      })
+
+      await waitFor(() => {
+        expect(result.current.selectedTokens).toHaveLength(1)
+      })
+
+      // Set budget and make a large change (>= $11)
+      await act(async () => {
+        result.current.handleBudgetInputChange("1000")
+      })
+
+      await act(async () => {
+        result.current.handleSliderChange("BTC/USDC:USDC", 315) // $15 increase from $300
+      })
+
+      await waitFor(() => {
+        expect(result.current.selectedTokens[0].lockedUsd).toBe(315)
+      })
+
+      // Submit
+      await act(async () => {
+        result.current.handleOpenPositions()
+      })
+
+      // Should call mutate with precise: false (default)
+      await waitFor(() => {
+        expect(mockMutate).toHaveBeenCalled()
+      })
+
+      const mutateCall = mockMutate.mock.calls[0][0]
+      expect(mutateCall.precise).toBe(false)
+    })
+
+    it("blocks small changes when precise is OFF but allows with different hook instance using true", async () => {
+      const mockMutate = vi.fn()
+      vi.mocked(useRebalanceHyperliquidPositions).mockReturnValue({
+        mutate: mockMutate,
+        isPending: false,
+      } as unknown as ReturnType<typeof useRebalanceHyperliquidPositions>)
+
+      vi.mocked(useHyperliquidPositions).mockReturnValue({
+        data: {
+          positions: [
+            {
+              symbol: "BTC/USDC:USDC",
+              percentage: 30,
+              side: "buy",
+              leverage: 1,
+              notional: 300,
+            },
+          ],
+          totalNotional: 1000,
+        },
+        isLoading: false,
+      } as unknown as ReturnType<typeof useHyperliquidPositions>)
+
+      // First, test with precise: false - should block small changes
+      const { result: resultFalse } = renderHook(
+        () => usePortfolioState(false),
+        {
+          wrapper: createWrapper(),
+        },
+      )
+
+      await waitFor(() => {
+        expect(resultFalse.current.selectedTokens).toHaveLength(1)
+      })
+
+      await act(async () => {
+        resultFalse.current.handleBudgetInputChange("1000")
+      })
+
+      await act(async () => {
+        resultFalse.current.handleSliderChange("BTC/USDC:USDC", 305) // $5 change - too small
+      })
+
+      await act(async () => {
+        resultFalse.current.handleOpenPositions()
+      })
+
+      // With precise: false, small change should be blocked
+      expect(mockMutate).not.toHaveBeenCalled()
+      expect(resultFalse.current.selectedTokens[0].message).toContain(
+        "below minimum",
+      )
+
+      // Now test with precise: true - should allow small changes
+      mockMutate.mockClear()
+
+      const { result: resultTrue } = renderHook(() => usePortfolioState(true), {
+        wrapper: createWrapper(),
+      })
+
+      await waitFor(() => {
+        expect(resultTrue.current.selectedTokens).toHaveLength(1)
+      })
+
+      await act(async () => {
+        resultTrue.current.handleBudgetInputChange("1000")
+      })
+
+      await act(async () => {
+        resultTrue.current.handleSliderChange("BTC/USDC:USDC", 305) // $5 change
+      })
+
+      // Wait for status to be computed (token should be "modified")
+      // The status computation compares lockedUsd: 305 (current) vs 300 (initial)
+      await waitFor(
+        () => {
+          const token = resultTrue.current.selectedTokens.find(
+            t => t.symbol === "BTC/USDC:USDC",
+          )
+          // Verify the lockedUsd was updated
+          expect(token?.lockedUsd).toBe(305)
+          // Then verify status is computed as modified
+          expect(token?.status).toBe("modified")
+        },
+        { timeout: 3000 },
+      )
+
+      await act(async () => {
+        resultTrue.current.handleOpenPositions()
+      })
+
+      // With precise: true, small change should be allowed
+      await waitFor(() => {
+        expect(mockMutate).toHaveBeenCalled()
+      })
+
+      const mutateCall = mockMutate.mock.calls[0][0]
+      expect(mutateCall.precise).toBe(true)
+    })
+
+    it("handles multiple tokens with mixed small and large changes when precise is OFF", async () => {
+      const mockMutate = vi.fn()
+      vi.mocked(useRebalanceHyperliquidPositions).mockReturnValue({
+        mutate: mockMutate,
+        isPending: false,
+      } as unknown as ReturnType<typeof useRebalanceHyperliquidPositions>)
+
+      vi.mocked(useHyperliquidPositions).mockReturnValue({
+        data: {
+          positions: [
+            {
+              symbol: "BTC/USDC:USDC",
+              percentage: 30,
+              side: "buy",
+              leverage: 1,
+              notional: 300,
+            },
+            {
+              symbol: "ETH/USDC:USDC",
+              percentage: 20,
+              side: "buy",
+              leverage: 1,
+              notional: 200,
+            },
+          ],
+          totalNotional: 1000,
+        },
+        isLoading: false,
+      } as unknown as ReturnType<typeof useHyperliquidPositions>)
+
+      const { result } = renderHook(() => usePortfolioState(false), {
+        wrapper: createWrapper(),
+      })
+
+      await waitFor(() => {
+        expect(result.current.selectedTokens).toHaveLength(2)
+      })
+
+      await act(async () => {
+        result.current.handleBudgetInputChange("1000")
+      })
+
+      // BTC: small change ($5), ETH: large change ($15)
+      await act(async () => {
+        result.current.handleSliderChange("BTC/USDC:USDC", 305) // $5 change
+      })
+
+      await act(async () => {
+        result.current.handleSliderChange("ETH/USDC:USDC", 215) // $15 change
+      })
+
+      await act(async () => {
+        result.current.handleOpenPositions()
+      })
+
+      // Should not submit because BTC has small change
+      expect(mockMutate).not.toHaveBeenCalled()
+
+      // BTC should have error message
+      const btcToken = result.current.selectedTokens.find(
+        t => t.symbol === "BTC/USDC:USDC",
+      )
+      expect(btcToken?.message).toContain("below minimum")
+
+      // ETH should NOT have error message (its change is large enough)
+      const ethToken = result.current.selectedTokens.find(
+        t => t.symbol === "ETH/USDC:USDC",
+      )
+      expect(ethToken?.message).toBeNull()
     })
   })
 })

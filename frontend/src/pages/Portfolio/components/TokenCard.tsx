@@ -247,11 +247,14 @@ export const TokenCard = ({
           </div>
         </div>
 
-        {token.status === "failed" && token.message && (
-          <div className="border-t border-border bg-rose-500/10 px-3 py-2 text-xs text-rose-500">
-            <p>{token.message}</p>
-          </div>
-        )}
+        {token.message &&
+          (token.status === "failed" ||
+            token.status === "idle" ||
+            token.status === "modified") && (
+            <div className="border-t border-border bg-rose-500/10 px-3 py-2 text-xs text-rose-500">
+              <p>{token.message}</p>
+            </div>
+          )}
       </div>
     </Card>
   )

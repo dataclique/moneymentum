@@ -93,7 +93,7 @@ export const useHyperliquidLeverageLimits = () => {
 
 export interface RebalanceParams {
   budget: number
-  precise?: boolean
+  precise: boolean
   positions: Array<{
     symbol: string
     percentage: number
@@ -122,7 +122,7 @@ export const useRebalanceHyperliquidPositions = () => {
       const results = await client.rebalancePositions(
         positions,
         params.budget,
-        params.precise ?? false,
+        params.precise,
       )
       return { orders: results }
     },

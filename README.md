@@ -136,7 +136,7 @@ python server.py  # Runs on http://localhost:8000
 **Launch frontend**:
 
 ```bash
-bun --cwd frontend run dev  # Runs on http://localhost:5173
+cd frontend && bun run dev  # Runs on http://localhost:5173
 ```
 
 **Run live trading** (requires API credentials):
@@ -187,7 +187,7 @@ Endpoints:
 ### Frontend Dashboard
 
 ```bash
-bun --cwd frontend run dev
+cd frontend && bun run dev
 ```
 
 Navigate to http://localhost:5173 to view:
@@ -288,14 +288,15 @@ pytest                 # Run tests
 pre-commit run -a      # Run all pre-commit hooks (must pass before completing tasks)
 ```
 
-**Frontend:**
+**Frontend** (run from `frontend/` directory):
 
 ```bash
-bun --cwd frontend run dev      # Development server (port 5173)
-bun --cwd frontend run build    # Production build
-bun --cwd frontend run lint     # ESLint check
-bun --cwd frontend run preview  # Preview production build
-bun --cwd frontend run test     # Run tests (uses vitest)
+cd frontend
+bun run dev      # Development server (port 5173)
+bun run build    # Production build
+bun run lint     # ESLint check
+bun run preview  # Preview production build
+bun run test     # Run tests (uses vitest)
 ```
 
 ### Code Quality

@@ -19,12 +19,25 @@ repository.
 
 ### Frontend (React + Vite)
 
-- **Development server**: `bun --cwd frontend run dev` (port 5173)
-- **Build frontend**: `bun --cwd frontend run build`
-- **Lint frontend**: `bun --cwd frontend run lint`
-- **Run tests**: `bun --cwd frontend run test` (uses vitest)
-- **Preview build**: `bun --cwd frontend run preview`
-- **Serve production build**: `bun --cwd frontend run serve:spa`
+Run all frontend commands from the `frontend/` directory:
+
+```bash
+cd frontend
+bun run typecheck # Type check only (fast, no build artifacts)
+bun run lint      # Lint frontend
+bun run test      # Run tests (uses vitest)
+bun run build     # Full build (typecheck + vite build)
+bun run dev       # Development server (port 5173)
+bun run preview   # Preview build
+bun run serve:spa # Serve production build
+```
+
+**IMPORTANT**: Do not run `bun run dev` unless explicitly asked. For verification,
+use `bun run typecheck`, `bun run lint`, and `bun run test` instead - they're
+faster and don't start a long-running server.
+
+**IMPORTANT**: Always use `bun run test`, not `bun test`. The latter won't work
+correctly with vitest.
 
 ### Environment Setup
 

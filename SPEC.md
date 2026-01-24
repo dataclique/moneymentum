@@ -1,8 +1,6 @@
 # Moneymentum Architecture Specification
 
 **Status**: Draft
-**Version**: 0.1.0
-**Last Updated**: 2025-01-17
 
 ---
 
@@ -10,7 +8,7 @@
 
 ### Vision
 
-Transform moneymentum from a momentum-based trading bot into an **institutional-grade quant toolkit for discretionary DeFi trading**. The core insight: traders should think in terms of factor exposures ("I want 30% momentum exposure with zero S&P beta") rather than individual asset positions.
+Transform `moneymentum` from a momentum-based trading bot into an **institutional-grade quant toolkit for discretionary DeFi trading**. The core insight: traders should think in terms of factor exposures ("I want 30% momentum exposure with zero S&P beta") rather than individual asset positions.
 
 ### Key Capabilities
 
@@ -19,7 +17,168 @@ Transform moneymentum from a momentum-based trading bot into an **institutional-
 | **Factor-first portfolio construction** | Rank/screen assets by factor loadings, build portfolios targeting specific exposures      |
 | **Multi-instrument aggregation**        | All instruments on an underlying (spot, perps, options) roll up to show aggregated Greeks |
 | **Real-time risk analytics**            | VaR, correlations, effective bets, stress testing                                         |
-| **Sketch → Simulate → Execute**         | Stage changes, see factor impact, backtest, then execute                                  |
+| **Sketch -> Simulate -> Execute**       | Stage changes, see factor impact, backtest, then execute                                  |
+
+# Appendix A: Open Questions (Expanded Analysis)
+
+---
+
+## 1. Options Pricing Model Selection
+
+### **Options**
+
+- **Black-Scholes**: Industry standard for vanilla options, assumes constant volatility and log-normal price distribution
+- **Heston**: Stochastic volatility model, captures volatility clustering and smiles
+- **SABR**: Stochastic Alpha Beta Rho, better for interest rate derivatives and skew modeling
+
+### **Implications**
+
+| Model             | Pros                                         | Cons                                           | Use Case Fit                              |
+| ----------------- | -------------------------------------------- | ---------------------------------------------- | ----------------------------------------- |
+| **Black-Scholes** | Simple, fast, widely understood              | Ignores volatility dynamics, poor for skew     | Basic Greeks, educational use             |
+| **Heston**        | Captures volatility clustering               | Computationally intensive, calibration complex | Institutional options trading             |
+| **SABR**          | Handles skew/smile better than Black-Scholes | Limited to specific parameter ranges           | Interest rate derivatives, crypto options |
+
+### **Recommendation**
+
+Adopt **Heston model** for:
+
+- Institutional-grade Greeks accuracy
+- Better handling of crypto volatility patterns
+- Support for volatility surface analysis
+
+Use Black-Scholes as fallback for:
+
+- Simple instruments
+- Backward compatibility
+- Educational scenarios
+
+---
+
+## 2. Analytics Freshness Strategy
+
+### **Options**
+
+- **15-Min Batch Processing**
+- **Streaming (Kafka/Spark Structured Streaming)**
+
+### **Implications**
+
+| Approach         | Latency   | Infrastructure                        | Complexity | Use Case Fit                                   |
+| ---------------- | --------- | ------------------------------------- | ---------- | ---------------------------------------------- |
+| **15-Min Batch** | 15 mins   | Simple (Spark)                        | Low        | Risk reporting, end-of-day analysis            |
+| **Streaming**    | Real-time | Complex (Kafka + stateful processing) | High       | Live risk monitoring, execution feedback loops |
+
+### **Recommendation**
+
+**Hybrid approach**:
+
+- **Batch layer** for daily risk reports and historical analysis
+- **Streaming layer** for:
+  - Real-time VaR updates
+  - Greeks recalculations during active trading hours
+  - Correlation matrix updates for position rebalancing
+
+Use **Apache Pulsar** for stream processing to balance complexity and scalability.
+
+---
+
+## 3. Historical Data Retention
+
+### **Options**
+
+- **1 Year**: Regulatory minimum in many jurisdictions
+- **5 Years**: Enables multi-cycle analysis (crypto bull/bear cycles)
+- **Unlimited**: Full historical backtesting capability
+
+### **Implications**
+
+| Retention     | Storage Cost | Backtest Depth | Regulatory Compliance   | Strategy Validation    |
+| ------------- | ------------ | -------------- | ----------------------- | ---------------------- |
+| **1 Year**    | Low          | Limited        | ✅                      | Short-term strategies  |
+| **5 Years**   | Medium       | Moderate       | ✅                      | Cycle-aware strategies |
+| **Unlimited** | High         | Complete       | ❌ (requires archiving) | Long-term research     |
+
+### **Recommendation**
+
+**Tiered retention strategy**:
+
+- **Hot storage (Iceberg)**: 2 years for active analytics
+- **Cold storage (S3 Glacier)**: 5+ years for deep backtests
+- **Archival (Parquet files)**: Unlimited for research
+
+This balances:
+
+- Cost efficiency
+- Regulatory requirements
+- Research flexibility
+
+---
+
+## 4. Multi-Account Support
+
+### **Options**
+
+- **Single Portfolio**: Simple, but no client segmentation
+- **Sub-Accounts**: Isolated portfolios with shared infrastructure
+- **Multi-User Accounts**: Full client isolation with separate credentials
+
+### **Implications**
+
+| Approach         | Complexity | Risk Isolation | Compliance        | Scalability |
+| ---------------- | ---------- | -------------- | ----------------- | ----------- |
+| **Single**       | Low        | None           | ❌                | Low         |
+| **Sub-Accounts** | Medium     | Partial        | ✅ (if auditable) | Medium      |
+| **Multi-User**   | High       | Full           | ✅                | High        |
+
+### **Recommendation**
+
+**Phase-based implementation**:
+
+1. **Phase 1**: Sub-accounts with:
+   - Shared analytics engine
+   - Isolated position tracking
+   - Unified risk reporting
+2. **Phase 2**: Multi-user support with:
+   - Role-based access control
+   - Separate credential management
+   - Regulatory reporting per account
+
+This aligns with institutional use cases while maintaining technical feasibility.
+
+---
+
+## Appendix C: Decision Impact Matrix
+
+| Decision Area         | Priority | Technical Impact | Business Impact | Dependencies           |
+| --------------------- | -------- | ---------------- | --------------- | ---------------------- |
+| Options Pricing Model | High     | Medium           | High            | Analytics engine       |
+| Analytics Freshness   | Medium   | High             | Medium          | Execution layer        |
+| Historical Retention  | Medium   | Medium           | High            | Storage architecture   |
+| Multi-Account Support | High     | High             | High            | API/permissions system |
+
+---
+
+## Appendix D: Next Steps
+
+1. **Options Model Benchmarking** (Q1 2025):
+
+   - Compare Greeks accuracy across models
+   - Stress-test performance on crypto options
+
+2. **Stream Processing Pilot** (Q2 2025):
+
+   - Implement real-time VaR updates
+   - Test Kafka/Pulsar integration
+
+3. **Storage Optimization** (Q3 2025):
+
+   - Implement tiered retention policy
+   - Evaluate Iceberg time travel vs S3 archiving
+
+4. **Sub-Account MVP** (Q4 2025):
+   - Add account isolation to position tracking
+   - Implement risk aggregation across sub-accounts
 
 ### Technology Stack
 

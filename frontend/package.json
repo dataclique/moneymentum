@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "typecheck": "tsc -b",
     "lint": "eslint . --max-warnings=0",
     "preview": "vite preview",
     "serve:spa": "bunx serve -s dist",

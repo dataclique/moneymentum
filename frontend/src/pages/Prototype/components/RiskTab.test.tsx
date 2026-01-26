@@ -315,8 +315,8 @@ describe("RiskTab", () => {
 
       await user.click(screen.getByText("Correlation"))
 
-      // High correlations should have green background
-      const highCorrCells = container.querySelectorAll(".bg-green-600")
+      // High correlations should have positive background (now uses semantic class)
+      const highCorrCells = container.querySelectorAll(".bg-positive")
       expect(highCorrCells.length).toBeGreaterThan(0)
     })
   })

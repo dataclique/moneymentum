@@ -267,6 +267,7 @@ describe("useTrading hooks", () => {
       await act(async () => {
         result.current.mutate({
           budget: 1000,
+          precise: false,
           positions: [],
         })
       })

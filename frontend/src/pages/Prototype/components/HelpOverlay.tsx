@@ -1,4 +1,5 @@
 import { X } from "lucide-react"
+import { getShortcutGroups } from "../keyboard/shortcuts"
 
 interface HelpOverlayProps {
   onClose: () => void
@@ -27,6 +28,8 @@ const ShortcutGroup = ({
 )
 
 export const HelpOverlay = ({ onClose }: HelpOverlayProps) => {
+  const shortcutGroups = getShortcutGroups()
+
   return (
     <div className="fixed inset-0 z-[100] bg-background/80 backdrop-blur-sm flex items-center justify-center">
       <div className="bg-background border border-border rounded-lg shadow-lg max-w-2xl w-full mx-4 max-h-[80vh] overflow-auto">
@@ -40,63 +43,13 @@ export const HelpOverlay = ({ onClose }: HelpOverlayProps) => {
           </button>
         </div>
         <div className="p-4 grid grid-cols-2 gap-6">
-          <ShortcutGroup
-            title="Panel Navigation"
-            shortcuts={[
-              { key: "1", description: "Focus Screener" },
-              { key: "2", description: "Focus Positions" },
-              { key: "3", description: "Focus Performance" },
-              { key: "4", description: "Focus Staged Changes" },
-              { key: "h/←", description: "Switch to Screener" },
-              { key: "l/→", description: "Switch to Positions" },
-              { key: "Esc", description: "Clear selection / Unfocus" },
-            ]}
-          />
-          <ShortcutGroup
-            title="List Navigation"
-            shortcuts={[
-              { key: "j/↓", description: "Select next item" },
-              { key: "k/↑", description: "Select previous item" },
-              { key: "o/⏎/␣", description: "Expand/collapse underlying" },
-            ]}
-          />
-          <ShortcutGroup
-            title="Instrument Weights"
-            shortcuts={[
-              { key: "⇧+", description: "Increase selected weight +5%" },
-              { key: "⇧-", description: "Decrease selected weight -5%" },
-            ]}
-          />
-          <ShortcutGroup
-            title="Leverage (when focused)"
-            shortcuts={[
-              { key: "h/←/[", description: "Decrease leverage" },
-              { key: "l/→/]", description: "Increase leverage" },
-              { key: "⇧", description: "Hold for ±0.5x step" },
-            ]}
-          />
-          <ShortcutGroup
-            title="Trading"
-            shortcuts={[
-              { key: "+", description: "Stage buy for selected" },
-              { key: "-", description: "Stage sell for selected" },
-              { key: "x", description: "Execute staged trades" },
-            ]}
-          />
-          <ShortcutGroup
-            title="Configuration"
-            shortcuts={[
-              { key: "m", description: "Open metric selector" },
-              { key: "f", description: "Toggle factor config panel" },
-            ]}
-          />
-          <ShortcutGroup
-            title="General"
-            shortcuts={[
-              { key: "?", description: "Toggle this help" },
-              { key: "F1", description: "Toggle help (Bloomberg)" },
-            ]}
-          />
+          {shortcutGroups.map(group => (
+            <ShortcutGroup
+              key={group.title}
+              title={group.title}
+              shortcuts={group.shortcuts}
+            />
+          ))}
         </div>
         <div className="p-3 border-t border-border bg-muted/30 text-xs text-muted-foreground">
           Press <kbd className="px-1 py-0.5 bg-muted rounded font-mono">?</kbd>{" "}

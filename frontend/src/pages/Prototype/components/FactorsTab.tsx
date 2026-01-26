@@ -7,6 +7,7 @@ import type {
   FactorHistoricalReturn,
   FactorAttribution,
 } from "../mockData"
+import { CHART_COLORS } from "../colors"
 
 type ViewMode = "exposures" | "performance" | "attribution"
 
@@ -16,12 +17,12 @@ interface FactorsTabProps {
   factorAttribution: FactorAttribution[]
 }
 
-const FACTOR_COLORS: Record<string, string> = {
-  "Market Beta": "#3b82f6",
-  "Momentum": "#22c55e",
-  "Carry": "#f59e0b",
-  "Volatility": "#ef4444",
-  "Size": "#8b5cf6",
+const FACTOR_CHART_COLORS: Record<string, string> = {
+  "Market Beta": CHART_COLORS.factorBtcBeta,
+  "Momentum": CHART_COLORS.factorSpyBeta,
+  "Carry": CHART_COLORS.factorMomentum,
+  "Volatility": CHART_COLORS.factorCarry,
+  "Size": CHART_COLORS.factorVolatility,
 }
 
 export const FactorsTab = ({
@@ -76,7 +77,7 @@ export const FactorsTab = ({
         r => r.factor === factor,
       )
       const series = chart.addSeries(LineSeries, {
-        color: FACTOR_COLORS[factor] ?? "#888",
+        color: FACTOR_CHART_COLORS[factor] ?? "#888",
         lineWidth: 2,
         title: factor,
       })
@@ -247,7 +248,7 @@ export const FactorsTab = ({
                 )}
                 style={{
                   backgroundColor: selectedFactors.includes(factor)
-                    ? FACTOR_COLORS[factor]
+                    ? FACTOR_CHART_COLORS[factor]
                     : undefined,
                 }}
               >

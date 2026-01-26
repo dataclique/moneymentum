@@ -511,11 +511,13 @@ const PrototypePage = () => {
       if (focusedPanel === "screener" && key === "o") {
         event.preventDefault()
         const selectedIdx = getSelectedIndex("screener")
-        const asset = sortedAssets[selectedIdx] as
-          | { ticker: string }
-          | undefined
-        if (asset) {
-          toggleScreenerExpanded(asset.ticker)
+        if (selectedIdx !== null) {
+          const asset = sortedAssets[selectedIdx] as
+            | { ticker: string }
+            | undefined
+          if (asset) {
+            toggleScreenerExpanded(asset.ticker)
+          }
         }
         return
       }
@@ -524,11 +526,13 @@ const PrototypePage = () => {
       if (focusedPanel === "screener" && event.key === "Enter") {
         event.preventDefault()
         const selectedIdx = getSelectedIndex("screener")
-        const asset = sortedAssets[selectedIdx] as
-          | { ticker: string }
-          | undefined
-        if (asset) {
-          openAddPositionModal(asset.ticker)
+        if (selectedIdx !== null) {
+          const asset = sortedAssets[selectedIdx] as
+            | { ticker: string }
+            | undefined
+          if (asset) {
+            openAddPositionModal(asset.ticker)
+          }
         }
         return
       }
@@ -833,10 +837,6 @@ const PrototypePage = () => {
                           </td>
                           {visibleColumns.map(col => {
                             const value = asset[col]
-                            const isRate = col === "fundingRate"
-                            const formatted = isRate
-                              ? `${(value * 100).toFixed(0)}%`
-                              : value.toFixed(2)
                             return (
                               <td
                                 key={col}
@@ -854,7 +854,7 @@ const PrototypePage = () => {
                                   openAddPositionModal(asset.ticker)
                                 }}
                               >
-                                {formatted}
+                                {value.toFixed(2)}
                               </td>
                             )
                           })}
@@ -875,35 +875,14 @@ const PrototypePage = () => {
                                 </span>
                                 {inst.type.toUpperCase()}
                               </td>
-                              {visibleColumns.map(col => {
-                                if (col === "fundingRate") {
-                                  return (
-                                    <td
-                                      key={col}
-                                      className={twMerge(
-                                        clsx(
-                                          "px-2 py-0.5 text-right font-mono",
-                                          inst.rate > 0
-                                            ? "text-green-500"
-                                            : inst.rate < 0
-                                              ? "text-red-500"
-                                              : "text-muted-foreground",
-                                        ),
-                                      )}
-                                    >
-                                      {`${(inst.rate * 100).toFixed(0)}%`}
-                                    </td>
-                                  )
-                                }
-                                return (
-                                  <td
-                                    key={col}
-                                    className="px-2 py-0.5 text-right font-mono text-muted-foreground/50"
-                                  >
-                                    —
-                                  </td>
-                                )
-                              })}
+                              {visibleColumns.map(col => (
+                                <td
+                                  key={col}
+                                  className="px-2 py-0.5 text-right font-mono text-muted-foreground/50"
+                                >
+                                  —
+                                </td>
+                              ))}
                             </tr>
                           ))}
                       </React.Fragment>

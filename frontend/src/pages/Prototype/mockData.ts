@@ -1,3 +1,9 @@
+/**
+ * Mock data for prototype UI development.
+ * This file provides static data for UI iteration without backend dependencies.
+ * Will be replaced with real API calls when backend is ready.
+ */
+
 export type InstrumentType = "perp" | "spot" | "call" | "put"
 
 export interface Instrument {

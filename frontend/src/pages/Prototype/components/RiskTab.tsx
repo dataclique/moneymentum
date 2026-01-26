@@ -8,6 +8,7 @@ import type {
   ConcentrationMetric,
   CorrelationEntry,
 } from "../mockData"
+import { getCorrelationColorClass, CHART_COLORS } from "../colors"
 
 type ViewMode =
   | "var"
@@ -49,15 +50,6 @@ export const RiskTab = ({
         (e.asset1 === a2 && e.asset2 === a1),
     )
     return entry?.correlation ?? 0
-  }
-
-  const getCorrelationColor = (corr: number): string => {
-    if (corr >= 0.7) return "bg-green-600"
-    if (corr >= 0.3) return "bg-green-500/60"
-    if (corr >= 0) return "bg-green-500/30"
-    if (corr >= -0.3) return "bg-red-500/30"
-    if (corr >= -0.7) return "bg-red-500/60"
-    return "bg-red-600"
   }
 
   return (
@@ -260,7 +252,7 @@ export const RiskTab = ({
                             className={twMerge(
                               clsx(
                                 "w-8 h-6 flex items-center justify-center rounded text-[8px] font-mono",
-                                getCorrelationColor(corr),
+                                getCorrelationColorClass(corr),
                                 asset1 === asset2 ? "opacity-50" : "",
                               ),
                             )}
@@ -319,7 +311,10 @@ export const RiskTab = ({
                   className="flex-1 transition-all"
                   style={{
                     height: `${(d.frequency / maxFreq) * 100}%`,
-                    backgroundColor: d.bucket >= 0 ? "#22c55e" : "#ef4444",
+                    backgroundColor:
+                      d.bucket >= 0
+                        ? CHART_COLORS.positive
+                        : CHART_COLORS.negative,
                   }}
                 />
               ))}

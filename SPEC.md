@@ -2,6 +2,8 @@
 
 **Status**: Draft
 
+> **Purpose**: This document is the **north star**—the product vision and the architecture required to achieve it. The prototype page (`/prototype`) is a concrete embodiment of this vision in code. For the practical path from current state to this vision, see [ROADMAP.md](./ROADMAP.md).
+
 ---
 
 ## Executive Summary
@@ -23,7 +25,7 @@ Transform `moneymentum` from a momentum-based trading bot into an **institutiona
 
 ---
 
-## 1. Options Pricing Model Selection
+## Options Pricing Model Selection
 
 ### **Options**
 
@@ -55,35 +57,46 @@ Use Black-Scholes as fallback for:
 
 ---
 
-## 2. Analytics Freshness Strategy
+## Analytics Freshness Strategy
 
-### **Options**
+### **Architecture: Event-Driven from Day 1**
 
-- **15-Min Batch Processing**
-- **Streaming (Kafka/Spark Structured Streaming)**
+The system is event-driven throughout, regardless of current latency requirements. This makes latency improvements a matter of changing event sources, not restructuring the architecture.
+
+```mermaid
+flowchart LR
+    subgraph Sources["Event Sources"]
+        POLL[Polling<br/>emits events]
+        WS[WebSocket<br/>emits events]
+        CHAIN[Chain Events<br/>emits events]
+    end
+
+    subgraph Core["Event-Driven Core"]
+        BUS[Event Bus]
+        ANAL[Analytics]
+        CACHE[State Cache]
+    end
+
+    Sources --> BUS
+    BUS --> ANAL
+    BUS --> CACHE
+```
 
 ### **Implications**
 
-| Approach         | Latency   | Infrastructure                        | Complexity | Use Case Fit                                   |
-| ---------------- | --------- | ------------------------------------- | ---------- | ---------------------------------------------- |
-| **15-Min Batch** | 15 mins   | Simple (Spark)                        | Low        | Risk reporting, end-of-day analysis            |
-| **Streaming**    | Real-time | Complex (Kafka + stateful processing) | High       | Live risk monitoring, execution feedback loops |
+| Latency Need   | Event Source                 | Core Changes Required |
+| -------------- | ---------------------------- | --------------------- |
+| **Minutes**    | Polling (simplest to start)  | None                  |
+| **Seconds**    | WebSocket subscriptions      | None                  |
+| **Sub-second** | Direct chain event listeners | None                  |
 
 ### **Recommendation**
 
-**Hybrid approach**:
-
-- **Batch layer** for daily risk reports and historical analysis
-- **Streaming layer** for:
-  - Real-time VaR updates
-  - Greeks recalculations during active trading hours
-  - Correlation matrix updates for position rebalancing
-
-Use **Apache Pulsar** for stream processing to balance complexity and scalability.
+Start with polling-based event sources for simplicity. When latency needs to improve, swap the event source—the rest of the system consumes events identically regardless of source latency.
 
 ---
 
-## 3. Historical Data Retention
+## Historical Data Retention
 
 ### **Options**
 
@@ -115,7 +128,7 @@ This balances:
 
 ---
 
-## 4. Multi-Account Support
+## Multi-Account Support
 
 ### **Options**
 
@@ -133,18 +146,15 @@ This balances:
 
 ### **Recommendation**
 
-**Phase-based implementation**:
+**Sub-accounts** as the target architecture:
 
-1. **Phase 1**: Sub-accounts with:
-   - Shared analytics engine
-   - Isolated position tracking
-   - Unified risk reporting
-2. **Phase 2**: Multi-user support with:
-   - Role-based access control
-   - Separate credential management
-   - Regulatory reporting per account
+- Shared analytics engine across all accounts
+- Isolated position tracking per account
+- Unified risk reporting with account-level drill-down
+- Role-based access control for multi-user scenarios
+- Regulatory reporting per account where required
 
-This aligns with institutional use cases while maintaining technical feasibility.
+This balances institutional requirements with architectural simplicity.
 
 ---
 
@@ -176,29 +186,31 @@ This aligns with institutional use cases while maintaining technical feasibility
    - Implement tiered retention policy
    - Evaluate Iceberg time travel vs S3 archiving
 
-4. **Sub-Account MVP** (Q4 2025):
+4. **Sub-Account Support** (Q4 2025):
    - Add account isolation to position tracking
    - Implement risk aggregation across sub-accounts
 
 ### Technology Stack
 
-| Layer                 | Technology             | Rationale                                                      |
-| --------------------- | ---------------------- | -------------------------------------------------------------- |
-| Data Ingestion        | Python + CCXT          | Best exchange library ecosystem, async support                 |
-| Analytics Engine      | Scala 2 + Apache Spark | Type-safe distributed computing, Frameless for typed datasets  |
-| Domain Library        | Scala 3                | Modern type system, consumed by both Spark (via TASTy) and API |
-| API Server            | Scala 3 + http4s       | Purely functional, composable, cats-effect ecosystem           |
-| Storage               | Apache Iceberg         | Multi-engine, time travel, schema evolution, no vendor lock-in |
-| Dependency Management | Nix                    | Reproducible builds across all languages                       |
+| Layer                 | Technology             | Rationale                                                                              |
+| --------------------- | ---------------------- | -------------------------------------------------------------------------------------- |
+| Data Ingestion        | Python + CCXT          | Thin wrappers only—no business logic. CCXT has the best exchange coverage.             |
+| Analytics Engine      | Scala 2 + Apache Spark | Type safety catches bugs at compile time. Frameless ensures schema correctness.        |
+| Domain Library        | Scala 3                | Exhaustive pattern matching, sum types—impossible states become unrepresentable.       |
+| API Server            | Scala 3 + http4s       | Purely functional. cats-effect provides referential transparency and safe concurrency. |
+| Storage               | Apache Iceberg         | Multi-engine, time travel, schema evolution, no vendor lock-in.                        |
+| Dependency Management | Nix                    | Reproducible builds across all languages.                                              |
+
+**Why Scala for mission-critical code?** This isn't about performance—it's about correctness. The code producing data for financial decisions must be bulletproof. Type safety, exhaustive pattern matching, and functional programming patterns (cats ecosystem) make bugs harder to write and easier to catch. Python is relegated to thin CCXT wrappers where no business logic exists.
 
 ### Core Architectural Principle
 
 **Dual abstraction**: The system abstracts away both **data sources** and **execution venues**, allowing the trader to focus purely on desired exposures.
 
-| Layer         | Abstraction               | Trader Thinks           | System Handles                                                                            |
-| ------------- | ------------------------- | ----------------------- | ----------------------------------------------------------------------------------------- |
-| **Data**      | Source-agnostic analytics | "What's my BTC beta?"   | Aggregating data from Hyperliquid, Deribit, Yahoo, etc.                                   |
-| **Execution** | Venue-agnostic routing    | "I want +0.5 BTC delta" | Routing to correct venue (spot on Binance, perps on Hyperliquid, options on Derive, etc.) |
+| Layer         | Abstraction               | Trader Thinks           | System Handles                                                                                |
+| ------------- | ------------------------- | ----------------------- | --------------------------------------------------------------------------------------------- |
+| **Data**      | Source-agnostic analytics | "What's my BTC beta?"   | Aggregating data from Hyperliquid, Deribit, Yahoo, etc.                                       |
+| **Execution** | Venue-agnostic routing    | "I want +0.5 BTC delta" | Routing to correct venue (spot on Hyperliquid, perps on Hyperliquid, options on Derive, etc.) |
 
 The trader expresses intent in terms of **exposures** (factors, Greeks, notional). The system determines:
 
@@ -246,21 +258,22 @@ This means:
 
 ## Table of Contents
 
-1. [System Overview](#1-system-overview)
-2. [Data Model](#2-data-model)
-3. [Data Ingestion Layer](#3-data-ingestion-layer)
-4. [Analytics Engine](#4-analytics-engine)
-5. [Execution Layer](#5-execution-layer)
-6. [API Layer](#6-api-layer)
-7. [Technology Decisions](#7-technology-decisions)
-8. [Scala 2/3 Interop Pattern](#8-scala-23-interop-pattern)
-9. [Migration Strategy](#9-migration-strategy)
+- [System Overview](#system-overview)
+- [Data Model](#data-model)
+- [Data Ingestion Layer](#data-ingestion-layer)
+- [Analytics Engine](#analytics-engine)
+- [Execution Layer](#execution-layer)
+- [API Layer](#api-layer)
+- [UI/UX Requirements](#uiux-requirements)
+- [Technology Decisions](#technology-decisions)
+- [Scala 2/3 Interop Pattern](#scala-23-interop-pattern)
+- [Migration Strategy](#migration-strategy)
 
 ---
 
-## 1. System Overview
+## System Overview
 
-### 1.1 High-Level Architecture
+### High-Level Architecture
 
 ```mermaid
 flowchart LR
@@ -301,7 +314,7 @@ flowchart LR
 1. **Data flow**: Sources → Ingestion → Iceberg → Analytics → API → Frontend
 2. **Execution flow**: Frontend requests plan from API, then executes directly to venues (credentials never leave browser)
 
-### 1.2 Module Boundaries
+### Module Boundaries
 
 | Module       | Language   | Responsibility                                                         | Dependencies              |
 | ------------ | ---------- | ---------------------------------------------------------------------- | ------------------------- |
@@ -317,7 +330,7 @@ flowchart LR
 2. **Serverless execution**: Actual order placement happens in frontend. Backend generates plans but never touches credentials.
 3. **Credential safety**: User credentials stay in browser storage. Zero backend liability.
 
-### 1.3 Module Structure
+### Module Structure
 
 ```
 quant-toolkit/
@@ -387,9 +400,9 @@ quant-toolkit/
 
 ---
 
-## 2. Data Model
+## Data Model
 
-### 2.1 Core Domain Types
+### Core Domain Types
 
 #### Instrument Hierarchy
 
@@ -523,7 +536,7 @@ classDiagram
     FactorExposure --> Factor
 ```
 
-### 2.2 Iceberg Table Schemas
+### Iceberg Table Schemas
 
 #### Raw Data Tables
 
@@ -544,7 +557,7 @@ classDiagram
 | `computed.greeks`           | `date`, `underlying` | Options Greeks            |
 | `computed.correlations`     | `date`               | Asset correlation matrix  |
 
-### 2.3 Schema Example: OHLCV
+### Schema Example: OHLCV
 
 ```
 ohlcv {
@@ -567,9 +580,9 @@ ohlcv {
 
 ---
 
-## 3. Data Ingestion Layer
+## Data Ingestion Layer
 
-### 3.1 Adapter Interface
+### Adapter Interface
 
 Each data source implements a common interface:
 
@@ -607,7 +620,7 @@ class DataSourceAdapter(Protocol):
         ...
 ```
 
-### 3.2 Planned Adapters
+### Planned Adapters
 
 | Adapter               | Data Types                          | Priority                |
 | --------------------- | ----------------------------------- | ----------------------- |
@@ -617,7 +630,7 @@ class DataSourceAdapter(Protocol):
 | `DeFiLlamaAdapter`    | Yield data, TVL                     | P1                      |
 | `PythAdapter`         | Real-time prices                    | P2                      |
 
-### 3.3 Ingestion Pipeline
+### Ingestion Pipeline
 
 ```mermaid
 flowchart LR
@@ -635,9 +648,9 @@ flowchart LR
 
 ---
 
-## 4. Analytics Engine
+## Analytics Engine
 
-### 4.1 Analytics Pipeline Overview
+### Analytics Pipeline Overview
 
 ```mermaid
 flowchart TB
@@ -686,7 +699,7 @@ flowchart TB
     FE --> RiskEngine
 ```
 
-### 4.2 Factor Engine
+### Factor Engine
 
 #### Supported Factors
 
@@ -726,7 +739,7 @@ Where:
 - **R-squared**: explained variance
 - **Residual**: $1 - R^2$ (idiosyncratic risk)
 
-### 4.3 Risk Engine
+### Risk Engine
 
 #### VaR/CVaR Methods
 
@@ -768,7 +781,7 @@ flowchart LR
     SIM --> TOTAL[Portfolio<br/>Impact]
 ```
 
-### 4.4 Greeks Engine
+### Greeks Engine
 
 #### Per-Instrument Greeks
 
@@ -812,9 +825,9 @@ Example aggregation:
 
 ---
 
-## 5. Execution Layer
+## Execution Layer
 
-### 5.1 Serverless Execution Model
+### Serverless Execution Model
 
 **Critical security principle**: The backend never stores or handles user credentials. All actual order placement happens client-side. This eliminates credential storage liability entirely.
 
@@ -859,7 +872,7 @@ flowchart TB
 | **Actual order placement**  | **Frontend** | **Credentials stay client-side**       |
 | Credential storage          | Frontend     | Zero backend liability                 |
 
-### 5.2 Execution Plan
+### Execution Plan
 
 The backend produces an **execution plan**—a structured description of what trades to make—but does not execute them.
 
@@ -883,7 +896,7 @@ interface PlannedOrder {
 }
 ```
 
-### 5.3 Frontend Execution Engine
+### Frontend Execution Engine
 
 The frontend receives execution plans and handles actual order placement:
 
@@ -897,7 +910,7 @@ sequenceDiagram
 
     U->>UI: "I want +0.5 BTC delta"
     UI->>BE: Request execution plan
-    BE->>BE: Analyze current portfolio
+    BE->>BE: Read positions from chain
     BE->>BE: Generate optimal plan
     BE-->>UI: ExecutionPlan
     UI->>U: Display plan for review
@@ -905,15 +918,15 @@ sequenceDiagram
     UI->>EX: Execute plan
 
     loop For each order
-        EX->>V: Place order (client credentials)
-        V-->>EX: Order result
+        EX->>V: Sign & submit (client credentials)
+        V-->>EX: Transaction result
     end
 
-    EX-->>UI: Execution report
-    UI->>BE: Report results (for tracking)
+    EX-->>UI: Show execution status
+    Note over BE: Backend detects new positions<br/>via onchain tracking
 ```
 
-### 5.4 Venue Adapters (Frontend TypeScript)
+### Venue Adapters (Frontend TypeScript)
 
 ```typescript
 interface VenueAdapter {
@@ -932,24 +945,25 @@ interface VenueAdapter {
 
 Venue adapters implemented in TypeScript:
 
-- **Hyperliquid**: CCXT TypeScript or direct REST/WebSocket
-- **Derive**: ethers.js for on-chain execution
-- **st0x**: Custom TypeScript SDK
-- **Binance**: CCXT TypeScript
+- **Hyperliquid**: REST/WebSocket
+- **Derive**: EVM integration
+- **Solana DEX**: Solana integration
+- **st0x**: REST API
+- **Pendle**: EVM integration
 
-### 5.5 Instrument-to-Venue Routing
+### Supported Venues
 
-The backend plan generator uses this routing table:
+All planned venues are DeFi/onchain, enabling position tracking without credential handling.
 
-| Instrument Type    | Primary Venue | Fallback | Selection Criteria      |
-| ------------------ | ------------- | -------- | ----------------------- |
-| Crypto Perps       | Hyperliquid   | Binance  | Funding rate, liquidity |
-| Crypto Options     | Derive        | Deribit  | DeFi-native preferred   |
-| Tokenized Equities | st0x          | —        | Single venue            |
-| Crypto Spot        | Binance       | Kraken   | Liquidity, fees         |
-| LSDs (stETH)       | Lido          | Curve    | Direct vs DEX           |
+| Venue Priority | Instrument Types   | Notes                                     |
+| -------------- | ------------------ | ----------------------------------------- |
+| 1. Hyperliquid | Perps, Spot        | Primary venue. Onchain order book.        |
+| 2. Derive      | Options            | DeFi-native options with onchain Greeks.  |
+| 3. Solana DEX  | Spot               | Tighter spreads than CEXs for some pairs. |
+| 4. st0x        | Tokenized Equities | SPY, TLT exposure for factor hedging.     |
+| 5. Pendle      | Yield Trading      | PT/YT for yield curve strategies.         |
 
-### 5.6 Execution Algorithms
+### Execution Algorithms
 
 For larger orders, the plan specifies an algorithm. The **frontend** implements these:
 
@@ -959,36 +973,44 @@ For larger orders, the plan specifies an algorithm. The **frontend** implements 
 | **TWAP**    | Time-weighted slices | Frontend schedules orders over time |
 | **Iceberg** | Hidden size          | Frontend places partial orders      |
 
-### 5.7 Position Aggregation
+### Position Tracking via Onchain Data
 
-Positions aggregated from multiple venues into unified view:
+All planned venues are onchain (Hyperliquid, Derive, Solana DEX, st0x, Pendle). This enables a simpler architecture: the backend tracks positions by reading chain state directly—no credential handling, no execution reports.
 
 ```mermaid
 flowchart LR
-    subgraph Frontend["Frontend (Real-time)"]
-        FE_HL[Hyperliquid]
-        FE_DRV[Derive]
-        FE_ST[st0x]
+    subgraph Frontend
+        ADDR[User provides<br/>wallet addresses]
     end
 
-    AGG[Aggregator]
-    UV[Unified View]
+    subgraph Backend["Backend (Reads Chain)"]
+        TRACK[Position Tracker]
+        ANAL[Analytics]
+    end
 
-    FE_HL --> AGG
-    FE_DRV --> AGG
-    FE_ST --> AGG
-    AGG --> UV
-    UV -->|report positions| Backend
+    subgraph Chains["Onchain Data"]
+        HL[Hyperliquid]
+        DRV[Derive]
+        SOL[Solana]
+        EVM[EVM chains]
+    end
+
+    ADDR -->|addresses to track| TRACK
+    Chains --> TRACK
+    TRACK --> ANAL
 ```
 
-- **Real-time view**: Frontend aggregates directly from venues
-- **Analytics**: Backend receives position reports for factor/risk calculations
+- **Frontend**: Provides wallet addresses to track. Holds credentials for signing transactions.
+- **Backend**: Reads positions from onchain data. No credentials, no execution reports needed.
+- **Execution**: Frontend signs and submits transactions directly to venues.
+
+This is cleaner than polling execution reports—just read the chain.
 
 ---
 
-## 6. API Layer
+## API Layer
 
-### 6.1 API Overview
+### API Overview
 
 ```mermaid
 flowchart LR
@@ -1011,7 +1033,7 @@ flowchart LR
     API <--> ICE
 ```
 
-### 5.2 REST Endpoints
+### REST Endpoints
 
 #### Portfolio
 
@@ -1136,7 +1158,7 @@ Response:
 }
 ```
 
-### 5.3 WebSocket Streams
+### WebSocket Streams
 
 ```mermaid
 sequenceDiagram
@@ -1158,27 +1180,111 @@ sequenceDiagram
 
 ---
 
-## 7. Technology Decisions
+## UI/UX Requirements
 
-### 7.1 Why Python for Ingestion?
+The frontend implements specific interaction patterns optimized for discretionary trading workflows.
 
-| Reason              | Details                                            |
-| ------------------- | -------------------------------------------------- |
-| **CCXT**            | Best-in-class exchange library with 100+ exchanges |
-| **Async ecosystem** | asyncio, httpx for efficient concurrent fetching   |
-| **PyIceberg**       | Native Iceberg support for writing tables          |
-| **Existing code**   | Can port `yang/dataloader/` with minimal changes   |
+### Screener
 
-### 7.2 Why Scala 2 for Spark Analytics?
+Asset ranking and filtering by factor loadings:
 
-| Reason                  | Details                                                        |
-| ----------------------- | -------------------------------------------------------------- |
-| **Spark compatibility** | Spark 3.x doesn't support Scala 3                              |
-| **Frameless**           | Type-safe DataFrame operations, compile-time schema validation |
-| **Performance**         | JVM optimizations, no Python serialization overhead            |
-| **Type safety**         | Catch errors at compile time, not runtime                      |
+| Feature               | Description                                       |
+| --------------------- | ------------------------------------------------- |
+| **Multi-factor sort** | Rank by Sharpe, Beta, Momentum, Carry, Volatility |
+| **Search/filter**     | Quick search by symbol, filter by criteria        |
+| **Configurable cols** | Show/hide columns, reorder based on workflow      |
+| **Click-to-add**      | Click asset to add to staged portfolio            |
 
-### 7.3 Why Scala 3 for Domain Library and API?
+### Staged Trades Workflow
+
+All portfolio changes are staged before execution:
+
+```
+Current Portfolio → Staged Changes → Preview Impact → Execute
+```
+
+| Stage       | Description                                           |
+| ----------- | ----------------------------------------------------- |
+| **Current** | Live positions from onchain tracking                  |
+| **Staged**  | Proposed changes (add/remove/resize positions)        |
+| **Preview** | Show projected factor exposures, Greeks, risk metrics |
+| **Execute** | User approves, frontend submits transactions          |
+
+### Global Leverage Control
+
+Single slider scales all positions proportionally:
+
+```
+Notional = NAV × Weight × Leverage
+```
+
+| Control          | Effect                                           |
+| ---------------- | ------------------------------------------------ |
+| **Leverage ↑**   | All position notionals scale up proportionally   |
+| **Leverage ↓**   | All position notionals scale down proportionally |
+| **Per-position** | Individual weight adjustments available in table |
+
+### Inline Editing
+
+Edit values directly in table cells:
+
+| Editable Field | Behavior                                 |
+| -------------- | ---------------------------------------- |
+| **Weight**     | Edit % allocation, notional recalculates |
+| **Notional**   | Edit $ amount, weight recalculates       |
+| **Side**       | Toggle long/short                        |
+
+Changes are staged (not executed) until user confirms.
+
+### Keyboard Navigation
+
+Vim-style navigation for power users:
+
+| Key       | Action                                |
+| --------- | ------------------------------------- |
+| `h/j/k/l` | Navigate left/down/up/right in tables |
+| `1-9`     | Switch between panels/tabs            |
+| `/`       | Focus search                          |
+| `Enter`   | Edit selected cell / confirm action   |
+| `Esc`     | Cancel edit / close modal             |
+| `?`       | Show keyboard shortcuts help          |
+
+### Multi-Metric Charts
+
+Overlay multiple metrics on price charts:
+
+| Feature              | Description                                        |
+| -------------------- | -------------------------------------------------- |
+| **Metric selection** | Toggle Sharpe, Beta, Momentum, Volatility overlays |
+| **Window config**    | Configurable rolling windows per metric            |
+| **Sync cursors**     | Crosshair syncs across all chart panels            |
+| **Time range**       | Zoom/pan with keyboard or mouse                    |
+
+---
+
+## Technology Decisions
+
+### Why Python for Ingestion Only?
+
+Python is used **exclusively** for thin CCXT wrappers—data fetching boilerplate with zero business logic.
+
+| Reason    | Details                                                                   |
+| --------- | ------------------------------------------------------------------------- |
+| **CCXT**  | Best-in-class exchange library with 100+ exchanges. No Scala alternative. |
+| **Scope** | Fetch data → validate schema → write to Iceberg. Nothing else.            |
+
+All analytics, transformations, and business logic live in Scala where the type system enforces correctness.
+
+### Why Scala 2 for Spark Analytics?
+
+| Reason                  | Details                                                                    |
+| ----------------------- | -------------------------------------------------------------------------- |
+| **Spark compatibility** | Spark 3.x doesn't support Scala 3.                                         |
+| **Frameless**           | Compile-time schema validation. Wrong column names or types fail to build. |
+| **Correctness**         | Type errors surface at compile time, not in production at 3am.             |
+| **Exhaustive matching** | The compiler ensures all cases are handled—no forgotten edge cases.        |
+
+### Why Scala 3 for Domain Library and API?
 
 | Reason                 | Details                                                  |
 | ---------------------- | -------------------------------------------------------- |
@@ -1187,7 +1293,7 @@ sequenceDiagram
 | **Interop**            | TASTy reader allows Scala 2 to consume Scala 3 libraries |
 | **http4s ecosystem**   | Purely functional HTTP, cats-effect                      |
 
-### 7.4 Why Apache Iceberg?
+### Why Apache Iceberg?
 
 | Feature                 | Benefit                                             |
 | ----------------------- | --------------------------------------------------- |
@@ -1197,7 +1303,7 @@ sequenceDiagram
 | **Multi-engine**        | Same tables readable by Spark, Trino, DuckDB        |
 | **No vendor lock-in**   | Open specification, unlike Delta Lake               |
 
-### 7.5 Why Nix?
+### Why Nix?
 
 | Reason                   | Details                                        |
 | ------------------------ | ---------------------------------------------- |
@@ -1208,15 +1314,15 @@ sequenceDiagram
 
 ---
 
-## 8. Scala 2/3 Interop Pattern
+## Scala 2/3 Interop Pattern
 
-### 8.1 The Challenge
+### The Challenge
 
 - Spark 3.x only supports Scala 2.13
 - We want domain types and business logic in Scala 3
 - Analytics (Spark jobs) need to use domain logic
 
-### 8.2 The Solution: Tldr Facade + TASTy Reader
+### The Solution: Tldr Facade + TASTy Reader
 
 ```mermaid
 flowchart TB
@@ -1238,7 +1344,7 @@ flowchart TB
     SP --> FR
 ```
 
-### 8.3 Tldr Facade Pattern
+### Tldr Facade Pattern
 
 The Tldr object exposes pure functions with simple signatures that Scala 2 can consume:
 
@@ -1297,7 +1403,7 @@ class BetaCalculator(spark: SparkSession) {
 }
 ```
 
-### 8.4 Build Configuration
+### Build Configuration
 
 ```scala
 // build.sbt
@@ -1359,9 +1465,9 @@ lazy val api = (project in file("api"))
 
 ---
 
-## 9. Migration Strategy
+## Migration Strategy
 
-### 9.1 Current State
+### Current State
 
 | Component         | Status     | Notes                                              |
 | ----------------- | ---------- | -------------------------------------------------- |
@@ -1370,7 +1476,7 @@ lazy val api = (project in file("api"))
 | FastAPI server    | Inactive   | Only serves backtest data                          |
 | CSV storage       | Legacy     | Will be replaced by Iceberg                        |
 
-### 9.2 Migration Approach: Clean Break
+### Migration Approach: Clean Break
 
 Since only `/portfolio` is in production use (and it's self-contained), we can rebuild everything else without disruption.
 
@@ -1394,18 +1500,18 @@ flowchart LR
     PORT -.->|keep until ready| PORT
 ```
 
-### 9.3 Phases
+### Module Dependencies
 
-| Phase                 | Scope                               | Deliverable               | Dependencies |
-| --------------------- | ----------------------------------- | ------------------------- | ------------ |
-| **1. Foundation**     | Nix flake, SBT build, Iceberg setup | Dev environment ready     | None         |
-| **2. Ingestion**      | Python adapters, Iceberg writers    | Data flowing to tables    | Phase 1      |
-| **3. Shared Library** | Domain types, Tldr facade           | Type-safe foundation      | Phase 1      |
-| **4. Analytics**      | Factor/risk/Greeks engines          | Computed tables populated | Phases 2, 3  |
-| **5. API**            | http4s server, REST + WebSocket     | Backend serving data      | Phases 3, 4  |
-| **6. Frontend**       | New analytics UI                    | Replace existing pages    | Phase 5      |
+| Module             | Scope                               | Depends On        |
+| ------------------ | ----------------------------------- | ----------------- |
+| **Foundation**     | Nix flake, SBT build, Iceberg setup | —                 |
+| **Ingestion**      | Python adapters, Iceberg writers    | Foundation        |
+| **Shared Library** | Domain types, Tldr facade           | Foundation        |
+| **Analytics**      | Factor/risk/Greeks engines          | Ingestion, Shared |
+| **API**            | http4s server, REST + WebSocket     | Shared, Analytics |
+| **Frontend**       | Analytics UI with execution         | API               |
 
-### 9.4 Constraints
+### Constraints
 
 - `/portfolio` page must remain functional until replacement is ready
 - No changes to Hyperliquid execution until new system is proven

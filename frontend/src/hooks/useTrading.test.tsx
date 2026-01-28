@@ -268,6 +268,7 @@ describe("useTrading hooks", () => {
         result.current.mutate({
           accountValue: 1000,
           crossAccountLeverage: 1,
+          precise: false,
           positions: [],
         })
       })
@@ -305,6 +306,7 @@ describe("useTrading hooks", () => {
         result.current.mutate({
           accountValue: 1000,
           crossAccountLeverage: 2,
+          precise: false,
           positions: [
             {
               symbol: "BTC/USDC:USDC",
@@ -358,6 +360,7 @@ describe("useTrading hooks", () => {
         result.current.mutate({
           accountValue: 1000,
           crossAccountLeverage: 1,
+          precise: false,
           positions: [
             {
               symbol: "BTC/USDC:USDC",
@@ -386,6 +389,7 @@ describe("useTrading hooks", () => {
         ],
         1000,
         1,
+        false, // precise parameter defaults to false
       )
     })
   })

@@ -106,12 +106,9 @@ graph TD
    nix develop   # Without direnv
    ```
 
-3. **Install frontend dependencies**
+3. **Frontend dependencies**
 
-   ```bash
-   cd frontend
-   npm install
-   ```
+   Frontend dependencies are automatically installed by the nix flake when entering the dev shell. No manual installation needed.
 
 4. **Configure environment variables**
 
@@ -139,8 +136,7 @@ python server.py  # Runs on http://localhost:8000
 **Launch frontend**:
 
 ```bash
-cd frontend
-npm run dev  # Runs on http://localhost:5173
+cd frontend && bun run dev  # Runs on http://localhost:5173
 ```
 
 **Run live trading** (requires API credentials):
@@ -191,8 +187,7 @@ Endpoints:
 ### Frontend Dashboard
 
 ```bash
-cd frontend
-npm run dev
+cd frontend && bun run dev
 ```
 
 Navigate to http://localhost:5173 to view:
@@ -293,14 +288,15 @@ pytest                 # Run tests
 pre-commit run -a      # Run all pre-commit hooks (must pass before completing tasks)
 ```
 
-**Frontend:**
+**Frontend** (run from `frontend/` directory):
 
 ```bash
 cd frontend
-npm run dev            # Development server
-npm run build          # Production build
-npm run lint           # ESLint check
-npm run preview        # Preview production build
+bun run dev      # Development server (port 5173)
+bun run build    # Production build
+bun run lint     # ESLint check
+bun run preview  # Preview production build
+bun run test     # Run tests (uses vitest)
 ```
 
 ### Code Quality

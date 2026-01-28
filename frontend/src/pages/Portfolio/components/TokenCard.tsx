@@ -22,7 +22,7 @@ import type { OrderSide } from "@/hooks/useTrading"
 import {
   type TokenAllocation,
   MIN_USD,
-  MIN_ORDER_SIZE,
+  MIN_CHANGE_DELTA,
 } from "../hooks/usePortfolioState"
 
 const getSideColor = (side: OrderSide) =>
@@ -203,7 +203,7 @@ export const TokenCard = ({
                         (token.targetNotional ?? 0) -
                           (token.currentNotional ?? 0),
                       ).toFixed(2)}{" "}
-                      is below ${MIN_ORDER_SIZE} minimum.
+                      is below ${MIN_CHANGE_DELTA} minimum.
                     </p>
                     <p className="text-xs text-muted-foreground">
                       This position won&apos;t be adjusted.
@@ -281,11 +281,14 @@ export const TokenCard = ({
           </div>
         </div>
 
-        {token.status === "failed" && token.message && (
-          <div className="border-t border-border bg-rose-500/10 px-3 py-2 text-xs text-rose-500">
-            <p>{token.message}</p>
-          </div>
-        )}
+        {token.message &&
+          (token.status === "failed" ||
+            token.status === "idle" ||
+            token.status === "modified") && (
+            <div className="border-t border-border bg-rose-500/10 px-3 py-2 text-xs text-rose-500">
+              <p>{token.message}</p>
+            </div>
+          )}
       </div>
     </Card>
   )

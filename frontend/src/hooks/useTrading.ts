@@ -121,6 +121,7 @@ export const useHyperliquidLeverageLimits = () => {
 export interface RebalanceParams {
   accountValue: number
   crossAccountLeverage: number
+  precise: boolean
   positions: Array<{
     symbol: string
     percentage: number
@@ -150,6 +151,7 @@ export const useRebalanceHyperliquidPositions = () => {
         positions,
         params.accountValue,
         params.crossAccountLeverage,
+        params.precise,
       )
       return { orders: results }
     },

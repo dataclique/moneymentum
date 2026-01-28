@@ -191,3 +191,36 @@ export const useStopReload = () => {
     },
   })
 }
+
+export const useBudgetPreference = () => {
+  return useQuery<{ budget: number }>({
+    queryKey: ["hyperliquid", "budget-preference"],
+    queryFn: async () => {
+      const response = await fetch("/api/hyperliquid/budget-preference")
+      if (!response.ok) {
+        const errorData = (await response.json().catch(() => ({}))) as ApiError
+        throw new Error(errorData.detail ?? "Unable to fetch budget preference")
+      }
+      return response.json() as Promise<{ budget: number }>
+    },
+  })
+}
+
+export const useSaveBudgetPreference = () => {
+  return useMutation({
+    mutationFn: async (payload: { budget: number }) => {
+      const response = await fetch("/api/hyperliquid/budget-preference", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      })
+
+      if (!response.ok) {
+        const errorData = (await response.json().catch(() => ({}))) as ApiError
+        throw new Error(errorData.detail ?? "Unable to save budget preference")
+      }
+    },
+  })
+}

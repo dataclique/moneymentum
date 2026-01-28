@@ -80,6 +80,7 @@ export default tseslint.config(
       "@typescript-eslint/no-unsafe-argument": "off",
       "@typescript-eslint/no-unsafe-return": "off",
       "@typescript-eslint/no-explicit-any": "off",
+      "@typescript-eslint/no-non-null-assertion": "off",
       "@typescript-eslint/unbound-method": "off",
       "@typescript-eslint/require-await": "off",
       "@typescript-eslint/no-invalid-void-type": "off",

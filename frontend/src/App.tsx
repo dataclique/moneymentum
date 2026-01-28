@@ -1,4 +1,4 @@
-import { Route, Routes, useLocation } from "react-router-dom"
+import { Link, Route, Routes, useLocation } from "react-router-dom"
 import { clsx } from "clsx"
 import { twMerge } from "tailwind-merge"
 import MainPage from "./pages/MainPage"
@@ -9,6 +9,21 @@ import { ModeToggle } from "./components/ui/mode-toggle"
 import { WalletHeader } from "./components/wallet-header"
 import { useNetwork } from "@/hooks/useNetwork"
 import { useWallet } from "@/hooks/useWallet"
+
+const NotFoundPage = () => (
+  <div className="flex flex-1 flex-col items-center justify-center gap-4">
+    <h2 className="text-2xl font-semibold">Page not found</h2>
+    <p className="text-sm text-muted-foreground">
+      The page you are looking for does not exist.
+    </p>
+    <Link
+      to="/"
+      className="inline-flex items-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+    >
+      Go home
+    </Link>
+  </div>
+)
 
 const App = () => {
   const { isNetworkSwitching } = useNetwork()
@@ -48,12 +63,10 @@ const App = () => {
         )}
       </header>
       <Routes>
-        <Route path="/" element={<MainPage />} />
+        <Route path="/" element={<PortfolioPage key={networkMode} />} />
+        <Route path="/dashboard" element={<MainPage />} />
         <Route path="/token/:ticker" element={<TokenPage timeframe="1h" />} />
-        <Route
-          path="/portfolio"
-          element={<PortfolioPage key={networkMode} />}
-        />
+        <Route path="*" element={<NotFoundPage />} />
       </Routes>
     </div>
   )

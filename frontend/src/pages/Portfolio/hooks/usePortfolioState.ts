@@ -933,6 +933,7 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
     accountValue,
     crossAccountLeverage,
     totalNotional,
+    displayNotional,
     selectedTokens: tokensWithDeltaTracking,
     activeTokens: derivedActiveTokens,
     minPercentFloor,

@@ -1,6 +1,112 @@
 import ccxt from "ccxt"
 import type { NetworkMode, WalletCredentials } from "@/contexts/wallet-context"
 
+const MARKETS_CACHE_KEY = "hyperliquid_markets_cache"
+const MARKETS_CACHE_TTL_MS = 24 * 60 * 60 * 1000
+
+interface MarketsCache {
+  markets: Record<string, unknown>
+  timestamp: number
+  networkMode: NetworkMode
+}
+
+const createTempExchange = (networkMode: NetworkMode): HyperliquidExchange => {
+  const HyperliquidClass = ccxt.hyperliquid as unknown as new (
+    config: Record<string, unknown>,
+  ) => HyperliquidExchange
+
+  const exchange = new HyperliquidClass({
+    enableRateLimit: true,
+  })
+
+  if (networkMode === "testnet") {
+    exchange.setSandboxMode(true)
+  }
+
+  return exchange
+}
+
+const getCachedMarkets = (
+  networkMode: NetworkMode,
+): Record<string, unknown> | null => {
+  try {
+    const cached = localStorage.getItem(MARKETS_CACHE_KEY)
+    if (!cached) {
+      console.log("[getCachedMarkets] No cache found in localStorage")
+      return null
+    }
+
+    const parsed: MarketsCache = JSON.parse(cached) as MarketsCache
+    const { markets, timestamp, networkMode: cachedMode } = parsed
+
+    if (cachedMode !== networkMode) {
+      console.log(
+        `[getCachedMarkets] Cache miss: network mismatch (cached: ${cachedMode}, requested: ${networkMode})`,
+      )
+      return null
+    }
+
+    const ageMs = Date.now() - timestamp
+    if (ageMs >= MARKETS_CACHE_TTL_MS) {
+      console.log(
+        `[getCachedMarkets] Cache miss: expired (age: ${Math.round(ageMs / 1000 / 60)}min)`,
+      )
+      return null
+    }
+
+    console.log(
+      `[getCachedMarkets] Cache HIT! Age: ${Math.round(ageMs / 1000 / 60)}min, ${Object.keys(markets).length} markets`,
+    )
+    return markets
+  } catch {
+    console.log("[getCachedMarkets] Cache miss: parse error")
+    return null
+  }
+}
+
+const setCachedMarkets = (
+  markets: Record<string, unknown>,
+  networkMode: NetworkMode,
+): void => {
+  console.log(
+    `[setCachedMarkets] Saving ${Object.keys(markets).length} markets to cache (${networkMode})`,
+  )
+  const cacheData: MarketsCache = {
+    markets,
+    timestamp: Date.now(),
+    networkMode,
+  }
+  localStorage.setItem(MARKETS_CACHE_KEY, JSON.stringify(cacheData))
+}
+
+export const preloadMarkets = async (
+  networkMode: NetworkMode,
+): Promise<Record<string, unknown> | null> => {
+  console.log(`[preloadMarkets] Starting preload for ${networkMode}...`)
+  const cached = getCachedMarkets(networkMode)
+  if (cached) {
+    console.log("[preloadMarkets] Using cached markets, no API call needed")
+    return cached
+  }
+
+  try {
+    console.log("[preloadMarkets] Cache miss, fetching from API...")
+    const tempExchange = createTempExchange(networkMode)
+    const markets = await tempExchange.loadMarkets()
+    console.log(
+      `[preloadMarkets] Fetched ${Object.keys(markets).length} markets from API`,
+    )
+
+    setCachedMarkets(markets, networkMode)
+    return markets
+  } catch (error) {
+    // Network errors are expected when offline or API is unreachable
+    // Markets will be loaded on-demand when needed
+    console.warn("[preloadMarkets] Failed to preload markets:", error)
+    return null
+  }
+}
+
 export type OrderSide = "buy" | "sell"
 export type PositionStatus =
   | "untouched"
@@ -92,7 +198,11 @@ export class HyperliquidClient {
   private networkMode: NetworkMode
   private vaultAddress: string | undefined
 
-  constructor(credentials: WalletCredentials, networkMode: NetworkMode) {
+  constructor(
+    credentials: WalletCredentials,
+    networkMode: NetworkMode,
+    markets?: Record<string, unknown>,
+  ) {
     this.networkMode = networkMode
     this.vaultAddress = credentials.vaultAddress
 
@@ -105,10 +215,27 @@ export class HyperliquidClient {
     const effectiveWalletAddress =
       credentials.vaultAddress ?? credentials.accountAddress
 
+    // Use pre-loaded markets if available, otherwise ccxt will load them on first use
+    console.log(
+      "[HyperliquidClient] Creating client, checking for cached markets...",
+    )
+    const cachedMarkets = markets ?? getCachedMarkets(networkMode)
+
+    if (cachedMarkets) {
+      console.log(
+        `[HyperliquidClient] Passing ${Object.keys(cachedMarkets).length} cached markets to ccxt`,
+      )
+    } else {
+      console.log(
+        "[HyperliquidClient] No cached markets, ccxt will fetch on first use",
+      )
+    }
+
     this.exchange = new HyperliquidClass({
       walletAddress: effectiveWalletAddress,
       privateKey: credentials.privateKey,
       enableRateLimit: true,
+      ...(cachedMarkets && { markets: cachedMarkets }),
     })
 
     if (networkMode === "testnet") {
@@ -165,7 +292,15 @@ export class HyperliquidClient {
   }
 
   async listPerpTickers(): Promise<string[]> {
+    console.log("[listPerpTickers] Calling exchange.loadMarkets()...")
     const markets = await this.exchange.loadMarkets()
+    console.log(
+      `[listPerpTickers] loadMarkets() returned ${Object.keys(markets).length} markets`,
+    )
+
+    // Update cache with fresh markets data
+    setCachedMarkets(markets, this.networkMode)
+
     const perpSymbols = Object.entries(markets)
       .filter(
         ([symbol, data]) =>

@@ -217,9 +217,23 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
   )
 
   useEffect(() => {
-    if (positionsLoadedFromExchange) return
-    if (isPositionsLoading || !positionsData?.positions) return
+    const effectStartTime = performance.now()
+    console.log("[usePortfolioState] positions useEffect triggered")
 
+    if (positionsLoadedFromExchange) {
+      console.log("[usePortfolioState] positions already loaded, skipping")
+      return
+    }
+    if (isPositionsLoading || !positionsData?.positions) {
+      console.log("[usePortfolioState] positions still loading or no data")
+      return
+    }
+
+    console.log(
+      `[usePortfolioState] processing ${positionsData.positions.length} positions from exchange`,
+    )
+
+    const mapStartTime = performance.now()
     const exchangeTokens: TokenAllocation[] = positionsData.positions.map(
       pos => ({
         symbol: pos.symbol,
@@ -231,6 +245,9 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
         notional: pos.notional,
         lockedUsd: pos.notional,
       }),
+    )
+    console.log(
+      `[usePortfolioState] mapping exchangeTokens took ${(performance.now() - mapStartTime).toFixed(2)}ms`,
     )
 
     // Always set initialPortfolio from exchange (source of truth for what exists on exchange)
@@ -293,6 +310,9 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
     }
 
     setPositionsLoadedFromExchange(true)
+    console.log(
+      `[usePortfolioState] positions useEffect completed in ${(performance.now() - effectStartTime).toFixed(2)}ms`,
+    )
   }, [
     positionsData,
     isPositionsLoading,

@@ -172,6 +172,8 @@ export interface RebalanceParams {
     percentage: number
     side: "buy" | "sell"
     leverage: number
+    leverageChanged: boolean
+    currentNotional?: number
     status: "untouched" | "modified" | "idle" | "deleted" | "working"
   }>
 }
@@ -182,6 +184,11 @@ export const useRebalanceHyperliquidPositions = () => {
 
   return useMutation<{ orders: OrderResult[] }, Error, RebalanceParams>({
     mutationFn: async (params: RebalanceParams) => {
+      const mutationStartTime = performance.now()
+      console.log("[Rebalance] mutationFn started", {
+        timestamp: new Date().toISOString(),
+      })
+
       if (!client) throw new Error("Wallet not connected")
 
       const positions: Position[] = params.positions.map(pos => ({
@@ -189,8 +196,15 @@ export const useRebalanceHyperliquidPositions = () => {
         percentage: pos.percentage,
         side: pos.side,
         leverage: pos.leverage,
+        leverageChanged: pos.leverageChanged,
+        currentNotional: pos.currentNotional,
         status: pos.status === "working" ? "idle" : pos.status,
       }))
+
+      console.log("[Rebalance] Calling client.rebalancePositions()", {
+        positionCount: positions.length,
+      })
+      const clientCallTime = performance.now()
 
       const results = await client.rebalancePositions(
         positions,
@@ -198,6 +212,14 @@ export const useRebalanceHyperliquidPositions = () => {
         params.crossAccountLeverage,
         params.precise,
       )
+
+      const endTime = performance.now()
+      console.log("[Rebalance] mutationFn completed", {
+        totalTime: `${(endTime - mutationStartTime).toFixed(2)}ms`,
+        clientTime: `${(endTime - clientCallTime).toFixed(2)}ms`,
+        resultsCount: results.length,
+      })
+
       return { orders: results }
     },
     onSuccess: () => {

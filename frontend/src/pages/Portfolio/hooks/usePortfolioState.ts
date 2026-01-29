@@ -731,6 +731,11 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
   )
 
   const handleOpenPositions = useCallback(() => {
+    const rebalanceStartTime = performance.now()
+    console.log("[Rebalance] handleOpenPositions called", {
+      timestamp: new Date().toISOString(),
+    })
+
     if (
       !tokensWithDeltaTracking.length ||
       accountValue <= 0 ||
@@ -738,6 +743,7 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
       (derivedTotalPercent <= 0 && !hasPendingDeletions) ||
       rebalancePositionsMutation.isPending
     ) {
+      console.log("[Rebalance] Early return - validation failed")
       return
     }
 
@@ -836,13 +842,22 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
       accountValue,
       crossAccountLeverage,
       precise: isPrecise,
-      positions: tokensWithDeltaTracking.map(token => ({
-        symbol: token.symbol,
-        side: token.side,
-        leverage: token.leverage,
-        percentage: token.percentage / 100,
-        status: mapStatusForApi(token.status),
-      })),
+      positions: tokensWithDeltaTracking.map(token => {
+        const exchangePosition = initialPortfolio.find(
+          p => p.symbol === token.symbol,
+        )
+        return {
+          symbol: token.symbol,
+          side: token.side,
+          leverage: token.leverage,
+          leverageChanged: exchangePosition
+            ? token.leverage !== exchangePosition.leverage
+            : true,
+          currentNotional: exchangePosition?.notional,
+          percentage: token.percentage / 100,
+          status: mapStatusForApi(token.status),
+        }
+      }),
     }
 
     setSelectedTokensAndPersist(prev =>
@@ -860,8 +875,28 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
       }),
     )
 
+    const mutationCallTime = performance.now()
+    console.log("[Rebalance] Calling mutation.mutate()", {
+      preparationTime: `${(mutationCallTime - rebalanceStartTime).toFixed(2)}ms`,
+      positions: payload.positions.length,
+      accountValue: payload.accountValue,
+      crossAccountLeverage: payload.crossAccountLeverage,
+      precise: payload.precise,
+    })
+
     rebalancePositionsMutation.mutate(payload, {
       onSuccess: data => {
+        const successTime = performance.now()
+        console.log("[Rebalance] Mutation onSuccess", {
+          totalTime: `${(successTime - rebalanceStartTime).toFixed(2)}ms`,
+          networkTime: `${(successTime - mutationCallTime).toFixed(2)}ms`,
+          ordersCount: data.orders.length,
+          orders: data.orders.map(o => ({
+            symbol: o.symbol,
+            status: o.status,
+          })),
+        })
+
         const updatedTokens = tokensWithDeltaTracking
           .map(token => {
             const status = data.orders.find(
@@ -884,7 +919,12 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
         setSelectedTokensAndPersist(updatedTokens)
       },
       onError: error => {
-        console.error("[Portfolio] handleOpenPositions: error", error)
+        const errorTime = performance.now()
+        console.error("[Rebalance] Mutation onError", {
+          totalTime: `${(errorTime - rebalanceStartTime).toFixed(2)}ms`,
+          networkTime: `${(errorTime - mutationCallTime).toFixed(2)}ms`,
+          error: error.message,
+        })
 
         const symbolMatch = error.message.match(/([A-Z0-9-]+\/[A-Z]+:[A-Z]+)/)
         const failedSymbol = symbolMatch ? symbolMatch[0] : null

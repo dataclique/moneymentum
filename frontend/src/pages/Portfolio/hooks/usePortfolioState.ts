@@ -55,11 +55,11 @@ const DEFAULT_CROSS_ACCOUNT_LEVERAGE = 1
 
 const getTokenUsdAllocation = (
   token: TokenAllocation,
-  totalNotional: number,
+  targetNotional: number,
 ) => {
   if (token.notional !== undefined && token.notional > 0) return token.notional
   if (token.lockedUsd !== undefined) return token.lockedUsd
-  if (totalNotional > 0) return (token.percentage / 100) * totalNotional
+  if (targetNotional > 0) return (token.percentage / 100) * targetNotional
   return 0
 }
 
@@ -144,13 +144,11 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
     setLeverageInitializedFromExchange(true)
   }, [accountSummaryData, leverageInitializedFromExchange])
 
-  // Compute totalNotional = accountValue * crossAccountLeverage
-  const totalNotional = useMemo(
+  // Compute targetNotional = accountValue * crossAccountLeverage (used for percentage calculations)
+  const targetNotional = useMemo(
     () => accountValue * crossAccountLeverage,
     [accountValue, crossAccountLeverage],
   )
-
-  const lastSufficientBudgetRef = useRef(0)
 
   const persistStateToLocalStorage = useCallback(
     (leverageVal: number, tokens: TokenAllocation[]) => {
@@ -359,7 +357,7 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
       // Use getTokenUsdAllocation to compare actual USD values
       // This handles tokens with notional vs lockedUsd correctly
       // Use budget directly (budgetForUi isn't available yet in this useMemo)
-      const comparisonBudget = totalNotional > 0 ? totalNotional : MIN_USD
+      const comparisonBudget = targetNotional > 0 ? targetNotional : MIN_USD
       const currentUsd = getTokenUsdAllocation(currentToken, comparisonBudget)
       const initialUsd = getTokenUsdAllocation(initialToken, comparisonBudget)
 
@@ -378,7 +376,7 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
 
       return currentToken
     })
-  }, [selectedTokens, initialPortfolio, totalNotional])
+  }, [selectedTokens, initialPortfolio, targetNotional])
 
   const activeTokens = useMemo(
     () => tokensWithComputedStatus.filter(t => t.status !== "deleted"),
@@ -391,24 +389,24 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
   )
 
   const requiredNotionalForTokens = activeTokens.length * MIN_USD
-  const notionalIsPositive = totalNotional > 0
+  const notionalIsPositive = targetNotional > 0
   const notionalBelowMinimum =
-    activeTokens.length > 0 && notionalIsPositive && totalNotional < MIN_USD
+    activeTokens.length > 0 && notionalIsPositive && targetNotional < MIN_USD
   const insufficientNotionalForTokens =
     activeTokens.length > 0 &&
     notionalIsPositive &&
-    requiredNotionalForTokens > totalNotional
+    requiredNotionalForTokens > targetNotional
 
-  // displayNotional is totalNotional, falling back to a minimum if needed for UI
+  // displayNotional is targetNotional, falling back to a minimum if needed for UI
   const displayNotional = useMemo(() => {
-    if (totalNotional > 0) {
-      return totalNotional
+    if (targetNotional > 0) {
+      return targetNotional
     }
     if (activeTokens.length === 0) {
       return 0
     }
     return Math.max(requiredNotionalForTokens, MIN_USD)
-  }, [totalNotional, requiredNotionalForTokens, activeTokens.length])
+  }, [targetNotional, requiredNotionalForTokens, activeTokens.length])
 
   const minPercentOfNotional =
     displayNotional > 0 ? Math.min(100, (MIN_USD / displayNotional) * 100) : 0
@@ -438,7 +436,7 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
 
       return { ...token, percentage: derivedPercent }
     })
-  }, [tokensWithComputedStatus, totalNotional])
+  }, [tokensWithComputedStatus, targetNotional])
 
   // Compute delta tracking for each token to show when adjustments are too small
   const tokensWithDeltaTracking = useMemo(() => {
@@ -486,6 +484,12 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
   )
   const derivedRemainingPercent = Math.max(0, 100 - derivedTotalPercent)
 
+  // Total notional = sum of all position notionals (actual exchange positions)
+  const totalNotional = useMemo(
+    () => derivedActiveTokens.reduce((sum, token) => sum + (token.notional ?? 0), 0),
+    [derivedActiveTokens],
+  )
+
   const leverageLimitsMap = useMemo(() => {
     const map: Record<string, number> = {}
     if (!leverageLimitsData) return map
@@ -496,10 +500,10 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
   }, [leverageLimitsData])
 
   const tokensBelowMinimum = useMemo(() => {
-    if (totalNotional <= 0) return []
+    if (targetNotional <= 0) return []
     return derivedActiveTokens
       .filter(token => {
-        const usdValue = getTokenUsdAllocation(token, totalNotional)
+        const usdValue = getTokenUsdAllocation(token, targetNotional)
         if (token.status === "untouched") {
           return false
         }
@@ -507,9 +511,9 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
       })
       .map(token => ({
         symbol: token.symbol,
-        usdValue: getTokenUsdAllocation(token, totalNotional),
+        usdValue: getTokenUsdAllocation(token, targetNotional),
       }))
-  }, [derivedActiveTokens, totalNotional])
+  }, [derivedActiveTokens, targetNotional])
 
   const hasPositionsBelowMinimum = tokensBelowMinimum.length > 0
   const hasBlockingNotionalIssue =
@@ -570,8 +574,8 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
       }
 
       const initialPercent =
-        totalNotional > 0
-          ? parseFloat(((MIN_USD / totalNotional) * 100).toFixed(2))
+        targetNotional > 0
+          ? parseFloat(((MIN_USD / targetNotional) * 100).toFixed(2))
           : 0
 
       const maxLeverageForSymbol = leverageLimitsMap[symbol] || 1
@@ -591,7 +595,7 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
       ])
     },
     [
-      totalNotional,
+      targetNotional,
       minPercentFloor,
       leverageLimitsMap,
       setSelectedTokensAndPersist,
@@ -756,7 +760,7 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
             return false
           }
 
-          const targetValue = getTokenUsdAllocation(token, totalNotional)
+          const targetValue = getTokenUsdAllocation(token, targetNotional)
           const initialToken = initialPortfolio.find(
             it => it.symbol === token.symbol,
           )
@@ -769,7 +773,7 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
           // Existing position - check if change delta is too small
           const currentValue = getTokenUsdAllocation(
             initialToken,
-            totalNotional,
+            targetNotional,
           )
           const delta = Math.abs(targetValue - currentValue)
 
@@ -795,12 +799,12 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
             )
             if (!hasSmallChange) return token
 
-            const targetValue = getTokenUsdAllocation(token, totalNotional)
+            const targetValue = getTokenUsdAllocation(token, targetNotional)
             const initialToken = initialPortfolio.find(
               it => it.symbol === token.symbol,
             )
             const currentValue = initialToken
-              ? getTokenUsdAllocation(initialToken, totalNotional)
+              ? getTokenUsdAllocation(initialToken, targetNotional)
               : 0
             const delta = Math.abs(targetValue - currentValue)
 
@@ -956,7 +960,7 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
   ])
 
   const netExposure = derivedActiveTokens.reduce((acc, token) => {
-    const usdValue = getTokenUsdAllocation(token, totalNotional)
+    const usdValue = getTokenUsdAllocation(token, targetNotional)
     return acc + (token.side === "buy" ? usdValue : -usdValue)
   }, 0)
 

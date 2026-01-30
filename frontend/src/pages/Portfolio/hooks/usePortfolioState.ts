@@ -52,6 +52,25 @@ interface StoredPortfolioState {
 const MIN_CROSS_ACCOUNT_LEVERAGE = 0.1
 const MAX_CROSS_ACCOUNT_LEVERAGE = 5
 const DEFAULT_CROSS_ACCOUNT_LEVERAGE = 1
+const LEVERAGE_COOKIE_NAME = "portfolio-cross-account-leverage"
+
+const getLeverageFromCookie = (): number => {
+  const match = document.cookie.match(
+    new RegExp(`(?:^|; )${LEVERAGE_COOKIE_NAME}=([^;]*)`),
+  )
+  if (!match) return DEFAULT_CROSS_ACCOUNT_LEVERAGE
+  const value = parseFloat(match[1])
+  if (Number.isNaN(value)) return DEFAULT_CROSS_ACCOUNT_LEVERAGE
+  return Math.max(
+    MIN_CROSS_ACCOUNT_LEVERAGE,
+    Math.min(MAX_CROSS_ACCOUNT_LEVERAGE, value),
+  )
+}
+
+const setLeverageCookie = (value: number) => {
+  const maxAge = 365 * 24 * 60 * 60 // 1 year
+  document.cookie = `${LEVERAGE_COOKIE_NAME}=${value}; path=/; max-age=${maxAge}; SameSite=Lax`
+}
 
 const getTokenUsdAllocation = (
   token: TokenAllocation,
@@ -94,14 +113,11 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
 
   const [storedDataSnapshot] = useState(() => getStoredPortfolio(networkMode))
 
-  // crossAccountLeverage will be initialized from exchange data, default to 1 until then
+  // crossAccountLeverage is initialized from cookie, default to 1
   const [crossAccountLeverage, setCrossAccountLeverage] = useState(
-    DEFAULT_CROSS_ACCOUNT_LEVERAGE,
+    getLeverageFromCookie,
   )
 
-  // Track if we've initialized leverage from exchange
-  const [leverageInitializedFromExchange, setLeverageInitializedFromExchange] =
-    useState(false)
   const [selectedTokens, setSelectedTokens] = useState<TokenAllocation[]>(
     () =>
       storedDataSnapshot?.tokens.map(token => ({
@@ -126,23 +142,6 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
     () => accountSummaryData?.accountValue ?? 0,
     [accountSummaryData],
   )
-
-  // Initialize crossAccountLeverage from exchange on first load
-  // Always use exchange data as source of truth for current leverage
-  useEffect(() => {
-    if (leverageInitializedFromExchange) return
-    if (!accountSummaryData) return
-
-    const exchangeLeverage = accountSummaryData.crossAccountLeverage
-    if (exchangeLeverage > 0) {
-      const clampedLeverage = Math.max(
-        MIN_CROSS_ACCOUNT_LEVERAGE,
-        Math.min(MAX_CROSS_ACCOUNT_LEVERAGE, exchangeLeverage),
-      )
-      setCrossAccountLeverage(clampedLeverage)
-    }
-    setLeverageInitializedFromExchange(true)
-  }, [accountSummaryData, leverageInitializedFromExchange])
 
   // Compute targetNotional = accountValue * crossAccountLeverage (used for percentage calculations)
   const targetNotional = useMemo(
@@ -206,6 +205,7 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
         Math.min(MAX_CROSS_ACCOUNT_LEVERAGE, newLeverage),
       )
       setCrossAccountLeverage(clampedLeverage)
+      setLeverageCookie(clampedLeverage)
       persistStateToLocalStorage(
         clampedLeverage,
         latestSelectedTokensRef.current,

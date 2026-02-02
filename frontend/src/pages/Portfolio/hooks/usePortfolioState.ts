@@ -49,7 +49,6 @@ interface StoredPortfolioState {
   }>
 }
 
-const MIN_CROSS_ACCOUNT_LEVERAGE = 0.1
 const MAX_CROSS_ACCOUNT_LEVERAGE = 5
 const DEFAULT_CROSS_ACCOUNT_LEVERAGE = 1
 const LEVERAGE_COOKIE_NAME = "portfolio-cross-account-leverage"
@@ -61,10 +60,7 @@ const getLeverageFromCookie = (): number => {
   if (!match) return DEFAULT_CROSS_ACCOUNT_LEVERAGE
   const value = parseFloat(match[1])
   if (Number.isNaN(value)) return DEFAULT_CROSS_ACCOUNT_LEVERAGE
-  return Math.max(
-    MIN_CROSS_ACCOUNT_LEVERAGE,
-    Math.min(MAX_CROSS_ACCOUNT_LEVERAGE, value),
-  )
+  return Math.min(MAX_CROSS_ACCOUNT_LEVERAGE, value)
 }
 
 const setLeverageCookie = (value: number) => {
@@ -200,10 +196,7 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
 
   const setCrossAccountLeverageAndPersist = useCallback(
     (newLeverage: number) => {
-      const clampedLeverage = Math.max(
-        MIN_CROSS_ACCOUNT_LEVERAGE,
-        Math.min(MAX_CROSS_ACCOUNT_LEVERAGE, newLeverage),
-      )
+      const clampedLeverage = Math.min(MAX_CROSS_ACCOUNT_LEVERAGE, newLeverage)
       setCrossAccountLeverage(clampedLeverage)
       setLeverageCookie(clampedLeverage)
       persistStateToLocalStorage(
@@ -242,6 +235,15 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
       (sum, pos) => sum + pos.notional,
       0,
     )
+
+    // Calculate leverage from the formula: leverage = totalNotional / accountValue
+    // This ensures leverage accurately reflects the current portfolio state
+    const calculatedLeverage =
+      accountValue > 0 ? totalExchangeNotional / accountValue : 1
+    const clampedLeverage = Math.min(MAX_CROSS_ACCOUNT_LEVERAGE, calculatedLeverage)
+    setCrossAccountLeverage(clampedLeverage)
+    setLeverageCookie(clampedLeverage)
+
     // Calculate percentage relative to total notional (sum of all position notionals)
     // This ensures weights represent the position's share of the actual portfolio
     const exchangeTokens: TokenAllocation[] = positionsData.positions.map(
@@ -340,7 +342,6 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
     storedDataSnapshot,
     positionsLoadedFromExchange,
     accountValue,
-    crossAccountLeverage,
   ])
 
   // Initialize budget from balance if not set from positions

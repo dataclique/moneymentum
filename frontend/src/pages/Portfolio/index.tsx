@@ -218,7 +218,7 @@ const PortfolioPage = () => {
                       className="w-32"
                     />
                     <span className="w-10 text-center text-sm font-medium">
-                      {crossAccountLeverage.toFixed(1)}x
+                      {crossAccountLeverage.toFixed(3)}x
                     </span>
                   </>
                 )}

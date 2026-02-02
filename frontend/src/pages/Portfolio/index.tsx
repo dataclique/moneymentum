@@ -12,7 +12,7 @@ import { Switch } from "@/components/ui/switch"
 import { ChevronUp } from "lucide-react"
 import { clsx } from "clsx"
 import { twMerge } from "tailwind-merge"
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { useNetwork } from "@/hooks/useNetwork"
 
 import { usePortfolioState } from "./hooks/usePortfolioState"
@@ -21,6 +21,11 @@ import { TokenCard } from "./components/TokenCard"
 import { TokenPickerDialog } from "./components/TokenPickerDialog"
 
 const PRECISE_TOGGLE_STORAGE_KEY = "portfolio-precise-toggle"
+
+const LEVERAGE_MIN = 0.001
+const LEVERAGE_MAX = 5
+const LEVERAGE_STEP = 0.1
+const DEFAULT_LEVERAGE = 1
 
 const PortfolioPage = () => {
   const { isNetworkSwitching } = useNetwork()
@@ -36,6 +41,7 @@ const PortfolioPage = () => {
   const {
     accountValue,
     crossAccountLeverage,
+    initialCrossAccountLeverage,
     totalNotional,
     selectedTokens,
     activeTokens,
@@ -58,6 +64,39 @@ const PortfolioPage = () => {
     handleCrossAccountLeverageChange,
     handleOpenPositions,
   } = usePortfolioState(isPrecise)
+
+  const [leverageInput, setLeverageInput] = useState(() =>
+    String(crossAccountLeverage),
+  )
+  const [isLeverageInputFocused, setIsLeverageInputFocused] =
+    useState(false)
+
+  useEffect(() => {
+    if (!isLeverageInputFocused) {
+      setLeverageInput(String(crossAccountLeverage))
+    }
+  }, [crossAccountLeverage, isLeverageInputFocused])
+
+  const applyLeverageInput = useCallback(
+    (raw: string) => {
+      setLeverageInput(raw)
+      if (raw === "") {
+        const emptyValue =
+          initialCrossAccountLeverage ?? DEFAULT_LEVERAGE
+        handleCrossAccountLeverageChange(emptyValue)
+        return
+      }
+      const value = parseFloat(raw)
+      if (!Number.isNaN(value)) {
+        const clamped = Math.max(
+          LEVERAGE_MIN,
+          Math.min(LEVERAGE_MAX, value),
+        )
+        handleCrossAccountLeverageChange(clamped)
+      }
+    },
+    [handleCrossAccountLeverageChange, initialCrossAccountLeverage],
+  )
 
   return (
     <>
@@ -213,14 +252,25 @@ const PortfolioPage = () => {
                       onValueChange={([value]) => {
                         handleCrossAccountLeverageChange(value)
                       }}
-                      min={0.1}
-                      max={5}
-                      step={0.1}
+                      min={LEVERAGE_MIN}
+                      max={LEVERAGE_MAX}
+                      step={LEVERAGE_STEP}
                       className="w-32"
                     />
-                    <span className="w-10 text-center text-sm font-medium">
-                      {crossAccountLeverage.toFixed(3)}x
-                    </span>
+                    <input
+                      type="number"
+                      value={leverageInput}
+                      onChange={event => {
+                        applyLeverageInput(event.target.value)
+                      }}
+                      onBlur={() => setIsLeverageInputFocused(false)}
+                      onFocus={() => setIsLeverageInputFocused(true)}
+                      min={LEVERAGE_MIN}
+                      max={LEVERAGE_MAX}
+                      step={LEVERAGE_STEP}
+                      className="w-14 rounded-md border border-border bg-transparent px-2 py-1 text-center text-sm font-medium [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                    />
+                    <span className="text-sm font-medium">x</span>
                   </>
                 )}
               </div>

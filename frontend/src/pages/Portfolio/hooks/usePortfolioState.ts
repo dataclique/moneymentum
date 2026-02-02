@@ -52,22 +52,6 @@ interface StoredPortfolioState {
 
 const MAX_CROSS_ACCOUNT_LEVERAGE = 5
 const DEFAULT_CROSS_ACCOUNT_LEVERAGE = 1
-const LEVERAGE_COOKIE_NAME = "portfolio-cross-account-leverage"
-
-const getLeverageFromCookie = (): number => {
-  const match = document.cookie.match(
-    new RegExp(`(?:^|; )${LEVERAGE_COOKIE_NAME}=([^;]*)`),
-  )
-  if (!match) return DEFAULT_CROSS_ACCOUNT_LEVERAGE
-  const value = parseFloat(match[1])
-  if (Number.isNaN(value)) return DEFAULT_CROSS_ACCOUNT_LEVERAGE
-  return Math.min(MAX_CROSS_ACCOUNT_LEVERAGE, value)
-}
-
-const setLeverageCookie = (value: number) => {
-  const maxAge = 365 * 24 * 60 * 60 // 1 year
-  document.cookie = `${LEVERAGE_COOKIE_NAME}=${value}; path=/; max-age=${maxAge}; SameSite=Lax`
-}
 
 const getTokenUsdAllocation = (
   token: TokenAllocation,
@@ -133,6 +117,20 @@ const calcLeverage = (totalNotional: number, accountValue: number): number =>
 const calcNotional = (percentage: number, totalNotional: number): number =>
   parseFloat(((percentage / 100) * totalNotional).toFixed(2))
 
+// Recalculate notionals for all tokens based on their weights and total notional
+// Use when leverage changes: totalNotional = leverage * accountValue
+const recalculateFromWeights = (
+  tokens: TokenAllocation[],
+  totalNotional: number,
+): TokenAllocation[] =>
+  tokens.map(t => {
+    if (t.status === "deleted") return t
+    return {
+      ...t,
+      notional: calcNotional(t.percentage, totalNotional),
+    }
+  })
+
 // Proportionally redistribute weights when one token's weight changes
 // The delta is distributed proportionally among other active tokens
 const redistributeWeights = (
@@ -194,10 +192,11 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
 
   const [storedDataSnapshot] = useState(() => getStoredPortfolio(networkMode))
 
-  // crossAccountLeverage is initialized from cookie, default to 1
   const [crossAccountLeverage, setCrossAccountLeverage] = useState(
-    getLeverageFromCookie,
+    DEFAULT_CROSS_ACCOUNT_LEVERAGE,
   )
+  const [initialCrossAccountLeverage, setInitialCrossAccountLeverage] =
+    useState<number | null>(null)
 
   const [selectedTokens, setSelectedTokens] = useState<TokenAllocation[]>(
     () =>
@@ -279,19 +278,6 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
     [persistStateToLocalStorage],
   )
 
-  const setCrossAccountLeverageAndPersist = useCallback(
-    (newLeverage: number) => {
-      const clampedLeverage = Math.min(MAX_CROSS_ACCOUNT_LEVERAGE, newLeverage)
-      setCrossAccountLeverage(clampedLeverage)
-      setLeverageCookie(clampedLeverage)
-      persistStateToLocalStorage(
-        clampedLeverage,
-        latestSelectedTokensRef.current,
-      )
-    },
-    [persistStateToLocalStorage],
-  )
-
   // Helper: recalculate percentages from notionals and update leverage
   // Use this when notional values change (add/remove/edit token notional)
   const updateByNotionalChange = useCallback(
@@ -301,7 +287,6 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
       if (accountValue > 0) {
         const newLeverage = calcLeverage(totalNotional, accountValue)
         setCrossAccountLeverage(newLeverage)
-        setLeverageCookie(newLeverage)
       }
       return updatedTokens
     },
@@ -340,7 +325,6 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
     // Calculate leverage from the formula: leverage = totalNotional / accountValue
     const initialLeverage = calcLeverage(totalExchangeNotional, accountValue)
     setCrossAccountLeverage(initialLeverage)
-    setLeverageCookie(initialLeverage)
 
     // Map exchange positions to TokenAllocation with calculated percentages
     const exchangeTokens: TokenAllocation[] = positionsData.positions.map(
@@ -417,7 +401,7 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
       if (accountValue > 0) {
         const newLeverage = calcLeverage(fullTotalNotional, accountValue)
         setCrossAccountLeverage(newLeverage)
-        setLeverageCookie(newLeverage)
+        setInitialCrossAccountLeverage(newLeverage)
       }
 
       setSelectedTokens(tokensWithPercentages)
@@ -843,11 +827,22 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
     [totalNotional, setSelectedTokensAndPersist],
   )
 
+  // When leverage changes: totalNotional = leverage * accountValue
+  // Weights stay fixed, notionals are recalculated from weights and new total
   const handleCrossAccountLeverageChange = useCallback(
     (value: number) => {
-      setCrossAccountLeverageAndPersist(value)
+      const clampedLeverage = Math.min(MAX_CROSS_ACCOUNT_LEVERAGE, value)
+      const newTotalNotional =
+        accountValue > 0 ? accountValue * clampedLeverage : 0
+
+      setCrossAccountLeverage(clampedLeverage)
+      latestCrossAccountLeverageRef.current = clampedLeverage
+
+      setSelectedTokensAndPersist(prev =>
+        recalculateFromWeights(prev, newTotalNotional),
+      )
     },
-    [setCrossAccountLeverageAndPersist],
+    [accountValue, setSelectedTokensAndPersist],
   )
 
   const handleOpenPositions = useCallback(() => {
@@ -1092,6 +1087,7 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
     // State
     accountValue,
     crossAccountLeverage,
+    initialCrossAccountLeverage,
     totalNotional,
     displayNotional,
     selectedTokens: tokensWithDeltaTracking,

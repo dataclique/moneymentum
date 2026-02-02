@@ -66,14 +66,14 @@ const PortfolioPage = () => {
   } = usePortfolioState(isPrecise)
 
   const [leverageInput, setLeverageInput] = useState(() =>
-    String(crossAccountLeverage),
+    crossAccountLeverage.toFixed(2),
   )
   const [isLeverageInputFocused, setIsLeverageInputFocused] =
     useState(false)
 
   useEffect(() => {
     if (!isLeverageInputFocused) {
-      setLeverageInput(String(crossAccountLeverage))
+      setLeverageInput(crossAccountLeverage.toFixed(2))
     }
   }, [crossAccountLeverage, isLeverageInputFocused])
 

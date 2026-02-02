@@ -61,8 +61,8 @@ export const TokenCard = ({
       : "0.00"
 
   // Local state for notional input to allow empty field while typing
-  const [notionalInput, setNotionalInput] = useState(
-    () => String(token.notional ?? parseFloat(usdAmount)),
+  const [notionalInput, setNotionalInput] = useState(() =>
+    (token.notional ?? parseFloat(usdAmount)).toFixed(2),
   )
 
   // Local state for weight input to allow empty field while typing
@@ -75,7 +75,7 @@ export const TokenCard = ({
     const externalValue = token.notional ?? parseFloat(usdAmount)
     const localValue = notionalInput === "" ? 0 : parseFloat(notionalInput)
     if (Math.abs(externalValue - localValue) > 0.001) {
-      setNotionalInput(String(externalValue))
+      setNotionalInput(Number(externalValue).toFixed(2))
     }
   }, [token.notional, usdAmount])
 

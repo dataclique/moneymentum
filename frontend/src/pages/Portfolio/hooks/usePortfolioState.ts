@@ -93,6 +93,41 @@ const getStoredPortfolio = (
   }
 }
 
+// Calculate total notional from active (non-deleted) tokens
+const calcTotalNotional = (tokens: TokenAllocation[]): number =>
+  tokens.reduce((sum, t) => {
+    if (t.status === "deleted") return sum
+    return sum + (t.notional ?? 0)
+  }, 0)
+
+// Calculate percentage from notional and total
+const calcPercentage = (notional: number, totalNotional: number): number =>
+  totalNotional > 0
+    ? parseFloat(((notional / totalNotional) * 100).toFixed(2))
+    : 0
+
+// Recalculate percentages for all tokens based on their notional values
+// Returns updated tokens and the total notional
+const recalculateFromNotionals = (
+  tokens: TokenAllocation[],
+): { tokens: TokenAllocation[]; totalNotional: number } => {
+  const totalNotional = calcTotalNotional(tokens)
+  const updatedTokens = tokens.map(t => {
+    if (t.status === "deleted" || t.notional === undefined) return t
+    return {
+      ...t,
+      percentage: calcPercentage(t.notional, totalNotional),
+    }
+  })
+  return { tokens: updatedTokens, totalNotional }
+}
+
+// Calculate leverage from total notional and account value
+const calcLeverage = (totalNotional: number, accountValue: number): number =>
+  accountValue > 0
+    ? Math.min(MAX_CROSS_ACCOUNT_LEVERAGE, totalNotional / accountValue)
+    : 1
+
 export const usePortfolioState = (isPrecise: boolean = false) => {
   const { networkMode } = useWallet()
 
@@ -207,6 +242,22 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
     [persistStateToLocalStorage],
   )
 
+  // Helper: recalculate percentages from notionals and update leverage
+  // Use this when notional values change (add/remove/edit token notional)
+  const updateByNotionalChange = useCallback(
+    (tokens: TokenAllocation[]): TokenAllocation[] => {
+      const { tokens: updatedTokens, totalNotional } =
+        recalculateFromNotionals(tokens)
+      if (accountValue > 0) {
+        const newLeverage = calcLeverage(totalNotional, accountValue)
+        setCrossAccountLeverage(newLeverage)
+        setLeverageCookie(newLeverage)
+      }
+      return updatedTokens
+    },
+    [accountValue],
+  )
+
   useEffect(() => {
     const effectStartTime = performance.now()
     console.log("[usePortfolioState] positions useEffect triggered")
@@ -237,35 +288,22 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
     )
 
     // Calculate leverage from the formula: leverage = totalNotional / accountValue
-    // This ensures leverage accurately reflects the current portfolio state
-    const calculatedLeverage =
-      accountValue > 0 ? totalExchangeNotional / accountValue : 1
-    const clampedLeverage = Math.min(MAX_CROSS_ACCOUNT_LEVERAGE, calculatedLeverage)
-    setCrossAccountLeverage(clampedLeverage)
-    setLeverageCookie(clampedLeverage)
+    const initialLeverage = calcLeverage(totalExchangeNotional, accountValue)
+    setCrossAccountLeverage(initialLeverage)
+    setLeverageCookie(initialLeverage)
 
-    // Calculate percentage relative to total notional (sum of all position notionals)
-    // This ensures weights represent the position's share of the actual portfolio
+    // Map exchange positions to TokenAllocation with calculated percentages
     const exchangeTokens: TokenAllocation[] = positionsData.positions.map(
-      pos => {
-        // Percentage = what portion of total portfolio this position represents
-        const percentage =
-          totalExchangeNotional > 0
-            ? parseFloat(
-                ((pos.notional / totalExchangeNotional) * 100).toFixed(2),
-              )
-            : 0
-        return {
-          symbol: pos.symbol,
-          percentage,
-          side: pos.side,
-          leverage: pos.leverage || 1,
-          status: "untouched" as const,
-          message: null,
-          notional: pos.notional,
-          lockedUsd: pos.notional,
-        }
-      },
+      pos => ({
+        symbol: pos.symbol,
+        percentage: calcPercentage(pos.notional, totalExchangeNotional),
+        side: pos.side,
+        leverage: pos.leverage || 1,
+        status: "untouched" as const,
+        message: null,
+        notional: pos.notional,
+        lockedUsd: pos.notional,
+      }),
     )
     console.log(
       `[usePortfolioState] mapping exchangeTokens took ${(performance.now() - mapStartTime).toFixed(2)}ms`,
@@ -282,44 +320,60 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
 
       // Start with localStorage tokens (preserving user's customizations)
       const mergedTokens: TokenAllocation[] = storedDataSnapshot.tokens.map(
-        token => ({
-          ...token,
-          leverage: token.leverage || 1,
-          lockedUsd:
-            token.lockedUsd === undefined || token.lockedUsd < MIN_USD
-              ? MIN_USD
-              : token.lockedUsd,
-          status: "untouched" as const,
-          message: null,
-        }),
+        token => {
+          const exchangeToken = exchangeTokens.find(
+            t => t.symbol === token.symbol,
+          )
+          if (exchangeToken) {
+            // Token exists on exchange - use exchange notional
+            return {
+              ...token,
+              leverage: token.leverage || 1,
+              notional: exchangeToken.notional,
+              lockedUsd: exchangeToken.notional,
+              status: "untouched" as const,
+              message: null,
+            }
+          }
+          // Token only in localStorage - set notional from stored value or MIN_USD
+          const storedNotional =
+            token.notional !== undefined && token.notional > 0
+              ? token.notional
+              : token.lockedUsd !== undefined && token.lockedUsd >= MIN_USD
+                ? token.lockedUsd
+                : MIN_USD
+          return {
+            ...token,
+            leverage: token.leverage || 1,
+            notional: storedNotional,
+            lockedUsd: storedNotional,
+            status: "untouched" as const,
+            message: null,
+          }
+        },
       )
 
-      // Add exchange positions that are NOT in localStorage (e.g., positions removed from UI but still on exchange)
+      // Add exchange positions that are NOT in localStorage
       for (const exchangeToken of exchangeTokens) {
         if (!storedSymbols.has(exchangeToken.symbol)) {
           mergedTokens.push(exchangeToken)
-        } else {
-          // Update notional AND percentage from exchange for existing tokens
-          // Percentage must be recalculated from actual notional to stay accurate
-          const idx = mergedTokens.findIndex(
-            t => t.symbol === exchangeToken.symbol,
-          )
-          if (idx !== -1) {
-            mergedTokens[idx] = {
-              ...mergedTokens[idx],
-              notional: exchangeToken.notional,
-              percentage: exchangeToken.percentage, // Use freshly calculated percentage
-            }
-          }
         }
       }
 
-      setSelectedTokens(mergedTokens)
+      // Recalculate percentages and leverage for all tokens
+      const { tokens: tokensWithPercentages, totalNotional: fullTotalNotional } =
+        recalculateFromNotionals(mergedTokens)
+
+      if (accountValue > 0) {
+        const newLeverage = calcLeverage(fullTotalNotional, accountValue)
+        setCrossAccountLeverage(newLeverage)
+        setLeverageCookie(newLeverage)
+      }
+
+      setSelectedTokens(tokensWithPercentages)
       // Baseline portfolio = only tokens that exist on exchange (for comparison)
-      // Tokens only in localStorage will be treated as "idle" (new tokens)
-      // But we need to match lockedUsd values from mergedTokens for accurate comparison
       const initialPortfolioTokens = exchangeTokens.map(exchangeToken => {
-        const mergedToken = mergedTokens.find(
+        const mergedToken = tokensWithPercentages.find(
           t => t.symbol === exchangeToken.symbol,
         )
         return mergedToken ?? exchangeToken
@@ -577,33 +631,26 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
         return
       }
 
-      const initialPercent =
-        targetNotional > 0
-          ? parseFloat(((MIN_USD / targetNotional) * 100).toFixed(2))
-          : 0
-
       const maxLeverageForSymbol = leverageLimitsMap[symbol] || 1
 
-      setSelectedTokensAndPersist(prev => [
-        ...prev,
-        {
-          symbol,
-          percentage: initialPercent,
-          side: "buy",
-          leverage: maxLeverageForSymbol,
-          status: "idle",
-          message: null,
-          notional: undefined,
-          lockedUsd: MIN_USD,
-        },
-      ])
+      setSelectedTokensAndPersist(prev => {
+        const tokensWithNew: TokenAllocation[] = [
+          ...prev,
+          {
+            symbol,
+            percentage: 0, // Will be recalculated
+            side: "buy" as const,
+            leverage: maxLeverageForSymbol,
+            status: "idle" as const,
+            message: null,
+            notional: MIN_USD,
+            lockedUsd: MIN_USD,
+          },
+        ]
+        return updateByNotionalChange(tokensWithNew)
+      })
     },
-    [
-      targetNotional,
-      minPercentFloor,
-      leverageLimitsMap,
-      setSelectedTokensAndPersist,
-    ],
+    [leverageLimitsMap, updateByNotionalChange, setSelectedTokensAndPersist],
   )
 
   const handleRemoveToken = useCallback(
@@ -612,53 +659,63 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
         const token = prev.find(t => t.symbol === symbol)
         if (!token) return prev
 
-        const existsOnExchange =
-          initialPortfolio.some(it => it.symbol === symbol) ||
-          (token.notional !== undefined && token.notional > 0)
+        // Only tokens from initialPortfolio (loaded from exchange) need the "undo" flow
+        // Newly added tokens should be removed completely
+        const existsOnExchange = initialPortfolio.some(
+          it => it.symbol === symbol,
+        )
 
-        // If token exists on exchange, mark as deleted so it gets closed
-        // Otherwise, just remove it from the list
-        if (!existsOnExchange) {
-          return prev.filter(t => t.symbol !== symbol)
+        if (existsOnExchange) {
+          // Mark as deleted (keeps in list for undo) and recalculate
+          const tokensWithDeleted = prev.map(t =>
+            t.symbol === symbol
+              ? {
+                  ...t,
+                  status: "deleted" as const,
+                  previousPercentage: t.percentage,
+                  percentage: 0,
+                  message: null,
+                }
+              : t,
+          )
+          return updateByNotionalChange(tokensWithDeleted)
         }
 
-        return prev.map(t =>
-          t.symbol === symbol
-            ? {
-                ...t,
-                status: "deleted" as const,
-                previousPercentage: t.percentage,
-                percentage: 0,
-                message: null,
-              }
-            : t,
-        )
+        // Token doesn't exist on exchange - remove completely and recalculate
+        const remainingTokens = prev.filter(t => t.symbol !== symbol)
+        return updateByNotionalChange(remainingTokens)
       })
     },
-    [initialPortfolio, setSelectedTokensAndPersist],
+    [initialPortfolio, updateByNotionalChange, setSelectedTokensAndPersist],
   )
 
   const handleUndoRemoveToken = useCallback(
     (symbol: string) => {
-      setSelectedTokensAndPersist(prev =>
-        prev.map(token => {
-          if (token.symbol !== symbol) return token
-          const hasExchangeNotional =
-            token.notional !== undefined && token.notional > 0
-          const needsMinimumUsd =
-            !hasExchangeNotional &&
-            (token.lockedUsd === undefined || token.lockedUsd < MIN_USD)
-          return {
-            ...token,
-            status: hasExchangeNotional ? "untouched" : "idle",
-            percentage: token.previousPercentage ?? minPercentFloor,
-            previousPercentage: undefined,
-            lockedUsd: needsMinimumUsd ? MIN_USD : token.lockedUsd,
-          }
-        }),
-      )
+      setSelectedTokensAndPersist(prev => {
+        const tokenToRestore = prev.find(t => t.symbol === symbol)
+        if (!tokenToRestore) return prev
+
+        const restoredNotional = tokenToRestore.notional ?? MIN_USD
+        const hasExchangeNotional =
+          tokenToRestore.notional !== undefined && tokenToRestore.notional > 0
+
+        // Restore token and recalculate
+        const tokensWithRestored = prev.map(token =>
+          token.symbol === symbol
+            ? {
+                ...token,
+                status: hasExchangeNotional
+                  ? ("untouched" as const)
+                  : ("idle" as const),
+                previousPercentage: undefined,
+                notional: restoredNotional,
+              }
+            : token,
+        )
+        return updateByNotionalChange(tokensWithRestored)
+      })
     },
-    [minPercentFloor, setSelectedTokensAndPersist],
+    [updateByNotionalChange, setSelectedTokensAndPersist],
   )
 
   const handleSideChange = useCallback(
@@ -690,55 +747,21 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
       if (Number.isNaN(newNotional) || newNotional < 0) return
 
       setSelectedTokensAndPersist(prev => {
-        // Calculate new total notional with the updated value
-        const newTotalNotional = prev.reduce((sum, token) => {
-          if (token.status === "deleted") return sum
-          if (token.symbol === symbol) return sum + newNotional
-          return sum + (token.notional ?? 0)
-        }, 0)
-
-        // Recalculate percentages for all tokens based on new total
-        const updatedTokens = prev.map(token => {
-          if (token.symbol === symbol) {
-            const percentage =
-              newTotalNotional > 0
-                ? parseFloat(((newNotional / newTotalNotional) * 100).toFixed(2))
-                : 0
-            return {
-              ...token,
-              notional: newNotional,
-              percentage,
-              lockedUsd: undefined,
-              message: null,
-            }
-          }
-          // Recalculate percentage for other tokens too
-          if (token.status !== "deleted" && token.notional !== undefined) {
-            const percentage =
-              newTotalNotional > 0
-                ? parseFloat(
-                    ((token.notional / newTotalNotional) * 100).toFixed(2),
-                  )
-                : token.percentage
-            return { ...token, percentage }
-          }
-          return token
-        })
-
-        // Recalculate cross account leverage: leverage = totalNotional / accountValue
-        if (accountValue > 0) {
-          const newLeverage = Math.min(
-            MAX_CROSS_ACCOUNT_LEVERAGE,
-            newTotalNotional / accountValue,
-          )
-          setCrossAccountLeverage(newLeverage)
-          setLeverageCookie(newLeverage)
-        }
-
-        return updatedTokens
+        // Update notional for the target token
+        const tokensWithUpdatedNotional = prev.map(token =>
+          token.symbol === symbol
+            ? {
+                ...token,
+                notional: newNotional,
+                lockedUsd: undefined,
+                message: null,
+              }
+            : token,
+        )
+        return updateByNotionalChange(tokensWithUpdatedNotional)
       })
     },
-    [accountValue, setSelectedTokensAndPersist],
+    [updateByNotionalChange, setSelectedTokensAndPersist],
   )
 
   const handleCrossAccountLeverageChange = useCallback(

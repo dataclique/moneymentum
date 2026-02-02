@@ -155,7 +155,7 @@ export const TokenCard = ({
             </Dialog>
           </div>
 
-          {/* Percentage (Weight) - stays fixed when leverage changes */}
+          {/* Weight - percentage of total notional */}
           <div
             className={twMerge(
               clsx(

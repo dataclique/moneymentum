@@ -237,15 +237,21 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
     )
 
     const mapStartTime = performance.now()
-    // Calculate percentage relative to targetNotional (accountValue * crossAccountLeverage)
-    // This ensures weights correctly represent the position's share of the target portfolio
-    const currentTargetNotional = accountValue * crossAccountLeverage
+    // Calculate total notional from all exchange positions first
+    const totalExchangeNotional = positionsData.positions.reduce(
+      (sum, pos) => sum + pos.notional,
+      0,
+    )
+    // Calculate percentage relative to total notional (sum of all position notionals)
+    // This ensures weights represent the position's share of the actual portfolio
     const exchangeTokens: TokenAllocation[] = positionsData.positions.map(
       pos => {
-        // Percentage = what portion of target portfolio this position represents
+        // Percentage = what portion of total portfolio this position represents
         const percentage =
-          currentTargetNotional > 0
-            ? parseFloat(((pos.notional / currentTargetNotional) * 100).toFixed(2))
+          totalExchangeNotional > 0
+            ? parseFloat(
+                ((pos.notional / totalExchangeNotional) * 100).toFixed(2),
+              )
             : 0
         return {
           symbol: pos.symbol,
@@ -397,6 +403,13 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
     [tokensWithComputedStatus],
   )
 
+  // Total notional = sum of all position notionals (actual exchange positions)
+  // Must be calculated before tokensWithDeltaTracking since it's used there
+  const totalNotional = useMemo(
+    () => activeTokens.reduce((sum, token) => sum + (token.notional ?? 0), 0),
+    [activeTokens],
+  )
+
   const hasPendingDeletions = useMemo(
     () => tokensWithComputedStatus.some(t => t.status === "deleted"),
     [tokensWithComputedStatus],
@@ -443,11 +456,12 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
       const currentNotional = exchangePosition?.notional ?? 0
 
       // Target notional based on percentage and total notional
-      const targetNotional =
-        displayNotional > 0 ? (token.percentage / 100) * displayNotional : 0
+      // Weight is percentage of total notional, so targetNotional = percentage/100 * totalNotional
+      const computedTargetNotional =
+        totalNotional > 0 ? (token.percentage / 100) * totalNotional : 0
 
       // Check if the delta is too small to execute
-      const delta = Math.abs(targetNotional - currentNotional)
+      const delta = Math.abs(computedTargetNotional - currentNotional)
       // Delta is insufficient if:
       // 1. There's a difference (not exactly matching)
       // 2. The difference is below the minimum order size
@@ -459,12 +473,12 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
 
       return {
         ...token,
-        targetNotional,
+        targetNotional: computedTargetNotional,
         currentNotional,
         deltaInsufficient,
       }
     })
-  }, [tokensWithDerivedPercentages, displayNotional, initialPortfolio])
+  }, [tokensWithDerivedPercentages, totalNotional, initialPortfolio])
 
   const derivedActiveTokens = useMemo(
     () => tokensWithDeltaTracking.filter(t => t.status !== "deleted"),
@@ -475,12 +489,6 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
     0,
   )
   const derivedRemainingPercent = Math.max(0, 100 - derivedTotalPercent)
-
-  // Total notional = sum of all position notionals (actual exchange positions)
-  const totalNotional = useMemo(
-    () => derivedActiveTokens.reduce((sum, token) => sum + (token.notional ?? 0), 0),
-    [derivedActiveTokens],
-  )
 
   const leverageLimitsMap = useMemo(() => {
     const map: Record<string, number> = {}

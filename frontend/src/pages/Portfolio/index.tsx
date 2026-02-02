@@ -116,7 +116,6 @@ const PortfolioPage = () => {
                   <div className="w-24 text-center">WEIGHT</div>
                   <div className="w-24 text-center">NOTIONAL</div>
                   <div className="w-24 text-center">SIDE</div>
-                  <div className="flex-1 px-2 text-center">SIZE</div>
                   <div className="w-16 text-right">ACTIONS</div>
                 </div>
                 {/* Skeleton token cards */}
@@ -150,7 +149,6 @@ const PortfolioPage = () => {
                   <div className="w-24 text-center">WEIGHT</div>
                   <div className="w-24 text-center">NOTIONAL</div>
                   <div className="w-24 text-center">SIDE</div>
-                  <div className="flex-1 px-2 text-center">SIZE</div>
                   <div className="w-16 text-right">ACTIONS</div>
                 </div>
                 <div className="space-y-2">

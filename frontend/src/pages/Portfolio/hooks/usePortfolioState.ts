@@ -226,23 +226,38 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
       console.log("[usePortfolioState] positions still loading or no data")
       return
     }
+    // Wait for accountValue to be loaded so we can calculate correct percentages
+    if (accountValue <= 0) {
+      console.log("[usePortfolioState] waiting for accountValue")
+      return
+    }
 
     console.log(
       `[usePortfolioState] processing ${positionsData.positions.length} positions from exchange`,
     )
 
     const mapStartTime = performance.now()
+    // Calculate percentage relative to targetNotional (accountValue * crossAccountLeverage)
+    // This ensures weights correctly represent the position's share of the target portfolio
+    const currentTargetNotional = accountValue * crossAccountLeverage
     const exchangeTokens: TokenAllocation[] = positionsData.positions.map(
-      pos => ({
-        symbol: pos.symbol,
-        percentage: parseFloat(pos.percentage.toFixed(2)),
-        side: pos.side,
-        leverage: pos.leverage || 1,
-        status: "untouched" as const,
-        message: null,
-        notional: pos.notional,
-        lockedUsd: pos.notional,
-      }),
+      pos => {
+        // Percentage = what portion of target portfolio this position represents
+        const percentage =
+          currentTargetNotional > 0
+            ? parseFloat(((pos.notional / currentTargetNotional) * 100).toFixed(2))
+            : 0
+        return {
+          symbol: pos.symbol,
+          percentage,
+          side: pos.side,
+          leverage: pos.leverage || 1,
+          status: "untouched" as const,
+          message: null,
+          notional: pos.notional,
+          lockedUsd: pos.notional,
+        }
+      },
     )
     console.log(
       `[usePortfolioState] mapping exchangeTokens took ${(performance.now() - mapStartTime).toFixed(2)}ms`,
@@ -276,7 +291,8 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
         if (!storedSymbols.has(exchangeToken.symbol)) {
           mergedTokens.push(exchangeToken)
         } else {
-          // Update notional from exchange for existing tokens
+          // Update notional AND percentage from exchange for existing tokens
+          // Percentage must be recalculated from actual notional to stay accurate
           const idx = mergedTokens.findIndex(
             t => t.symbol === exchangeToken.symbol,
           )
@@ -284,6 +300,7 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
             mergedTokens[idx] = {
               ...mergedTokens[idx],
               notional: exchangeToken.notional,
+              percentage: exchangeToken.percentage, // Use freshly calculated percentage
             }
           }
         }
@@ -316,6 +333,8 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
     isPositionsLoading,
     storedDataSnapshot,
     positionsLoadedFromExchange,
+    accountValue,
+    crossAccountLeverage,
   ])
 
   // Initialize budget from balance if not set from positions
@@ -354,15 +373,10 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
         return currentToken
       }
 
-      // Use getTokenUsdAllocation to compare actual USD values
-      // This handles tokens with notional vs lockedUsd correctly
-      // Use budget directly (budgetForUi isn't available yet in this useMemo)
-      const comparisonBudget = targetNotional > 0 ? targetNotional : MIN_USD
-      const currentUsd = getTokenUsdAllocation(currentToken, comparisonBudget)
-      const initialUsd = getTokenUsdAllocation(initialToken, comparisonBudget)
-
+      // Compare percentages (weights) directly - they are the source of truth
+      // Percentages stay fixed when leverage changes, so this comparison is stable
       const isModified =
-        Math.abs(currentUsd - initialUsd) > 0.01 ||
+        Math.abs(currentToken.percentage - initialToken.percentage) > 0.01 ||
         currentToken.side !== initialToken.side ||
         currentToken.leverage !== initialToken.leverage
 
@@ -376,7 +390,7 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
 
       return currentToken
     })
-  }, [selectedTokens, initialPortfolio, targetNotional])
+  }, [selectedTokens, initialPortfolio])
 
   const activeTokens = useMemo(
     () => tokensWithComputedStatus.filter(t => t.status !== "deleted"),
@@ -412,31 +426,9 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
     displayNotional > 0 ? Math.min(100, (MIN_USD / displayNotional) * 100) : 0
   const minPercentFloor = displayNotional >= MIN_USD ? minPercentOfNotional : 0
 
-  const tokensWithDerivedPercentages = useMemo(() => {
-    if (displayNotional <= 0) return tokensWithComputedStatus
-
-    return tokensWithComputedStatus.map(token => {
-      if (token.status === "deleted") return token
-      const referenceUsd =
-        token.notional !== undefined && token.notional > 0
-          ? token.notional
-          : token.lockedUsd
-      if (referenceUsd === undefined || referenceUsd < 0) return token
-
-      const derivedPercent = parseFloat(
-        ((referenceUsd / displayNotional) * 100).toFixed(2),
-      )
-
-      if (
-        !Number.isFinite(derivedPercent) ||
-        Math.abs(derivedPercent - token.percentage) <= 0.01
-      ) {
-        return token
-      }
-
-      return { ...token, percentage: derivedPercent }
-    })
-  }, [tokensWithComputedStatus, targetNotional])
+  // Percentages (weights) are fixed - they only change when user adjusts the slider
+  // or when initially loaded from exchange. They do NOT change when leverage changes.
+  const tokensWithDerivedPercentages = tokensWithComputedStatus
 
   // Compute delta tracking for each token to show when adjustments are too small
   const tokensWithDeltaTracking = useMemo(() => {

@@ -28,16 +28,6 @@ import {
 const getSideColor = (side: OrderSide) =>
   side === "buy" ? "rgba(34, 197, 94, 0.8)" : "rgba(239, 68, 68, 0.8)"
 
-const getTokenUsdAllocation = (token: TokenAllocation) => {
-  if (token.lockedUsd !== undefined && token.lockedUsd > 0) {
-    return token.lockedUsd
-  }
-  if (token.notional !== undefined && token.notional > 0) {
-    return token.notional
-  }
-  return 0
-}
-
 interface TokenCardProps {
   token: TokenAllocation
   displayNotional: number
@@ -61,13 +51,10 @@ export const TokenCard = ({
   onSideChange,
   onLeverageChange,
 }: TokenCardProps) => {
-  const tokenUsdValue = getTokenUsdAllocation(token)
-  const effectivePercent =
-    displayNotional > 0
-      ? (tokenUsdValue / displayNotional) * 100
-      : token.percentage
   const sideColor = getSideColor(token.side)
   const isLong = token.side === "buy"
+  // Always show target notional based on percentage and displayNotional
+  // When leverage changes, percentage stays fixed and notional is recalculated
   const usdAmount =
     displayNotional > 0
       ? ((token.percentage / 100) * displayNotional).toFixed(2)
@@ -168,7 +155,7 @@ export const TokenCard = ({
             </Dialog>
           </div>
 
-          {/* Percentage */}
+          {/* Percentage (Weight) - stays fixed when leverage changes */}
           <div
             className={twMerge(
               clsx(
@@ -177,7 +164,7 @@ export const TokenCard = ({
               ),
             )}
           >
-            <span className="text-sm">{effectivePercent.toFixed(2)}%</span>
+            <span className="text-sm">{token.percentage.toFixed(2)}%</span>
           </div>
 
           {/* Position Value */}
@@ -238,24 +225,6 @@ export const TokenCard = ({
               <option value="buy">Long</option>
               <option value="sell">Short</option>
             </select>
-          </div>
-
-          {/* Slider */}
-          <div
-            className={twMerge(
-              clsx("flex-1 px-2", token.status === "deleted" && "opacity-50"),
-            )}
-          >
-            <Slider
-              value={[token.percentage]}
-              onValueChange={([value]) => {
-                onSliderChange(token.symbol, value)
-              }}
-              min={minPercent}
-              max={maxPercent}
-              step={0.01}
-              disabled={token.status === "deleted"}
-            />
           </div>
 
           {/* Remove Button */}

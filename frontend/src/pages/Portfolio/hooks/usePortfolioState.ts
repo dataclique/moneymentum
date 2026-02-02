@@ -632,12 +632,6 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
       `Each position must be at least $${String(MIN_USD)}. Positions below minimum: ${tokensList}`,
     )
   }
-  const derivedTotalPercentExceeds100 = derivedTotalPercent > 100
-  if (derivedTotalPercentExceeds100) {
-    blockingReasons.push(
-      `Total allocation cannot exceed 100%. Current allocation: ${derivedTotalPercent.toFixed(2)}%`,
-    )
-  }
 
   const handleAddToken = useCallback(
     (symbol: string) => {
@@ -1080,8 +1074,7 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
     accountValue <= 0 ||
     rebalancePositionsMutation.isPending ||
     (derivedTotalPercent <= 0 && !hasPendingDeletions) ||
-    hasBlockingNotionalIssue ||
-    derivedTotalPercentExceeds100
+    hasBlockingNotionalIssue
 
   return {
     // State

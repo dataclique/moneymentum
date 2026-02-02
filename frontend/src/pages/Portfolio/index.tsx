@@ -53,6 +53,7 @@ const PortfolioPage = () => {
     handleUndoRemoveToken,
     handleSideChange,
     handleLeverageChange,
+    handleNotionalChange,
     handleCrossAccountLeverageChange,
     handleOpenPositions,
   } = usePortfolioState(isPrecise)
@@ -161,6 +162,7 @@ const PortfolioPage = () => {
                       onUndoRemove={handleUndoRemoveToken}
                       onSideChange={handleSideChange}
                       onLeverageChange={handleLeverageChange}
+                      onNotionalChange={handleNotionalChange}
                     />
                   ))}
                 </div>

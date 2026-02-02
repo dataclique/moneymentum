@@ -380,10 +380,13 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
         return currentToken
       }
 
-      // Compare percentages (weights) directly - they are the source of truth
-      // Percentages stay fixed when leverage changes, so this comparison is stable
+      // Compare notional values and other properties to determine if modified
+      // Notional comparison is the source of truth for position changes
+      const notionalDelta = Math.abs(
+        (currentToken.notional ?? 0) - (initialToken.notional ?? 0),
+      )
       const isModified =
-        Math.abs(currentToken.percentage - initialToken.percentage) > 0.01 ||
+        notionalDelta > 0.01 ||
         currentToken.side !== initialToken.side ||
         currentToken.leverage !== initialToken.leverage
 
@@ -682,6 +685,62 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
     [leverageLimitsMap, setSelectedTokensAndPersist],
   )
 
+  const handleNotionalChange = useCallback(
+    (symbol: string, newNotional: number) => {
+      if (Number.isNaN(newNotional) || newNotional < 0) return
+
+      setSelectedTokensAndPersist(prev => {
+        // Calculate new total notional with the updated value
+        const newTotalNotional = prev.reduce((sum, token) => {
+          if (token.status === "deleted") return sum
+          if (token.symbol === symbol) return sum + newNotional
+          return sum + (token.notional ?? 0)
+        }, 0)
+
+        // Recalculate percentages for all tokens based on new total
+        const updatedTokens = prev.map(token => {
+          if (token.symbol === symbol) {
+            const percentage =
+              newTotalNotional > 0
+                ? parseFloat(((newNotional / newTotalNotional) * 100).toFixed(2))
+                : 0
+            return {
+              ...token,
+              notional: newNotional,
+              percentage,
+              lockedUsd: undefined,
+              message: null,
+            }
+          }
+          // Recalculate percentage for other tokens too
+          if (token.status !== "deleted" && token.notional !== undefined) {
+            const percentage =
+              newTotalNotional > 0
+                ? parseFloat(
+                    ((token.notional / newTotalNotional) * 100).toFixed(2),
+                  )
+                : token.percentage
+            return { ...token, percentage }
+          }
+          return token
+        })
+
+        // Recalculate cross account leverage: leverage = totalNotional / accountValue
+        if (accountValue > 0) {
+          const newLeverage = Math.min(
+            MAX_CROSS_ACCOUNT_LEVERAGE,
+            newTotalNotional / accountValue,
+          )
+          setCrossAccountLeverage(newLeverage)
+          setLeverageCookie(newLeverage)
+        }
+
+        return updatedTokens
+      })
+    },
+    [accountValue, setSelectedTokensAndPersist],
+  )
+
   const handleCrossAccountLeverageChange = useCallback(
     (value: number) => {
       setCrossAccountLeverageAndPersist(value)
@@ -956,6 +1015,7 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
     handleUndoRemoveToken,
     handleSideChange,
     handleLeverageChange,
+    handleNotionalChange,
     handleCrossAccountLeverageChange,
     handleOpenPositions,
   }

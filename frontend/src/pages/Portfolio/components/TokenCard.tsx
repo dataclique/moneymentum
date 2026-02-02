@@ -1,3 +1,4 @@
+import { useState, useEffect } from "react"
 import { Trash2, Undo2, AlertCircle } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
@@ -35,6 +36,7 @@ interface TokenCardProps {
   onUndoRemove: (symbol: string) => void
   onSideChange: (symbol: string, side: OrderSide) => void
   onLeverageChange: (symbol: string, leverage: number) => void
+  onNotionalChange: (symbol: string, notional: number) => void
 }
 
 export const TokenCard = ({
@@ -45,6 +47,7 @@ export const TokenCard = ({
   onUndoRemove,
   onSideChange,
   onLeverageChange,
+  onNotionalChange,
 }: TokenCardProps) => {
   const sideColor = getSideColor(token.side)
   const isLong = token.side === "buy"
@@ -54,6 +57,20 @@ export const TokenCard = ({
     displayNotional > 0
       ? ((token.percentage / 100) * displayNotional).toFixed(2)
       : "0.00"
+
+  // Local state for notional input to allow empty field while typing
+  const [notionalInput, setNotionalInput] = useState(
+    () => String(token.notional ?? parseFloat(usdAmount)),
+  )
+
+  // Sync local state when token.notional changes from outside
+  useEffect(() => {
+    const externalValue = token.notional ?? parseFloat(usdAmount)
+    const localValue = notionalInput === "" ? 0 : parseFloat(notionalInput)
+    if (Math.abs(externalValue - localValue) > 0.001) {
+      setNotionalInput(String(externalValue))
+    }
+  }, [token.notional, usdAmount])
 
   return (
     <Card
@@ -147,16 +164,32 @@ export const TokenCard = ({
             <span className="text-sm">{token.percentage.toFixed(2)}%</span>
           </div>
 
-          {/* Position Value */}
+          {/* Position Notional */}
           <div
             className={twMerge(
               clsx(
-                "w-24 text-center flex items-center justify-center gap-1",
+                "w-28 text-center flex items-center justify-center gap-1",
                 token.status === "deleted" && "opacity-50",
               ),
             )}
           >
-            <span className="text-sm">${usdAmount}</span>
+            <span className="text-sm text-muted-foreground">$</span>
+            <input
+              type="number"
+              value={notionalInput}
+              onChange={event => {
+                const rawValue = event.target.value
+                setNotionalInput(rawValue)
+                const value = rawValue === "" ? 0 : parseFloat(rawValue)
+                if (!Number.isNaN(value)) {
+                  onNotionalChange(token.symbol, value)
+                }
+              }}
+              disabled={token.status === "deleted"}
+              step={1}
+              min={0}
+              className="w-20 rounded-md border border-border bg-transparent px-2 py-1 text-sm text-center [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+            />
             {token.deltaInsufficient && (
               <TooltipProvider>
                 <Tooltip>

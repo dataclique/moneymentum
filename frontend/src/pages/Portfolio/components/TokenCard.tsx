@@ -37,6 +37,7 @@ interface TokenCardProps {
   onSideChange: (symbol: string, side: OrderSide) => void
   onLeverageChange: (symbol: string, leverage: number) => void
   onNotionalChange: (symbol: string, notional: number) => void
+  onWeightChange: (symbol: string, percentage: number) => void
 }
 
 export const TokenCard = ({
@@ -48,6 +49,7 @@ export const TokenCard = ({
   onSideChange,
   onLeverageChange,
   onNotionalChange,
+  onWeightChange,
 }: TokenCardProps) => {
   const sideColor = getSideColor(token.side)
   const isLong = token.side === "buy"
@@ -63,6 +65,11 @@ export const TokenCard = ({
     () => String(token.notional ?? parseFloat(usdAmount)),
   )
 
+  // Local state for weight input to allow empty field while typing
+  const [weightInput, setWeightInput] = useState(() =>
+    String(token.percentage),
+  )
+
   // Sync local state when token.notional changes from outside
   useEffect(() => {
     const externalValue = token.notional ?? parseFloat(usdAmount)
@@ -71,6 +78,14 @@ export const TokenCard = ({
       setNotionalInput(String(externalValue))
     }
   }, [token.notional, usdAmount])
+
+  // Sync local weight state when token.percentage changes from outside
+  useEffect(() => {
+    const localValue = weightInput === "" ? 0 : parseFloat(weightInput)
+    if (Math.abs(token.percentage - localValue) > 0.001) {
+      setWeightInput(String(token.percentage))
+    }
+  }, [token.percentage])
 
   return (
     <Card
@@ -156,12 +171,29 @@ export const TokenCard = ({
           <div
             className={twMerge(
               clsx(
-                "w-24 text-center",
+                "w-28 text-center flex items-center justify-center gap-1",
                 token.status === "deleted" && "opacity-50",
               ),
             )}
           >
-            <span className="text-sm">{token.percentage.toFixed(2)}%</span>
+            <input
+              type="number"
+              value={weightInput}
+              onChange={event => {
+                const rawValue = event.target.value
+                setWeightInput(rawValue)
+                const value = rawValue === "" ? 0 : parseFloat(rawValue)
+                if (!Number.isNaN(value)) {
+                  onWeightChange(token.symbol, value)
+                }
+              }}
+              disabled={token.status === "deleted"}
+              step={0.5}
+              min={0}
+              max={100}
+              className="w-16 rounded-md border border-border bg-transparent px-2 py-1 text-sm text-center [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+            />
+            <span className="text-sm text-muted-foreground">%</span>
           </div>
 
           {/* Position Notional */}

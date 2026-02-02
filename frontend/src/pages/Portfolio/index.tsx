@@ -54,6 +54,7 @@ const PortfolioPage = () => {
     handleSideChange,
     handleLeverageChange,
     handleNotionalChange,
+    handleWeightChange,
     handleCrossAccountLeverageChange,
     handleOpenPositions,
   } = usePortfolioState(isPrecise)
@@ -163,6 +164,7 @@ const PortfolioPage = () => {
                       onSideChange={handleSideChange}
                       onLeverageChange={handleLeverageChange}
                       onNotionalChange={handleNotionalChange}
+                      onWeightChange={handleWeightChange}
                     />
                   ))}
                 </div>

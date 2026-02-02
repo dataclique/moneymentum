@@ -30,6 +30,7 @@ export interface TokenAllocation {
   notional?: number
   lockedUsd?: number
   previousPercentage?: number
+  previousNotional?: number
   // Delta tracking for UI display
   targetNotional?: number
   currentNotional?: number
@@ -127,6 +128,55 @@ const calcLeverage = (totalNotional: number, accountValue: number): number =>
   accountValue > 0
     ? Math.min(MAX_CROSS_ACCOUNT_LEVERAGE, totalNotional / accountValue)
     : 1
+
+// Calculate notional from percentage and total notional
+const calcNotional = (percentage: number, totalNotional: number): number =>
+  parseFloat(((percentage / 100) * totalNotional).toFixed(2))
+
+// Proportionally redistribute weights when one token's weight changes
+// The delta is distributed proportionally among other active tokens
+const redistributeWeights = (
+  tokens: TokenAllocation[],
+  changedSymbol: string,
+  newPercentage: number,
+  totalNotional: number,
+): TokenAllocation[] => {
+  const changedToken = tokens.find(t => t.symbol === changedSymbol)
+  if (!changedToken) return tokens
+
+  const oldPercentage = changedToken.percentage
+  const delta = newPercentage - oldPercentage
+
+  // Sum of other active tokens' percentages
+  const otherActiveTokens = tokens.filter(
+    t => t.symbol !== changedSymbol && t.status !== "deleted",
+  )
+  const otherTotalPercent = otherActiveTokens.reduce(
+    (sum, t) => sum + t.percentage,
+    0,
+  )
+
+  return tokens.map(t => {
+    if (t.symbol === changedSymbol) {
+      return {
+        ...t,
+        percentage: parseFloat(newPercentage.toFixed(2)),
+        notional: calcNotional(newPercentage, totalNotional),
+      }
+    }
+    if (t.status === "deleted") return t
+
+    // Proportionally adjust other tokens' weights
+    // Each token absorbs a share of the delta proportional to its weight
+    const proportion = otherTotalPercent > 0 ? t.percentage / otherTotalPercent : 0
+    const adjustedPercentage = Math.max(0, t.percentage - delta * proportion)
+    return {
+      ...t,
+      percentage: parseFloat(adjustedPercentage.toFixed(2)),
+      notional: calcNotional(adjustedPercentage, totalNotional),
+    }
+  })
+}
 
 export const usePortfolioState = (isPrecise: boolean = false) => {
   const { networkMode } = useWallet()
@@ -610,23 +660,29 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
       const existingToken = selectedTokens.find(t => t.symbol === symbol)
       if (existingToken) {
         if (existingToken.status === "deleted") {
-          setSelectedTokensAndPersist(prev =>
-            prev.map(token => {
-              if (token.symbol !== symbol) return token
-              const hasExchangeNotional =
-                token.notional !== undefined && token.notional > 0
-              const needsMinimumUsd =
-                !hasExchangeNotional &&
-                (token.lockedUsd === undefined || token.lockedUsd < MIN_USD)
-              return {
-                ...token,
-                status: hasExchangeNotional ? "untouched" : "idle",
-                percentage: token.previousPercentage ?? minPercentFloor,
-                previousPercentage: undefined,
-                lockedUsd: needsMinimumUsd ? MIN_USD : token.lockedUsd,
-              }
-            }),
-          )
+          // Restore deleted token and recalculate weights from notionals
+          setSelectedTokensAndPersist(prev => {
+            const tokenToRestore = prev.find(t => t.symbol === symbol)
+            if (!tokenToRestore) return prev
+
+            const restoredNotional = tokenToRestore.notional ?? MIN_USD
+            const hasExchangeNotional =
+              tokenToRestore.notional !== undefined && tokenToRestore.notional > 0
+
+            const tokensWithRestored = prev.map(t =>
+              t.symbol === symbol
+                ? {
+                    ...t,
+                    status: hasExchangeNotional
+                      ? ("untouched" as const)
+                      : ("idle" as const),
+                    previousPercentage: undefined,
+                    notional: restoredNotional,
+                  }
+                : t,
+            )
+            return updateByNotionalChange(tokensWithRestored)
+          })
         }
         return
       }
@@ -638,7 +694,7 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
           ...prev,
           {
             symbol,
-            percentage: 0, // Will be recalculated
+            percentage: 0, // Will be recalculated from notional
             side: "buy" as const,
             leverage: maxLeverageForSymbol,
             status: "idle" as const,
@@ -666,7 +722,8 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
         )
 
         if (existsOnExchange) {
-          // Mark as deleted (keeps in list for undo) and recalculate
+          // For existing exchange positions: keep token (for undo), zero notional and weight.
+          // Then recalculate weights from notionals and update leverage.
           const tokensWithDeleted = prev.map(t =>
             t.symbol === symbol
               ? {
@@ -674,6 +731,7 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
                   status: "deleted" as const,
                   previousPercentage: t.percentage,
                   percentage: 0,
+                  notional: 0,
                   message: null,
                 }
               : t,
@@ -681,7 +739,8 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
           return updateByNotionalChange(tokensWithDeleted)
         }
 
-        // Token doesn't exist on exchange - remove completely and recalculate
+        // For newly added tokens (not on exchange): remove from list.
+        // Then recalculate weights from notionals and update leverage.
         const remainingTokens = prev.filter(t => t.symbol !== symbol)
         return updateByNotionalChange(remainingTokens)
       })
@@ -695,11 +754,15 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
         const tokenToRestore = prev.find(t => t.symbol === symbol)
         if (!tokenToRestore) return prev
 
-        const restoredNotional = tokenToRestore.notional ?? MIN_USD
+        const restoredPercent = tokenToRestore.previousPercentage ?? 0
+        const restoredNotional =
+          tokenToRestore.previousNotional ?? tokenToRestore.lockedUsd ?? MIN_USD
         const hasExchangeNotional =
-          tokenToRestore.notional !== undefined && tokenToRestore.notional > 0
+          tokenToRestore.previousNotional !== undefined &&
+          tokenToRestore.previousNotional > 0
 
-        // Restore token and recalculate
+        // Restore token's notional and let updateByNotionalChange
+        // recompute totalNotional, leverage and weights for all tokens
         const tokensWithRestored = prev.map(token =>
           token.symbol === symbol
             ? {
@@ -707,11 +770,13 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
                 status: hasExchangeNotional
                   ? ("untouched" as const)
                   : ("idle" as const),
+                percentage: restoredPercent,
                 previousPercentage: undefined,
                 notional: restoredNotional,
               }
             : token,
         )
+
         return updateByNotionalChange(tokensWithRestored)
       })
     },
@@ -762,6 +827,20 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
       })
     },
     [updateByNotionalChange, setSelectedTokensAndPersist],
+  )
+
+  const handleWeightChange = useCallback(
+    (symbol: string, newPercentage: number) => {
+      if (Number.isNaN(newPercentage) || newPercentage < 0) return
+
+      setSelectedTokensAndPersist(prev => {
+        // Clamp percentage to max 100%
+        const clampedPercentage = Math.min(100, newPercentage)
+        // Redistribute weights proportionally - total notional stays constant
+        return redistributeWeights(prev, symbol, clampedPercentage, totalNotional)
+      })
+    },
+    [totalNotional, setSelectedTokensAndPersist],
   )
 
   const handleCrossAccountLeverageChange = useCallback(
@@ -1039,6 +1118,7 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
     handleSideChange,
     handleLeverageChange,
     handleNotionalChange,
+    handleWeightChange,
     handleCrossAccountLeverageChange,
     handleOpenPositions,
   }

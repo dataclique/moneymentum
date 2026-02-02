@@ -21,7 +21,6 @@ import { twMerge } from "tailwind-merge"
 import type { OrderSide } from "@/hooks/useTrading"
 import {
   type TokenAllocation,
-  MIN_USD,
   MIN_CHANGE_DELTA,
 } from "../hooks/usePortfolioState"
 
@@ -31,11 +30,9 @@ const getSideColor = (side: OrderSide) =>
 interface TokenCardProps {
   token: TokenAllocation
   displayNotional: number
-  activeTokens: TokenAllocation[]
   maxLeverage: number | undefined
   onRemove: (symbol: string) => void
   onUndoRemove: (symbol: string) => void
-  onSliderChange: (symbol: string, percentage: number) => void
   onSideChange: (symbol: string, side: OrderSide) => void
   onLeverageChange: (symbol: string, leverage: number) => void
 }
@@ -43,11 +40,9 @@ interface TokenCardProps {
 export const TokenCard = ({
   token,
   displayNotional,
-  activeTokens,
   maxLeverage,
   onRemove,
   onUndoRemove,
-  onSliderChange,
   onSideChange,
   onLeverageChange,
 }: TokenCardProps) => {
@@ -59,21 +54,6 @@ export const TokenCard = ({
     displayNotional > 0
       ? ((token.percentage / 100) * displayNotional).toFixed(2)
       : "0.00"
-
-  // Min percentage based on MIN_USD requirement
-  const minPercent =
-    displayNotional > 0
-      ? Math.max(0.01, (MIN_USD / displayNotional) * 100)
-      : 0.01
-
-  // Sum of other tokens' percentages
-  const otherTokensPercent = activeTokens.reduce((acc, t) => {
-    if (t.symbol === token.symbol) return acc
-    return acc + t.percentage
-  }, 0)
-
-  // Max for this token is 100% minus other allocations
-  const maxPercent = Math.max(minPercent, 100 - otherTokensPercent)
 
   return (
     <Card

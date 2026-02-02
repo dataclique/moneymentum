@@ -658,52 +658,6 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
     [minPercentFloor, setSelectedTokensAndPersist],
   )
 
-  const handleSliderChange = useCallback(
-    (symbol: string, percentage: number) => {
-      if (Number.isNaN(percentage) || percentage < 0) return
-
-      const targetToken = selectedTokens.find(token => token.symbol === symbol)
-      if (!targetToken) return
-
-      // Calculate other tokens' total percentage
-      const otherTokensPercent = activeTokens.reduce((sum, token) => {
-        if (token.symbol === symbol) return sum
-        return sum + token.percentage
-      }, 0)
-
-      // Max percentage for this token: 100% minus other tokens' allocations
-      const maxPercent = Math.max(0, 100 - otherTokensPercent)
-
-      // Clamp to valid range
-      const clampedPercent = Math.max(
-        minPercentFloor,
-        Math.min(percentage, maxPercent),
-      )
-
-      setSelectedTokensAndPersist(prev =>
-        prev.map(token => {
-          if (token.symbol !== symbol) return token
-          const finalPercent = parseFloat(
-            Math.max(0, clampedPercent).toFixed(2),
-          )
-          return {
-            ...token,
-            percentage: finalPercent,
-            notional: undefined,
-            lockedUsd: undefined,
-            message: null,
-          }
-        }),
-      )
-    },
-    [
-      selectedTokens,
-      activeTokens,
-      minPercentFloor,
-      setSelectedTokensAndPersist,
-    ],
-  )
-
   const handleSideChange = useCallback(
     (symbol: string, side: OrderSide) => {
       setSelectedTokensAndPersist(prev =>
@@ -1000,7 +954,6 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
     handleAddToken,
     handleRemoveToken,
     handleUndoRemoveToken,
-    handleSliderChange,
     handleSideChange,
     handleLeverageChange,
     handleCrossAccountLeverageChange,

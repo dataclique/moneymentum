@@ -51,7 +51,6 @@ const PortfolioPage = () => {
     handleAddToken,
     handleRemoveToken,
     handleUndoRemoveToken,
-    handleSliderChange,
     handleSideChange,
     handleLeverageChange,
     handleCrossAccountLeverageChange,
@@ -157,11 +156,9 @@ const PortfolioPage = () => {
                       key={token.symbol}
                       token={token}
                       displayNotional={displayNotional}
-                      activeTokens={activeTokens}
                       maxLeverage={leverageLimitsMap[token.symbol]}
                       onRemove={handleRemoveToken}
                       onUndoRemove={handleUndoRemoveToken}
-                      onSliderChange={handleSliderChange}
                       onSideChange={handleSideChange}
                       onLeverageChange={handleLeverageChange}
                     />

@@ -174,6 +174,7 @@ export interface RebalanceParams {
     leverage: number
     leverageChanged: boolean
     currentNotional?: number
+    currentSide?: "buy" | "sell"
     status: "untouched" | "modified" | "idle" | "deleted" | "working"
   }>
 }
@@ -198,6 +199,7 @@ export const useRebalanceHyperliquidPositions = () => {
         leverage: pos.leverage,
         leverageChanged: pos.leverageChanged,
         currentNotional: pos.currentNotional,
+        currentSide: pos.currentSide,
         status: pos.status === "working" ? "idle" : pos.status,
       }))
 

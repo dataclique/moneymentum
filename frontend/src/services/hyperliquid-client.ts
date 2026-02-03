@@ -122,6 +122,7 @@ export interface Position {
   leverage: number
   leverageChanged: boolean
   currentNotional?: number
+  currentSide?: OrderSide
   status: PositionStatus
 }
 
@@ -376,6 +377,29 @@ export class HyperliquidClient {
     return processed
   }
 
+  private buildCurrentPositionsMapFromPayload(
+    positions: Position[],
+  ): Record<string, CurrentPosition> {
+    const result: Record<string, CurrentPosition> = {}
+    for (const pos of positions) {
+      if (
+        pos.currentNotional !== undefined &&
+        pos.currentNotional > 0 &&
+        pos.currentSide !== undefined
+      ) {
+        result[pos.symbol] = {
+          symbol: pos.symbol,
+          side: pos.currentSide,
+          notional: pos.currentNotional,
+          entryPrice: 0,
+          unrealizedPnl: 0,
+          leverage: pos.leverage,
+        }
+      }
+    }
+    return result
+  }
+
   private async fetchSymbolPrices(
     symbols: string[],
   ): Promise<Record<string, number>> {
@@ -495,7 +519,7 @@ export class HyperliquidClient {
     price: number,
     notionalDelta: number,
     percentage: number,
-  ): Promise<OrderResult | null> {
+  ): Promise<OrderResult> {
     const side: OrderSide = notionalDelta > 0 ? "buy" : "sell"
     const usdAmount = Math.abs(notionalDelta)
     const coinAmount = usdAmount / price
@@ -514,25 +538,6 @@ export class HyperliquidClient {
       const slippagePrice =
         side === "buy" ? price * (1 + SLIPPAGE) : price * (1 - SLIPPAGE)
 
-      // Check markets state before createOrder
-      const exchange = this.exchange as unknown as {
-        markets?: Record<string, unknown>
-        markets_by_id?: Record<string, unknown>
-      }
-      console.log("[placeOrder] Before createOrder", {
-        symbol,
-        side,
-        coinAmount: coinAmount.toFixed(6),
-        slippagePrice: slippagePrice.toFixed(2),
-        hasMarkets: !!exchange.markets,
-        marketsCount: exchange.markets
-          ? Object.keys(exchange.markets).length
-          : 0,
-        hasMarketsById: !!exchange.markets_by_id,
-      })
-
-      const createOrderStart = performance.now()
-      console.log("[placeOrder] Calling createOrder...")
       await this.exchange.createOrder(
         symbol,
         "market",
@@ -541,9 +546,6 @@ export class HyperliquidClient {
         slippagePrice,
         this.vaultParams,
       )
-      console.log("[placeOrder] createOrder completed", {
-        elapsed: `${(performance.now() - createOrderStart).toFixed(2)}ms`,
-      })
 
       return {
         symbol,
@@ -562,10 +564,61 @@ export class HyperliquidClient {
     }
   }
 
+  /** Close a portion of position by notional (USD). Bypasses MIN_ORDER_VALUE for reduce-only. */
+  private async closeReduceOnlyNotional(
+    symbol: string,
+    price: number,
+    usdAmount: number,
+    closeSide: OrderSide,
+    _targetSide: OrderSide,
+    percentage: number,
+  ): Promise<OrderResult> {
+    const coinAmount = usdAmount / price
+    if (coinAmount <= 0) {
+      return {
+        symbol,
+        side: closeSide,
+        percentage,
+        status: "filled",
+        message: "No close needed: amount is zero.",
+      }
+    }
+
+    try {
+      const slippagePrice =
+        closeSide === "buy"
+          ? price * (1 + SLIPPAGE)
+          : price * (1 - SLIPPAGE)
+
+      await this.exchange.createOrder(
+        symbol,
+        "market",
+        closeSide,
+        coinAmount,
+        slippagePrice,
+        {
+          reduceOnly: true,
+          ...this.vaultParams,
+        },
+      )
+
+      return { symbol, side: closeSide, percentage, status: "filled" }
+    } catch (error) {
+      return {
+        symbol,
+        side: closeSide,
+        percentage,
+        status: "failed",
+        message: error instanceof Error ? error.message : String(error),
+      }
+    }
+  }
+
   async rebalancePositions(
     positions: Position[],
     accountValue: number,
     crossAccountLeverage: number = 1,
+    precise: boolean = false,
   ): Promise<OrderResult[]> {
     const rebalanceStartTime = performance.now()
     console.log("[Rebalance] client.rebalancePositions() started", {
@@ -573,6 +626,7 @@ export class HyperliquidClient {
       positionCount: positions.length,
       accountValue,
       crossAccountLeverage,
+      precise,
     })
 
     if (accountValue <= 0) {
@@ -680,9 +734,11 @@ export class HyperliquidClient {
         position.percentage * totalNotional,
       )
       // Use passed currentNotional (from cached positions), default to 0 for new positions
+      // Sign with currentSide when available (actual exchange side), else position.side
       if (position.currentNotional !== undefined) {
+        const sideForSign = position.currentSide ?? position.side
         currentNotional[position.symbol] = this.signedNotional(
-          position.side,
+          sideForSign,
           position.currentNotional,
         )
       }
@@ -702,7 +758,13 @@ export class HyperliquidClient {
     const ordersStartTime = performance.now()
     console.log("[Rebalance] Step 6: Placing orders", {
       count: successfulPositions.length,
+      precise,
     })
+
+    const currentPositionsMap: Record<string, CurrentPosition> = precise
+      ? this.buildCurrentPositionsMapFromPayload(successfulPositions)
+      : {}
+
     if (successfulPositions.length > 0) {
       const orderPreview = successfulPositions.map(position => {
         const symbol = position.symbol
@@ -727,40 +789,29 @@ export class HyperliquidClient {
     for (const position of successfulPositions) {
       const symbol = position.symbol
       const price = prices[symbol]
+      if (price === undefined) continue
 
       const targetValue = targetNotional[symbol] ?? 0
       const currentValue = currentNotional[symbol] ?? 0
-      const notionalDelta = targetValue - currentValue
-
-      if (Math.abs(notionalDelta) < 1.0) {
-        console.log("[Rebalance] Skipping order - negligible delta", {
-          symbol,
-          notionalDelta,
-        })
-        results.push({
-          symbol,
-          side: position.side,
-          percentage: position.percentage,
-          status: "filled",
-          message: "No action taken: change is negligible.",
-        })
-        continue
-      }
+      const currentPosition = currentPositionsMap[symbol]
 
       const orderStartTime = performance.now()
-      const orderResult = await this.placeOrder(
-        symbol,
+      const orderResults = await this.processPosition(
+        position,
         price,
-        notionalDelta,
-        position.percentage,
+        targetValue,
+        currentValue,
+        currentPosition,
+        currentNotional,
+        precise,
       )
       console.log("[Rebalance] Order placed", {
         symbol,
         elapsed: `${(performance.now() - orderStartTime).toFixed(2)}ms`,
-        status: orderResult?.status,
+        status: orderResults[0]?.status,
       })
 
-      if (orderResult) {
+      for (const orderResult of orderResults) {
         results.push(orderResult)
       }
     }
@@ -804,7 +855,8 @@ export class HyperliquidClient {
 
     // Precise mode for small changes
     if (precise && Math.abs(notionalDelta) < MIN_ORDER_VALUE) {
-      const currentNotionalAbs = Math.abs(currentNotional[symbol] ?? 0)
+      const currentNotionalAbs =
+        currentPosition?.notional ?? Math.abs(currentNotional[symbol] ?? 0)
       return this.processPositionPreciseMode(
         position,
         price,
@@ -922,22 +974,14 @@ export class HyperliquidClient {
     // Close amount exceeds or equals position size - close fully and open target
     if (closeAmount >= currentNotionalAbs) {
       const actualCloseAmount = Math.min(closeAmount, currentNotionalAbs)
-      const closeResult =
-        actualCloseAmount < MIN_ORDER_VALUE
-          ? await this.closeReduceOnlyNotional(
-              symbol,
-              price,
-              actualCloseAmount,
-              closeSide,
-              targetSide,
-              percentage,
-            )
-          : await this.placeOrder(
-              symbol,
-              price,
-              closeSide === "buy" ? actualCloseAmount : -actualCloseAmount,
-              percentage,
-            )
+      const closeResult = await this.closeReduceOnlyNotional(
+        symbol,
+        price,
+        actualCloseAmount,
+        closeSide,
+        targetSide,
+        percentage,
+      )
 
       const openNotional =
         targetNotionalAbs >= MIN_ORDER_VALUE
@@ -958,15 +1002,16 @@ export class HyperliquidClient {
     }
 
     // Normal increasing: close $11, open ($11 + delta)
-    const closeNotional = closeSide === "buy" ? closeAmount : -closeAmount
-    const closeResult = await this.placeOrder(
+    const closeResult = await this.closeReduceOnlyNotional(
       symbol,
       price,
-      closeNotional,
+      closeAmount,
+      closeSide,
+      targetSide,
       percentage,
-    )
+      )
 
-    const openNotional = targetSide === "buy" ? openAmount : -openAmount
+      const openNotional = targetSide === "buy" ? openAmount : -openAmount
     const openResult = await this.placeOrder(
       symbol,
       price,

@@ -963,6 +963,7 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
             ? token.leverage !== exchangePosition.leverage
             : true,
           currentNotional: exchangePosition?.notional,
+          currentSide: exchangePosition?.side,
           percentage: token.percentage / 100,
           status: mapStatusForApi(token.status),
         }

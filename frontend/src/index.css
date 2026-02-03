@@ -198,28 +198,29 @@
   }
 }
 
-.border-animated-gradient {
+.card-border {
   position: relative;
-  z-index: 0;
-  border-radius: var(--radius); /* Match your card's border-radius */
 }
 
-.border-animated-gradient::before {
-  content: "";
+.card-border-svg {
   position: absolute;
-  z-index: -1;
-  inset: -2px; /* Border thickness */
-  border-radius: inherit; /* Match parent */
-  background-image: conic-gradient(
-    from 180deg at 50% 50%,
-    var(--gradient-amber-400),
-    var(--gradient-amber-500),
-    var(--gradient-amber-600),
-    var(--gradient-amber-700),
-    var(--gradient-amber-500),
-    var(--gradient-amber-400)
-  );
-  animation: rotate 4s linear infinite;
+}
+
+.card-border-line {
+  stroke-dasharray: 260;
+  stroke-width: 1px;
+  fill: transparent;
+  stroke: rgba(255, 243, 13, 0.3);
+  animation: svgAnimation 2.5s linear infinite;
+}
+
+@keyframes svgAnimation {
+  from {
+    stroke-dashoffset: 0;
+  }
+  to {
+    stroke-dashoffset: 1000;
+  }
 }
 
 .portfolio-slider {

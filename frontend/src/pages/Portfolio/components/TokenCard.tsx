@@ -32,6 +32,7 @@ interface TokenCardProps {
   token: TokenAllocation
   displayNotional: number
   maxLeverage: number | undefined
+  isRebalancing: boolean
   onRemove: (symbol: string) => void
   onUndoRemove: (symbol: string) => void
   onSideChange: (symbol: string, side: OrderSide) => void
@@ -44,6 +45,7 @@ export const TokenCard = ({
   token,
   displayNotional,
   maxLeverage,
+  isRebalancing,
   onRemove,
   onUndoRemove,
   onSideChange,
@@ -52,6 +54,16 @@ export const TokenCard = ({
   onWeightChange,
 }: TokenCardProps) => {
   const sideColor = getSideColor(token.side)
+  const borderColor =
+    token.status === "deleted"
+      ? sideColor.replace("0.8", "0.2")
+      : sideColor
+  const showProgressAnimation =
+    token.status === "working" ||
+    (token.status === "deleted" && isRebalancing)
+  const cardStyle = {
+    borderLeftColor: borderColor,
+  }
   const isLong = token.side === "buy"
   // Always show target notional based on percentage and displayNotional
   // When leverage changes, percentage stays fixed and notional is recalculated
@@ -91,36 +103,45 @@ export const TokenCard = ({
     <Card
       className={twMerge(
         clsx(
-          "overflow-hidden",
+          "card-border relative overflow-hidden",
           token.status === "idle" && "border-l-4",
-          token.status === "filled" && "border-2 border-emerald-500",
-          token.status === "working" && "border-animated-gradient",
-          token.status === "failed" && "border-2 border-rose-500",
+          token.status === "filled" && "border-l-4 border-emerald-500",
+          token.status === "working" && "border-l-4",
+          token.status === "failed" && "border-l-4 border-rose-500",
           token.status === "untouched" && "border-l-4 border-blue-500/50",
+          token.status === "modified" && "border-l-4 border-transparent",
+          token.status === "deleted" && "border-l-4",
         ),
       )}
-      style={{
-        borderLeftColor:
-          token.status === "idle" || token.status === "untouched"
-            ? sideColor
-            : "transparent",
-      }}
+      style={cardStyle}
     >
-      <div
-        className={twMerge(
-          clsx(
-            token.status === "working"
-              ? "rounded-[--radius] bg-background"
-              : "",
-          ),
-        )}
-      >
-        <div className="flex items-center gap-2 px-3">
+      {showProgressAnimation && (
+        <svg
+          className="card-border-svg"
+          height="100%"
+          width="100%"
+          xmlns="http://www.w3.org/2000/svg"
+          aria-hidden="true"
+        >
+          <rect
+            rx="14"
+            ry="14"
+            className="card-border-line"
+            height="100%"
+            width="100%"
+            fill="transparent"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+      )}
+      <div className="relative z-[2]">
+        <div className="grid grid-cols-[8rem_7rem_7rem_6rem_4rem] items-center gap-2 px-3">
           {/* Coin Name and Leverage */}
           <div
             className={twMerge(
               clsx(
-                "flex w-32 items-center gap-2",
+                "flex items-center gap-2",
                 token.status === "deleted" && "opacity-50",
               ),
             )}
@@ -171,7 +192,7 @@ export const TokenCard = ({
           <div
             className={twMerge(
               clsx(
-                "w-28 text-center flex items-center justify-center gap-1",
+                "flex items-center justify-center gap-1",
                 token.status === "deleted" && "opacity-50",
               ),
             )}
@@ -200,7 +221,7 @@ export const TokenCard = ({
           <div
             className={twMerge(
               clsx(
-                "w-28 text-center flex items-center justify-center gap-1",
+                "flex items-center justify-center gap-1",
                 token.status === "deleted" && "opacity-50",
               ),
             )}
@@ -222,35 +243,37 @@ export const TokenCard = ({
               min={0}
               className="w-20 rounded-md border border-border bg-transparent px-2 py-1 text-sm text-center [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
             />
-            {token.deltaInsufficient && (
-              <TooltipProvider>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <AlertCircle className="h-3.5 w-3.5 text-amber-500" />
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    <p className="text-xs">
-                      Delta $
-                      {Math.abs(
-                        (token.targetNotional ?? 0) -
-                          (token.currentNotional ?? 0),
-                      ).toFixed(2)}{" "}
-                      is below ${MIN_CHANGE_DELTA} minimum.
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      This position won&apos;t be adjusted.
-                    </p>
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-            )}
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <AlertCircle
+                    className={twMerge(
+                      "h-3.5 w-3.5 text-amber-500 ml-[2px]",
+                      !token.deltaInsufficient &&
+                        "pointer-events-none opacity-0",
+                    )}
+                  />
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p className="text-xs">
+                    Delta $
+                    {Math.abs(
+                      (token.targetNotional ?? 0) -
+                        (token.currentNotional ?? 0),
+                    ).toFixed(2)}{" "}
+                    is below ${MIN_CHANGE_DELTA} minimum.
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    This position won&apos;t be adjusted.
+                  </p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
           </div>
 
           {/* Long/Short Select */}
           <div
-            className={twMerge(
-              clsx("w-24", token.status === "deleted" && "opacity-50"),
-            )}
+            className={twMerge(clsx(token.status === "deleted" && "opacity-50"))}
           >
             <select
               value={token.side}
@@ -273,7 +296,7 @@ export const TokenCard = ({
           </div>
 
           {/* Remove Button */}
-          <div className="flex w-16 items-center justify-end gap-2">
+          <div className="flex items-center justify-center gap-1">
             <Button
               variant="ghost"
               size="icon"

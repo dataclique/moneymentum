@@ -201,6 +201,19 @@ export const useRebalanceHyperliquidPositions = () => {
         status: pos.status === "working" ? "idle" : pos.status,
       }))
 
+      console.log("%c[Rebalance] Positions data:", "background: purple; color: white; padding: 2px 6px; border-radius: 3px");
+      console.table(
+        positions.map(position => ({
+          symbol: position.symbol,
+          percentage: position.percentage,
+          side: position.side,
+          leverage: position.leverage,
+          leverageChanged: position.leverageChanged,
+          currentNotional: position.currentNotional ?? "—",
+          status: position.status,
+        })),
+      )
+
       console.log("[Rebalance] Calling client.rebalancePositions()", {
         positionCount: positions.length,
       })

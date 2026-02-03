@@ -147,28 +147,27 @@ const PortfolioPage = () => {
           </Card>
 
           {/* Token Allocation Cards */}
-          <div className="w-full space-y-2">
+          <div className="space-y-2 self-start w-fit">
             {isPositionsLoading ? (
               <>
                 {/* Skeleton column headers */}
-                <div className="flex items-center gap-2 px-3 text-xs font-semibold text-muted-foreground">
-                  <div className="w-32">MARKET</div>
-                  <div className="w-24 text-center">WEIGHT</div>
-                  <div className="w-24 text-center">NOTIONAL</div>
-                  <div className="w-24 text-center">SIDE</div>
-                  <div className="w-16 text-right">ACTIONS</div>
+                <div className="grid grid-cols-[8rem_7rem_7rem_6rem_4rem] gap-2 px-3 text-xs font-semibold text-muted-foreground">
+                  <div>MARKET</div>
+                  <div className="text-center">WEIGHT</div>
+                  <div className="text-center">NOTIONAL</div>
+                  <div className="text-center">SIDE</div>
+                  <div className="text-right">ACTIONS</div>
                 </div>
                 {/* Skeleton token cards */}
                 <div className="space-y-2">
                   {[1, 2, 3].map(i => (
                     <Card key={i} className="gap-3 py-3">
-                      <CardContent className="flex items-center gap-2">
+                      <CardContent className="grid grid-cols-[8rem_7rem_7rem_6rem_4rem] items-center gap-2 px-3">
                         <Skeleton className="h-8 w-32" />
-                        <Skeleton className="h-6 w-24" />
-                        <Skeleton className="h-6 w-24" />
-                        <Skeleton className="h-8 w-24" />
-                        <Skeleton className="h-4 flex-1" />
-                        <Skeleton className="h-8 w-16" />
+                        <Skeleton className="h-6 w-20" />
+                        <Skeleton className="h-6 w-20" />
+                        <Skeleton className="h-8 w-20" />
+                        <Skeleton className="h-8 w-8" />
                       </CardContent>
                     </Card>
                   ))}
@@ -184,12 +183,12 @@ const PortfolioPage = () => {
             ) : (
               <>
                 {/* Column Headers */}
-                <div className="flex items-center gap-2 px-3 text-xs font-semibold text-muted-foreground">
-                  <div className="w-32">MARKET</div>
-                  <div className="w-24 text-center">WEIGHT</div>
-                  <div className="w-24 text-center">NOTIONAL</div>
-                  <div className="w-24 text-center">SIDE</div>
-                  <div className="w-16 text-right">ACTIONS</div>
+                <div className="grid grid-cols-[8rem_7rem_7rem_6rem_4rem] gap-2 px-3 text-xs font-semibold text-muted-foreground">
+                  <div>MARKET</div>
+                  <div className="text-center">WEIGHT</div>
+                  <div className="text-center">NOTIONAL</div>
+                  <div className="text-center">SIDE</div>
+                  <div className="text-right">ACTIONS</div>
                 </div>
                 <div className="space-y-2">
                   {selectedTokens.map(token => (
@@ -198,6 +197,7 @@ const PortfolioPage = () => {
                       token={token}
                       displayNotional={displayNotional}
                       maxLeverage={leverageLimitsMap[token.symbol]}
+                      isRebalancing={isRebalancing}
                       onRemove={handleRemoveToken}
                       onUndoRemove={handleUndoRemoveToken}
                       onSideChange={handleSideChange}

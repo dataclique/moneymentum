@@ -703,6 +703,27 @@ export class HyperliquidClient {
     console.log("[Rebalance] Step 6: Placing orders", {
       count: successfulPositions.length,
     })
+    if (successfulPositions.length > 0) {
+      const orderPreview = successfulPositions.map(position => {
+        const symbol = position.symbol
+        const price = prices[symbol]
+        const targetValue = targetNotional[symbol] ?? 0
+        const currentValue = currentNotional[symbol] ?? 0
+        const notionalDelta = targetValue - currentValue
+        return {
+          symbol,
+          side: position.side,
+          leverage: position.leverage,
+          targetNotional: Number(targetValue.toFixed(2)),
+          currentNotional: Number(currentValue.toFixed(2)),
+          deltaNotional: Number(notionalDelta.toFixed(2)),
+          price: Number(price?.toFixed(4) ?? 0),
+          percentage: Number(position.percentage.toFixed(2)),
+        }
+      })
+      console.log("%c[Rebalance] Order preview:", "background: purple; color: white; padding: 2px 6px; border-radius: 3px");
+      console.table(orderPreview)
+    }
     for (const position of successfulPositions) {
       const symbol = position.symbol
       const price = prices[symbol]

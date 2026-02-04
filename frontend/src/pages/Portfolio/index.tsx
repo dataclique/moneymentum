@@ -209,6 +209,7 @@ const PortfolioPage = () => {
                       displayNotional={displayNotional}
                       maxLeverage={leverageLimitsMap[token.symbol]}
                       isRebalancing={isRebalancing}
+                      isPrecise={isPrecise}
                       onRemove={handleRemoveToken}
                       onUndoRemove={handleUndoRemoveToken}
                       onSideChange={handleSideChange}

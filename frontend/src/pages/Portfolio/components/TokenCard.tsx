@@ -23,6 +23,7 @@ import type { OrderSide } from "@/hooks/useTrading"
 import {
   type TokenAllocation,
   MIN_CHANGE_DELTA,
+  MIN_USD,
 } from "../hooks/usePortfolioState"
 
 const getSideColor = (side: OrderSide) =>
@@ -33,6 +34,7 @@ interface TokenCardProps {
   displayNotional: number
   maxLeverage: number | undefined
   isRebalancing: boolean
+  isPrecise: boolean
   onRemove: (symbol: string) => void
   onUndoRemove: (symbol: string) => void
   onSideChange: (symbol: string, side: OrderSide) => void
@@ -46,6 +48,7 @@ export const TokenCard = ({
   displayNotional,
   maxLeverage,
   isRebalancing,
+  isPrecise,
   onRemove,
   onUndoRemove,
   onSideChange,
@@ -243,32 +246,54 @@ export const TokenCard = ({
               min={0}
               className="w-20 rounded-md border border-border bg-transparent px-2 py-1 text-sm text-center [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
             />
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <AlertCircle
-                    className={twMerge(
-                      "h-3.5 w-3.5 text-amber-500 ml-[2px]",
-                      !token.deltaInsufficient &&
-                        "pointer-events-none opacity-0",
-                    )}
-                  />
-                </TooltipTrigger>
-                <TooltipContent>
-                  <p className="text-xs">
-                    Delta $
-                    {Math.abs(
-                      (token.targetNotional ?? 0) -
-                        (token.currentNotional ?? 0),
-                    ).toFixed(2)}{" "}
-                    is below ${MIN_CHANGE_DELTA} minimum.
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    This position won&apos;t be adjusted.
-                  </p>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
+            {(() => {
+              const targetValue =
+                token.targetNotional ?? token.notional ?? parseFloat(usdAmount)
+              const showDeltaWarning =
+                !isPrecise &&
+                token.deltaInsufficient &&
+                token.status === "modified"
+              const showSmallPositionWarning =
+                token.status !== "untouched" &&
+                token.status !== "deleted" &&
+                targetValue > 0 &&
+                targetValue < MIN_USD
+              const showWarning =
+                showDeltaWarning || showSmallPositionWarning
+              return (
+                <TooltipProvider delayDuration={0}>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <AlertCircle
+                        className={twMerge(
+                          "h-3.5 w-3.5 text-amber-500 ml-[2px]",
+                          !showWarning && "pointer-events-none opacity-0",
+                        )}
+                      />
+                    </TooltipTrigger>
+                    <TooltipContent className="space-y-2">
+                      {showDeltaWarning && (
+                        <p className="text-[16px]">
+                          Delta $
+                          {Math.abs(
+                            (token.targetNotional ?? 0) -
+                              (token.currentNotional ?? 0),
+                          ).toFixed(2)}{" "}
+                          is below ${MIN_CHANGE_DELTA} minimum.
+                        </p>
+                      )}
+                      {showSmallPositionWarning && (
+                        <p className="text-[16px] mb-[0px]">
+                          Position value $
+                          {targetValue.toFixed(2)} is below ${MIN_USD}{" "}
+                          minimum.
+                        </p>
+                      )}
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              )
+            })()}
           </div>
 
           {/* Long/Short Select */}

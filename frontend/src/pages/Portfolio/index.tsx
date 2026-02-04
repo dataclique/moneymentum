@@ -21,6 +21,7 @@ import { TokenCard } from "./components/TokenCard"
 import { TokenPickerDialog } from "./components/TokenPickerDialog"
 
 const PRECISE_TOGGLE_STORAGE_KEY = "portfolio-precise-toggle"
+const WEIGHT_REDISTRIBUTION_STORAGE_KEY = "portfolio-weight-redistribution"
 
 const LEVERAGE_MIN = 0.001
 const LEVERAGE_MAX = 5
@@ -33,16 +34,26 @@ const PortfolioPage = () => {
     const stored = localStorage.getItem(PRECISE_TOGGLE_STORAGE_KEY)
     return stored === "true"
   })
+  const [isWeightRedistribution, setIsWeightRedistribution] = useState(() => {
+    const stored = localStorage.getItem(WEIGHT_REDISTRIBUTION_STORAGE_KEY)
+    return stored !== "false"
+  })
 
   useEffect(() => {
     localStorage.setItem(PRECISE_TOGGLE_STORAGE_KEY, String(isPrecise))
   }, [isPrecise])
+  useEffect(() => {
+    localStorage.setItem(
+      WEIGHT_REDISTRIBUTION_STORAGE_KEY,
+      String(isWeightRedistribution),
+    )
+  }, [isWeightRedistribution])
 
   const {
     accountValue,
     crossAccountLeverage,
     initialCrossAccountLeverage,
-    totalNotional,
+    targetNotional,
     selectedTokens,
     activeTokens,
     displayNotional,
@@ -63,7 +74,7 @@ const PortfolioPage = () => {
     handleWeightChange,
     handleCrossAccountLeverageChange,
     handleOpenPositions,
-  } = usePortfolioState(isPrecise)
+  } = usePortfolioState(isPrecise, isWeightRedistribution)
 
   const [leverageInput, setLeverageInput] = useState(() =>
     crossAccountLeverage.toFixed(2),
@@ -133,7 +144,7 @@ const PortfolioPage = () => {
                         Total Notional:
                       </span>
                       <span className="text-sm font-medium">
-                        ${totalNotional.toFixed(2)}
+                        ${targetNotional.toFixed(2)}
                       </span>
                     </div>
                   </>
@@ -292,6 +303,18 @@ const PortfolioPage = () => {
                       <Switch
                         checked={isPrecise}
                         onCheckedChange={setIsPrecise}
+                      />
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      className="flex items-center justify-between gap-2"
+                      onSelect={e => {
+                        e.preventDefault()
+                      }}
+                    >
+                      <span>Redistribution of weights</span>
+                      <Switch
+                        checked={isWeightRedistribution}
+                        onCheckedChange={setIsWeightRedistribution}
                       />
                     </DropdownMenuItem>
                   </DropdownMenuContent>

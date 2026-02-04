@@ -12,6 +12,8 @@ import { useWallet } from "@/hooks/useWallet"
 const STORAGE_KEY_PREFIX = "portfolio-allocation-state"
 export const MIN_USD = 11
 export const MIN_CHANGE_DELTA = 11.0 // Minimum change in USD to trigger a rebalance
+// Allow sum of weights slightly above 100% due to rounding (e.g. 33.33 + 33.33 + 33.34 = 100.00)
+const MAX_TOTAL_PERCENT_TOLERANCE = 0.1
 
 export type AllocationStatus =
   | OrderResult["status"]
@@ -176,7 +178,10 @@ const redistributeWeights = (
   })
 }
 
-export const usePortfolioState = (isPrecise: boolean = false) => {
+export const usePortfolioState = (
+  isPrecise: boolean = false,
+  isWeightRedistribution: boolean = true,
+) => {
   const { networkMode } = useWallet()
 
   // Exchange data queries
@@ -547,10 +552,11 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
       )
       const currentNotional = exchangePosition?.notional ?? 0
 
-      // Target notional based on percentage and total notional
-      // Weight is percentage of total notional, so targetNotional = percentage/100 * totalNotional
+      // Target notional based on percentage and fixed target total (accountValue * leverage)
       const computedTargetNotional =
-        totalNotional > 0 ? (token.percentage / 100) * totalNotional : 0
+        targetNotional > 0
+          ? (token.percentage / 100) * targetNotional
+          : 0
 
       // Check if the delta is too small to execute
       const delta = Math.abs(computedTargetNotional - currentNotional)
@@ -570,7 +576,7 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
         deltaInsufficient,
       }
     })
-  }, [tokensWithDerivedPercentages, totalNotional, initialPortfolio])
+  }, [tokensWithDerivedPercentages, targetNotional, initialPortfolio])
 
   const derivedActiveTokens = useMemo(
     () => tokensWithDeltaTracking.filter(t => t.status !== "deleted"),
@@ -608,10 +614,18 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
   }, [derivedActiveTokens, targetNotional])
 
   const hasPositionsBelowMinimum = tokensBelowMinimum.length > 0
+  const hasTotalPercentExceeded =
+    derivedTotalPercent > 100 + MAX_TOTAL_PERCENT_TOLERANCE
+  const hasTotalPercentBelow =
+    derivedTotalPercent < 100 - MAX_TOTAL_PERCENT_TOLERANCE
+  const showTargetOfTotal =
+    Math.abs(derivedTotalPercent - 100) > MAX_TOTAL_PERCENT_TOLERANCE
   const hasBlockingNotionalIssue =
     notionalBelowMinimum ||
     insufficientNotionalForTokens ||
-    hasPositionsBelowMinimum
+    hasPositionsBelowMinimum ||
+    hasTotalPercentExceeded ||
+    hasTotalPercentBelow
 
   const blockingReasons: string[] = []
   if (notionalBelowMinimum) {
@@ -630,6 +644,18 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
       .join(", ")
     blockingReasons.push(
       `Each position must be at least $${String(MIN_USD)}. Positions below minimum: ${tokensList}`,
+    )
+  }
+  if (hasTotalPercentExceeded) {
+    const excessPercent = (derivedTotalPercent - 100).toFixed(1)
+    blockingReasons.push(
+      `Sum of weights exceeds 100% by ${excessPercent}%. Reduce allocations.`,
+    )
+  }
+  if (hasTotalPercentBelow) {
+    const deficitPercent = (100 - derivedTotalPercent).toFixed(1)
+    blockingReasons.push(
+      `Sum of weights is below 100% by ${deficitPercent}%. Add allocations.`,
     )
   }
 
@@ -812,13 +838,31 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
       if (Number.isNaN(newPercentage) || newPercentage < 0) return
 
       setSelectedTokensAndPersist(prev => {
-        // Clamp percentage to max 100%
         const clampedPercentage = Math.min(100, newPercentage)
-        // Redistribute weights proportionally - total notional stays constant
-        return redistributeWeights(prev, symbol, clampedPercentage, totalNotional)
+
+        if (isWeightRedistribution) {
+          return redistributeWeights(
+            prev,
+            symbol,
+            clampedPercentage,
+            targetNotional,
+          )
+        }
+
+        // No redistribution: total notional is fixed (targetNotional = accountValue * leverage).
+        // Update only the changed token's notional. Other tokens unchanged.
+        return prev.map(t =>
+          t.symbol === symbol
+            ? {
+                ...t,
+                percentage: parseFloat(clampedPercentage.toFixed(2)),
+                notional: calcNotional(clampedPercentage, targetNotional),
+              }
+            : t,
+        )
       })
     },
-    [totalNotional, setSelectedTokensAndPersist],
+    [targetNotional, isWeightRedistribution, setSelectedTokensAndPersist],
   )
 
   // When leverage changes: totalNotional = leverage * accountValue
@@ -1084,6 +1128,8 @@ export const usePortfolioState = (isPrecise: boolean = false) => {
     initialCrossAccountLeverage,
     totalNotional,
     displayNotional,
+    targetNotional,
+    showTargetOfTotal,
     selectedTokens: tokensWithDeltaTracking,
     activeTokens: derivedActiveTokens,
     minPercentFloor,

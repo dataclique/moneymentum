@@ -33,7 +33,7 @@ export const useHyperliquidBalance = () => {
       return client.getBalance()
     },
     enabled: isConnected && client !== null,
-    staleTime: 30000,
+    staleTime: Infinity,
   })
 }
 

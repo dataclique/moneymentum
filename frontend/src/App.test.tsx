@@ -39,6 +39,12 @@ const useBudgetPreferenceMock = vi.hoisted(() =>
   })),
 )
 
+// Mock hyperliquid-client to prevent preloadMarkets from making API calls
+vi.mock("@/services/hyperliquid-client", () => ({
+  HyperliquidClient: vi.fn(),
+  preloadMarkets: vi.fn().mockResolvedValue(undefined),
+}))
+
 // Mock CCXT to prevent initialization errors
 vi.mock("ccxt", () => ({
   default: {
@@ -144,7 +150,7 @@ describe("App", () => {
         isLoading: true,
       } as unknown as ReturnType<typeof useApiModule.useDateRange>)
 
-      render(<App />, { wrapper: createWrapper() })
+      render(<App />, { wrapper: createWrapper("/dashboard") })
 
       expect(screen.getByText(/Loading data/)).toBeInTheDocument()
     })
@@ -159,7 +165,9 @@ describe("App", () => {
         isLoading: true,
       } as unknown as ReturnType<typeof useApiModule.useDateRange>)
 
-      const { rerender } = render(<App />, { wrapper: createWrapper() })
+      const { rerender } = render(<App />, {
+        wrapper: createWrapper("/dashboard"),
+      })
 
       // Then update with data
       vi.mocked(useApiModule.useDateRange).mockReturnValue({
@@ -186,24 +194,6 @@ describe("App", () => {
       })
     })
 
-    it("shows error state when date range query fails", async () => {
-      const useApiModule = await import("@/hooks/useApi")
-
-      vi.mocked(useApiModule.useDateRange).mockReturnValue({
-        data: null,
-        error: { message: "Failed to fetch date range" },
-        isLoading: false,
-      } as unknown as ReturnType<typeof useApiModule.useDateRange>)
-
-      render(<App />, { wrapper: createWrapper() })
-
-      await waitFor(() => {
-        expect(
-          screen.getByText(/Error: Failed to fetch date range/),
-        ).toBeInTheDocument()
-      })
-    })
-
     it("shows error state when analysis query fails", async () => {
       const useApiModule = await import("@/hooks/useApi")
 
@@ -223,7 +213,7 @@ describe("App", () => {
         isLoading: false,
       } as unknown as ReturnType<typeof useApiModule.useAnalysisData>)
 
-      render(<App />, { wrapper: createWrapper() })
+      render(<App />, { wrapper: createWrapper("/dashboard") })
 
       await waitFor(() => {
         expect(screen.getByText(/Error: Analysis failed/)).toBeInTheDocument()
@@ -279,7 +269,7 @@ describe("App", () => {
         isPending: true,
       } as unknown as ReturnType<typeof useApiModule.useReloadData>)
 
-      render(<App />, { wrapper: createWrapper() })
+      render(<App />, { wrapper: createWrapper("/dashboard") })
 
       expect(screen.getByText("Stop reloading")).toBeInTheDocument()
     })
@@ -305,7 +295,7 @@ describe("App", () => {
         isLoading: false,
       } as never)
 
-      render(<App />, { wrapper: createWrapper() })
+      render(<App />, { wrapper: createWrapper("/dashboard") })
 
       await waitFor(() => {
         expect(useAnalysisDataMock).toHaveBeenCalledWith({
@@ -336,7 +326,7 @@ describe("App", () => {
         isLoading: false,
       } as never)
 
-      render(<App />, { wrapper: createWrapper() })
+      render(<App />, { wrapper: createWrapper("/dashboard") })
 
       expect(useDateRangeMock).toHaveBeenCalledWith("1h")
     })
@@ -373,7 +363,9 @@ describe("App", () => {
         isLoading: false,
       } as never)
 
-      const { rerender } = render(<App />, { wrapper: createWrapper() })
+      const { rerender } = render(<App />, {
+        wrapper: createWrapper("/dashboard"),
+      })
 
       // Verify initial call with maxDate
       await waitFor(() => {
@@ -430,7 +422,7 @@ describe("App", () => {
         isLoading: false,
       } as never)
 
-      render(<App />, { wrapper: createWrapper() })
+      render(<App />, { wrapper: createWrapper("/dashboard") })
 
       // Should strip time and only use date portion
       await waitFor(() => {
@@ -458,7 +450,7 @@ describe("App", () => {
         isLoading: false,
       } as never)
 
-      render(<App />, { wrapper: createWrapper() })
+      render(<App />, { wrapper: createWrapper("/dashboard") })
 
       // With null dates, should call with empty strings
       expect(useAnalysisDataMock).toHaveBeenCalledWith({

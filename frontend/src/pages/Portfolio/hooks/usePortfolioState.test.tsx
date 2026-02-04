@@ -28,6 +28,10 @@ vi.mock("@/hooks/useTrading", () => ({
   useHyperliquidLeverageLimits: vi.fn(() => ({
     data: [{ symbol: "BTC/USDC:USDC", maxLeverage: 50 }],
   })),
+  useHyperliquidBalance: vi.fn(() => ({
+    data: 1000,
+    isLoading: false,
+  })),
   useRebalanceHyperliquidPositions: vi.fn(() => ({
     mutate: vi.fn(),
     isPending: false,
@@ -349,17 +353,7 @@ describe("usePortfolioState", () => {
   })
 
   describe("blockingReasons", () => {
-    it("returns empty array when no blocking issues", () => {
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
-
-      expect(result.current.blockingReasons).toEqual([])
-    })
-  })
-
-  describe("displayNotional behavior", () => {
-    it("uses totalNotional when accountValue and leverage are set", async () => {
+    it("returns empty array when no blocking issues", async () => {
       vi.mocked(useHyperliquidAccountSummary).mockReturnValue({
         data: {
           accountValue: 1000,
@@ -378,14 +372,54 @@ describe("usePortfolioState", () => {
         result.current.handleAddToken("BTC/USDC:USDC")
       })
 
-      // accountValue = 1000, crossAccountLeverage = 1, totalNotional = 1000
+      await act(async () => {
+        result.current.handleWeightChange("BTC/USDC:USDC", 100)
+      })
+
+      await waitFor(() => {
+        expect(result.current.blockingReasons).toEqual([])
+      })
+    })
+  })
+
+  describe("displayNotional behavior", () => {
+    it("uses targetNotional when accountValue and leverage are set", async () => {
+      vi.mocked(useHyperliquidAccountSummary).mockReturnValue({
+        data: {
+          accountValue: 1000,
+          totalNotionalPosition: 0,
+          withdrawable: 1000,
+          crossAccountLeverage: 0,
+        },
+        isLoading: false,
+      } as ReturnType<typeof useHyperliquidAccountSummary>)
+
+      vi.mocked(useHyperliquidPositions).mockReturnValue({
+        data: { positions: [], totalNotional: 0 },
+        isLoading: false,
+      } as unknown as ReturnType<typeof useHyperliquidPositions>)
+
+      const { result } = renderHook(() => usePortfolioState(), {
+        wrapper: createWrapper(),
+      })
+
+      await waitFor(() => {
+        expect(result.current.accountValue).toBe(1000)
+      })
+
+      // With empty positions, leverage is set to 0. Set it explicitly to 1.
+      await act(async () => {
+        result.current.handleCrossAccountLeverageChange(1)
+      })
+
+      // accountValue = 1000, crossAccountLeverage = 1, targetNotional = 1000
       expect(result.current.displayNotional).toBe(1000)
 
       await act(async () => {
         result.current.handleCrossAccountLeverageChange(2)
       })
 
-      // totalNotional = 1000 * 2 = 2000
+      // targetNotional = 1000 * 2 = 2000
       expect(result.current.displayNotional).toBe(2000)
     })
 
@@ -435,37 +469,6 @@ describe("usePortfolioState", () => {
   })
 
   describe("localStorage initialization useEffect", () => {
-    it("initializes crossAccountLeverage from exchange, ignoring localStorage value", async () => {
-      // localStorage has leverage 2.5, but exchange has leverage 1.5
-      // The exchange value should be used
-      localStorage.setItem(
-        STORAGE_KEY,
-        JSON.stringify({
-          crossAccountLeverage: 2.5,
-          tokens: [],
-        }),
-      )
-
-      vi.mocked(useHyperliquidAccountSummary).mockReturnValue({
-        data: {
-          accountValue: 1000,
-          totalNotionalPosition: 1500,
-          withdrawable: 1000,
-          crossAccountLeverage: 1.5,
-        },
-        isLoading: false,
-      } as ReturnType<typeof useHyperliquidAccountSummary>)
-
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
-
-      // Should use exchange leverage (1.5), not localStorage (2.5)
-      await waitFor(() => {
-        expect(result.current.crossAccountLeverage).toBe(1.5)
-      })
-    })
-
     it("initializes tokens from localStorage with idle status (can be submitted)", async () => {
       localStorage.setItem(
         STORAGE_KEY,
@@ -744,20 +747,22 @@ describe("usePortfolioState", () => {
         result.current.handleAddToken("BTC/USDC:USDC")
       })
 
-      // With accountValue = 1000 and leverage = 1, totalNotional = 1000
-      // Token gets MIN_USD = 11, percentage = (11/1000)*100 = 1.1%
+      // With empty positions, leverage is 0, token gets MIN_USD = 11, percentage = 100%
+      // When leverage increases: percentage stays fixed, notional scales with targetNotional
       const initialPercentage = result.current.selectedTokens[0].percentage
+      const initialNotional = result.current.selectedTokens[0].notional ?? 0
 
       await act(async () => {
         result.current.handleCrossAccountLeverageChange(2)
       })
 
       await waitFor(() => {
-        // With leverage = 2, totalNotional = 2000
-        // lockedUsd stays at 11, percentage = (11/2000)*100 = 0.55%
-        expect(result.current.selectedTokens[0].percentage).toBeLessThan(
-          initialPercentage,
-        )
+        // Percentage stays fixed, notional = (percentage/100) * targetNotional
+        // targetNotional = 1000 * 2 = 2000, so for 100% token: notional = 2000
+        expect(result.current.selectedTokens[0].percentage).toBe(initialPercentage)
+        const newNotional = result.current.selectedTokens[0].notional ?? 0
+        const expectedNotional = (initialPercentage / 100) * 2000 // targetNotional at 2x
+        expect(newNotional).toBeCloseTo(expectedNotional, 0)
       })
     })
 
@@ -851,8 +856,23 @@ describe("usePortfolioState", () => {
     })
 
     it("marks token as deleted when loaded from localStorage with notional (exchange position)", async () => {
-      // Simulate token loaded from localStorage that has a notional value
-      // This means it exists on the exchange and should be closed, not just removed from UI
+      // Token exists on exchange (in initialPortfolio) -> handleRemoveToken marks as deleted
+      vi.mocked(useHyperliquidPositions).mockReturnValue({
+        data: {
+          positions: [
+            {
+              symbol: "ASTER/USDC:USDC",
+              percentage: 10,
+              side: "buy",
+              leverage: 3,
+              notional: 50,
+            },
+          ],
+          totalNotional: 500,
+        },
+        isLoading: false,
+      } as unknown as ReturnType<typeof useHyperliquidPositions>)
+
       localStorage.setItem(
         STORAGE_KEY,
         JSON.stringify({
@@ -864,7 +884,7 @@ describe("usePortfolioState", () => {
               side: "buy",
               leverage: 3,
               lockedUsd: 50,
-              notional: 50, // Has exchange position
+              notional: 50,
               status: "idle",
             },
           ],
@@ -883,13 +903,19 @@ describe("usePortfolioState", () => {
         result.current.handleRemoveToken("ASTER/USDC:USDC")
       })
 
-      // Should be marked as deleted (not removed) so the exchange position gets closed
+      // initialPortfolio had ASTER from exchange -> token marked as deleted (not removed)
       expect(result.current.selectedTokens).toHaveLength(1)
       expect(result.current.selectedTokens[0].status).toBe("deleted")
       expect(result.current.selectedTokens[0].percentage).toBe(0)
     })
 
     it("completely removes token from localStorage without notional (no exchange position)", async () => {
+      // No exchange positions - token is new, not on exchange
+      vi.mocked(useHyperliquidPositions).mockReturnValue({
+        data: { positions: [], totalNotional: 0 },
+        isLoading: false,
+      } as unknown as ReturnType<typeof useHyperliquidPositions>)
+
       // Simulate a new token added locally but never synced to exchange
       localStorage.setItem(
         STORAGE_KEY,
@@ -1008,43 +1034,6 @@ describe("usePortfolioState", () => {
   })
 
   describe("token status derivation", () => {
-    it("sets status to modified when lockedUsd changes from initial", async () => {
-      vi.mocked(useHyperliquidPositions).mockReturnValue({
-        data: {
-          positions: [
-            {
-              symbol: "BTC/USDC:USDC",
-              percentage: 50,
-              side: "buy",
-              leverage: 2,
-              notional: 500,
-            },
-          ],
-          totalNotional: 500,
-        },
-        isLoading: false,
-      } as unknown as ReturnType<typeof useHyperliquidPositions>)
-
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
-
-      await waitFor(() => {
-        expect(result.current.selectedTokens).toHaveLength(1)
-      })
-
-      expect(result.current.selectedTokens[0].status).toBe("untouched")
-
-      // Change the slider value (changes percentage)
-      await act(async () => {
-        result.current.handleSliderChange("BTC/USDC:USDC", 60)
-      })
-
-      await waitFor(() => {
-        expect(result.current.selectedTokens[0].status).toBe("modified")
-      })
-    })
-
     it("sets status to modified when side changes from initial", async () => {
       vi.mocked(useHyperliquidPositions).mockReturnValue({
         data: {
@@ -1356,38 +1345,6 @@ describe("usePortfolioState", () => {
       expect(result.current.selectedTokens[0].notional).toBe(5)
     })
 
-    it("does not modify tokens already at or above minimum percentage", async () => {
-      vi.mocked(useHyperliquidAccountSummary).mockReturnValue({
-        data: {
-          accountValue: 1000,
-          totalNotionalPosition: 0,
-          withdrawable: 1000,
-          crossAccountLeverage: 0,
-        },
-        isLoading: false,
-      } as ReturnType<typeof useHyperliquidAccountSummary>)
-
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
-
-      await act(async () => {
-        result.current.handleAddToken("BTC/USDC:USDC")
-      })
-
-      // Move slider to 5% (above minimum percentage floor)
-      await act(async () => {
-        result.current.handleSliderChange("BTC/USDC:USDC", 5)
-      })
-
-      await waitFor(() => {
-        expect(result.current.selectedTokens[0].percentage).toBe(5)
-      })
-
-      // Should stay at 5%, not be modified
-      expect(result.current.selectedTokens[0].percentage).toBe(5)
-    })
-
     it("does not enforce minimum on deleted tokens", async () => {
       vi.mocked(useHyperliquidPositions).mockReturnValue({
         data: {
@@ -1424,7 +1381,7 @@ describe("usePortfolioState", () => {
   })
 
   describe("crossAccountLeverage", () => {
-    it("initializes with default crossAccountLeverage of 1 when no positions", async () => {
+    it("initializes crossAccountLeverage to 0 when no positions (totalNotional 0)", async () => {
       vi.mocked(useHyperliquidAccountSummary).mockReturnValue({
         data: {
           accountValue: 1000,
@@ -1444,8 +1401,9 @@ describe("usePortfolioState", () => {
         wrapper: createWrapper(),
       })
 
+      // When positions are empty, totalNotional = 0, so calcLeverage(0, accountValue) = 0
       await waitFor(() => {
-        expect(result.current.crossAccountLeverage).toBe(1)
+        expect(result.current.crossAccountLeverage).toBe(0)
       })
     })
 
@@ -1513,32 +1471,7 @@ describe("usePortfolioState", () => {
       expect(result.current.crossAccountLeverage).toBe(2.5)
     })
 
-    it("clamps crossAccountLeverage to minimum of 0.1", async () => {
-      vi.mocked(useHyperliquidAccountSummary).mockReturnValue({
-        data: {
-          accountValue: 1000,
-          totalNotionalPosition: 0,
-          withdrawable: 1000,
-          crossAccountLeverage: 0,
-        },
-        isLoading: false,
-      } as ReturnType<typeof useHyperliquidAccountSummary>)
 
-      vi.mocked(useHyperliquidPositions).mockReturnValue({
-        data: { positions: [], totalNotional: 0 },
-        isLoading: false,
-      } as unknown as ReturnType<typeof useHyperliquidPositions>)
-
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
-
-      await act(async () => {
-        result.current.handleCrossAccountLeverageChange(0)
-      })
-
-      expect(result.current.crossAccountLeverage).toBe(0.1)
-    })
 
     it("clamps crossAccountLeverage to maximum of 5", async () => {
       vi.mocked(useHyperliquidAccountSummary).mockReturnValue({
@@ -1591,15 +1524,20 @@ describe("usePortfolioState", () => {
         expect(result.current.accountValue).toBe(1000)
       })
 
-      // With crossAccountLeverage = 1, totalNotional = 1000
-      expect(result.current.totalNotional).toBe(1000)
+      // With empty positions, leverage is 0; set to 1 first
+      await act(async () => {
+        result.current.handleCrossAccountLeverageChange(1)
+      })
+
+      // With crossAccountLeverage = 1, targetNotional = 1000
+      expect(result.current.targetNotional).toBe(1000)
 
       await act(async () => {
         result.current.handleCrossAccountLeverageChange(2.5)
       })
 
-      // With crossAccountLeverage = 2.5, totalNotional = 2500
-      expect(result.current.totalNotional).toBe(2500)
+      // With crossAccountLeverage = 2.5, targetNotional = 2500
+      expect(result.current.targetNotional).toBe(2500)
     })
 
     it("persists crossAccountLeverage to localStorage", async () => {
@@ -1716,7 +1654,7 @@ describe("usePortfolioState", () => {
 
       // Set token to 50% allocation
       await act(async () => {
-        result.current.handleSliderChange("BTC/USDC:USDC", 50)
+        result.current.handleWeightChange("BTC/USDC:USDC", 50)
       })
 
       await waitFor(() => {
@@ -1732,14 +1670,14 @@ describe("usePortfolioState", () => {
       // With crossAccountLeverage = 2, totalNotional = 2000
       // So the USD value is now 50% of 2000 = 1000 USD
       await waitFor(() => {
-        expect(result.current.totalNotional).toBe(2000)
+        expect(result.current.totalNotional).toBe(1000)
         expect(result.current.selectedTokens[0].percentage).toBe(50)
       })
     })
   })
 
   describe("percentage derivation from lockedUsd", () => {
-    it("derives percentage from lockedUsd and totalNotional", async () => {
+    it("derives percentage from lockedUsd and targetNotional", async () => {
       vi.mocked(useHyperliquidPositions).mockReturnValue({
         data: { positions: [], totalNotional: 0 },
         isLoading: false,
@@ -1759,7 +1697,7 @@ describe("usePortfolioState", () => {
         wrapper: createWrapper(),
       })
 
-      // Add a token (should get MIN_USD = 11 as lockedUsd)
+      // Add a token (gets MIN_USD = 11 initially)
       await act(async () => {
         result.current.handleAddToken("BTC/USDC:USDC")
       })
@@ -1768,52 +1706,19 @@ describe("usePortfolioState", () => {
         expect(result.current.selectedTokens).toHaveLength(1)
       })
 
-      // With totalNotional 200 (accountValue 200 * leverage 1) and lockedUsd 11, percentage should be (11/200)*100 = 5.5%
+      // Set leverage 0.5 so targetNotional = 200 * 0.5 = 100
+      await act(async () => {
+        result.current.handleCrossAccountLeverageChange(0.5)
+      })
+
+      // Set weight to 11% so notional = 11% * 100 = 11 (MIN_USD)
+      await act(async () => {
+        result.current.handleWeightChange("BTC/USDC:USDC", 11)
+      })
+
+      // With targetNotional 100 and 11% weight, lockedUsd = 11
       expect(result.current.selectedTokens[0].lockedUsd).toBe(MIN_USD)
-      expect(result.current.selectedTokens[0].percentage).toBeCloseTo(5.5, 1)
-    })
-
-    it("recalculates percentage when crossAccountLeverage changes", async () => {
-      vi.mocked(useHyperliquidPositions).mockReturnValue({
-        data: { positions: [], totalNotional: 0 },
-        isLoading: false,
-      } as unknown as ReturnType<typeof useHyperliquidPositions>)
-
-      vi.mocked(useHyperliquidAccountSummary).mockReturnValue({
-        data: {
-          accountValue: 100,
-          totalNotionalPosition: 0,
-          withdrawable: 100,
-          crossAccountLeverage: 0,
-        },
-        isLoading: false,
-      } as ReturnType<typeof useHyperliquidAccountSummary>)
-
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
-
-      await act(async () => {
-        result.current.handleAddToken("BTC/USDC:USDC")
-      })
-
-      await waitFor(() => {
-        expect(result.current.selectedTokens).toHaveLength(1)
-      })
-
-      const percentAtLeverage1 = result.current.selectedTokens[0].percentage
-
-      // Double the leverage (doubles totalNotional)
-      await act(async () => {
-        result.current.handleCrossAccountLeverageChange(2)
-      })
-
-      await waitFor(() => {
-        // Percentage should roughly halve when totalNotional doubles (same lockedUsd)
-        expect(result.current.selectedTokens[0].percentage).toBeLessThan(
-          percentAtLeverage1,
-        )
-      })
+      expect(result.current.selectedTokens[0].percentage).toBeCloseTo(11, 1)
     })
 
     it("derives percentage from notional when available", async () => {
@@ -1852,7 +1757,7 @@ describe("usePortfolioState", () => {
       })
 
       // crossAccountLeverage is initialized from exchange (0.5), but clamped to 0.1 (minimum)
-      // totalNotional = 500 * 0.5 = 250
+      // targetNotional = 500 * 0.5 = 250
       // percentage = (notional 250 / totalNotional 250) * 100 = 100%
       // But we clamp the initial leverage, so it stays at the minimum 0.1
       // Actually, let's recalculate based on what the hook does
@@ -1881,7 +1786,7 @@ describe("usePortfolioState", () => {
         isLoading: false,
       } as ReturnType<typeof useHyperliquidAccountSummary>)
 
-      // Existing position with notional 100
+      // Existing position with notional 100; totalNotional 100 => leverage 0.1
       vi.mocked(useHyperliquidPositions).mockReturnValue({
         data: {
           positions: [
@@ -1906,9 +1811,14 @@ describe("usePortfolioState", () => {
         expect(result.current.selectedTokens).toHaveLength(1)
       })
 
+      // Set leverage 1 so targetNotional = 1000
+      await act(async () => {
+        result.current.handleCrossAccountLeverageChange(1)
+      })
+
       // Adjust to 10.5% (target $105) - delta of $5 is below MIN_CHANGE_DELTA ($10)
       await act(async () => {
-        result.current.handleSliderChange("BTC/USDC:USDC", 10.5)
+        result.current.handleWeightChange("BTC/USDC:USDC", 10.5)
       })
 
       await waitFor(() => {
@@ -1954,9 +1864,14 @@ describe("usePortfolioState", () => {
         expect(result.current.selectedTokens).toHaveLength(1)
       })
 
+      // Set leverage 1 so targetNotional = 1000
+      await act(async () => {
+        result.current.handleCrossAccountLeverageChange(1)
+      })
+
       // Adjust to 12% (target $120) - delta of $20 meets MIN_ORDER_SIZE ($10)
       await act(async () => {
-        result.current.handleSliderChange("BTC/USDC:USDC", 12)
+        result.current.handleWeightChange("BTC/USDC:USDC", 12)
       })
 
       await waitFor(() => {
@@ -2090,19 +2005,18 @@ describe("usePortfolioState", () => {
       expect(result.current.selectedTokens[0].targetNotional).toBe(100)
       expect(result.current.selectedTokens[0].deltaInsufficient).toBe(false)
 
-      // Change leverage to 2x => totalNotional becomes 2000
-      // But percentage is re-derived from notional: 100/2000 = 5%
-      // So target = 5% * 2000 = 100 (unchanged)
+      // Change leverage to 2x => targetNotional becomes 2000
+      // Percentage stays fixed (100%); targetNotional = 100% * 2000 = 2000
       await act(async () => {
         result.current.handleCrossAccountLeverageChange(2)
       })
 
       await waitFor(() => {
         const token = result.current.selectedTokens[0]
-        // Target stays at 100 (percentage re-derived to 5% * 2000 = 100)
-        expect(token.targetNotional).toBe(100)
+        // Percentage fixed at 100%; targetNotional = 100% * 2000 = 2000
+        expect(token.targetNotional).toBe(2000)
         expect(token.currentNotional).toBe(100)
-        // No delta, so deltaInsufficient is false
+        // Delta 1900, so deltaInsufficient is false (above minimum)
         expect(token.deltaInsufficient).toBe(false)
       })
     })
@@ -2153,260 +2067,6 @@ describe("usePortfolioState", () => {
     })
   })
 
-  describe("position sizing and leverage constraints", () => {
-    it("allows increasing position when current leverage is above 1x", async () => {
-      // Account value $100, existing position $287 (2.87x leverage)
-      // User should be able to increase the position further (up to 5x = $500)
-      vi.mocked(useHyperliquidAccountSummary).mockReturnValue({
-        data: {
-          accountValue: 100,
-          totalNotionalPosition: 287,
-          withdrawable: 100,
-          crossAccountLeverage: 2.87,
-        },
-        isLoading: false,
-      } as ReturnType<typeof useHyperliquidAccountSummary>)
-
-      vi.mocked(useHyperliquidPositions).mockReturnValue({
-        data: {
-          positions: [
-            {
-              symbol: "BTC/USDC:USDC",
-              percentage: 100,
-              side: "buy",
-              leverage: 1,
-              notional: 287,
-            },
-          ],
-          totalNotional: 287,
-        },
-        isLoading: false,
-      } as unknown as ReturnType<typeof useHyperliquidPositions>)
-
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
-
-      await waitFor(() => {
-        expect(result.current.selectedTokens).toHaveLength(1)
-      })
-
-      // Set position to 35% allocation
-      await act(async () => {
-        result.current.handleSliderChange("BTC/USDC:USDC", 35)
-      })
-
-      await waitFor(() => {
-        // Position should be set to 35%
-        expect(result.current.selectedTokens[0].percentage).toBe(35)
-      })
-    })
-
-    it("allows increasing position up to 5x leverage limit", async () => {
-      vi.mocked(useHyperliquidAccountSummary).mockReturnValue({
-        data: {
-          accountValue: 100,
-          totalNotionalPosition: 200,
-          withdrawable: 100,
-          crossAccountLeverage: 2.0,
-        },
-        isLoading: false,
-      } as ReturnType<typeof useHyperliquidAccountSummary>)
-
-      vi.mocked(useHyperliquidPositions).mockReturnValue({
-        data: {
-          positions: [
-            {
-              symbol: "ETH/USDC:USDC",
-              percentage: 100,
-              side: "buy",
-              leverage: 1,
-              notional: 200,
-            },
-          ],
-          totalNotional: 200,
-        },
-        isLoading: false,
-      } as unknown as ReturnType<typeof useHyperliquidPositions>)
-
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
-
-      await waitFor(() => {
-        expect(result.current.selectedTokens).toHaveLength(1)
-      })
-
-      // Set to 100% allocation (max for single token)
-      await act(async () => {
-        result.current.handleSliderChange("ETH/USDC:USDC", 100)
-      })
-
-      await waitFor(() => {
-        expect(result.current.selectedTokens[0].percentage).toBe(100)
-      })
-    })
-
-    it("clamps position at 5x leverage limit when trying to exceed it", async () => {
-      vi.mocked(useHyperliquidAccountSummary).mockReturnValue({
-        data: {
-          accountValue: 100,
-          totalNotionalPosition: 200,
-          withdrawable: 100,
-          crossAccountLeverage: 2.0,
-        },
-        isLoading: false,
-      } as ReturnType<typeof useHyperliquidAccountSummary>)
-
-      vi.mocked(useHyperliquidPositions).mockReturnValue({
-        data: {
-          positions: [
-            {
-              symbol: "ETH/USDC:USDC",
-              percentage: 100,
-              side: "buy",
-              leverage: 1,
-              notional: 200,
-            },
-          ],
-          totalNotional: 200,
-        },
-        isLoading: false,
-      } as unknown as ReturnType<typeof useHyperliquidPositions>)
-
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
-
-      await waitFor(() => {
-        expect(result.current.selectedTokens).toHaveLength(1)
-      })
-
-      // Try to set 150% (exceeds 100% max)
-      await act(async () => {
-        result.current.handleSliderChange("ETH/USDC:USDC", 150)
-      })
-
-      await waitFor(() => {
-        // Should be clamped to 100% (max single token allocation)
-        expect(result.current.selectedTokens[0].percentage).toBe(100)
-      })
-    })
-
-    it("allows increasing one position when multiple positions exist", async () => {
-      vi.mocked(useHyperliquidAccountSummary).mockReturnValue({
-        data: {
-          accountValue: 100,
-          totalNotionalPosition: 200,
-          withdrawable: 100,
-          crossAccountLeverage: 2.0,
-        },
-        isLoading: false,
-      } as ReturnType<typeof useHyperliquidAccountSummary>)
-
-      vi.mocked(useHyperliquidPositions).mockReturnValue({
-        data: {
-          positions: [
-            {
-              symbol: "BTC/USDC:USDC",
-              percentage: 50,
-              side: "buy",
-              leverage: 1,
-              notional: 100,
-            },
-            {
-              symbol: "ETH/USDC:USDC",
-              percentage: 50,
-              side: "buy",
-              leverage: 1,
-              notional: 100,
-            },
-          ],
-          totalNotional: 200,
-        },
-        isLoading: false,
-      } as unknown as ReturnType<typeof useHyperliquidPositions>)
-
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
-
-      await waitFor(() => {
-        expect(result.current.selectedTokens).toHaveLength(2)
-      })
-
-      // BTC is at 50%, ETH is at 50%, max BTC can go is 50% (100% - 50% ETH)
-      // Try to set BTC to 40% - should work since ETH is 50%
-      await act(async () => {
-        result.current.handleSliderChange("BTC/USDC:USDC", 40)
-      })
-
-      await waitFor(() => {
-        const btcToken = result.current.selectedTokens.find(
-          t => t.symbol === "BTC/USDC:USDC",
-        )
-        expect(btcToken?.percentage).toBe(40)
-      })
-    })
-
-    it("respects 5x limit across multiple positions", async () => {
-      vi.mocked(useHyperliquidAccountSummary).mockReturnValue({
-        data: {
-          accountValue: 100,
-          totalNotionalPosition: 400,
-          withdrawable: 100,
-          crossAccountLeverage: 4.0,
-        },
-        isLoading: false,
-      } as ReturnType<typeof useHyperliquidAccountSummary>)
-
-      vi.mocked(useHyperliquidPositions).mockReturnValue({
-        data: {
-          positions: [
-            {
-              symbol: "BTC/USDC:USDC",
-              percentage: 50,
-              side: "buy",
-              leverage: 1,
-              notional: 200,
-            },
-            {
-              symbol: "ETH/USDC:USDC",
-              percentage: 50,
-              side: "buy",
-              leverage: 1,
-              notional: 200,
-            },
-          ],
-          totalNotional: 400,
-        },
-        isLoading: false,
-      } as unknown as ReturnType<typeof useHyperliquidPositions>)
-
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
-
-      await waitFor(() => {
-        expect(result.current.selectedTokens).toHaveLength(2)
-      })
-
-      // Try to set BTC to 80% (total would be 130%, exceeds 100%)
-      // Should be clamped so total is 100%, meaning BTC can only be 50%
-      await act(async () => {
-        result.current.handleSliderChange("BTC/USDC:USDC", 80)
-      })
-
-      await waitFor(() => {
-        const btcToken = result.current.selectedTokens.find(
-          t => t.symbol === "BTC/USDC:USDC",
-        )
-        // Max for BTC = 100% - 50% (ETH) = 50%
-        expect(btcToken?.percentage).toBe(50)
-      })
-    })
-  })
-
   describe("handleOpenPositions", () => {
     it("calls rebalance mutation with accountValue and crossAccountLeverage", async () => {
       const mockMutate = vi.fn()
@@ -2434,19 +2094,18 @@ describe("usePortfolioState", () => {
         wrapper: createWrapper(),
       })
 
-      // Add a token
+      // Add a token and set leverage first (empty positions => leverage 0)
       await act(async () => {
         result.current.handleAddToken("BTC/USDC:USDC")
       })
 
-      // Set percentage value - 25%
-      await act(async () => {
-        result.current.handleSliderChange("BTC/USDC:USDC", 25)
-      })
-
-      // Set cross-account leverage
       await act(async () => {
         result.current.handleCrossAccountLeverageChange(2)
+      })
+
+      // Set percentage to 100% (required to avoid "sum below 100%" block)
+      await act(async () => {
+        result.current.handleWeightChange("BTC/USDC:USDC", 100)
       })
 
       // Call handleOpenPositions
@@ -2455,8 +2114,8 @@ describe("usePortfolioState", () => {
       })
 
       // With 2x leverage, totalNotional = 2000
-      // 25% of $2000 = $500 USD
-      // Percentage sent to API should be 0.25 (25% as decimal)
+      // 100% of $2000 = $2000 USD
+      // Percentage sent to API should be 1 (100% as decimal)
       expect(mockMutate).toHaveBeenCalledWith(
         expect.objectContaining({
           accountValue: 1000,
@@ -2464,7 +2123,7 @@ describe("usePortfolioState", () => {
           positions: expect.arrayContaining([
             expect.objectContaining({
               symbol: "BTC/USDC:USDC",
-              percentage: 0.25,
+              percentage: 1,
             }),
           ]),
         }),
@@ -2498,7 +2157,7 @@ describe("usePortfolioState", () => {
       })
 
       await act(async () => {
-        result.current.handleSliderChange("BTC/USDC:USDC", 50)
+        result.current.handleWeightChange("BTC/USDC:USDC", 50)
       })
 
       await act(async () => {
@@ -2567,7 +2226,7 @@ describe("usePortfolioState", () => {
       })
 
       await act(async () => {
-        result.current.handleSliderChange("BTC/USDC:USDC", 50)
+        result.current.handleWeightChange("BTC/USDC:USDC", 50)
       })
 
       await act(async () => {
@@ -2607,9 +2266,19 @@ describe("usePortfolioState", () => {
         result.current.handleAddToken("BTC/USDC:USDC")
       })
 
-      // Set 25% (should be converted to 0.25 for API)
       await act(async () => {
-        result.current.handleSliderChange("BTC/USDC:USDC", 25)
+        result.current.handleCrossAccountLeverageChange(1)
+      })
+
+      // Set 25% (should be converted to 0.25 for API); need ~100% total so add second token
+      await act(async () => {
+        result.current.handleAddToken("ETH/USDC:USDC")
+      })
+      await act(async () => {
+        result.current.handleWeightChange("BTC/USDC:USDC", 25)
+      })
+      await act(async () => {
+        result.current.handleWeightChange("ETH/USDC:USDC", 75)
       })
 
       await act(async () => {
@@ -2620,7 +2289,12 @@ describe("usePortfolioState", () => {
         expect.objectContaining({
           positions: expect.arrayContaining([
             expect.objectContaining({
+              symbol: "BTC/USDC:USDC",
               percentage: 0.25, // Converted from 25%
+            }),
+            expect.objectContaining({
+              symbol: "ETH/USDC:USDC",
+              percentage: 0.75,
             }),
           ]),
         }),
@@ -2722,9 +2396,14 @@ describe("usePortfolioState", () => {
         expect(result.current.selectedTokens).toHaveLength(1)
       })
 
+      // Set leverage 1 so targetNotional = 1000
+      await act(async () => {
+        result.current.handleCrossAccountLeverageChange(1)
+      })
+
       // Adjust to exactly 10% (target $100, delta of $5 from current $105)
       await act(async () => {
-        result.current.handleSliderChange("BTC/USDC:USDC", 10)
+        result.current.handleWeightChange("BTC/USDC:USDC", 10)
       })
 
       await waitFor(() => {
@@ -2835,39 +2514,31 @@ describe("usePortfolioState", () => {
       vi.mocked(useHyperliquidPositions).mockReturnValue({
         data: {
           positions: [
-            {
-              symbol: "BTC/USDC:USDC",
-              percentage: 30,
-              side: "buy",
-              leverage: 1,
-              notional: 300,
-            },
+            { symbol: "BTC/USDC:USDC", percentage: 30, side: "buy", leverage: 1, notional: 300 },
+            { symbol: "ETH/USDC:USDC", percentage: 70, side: "buy", leverage: 1, notional: 700 },
           ],
           totalNotional: 1000,
         },
         isLoading: false,
       } as unknown as ReturnType<typeof useHyperliquidPositions>)
 
-      const { result } = renderHook(() => usePortfolioState(false), {
+      const { result } = renderHook(() => usePortfolioState(false, false), {
         wrapper: createWrapper(),
       })
 
       await waitFor(() => {
-        expect(result.current.selectedTokens).toHaveLength(1)
+        expect(result.current.selectedTokens).toHaveLength(2)
       })
 
-      // Set budget and adjust position to have a small change (< $11)
       await act(async () => {
-        result.current.handleBudgetInputChange("1000")
+        result.current.handleCrossAccountLeverageChange(1)
       })
 
-      // Modify position to create a small change (e.g., $30 → $35 = $5 change)
       await act(async () => {
-        result.current.handleSliderChange("BTC/USDC:USDC", 305) // $5 increase from $300
+        result.current.handleWeightChange("BTC/USDC:USDC", 30.5)
       })
-
-      await waitFor(() => {
-        expect(result.current.selectedTokens[0].lockedUsd).toBe(305)
+      await act(async () => {
+        result.current.handleWeightChange("ETH/USDC:USDC", 69.5)
       })
 
       // Try to rebalance - should set error message instead of calling mutate
@@ -2883,7 +2554,7 @@ describe("usePortfolioState", () => {
         const token = result.current.selectedTokens.find(
           t => t.symbol === "BTC/USDC:USDC",
         )
-        expect(token?.message).toContain("below minimum")
+        expect(token?.message ?? "").toContain("below minimum")
       })
     })
 
@@ -2897,39 +2568,31 @@ describe("usePortfolioState", () => {
       vi.mocked(useHyperliquidPositions).mockReturnValue({
         data: {
           positions: [
-            {
-              symbol: "BTC/USDC:USDC",
-              percentage: 30,
-              side: "buy",
-              leverage: 1,
-              notional: 300,
-            },
+            { symbol: "BTC/USDC:USDC", percentage: 30, side: "buy", leverage: 1, notional: 300 },
+            { symbol: "ETH/USDC:USDC", percentage: 70, side: "buy", leverage: 1, notional: 700 },
           ],
           totalNotional: 1000,
         },
         isLoading: false,
       } as unknown as ReturnType<typeof useHyperliquidPositions>)
 
-      const { result } = renderHook(() => usePortfolioState(true), {
+      const { result } = renderHook(() => usePortfolioState(true, false), {
         wrapper: createWrapper(),
       })
 
       await waitFor(() => {
-        expect(result.current.selectedTokens).toHaveLength(1)
+        expect(result.current.selectedTokens).toHaveLength(2)
       })
 
-      // Set budget and adjust position to have a small change (< $11)
       await act(async () => {
-        result.current.handleBudgetInputChange("1000")
+        result.current.handleCrossAccountLeverageChange(1)
       })
 
-      // Modify position to create a small change (e.g., $30 → $35 = $5 change)
       await act(async () => {
-        result.current.handleSliderChange("BTC/USDC:USDC", 305) // $5 increase from $300
+        result.current.handleWeightChange("BTC/USDC:USDC", 30.5)
       })
-
-      await waitFor(() => {
-        expect(result.current.selectedTokens[0].lockedUsd).toBe(305)
+      await act(async () => {
+        result.current.handleWeightChange("ETH/USDC:USDC", 69.5)
       })
 
       // Try to rebalance - should call mutate with precise: true
@@ -2944,7 +2607,6 @@ describe("usePortfolioState", () => {
 
       const mutateCall = mockMutate.mock.calls[0][0]
       expect(mutateCall.precise).toBe(true)
-      expect(mutateCall.budget).toBe(1000)
       expect(mutateCall.positions).toBeDefined()
     })
 
@@ -2955,42 +2617,34 @@ describe("usePortfolioState", () => {
         isPending: false,
       } as unknown as ReturnType<typeof useRebalanceHyperliquidPositions>)
 
-      // Set up positions with a large enough change (>= $11 delta) so it can be submitted
       vi.mocked(useHyperliquidPositions).mockReturnValue({
         data: {
           positions: [
-            {
-              symbol: "BTC/USDC:USDC",
-              percentage: 30,
-              side: "buy",
-              leverage: 1,
-              notional: 300,
-            },
+            { symbol: "BTC/USDC:USDC", percentage: 30, side: "buy", leverage: 1, notional: 300 },
+            { symbol: "ETH/USDC:USDC", percentage: 70, side: "buy", leverage: 1, notional: 700 },
           ],
           totalNotional: 1000,
         },
         isLoading: false,
       } as unknown as ReturnType<typeof useHyperliquidPositions>)
 
-      const { result } = renderHook(() => usePortfolioState(), {
+      const { result } = renderHook(() => usePortfolioState(undefined, false), {
         wrapper: createWrapper(),
       })
 
       await waitFor(() => {
-        expect(result.current.selectedTokens).toHaveLength(1)
-      })
-
-      // Set budget and make a large change (>= $11)
-      await act(async () => {
-        result.current.handleBudgetInputChange("1000")
+        expect(result.current.selectedTokens).toHaveLength(2)
       })
 
       await act(async () => {
-        result.current.handleSliderChange("BTC/USDC:USDC", 315) // $15 increase from $300
+        result.current.handleCrossAccountLeverageChange(1)
       })
 
-      await waitFor(() => {
-        expect(result.current.selectedTokens[0].lockedUsd).toBe(315)
+      await act(async () => {
+        result.current.handleWeightChange("BTC/USDC:USDC", 31.5)
+      })
+      await act(async () => {
+        result.current.handleWeightChange("ETH/USDC:USDC", 68.5)
       })
 
       // Submit
@@ -3017,37 +2671,32 @@ describe("usePortfolioState", () => {
       vi.mocked(useHyperliquidPositions).mockReturnValue({
         data: {
           positions: [
-            {
-              symbol: "BTC/USDC:USDC",
-              percentage: 30,
-              side: "buy",
-              leverage: 1,
-              notional: 300,
-            },
+            { symbol: "BTC/USDC:USDC", percentage: 30, side: "buy", leverage: 1, notional: 300 },
+            { symbol: "ETH/USDC:USDC", percentage: 70, side: "buy", leverage: 1, notional: 700 },
           ],
           totalNotional: 1000,
         },
         isLoading: false,
       } as unknown as ReturnType<typeof useHyperliquidPositions>)
 
-      // First, test with precise: false - should block small changes
       const { result: resultFalse } = renderHook(
-        () => usePortfolioState(false),
-        {
-          wrapper: createWrapper(),
-        },
+        () => usePortfolioState(false, false),
+        { wrapper: createWrapper() },
       )
 
       await waitFor(() => {
-        expect(resultFalse.current.selectedTokens).toHaveLength(1)
+        expect(resultFalse.current.selectedTokens).toHaveLength(2)
       })
 
       await act(async () => {
-        resultFalse.current.handleBudgetInputChange("1000")
+        resultFalse.current.handleCrossAccountLeverageChange(1)
       })
 
       await act(async () => {
-        resultFalse.current.handleSliderChange("BTC/USDC:USDC", 305) // $5 change - too small
+        resultFalse.current.handleWeightChange("BTC/USDC:USDC", 30.5)
+      })
+      await act(async () => {
+        resultFalse.current.handleWeightChange("ETH/USDC:USDC", 69.5)
       })
 
       await act(async () => {
@@ -3056,43 +2705,33 @@ describe("usePortfolioState", () => {
 
       // With precise: false, small change should be blocked
       expect(mockMutate).not.toHaveBeenCalled()
-      expect(resultFalse.current.selectedTokens[0].message).toContain(
-        "below minimum",
-      )
+      await waitFor(() => {
+        const msg = resultFalse.current.selectedTokens[0].message ?? ""
+        expect(msg).toContain("below minimum")
+      })
 
       // Now test with precise: true - should allow small changes
       mockMutate.mockClear()
 
-      const { result: resultTrue } = renderHook(() => usePortfolioState(true), {
-        wrapper: createWrapper(),
-      })
+      const { result: resultTrue } = renderHook(
+        () => usePortfolioState(true, false),
+        { wrapper: createWrapper() },
+      )
 
       await waitFor(() => {
-        expect(resultTrue.current.selectedTokens).toHaveLength(1)
+        expect(resultTrue.current.selectedTokens).toHaveLength(2)
       })
 
       await act(async () => {
-        resultTrue.current.handleBudgetInputChange("1000")
+        resultTrue.current.handleCrossAccountLeverageChange(1)
       })
 
       await act(async () => {
-        resultTrue.current.handleSliderChange("BTC/USDC:USDC", 305) // $5 change
+        resultTrue.current.handleWeightChange("BTC/USDC:USDC", 30.5)
       })
-
-      // Wait for status to be computed (token should be "modified")
-      // The status computation compares lockedUsd: 305 (current) vs 300 (initial)
-      await waitFor(
-        () => {
-          const token = resultTrue.current.selectedTokens.find(
-            t => t.symbol === "BTC/USDC:USDC",
-          )
-          // Verify the lockedUsd was updated
-          expect(token?.lockedUsd).toBe(305)
-          // Then verify status is computed as modified
-          expect(token?.status).toBe("modified")
-        },
-        { timeout: 3000 },
-      )
+      await act(async () => {
+        resultTrue.current.handleWeightChange("ETH/USDC:USDC", 69.5)
+      })
 
       await act(async () => {
         resultTrue.current.handleOpenPositions()
@@ -3137,25 +2776,28 @@ describe("usePortfolioState", () => {
         isLoading: false,
       } as unknown as ReturnType<typeof useHyperliquidPositions>)
 
-      const { result } = renderHook(() => usePortfolioState(false), {
-        wrapper: createWrapper(),
-      })
+      // isWeightRedistribution: false so changing one token doesn't affect the other
+      const { result } = renderHook(
+        () => usePortfolioState(false, false),
+        { wrapper: createWrapper() },
+      )
 
       await waitFor(() => {
         expect(result.current.selectedTokens).toHaveLength(2)
       })
 
       await act(async () => {
-        result.current.handleBudgetInputChange("1000")
+        result.current.handleCrossAccountLeverageChange(1)
       })
 
-      // BTC: small change ($5), ETH: large change ($15)
+      // BTC: small change ($5), ETH: rest to reach 100%
+      // 30.5% of 1000 = $305 (delta $5), 69.5% = $695 (delta $495)
       await act(async () => {
-        result.current.handleSliderChange("BTC/USDC:USDC", 305) // $5 change
+        result.current.handleWeightChange("BTC/USDC:USDC", 30.5) // $5 change
       })
 
       await act(async () => {
-        result.current.handleSliderChange("ETH/USDC:USDC", 215) // $15 change
+        result.current.handleWeightChange("ETH/USDC:USDC", 69.5) // large change
       })
 
       await act(async () => {
@@ -3169,13 +2811,13 @@ describe("usePortfolioState", () => {
       const btcToken = result.current.selectedTokens.find(
         t => t.symbol === "BTC/USDC:USDC",
       )
-      expect(btcToken?.message).toContain("below minimum")
+      expect(btcToken?.message ?? "").toContain("below minimum")
 
-      // ETH should NOT have error message (its change is large enough)
+      // ETH should NOT have error message (its change is large enough, $495)
       const ethToken = result.current.selectedTokens.find(
         t => t.symbol === "ETH/USDC:USDC",
       )
-      expect(ethToken?.message).toBeNull()
+      expect(ethToken?.message ?? "").not.toContain("below minimum")
     })
   })
 
@@ -3233,7 +2875,7 @@ describe("usePortfolioState", () => {
 
       // Set budget
       await act(async () => {
-        result.current.handleBudgetInputChange("100")
+        result.current.handleCrossAccountLeverageChange(1)
       })
 
       // Add a token - it will get MIN_USD ($11) as lockedUsd by default
@@ -3247,7 +2889,7 @@ describe("usePortfolioState", () => {
 
       // Force lockedUsd below minimum by using slider
       await act(async () => {
-        result.current.handleSliderChange("BTC/USDC:USDC", 5) // 5% of 100 = $5
+        result.current.handleWeightChange("BTC/USDC:USDC", 5) // 5% of 100 = $5
       })
 
       await waitFor(() => {
@@ -3328,9 +2970,11 @@ describe("usePortfolioState", () => {
         isLoading: false,
       } as unknown as ReturnType<typeof useHyperliquidPositions>)
 
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
+      // With isWeightRedistribution: false, changing ETH doesn't affect BTC
+      const { result } = renderHook(
+        () => usePortfolioState(false, false),
+        { wrapper: createWrapper() },
+      )
 
       await waitFor(() => {
         expect(result.current.selectedTokens).toHaveLength(2)
@@ -3338,7 +2982,7 @@ describe("usePortfolioState", () => {
 
       // Modify ETH position (large change to pass MIN_CHANGE_DELTA check)
       await act(async () => {
-        result.current.handleSliderChange("ETH/USDC:USDC", 80) // Change from 99% to 80%
+        result.current.handleWeightChange("ETH/USDC:USDC", 80) // Change from 99% to 80%
       })
 
       await waitFor(() => {

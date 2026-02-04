@@ -36,6 +36,7 @@ vi.mock("@/services/hyperliquid-client", () => ({
     getNetworkMode = mockMethods.getNetworkMode
     getPublicKey = mockMethods.getPublicKey
   },
+  preloadMarkets: vi.fn().mockResolvedValue(undefined),
 }))
 
 const createWrapper = () => {
@@ -325,16 +326,17 @@ describe("useTrading hooks", () => {
 
       expect(mockMethods.rebalancePositions).toHaveBeenCalledWith(
         [
-          {
+          expect.objectContaining({
             symbol: "BTC/USDC:USDC",
             percentage: 0.5,
             side: "buy",
             leverage: 2,
             status: "modified",
-          },
+          }),
         ],
         1000,
         2,
+        false,
       )
 
       expect(result.current.data?.orders).toHaveLength(1)

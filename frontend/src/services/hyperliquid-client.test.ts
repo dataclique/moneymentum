@@ -38,6 +38,14 @@ vi.mock("ccxt", () => {
 
 import { HyperliquidClient } from "./hyperliquid-client"
 import type { WalletCredentials } from "@/contexts/wallet-context"
+import type { Position } from "./hyperliquid-client"
+
+const createPosition = (
+  overrides: Partial<Position> & Pick<Position, "symbol" | "percentage" | "side" | "leverage" | "status">,
+): Position => ({
+  leverageChanged: false,
+  ...overrides,
+})
 
 describe("HyperliquidClient", () => {
   const mockCredentials: WalletCredentials = {
@@ -295,14 +303,14 @@ describe("HyperliquidClient", () => {
       ])
       mockExchange.createOrder.mockResolvedValue({})
 
-      const positions = [
-        {
+      const positions: Position[] = [
+        createPosition({
           symbol: "BTC/USDC:USDC",
           percentage: 0.5,
-          side: "buy" as const,
+          side: "buy",
           leverage: 2,
-          status: "deleted" as const,
-        },
+          status: "deleted",
+        }),
       ]
 
       const results = await client.rebalancePositions(positions, 1000)
@@ -322,14 +330,14 @@ describe("HyperliquidClient", () => {
     it("skips untouched positions", async () => {
       client = new HyperliquidClient(mockCredentials, "testnet")
 
-      const positions = [
-        {
+      const positions: Position[] = [
+        createPosition({
           symbol: "BTC/USDC:USDC",
           percentage: 0.5,
-          side: "buy" as const,
+          side: "buy",
           leverage: 2,
-          status: "untouched" as const,
-        },
+          status: "untouched",
+        }),
       ]
 
       const results = await client.rebalancePositions(positions, 1000)
@@ -347,14 +355,15 @@ describe("HyperliquidClient", () => {
       })
       mockExchange.createOrder.mockResolvedValue({})
 
-      const positions = [
-        {
+      const positions: Position[] = [
+        createPosition({
           symbol: "BTC/USDC:USDC",
           percentage: 0.5,
-          side: "buy" as const,
+          side: "buy",
           leverage: 5,
-          status: "modified" as const,
-        },
+          status: "modified",
+          leverageChanged: true,
+        }),
       ]
 
       await client.rebalancePositions(positions, 1000)
@@ -370,14 +379,15 @@ describe("HyperliquidClient", () => {
       client = new HyperliquidClient(mockCredentials, "testnet")
       mockExchange.setLeverage.mockRejectedValue(new Error("Leverage too high"))
 
-      const positions = [
-        {
+      const positions: Position[] = [
+        createPosition({
           symbol: "BTC/USDC:USDC",
           percentage: 0.5,
-          side: "buy" as const,
+          side: "buy",
           leverage: 100,
-          status: "modified" as const,
-        },
+          status: "modified",
+          leverageChanged: true,
+        }),
       ]
 
       const results = await client.rebalancePositions(positions, 1000)
@@ -396,14 +406,14 @@ describe("HyperliquidClient", () => {
       })
       mockExchange.createOrder.mockResolvedValue({})
 
-      const positions = [
-        {
+      const positions: Position[] = [
+        createPosition({
           symbol: "BTC/USDC:USDC",
           percentage: 0.5,
-          side: "buy" as const,
+          side: "buy",
           leverage: 2,
-          status: "idle" as const,
-        },
+          status: "idle",
+        }),
       ]
 
       const results = await client.rebalancePositions(positions, 1000)
@@ -423,25 +433,20 @@ describe("HyperliquidClient", () => {
     it("skips negligible changes", async () => {
       client = new HyperliquidClient(mockCredentials, "testnet")
       mockExchange.setLeverage.mockResolvedValue({})
-      mockExchange.fetchPositions.mockResolvedValue([
-        {
-          symbol: "BTC/USDC:USDC",
-          side: "long",
-          notional: 500,
-        },
-      ])
       mockExchange.fetchTickers.mockResolvedValue({
         "BTC/USDC:USDC": { last: 50000 },
       })
 
-      const positions = [
-        {
+      const positions: Position[] = [
+        createPosition({
           symbol: "BTC/USDC:USDC",
           percentage: 0.5,
-          side: "buy" as const,
+          side: "buy",
           leverage: 2,
-          status: "modified" as const,
-        },
+          status: "modified",
+          currentNotional: 500,
+          currentSide: "buy",
+        }),
       ]
 
       const results = await client.rebalancePositions(positions, 1000)
@@ -458,14 +463,14 @@ describe("HyperliquidClient", () => {
         "BTC/USDC:USDC": { last: 50000 },
       })
 
-      const positions = [
-        {
+      const positions: Position[] = [
+        createPosition({
           symbol: "BTC/USDC:USDC",
           percentage: 0.005, // 0.5% of 1000 = 5 USD, below min
-          side: "buy" as const,
+          side: "buy",
           leverage: 1,
-          status: "idle" as const,
-        },
+          status: "idle",
+        }),
       ]
 
       const results = await client.rebalancePositions(positions, 1000)
@@ -485,14 +490,14 @@ describe("HyperliquidClient", () => {
         new Error("Insufficient balance"),
       )
 
-      const positions = [
-        {
+      const positions: Position[] = [
+        createPosition({
           symbol: "BTC/USDC:USDC",
           percentage: 0.5,
-          side: "buy" as const,
+          side: "buy",
           leverage: 2,
-          status: "idle" as const,
-        },
+          status: "idle",
+        }),
       ]
 
       const results = await client.rebalancePositions(positions, 1000)
@@ -514,14 +519,14 @@ describe("HyperliquidClient", () => {
       // totalNotional = 1000 * 2 = 2000
       // targetNotional for 50% = 0.5 * 2000 = 1000 USD
       // coinAmount = 1000 / 50000 = 0.02
-      const positions = [
-        {
+      const positions: Position[] = [
+        createPosition({
           symbol: "BTC/USDC:USDC",
           percentage: 0.5,
-          side: "buy" as const,
+          side: "buy",
           leverage: 2,
-          status: "idle" as const,
-        },
+          status: "idle",
+        }),
       ]
 
       await client.rebalancePositions(positions, 1000, 2)
@@ -549,14 +554,14 @@ describe("HyperliquidClient", () => {
       // totalNotional = 1000 * 1 = 1000
       // targetNotional for 50% = 0.5 * 1000 = 500 USD
       // coinAmount = 500 / 50000 = 0.01
-      const positions = [
-        {
+      const positions: Position[] = [
+        createPosition({
           symbol: "BTC/USDC:USDC",
           percentage: 0.5,
-          side: "buy" as const,
+          side: "buy",
           leverage: 2,
-          status: "idle" as const,
-        },
+          status: "idle",
+        }),
       ]
 
       await client.rebalancePositions(positions, 1000)
@@ -585,21 +590,21 @@ describe("HyperliquidClient", () => {
       // totalNotional = 1000 * 3 = 3000
       // BTC: 40% = 0.4 * 3000 = 1200 USD -> 0.024 BTC
       // ETH: 60% = 0.6 * 3000 = 1800 USD -> 0.45 ETH
-      const positions = [
-        {
+      const positions: Position[] = [
+        createPosition({
           symbol: "BTC/USDC:USDC",
           percentage: 0.4,
-          side: "buy" as const,
+          side: "buy",
           leverage: 1,
-          status: "idle" as const,
-        },
-        {
+          status: "idle",
+        }),
+        createPosition({
           symbol: "ETH/USDC:USDC",
           percentage: 0.6,
-          side: "sell" as const,
+          side: "sell",
           leverage: 1,
-          status: "idle" as const,
-        },
+          status: "idle",
+        }),
       ]
 
       await client.rebalancePositions(positions, 1000, 3)
@@ -629,25 +634,24 @@ describe("HyperliquidClient", () => {
       it("increases existing long position", async () => {
         client = new HyperliquidClient(mockCredentials, "testnet")
         mockExchange.setLeverage.mockResolvedValue({})
-        // Existing long position of $300
-        mockExchange.fetchPositions.mockResolvedValue([
-          { symbol: "BTC/USDC:USDC", side: "long", notional: 300 },
-        ])
         mockExchange.fetchTickers.mockResolvedValue({
           "BTC/USDC:USDC": { last: 50000 },
         })
         mockExchange.createOrder.mockResolvedValue({})
 
         // Target: 50% of $1000 = $500
+        // Current: $300 (from payload)
         // Delta: $500 - $300 = $200 (buy more)
-        const positions = [
-          {
+        const positions: Position[] = [
+          createPosition({
             symbol: "BTC/USDC:USDC",
             percentage: 0.5,
-            side: "buy" as const,
+            side: "buy",
             leverage: 2,
-            status: "modified" as const,
-          },
+            status: "modified",
+            currentNotional: 300,
+            currentSide: "buy",
+          }),
         ]
 
         const results = await client.rebalancePositions(positions, 1000)
@@ -666,10 +670,6 @@ describe("HyperliquidClient", () => {
       it("increases existing short position", async () => {
         client = new HyperliquidClient(mockCredentials, "testnet")
         mockExchange.setLeverage.mockResolvedValue({})
-        // Existing short position of $200
-        mockExchange.fetchPositions.mockResolvedValue([
-          { symbol: "ETH/USDC:USDC", side: "short", notional: 200 },
-        ])
         mockExchange.fetchTickers.mockResolvedValue({
           "ETH/USDC:USDC": { last: 4000 },
         })
@@ -677,14 +677,16 @@ describe("HyperliquidClient", () => {
 
         // Target: 50% short of $1000 = -$500
         // Current: -$200, Delta: -$500 - (-$200) = -$300 (sell more)
-        const positions = [
-          {
+        const positions: Position[] = [
+          createPosition({
             symbol: "ETH/USDC:USDC",
             percentage: 0.5,
-            side: "sell" as const,
+            side: "sell",
             leverage: 1,
-            status: "modified" as const,
-          },
+            status: "modified",
+            currentNotional: 200,
+            currentSide: "sell",
+          }),
         ]
 
         const results = await client.rebalancePositions(positions, 1000)
@@ -705,25 +707,23 @@ describe("HyperliquidClient", () => {
       it("decreases existing long position", async () => {
         client = new HyperliquidClient(mockCredentials, "testnet")
         mockExchange.setLeverage.mockResolvedValue({})
-        // Existing long position of $800
-        mockExchange.fetchPositions.mockResolvedValue([
-          { symbol: "BTC/USDC:USDC", side: "long", notional: 800 },
-        ])
         mockExchange.fetchTickers.mockResolvedValue({
           "BTC/USDC:USDC": { last: 50000 },
         })
         mockExchange.createOrder.mockResolvedValue({})
 
         // Target: 30% of $1000 = $300
-        // Delta: $300 - $800 = -$500 (sell some)
-        const positions = [
-          {
+        // Current: $800, Delta: $300 - $800 = -$500 (sell some)
+        const positions: Position[] = [
+          createPosition({
             symbol: "BTC/USDC:USDC",
             percentage: 0.3,
-            side: "buy" as const,
+            side: "buy",
             leverage: 2,
-            status: "modified" as const,
-          },
+            status: "modified",
+            currentNotional: 800,
+            currentSide: "buy",
+          }),
         ]
 
         const results = await client.rebalancePositions(positions, 1000)
@@ -742,10 +742,6 @@ describe("HyperliquidClient", () => {
       it("decreases existing short position (buy to cover)", async () => {
         client = new HyperliquidClient(mockCredentials, "testnet")
         mockExchange.setLeverage.mockResolvedValue({})
-        // Existing short position of $600
-        mockExchange.fetchPositions.mockResolvedValue([
-          { symbol: "ETH/USDC:USDC", side: "short", notional: 600 },
-        ])
         mockExchange.fetchTickers.mockResolvedValue({
           "ETH/USDC:USDC": { last: 4000 },
         })
@@ -753,14 +749,16 @@ describe("HyperliquidClient", () => {
 
         // Target: 20% short of $1000 = -$200
         // Current: -$600, Delta: -$200 - (-$600) = $400 (buy to cover)
-        const positions = [
-          {
+        const positions: Position[] = [
+          createPosition({
             symbol: "ETH/USDC:USDC",
             percentage: 0.2,
-            side: "sell" as const,
+            side: "sell",
             leverage: 1,
-            status: "modified" as const,
-          },
+            status: "modified",
+            currentNotional: 600,
+            currentSide: "sell",
+          }),
         ]
 
         const results = await client.rebalancePositions(positions, 1000)
@@ -781,10 +779,6 @@ describe("HyperliquidClient", () => {
       it("flips from long to short with single order", async () => {
         client = new HyperliquidClient(mockCredentials, "testnet")
         mockExchange.setLeverage.mockResolvedValue({})
-        // Existing long position of $300
-        mockExchange.fetchPositions.mockResolvedValue([
-          { symbol: "BTC/USDC:USDC", side: "long", notional: 300 },
-        ])
         mockExchange.fetchTickers.mockResolvedValue({
           "BTC/USDC:USDC": { last: 50000 },
         })
@@ -792,14 +786,16 @@ describe("HyperliquidClient", () => {
 
         // Target: 40% SHORT of $1000 = -$400
         // Current: +$300, Delta: -$400 - $300 = -$700 (sell $700 worth)
-        const positions = [
-          {
+        const positions: Position[] = [
+          createPosition({
             symbol: "BTC/USDC:USDC",
             percentage: 0.4,
-            side: "sell" as const,
+            side: "sell",
             leverage: 2,
-            status: "modified" as const,
-          },
+            status: "modified",
+            currentNotional: 300,
+            currentSide: "buy",
+          }),
         ]
 
         const results = await client.rebalancePositions(positions, 1000)
@@ -818,10 +814,6 @@ describe("HyperliquidClient", () => {
       it("flips from short to long with single order", async () => {
         client = new HyperliquidClient(mockCredentials, "testnet")
         mockExchange.setLeverage.mockResolvedValue({})
-        // Existing short position of $200
-        mockExchange.fetchPositions.mockResolvedValue([
-          { symbol: "ETH/USDC:USDC", side: "short", notional: 200 },
-        ])
         mockExchange.fetchTickers.mockResolvedValue({
           "ETH/USDC:USDC": { last: 4000 },
         })
@@ -829,14 +821,16 @@ describe("HyperliquidClient", () => {
 
         // Target: 50% LONG of $1000 = +$500
         // Current: -$200, Delta: $500 - (-$200) = $700 (buy $700 worth)
-        const positions = [
-          {
+        const positions: Position[] = [
+          createPosition({
             symbol: "ETH/USDC:USDC",
             percentage: 0.5,
-            side: "buy" as const,
+            side: "buy",
             leverage: 1,
-            status: "modified" as const,
-          },
+            status: "modified",
+            currentNotional: 200,
+            currentSide: "sell",
+          }),
         ]
 
         const results = await client.rebalancePositions(positions, 1000)
@@ -857,24 +851,22 @@ describe("HyperliquidClient", () => {
       it("reports insufficient delta differently from failures", async () => {
         client = new HyperliquidClient(mockCredentials, "testnet")
         mockExchange.setLeverage.mockResolvedValue({})
-        // Existing position of $505
-        mockExchange.fetchPositions.mockResolvedValue([
-          { symbol: "BTC/USDC:USDC", side: "long", notional: 505 },
-        ])
         mockExchange.fetchTickers.mockResolvedValue({
           "BTC/USDC:USDC": { last: 50000 },
         })
 
         // Target: 50% of $1000 = $500
-        // Delta: $500 - $505 = -$5 (below $10 minimum)
-        const positions = [
-          {
+        // Current: $505, Delta: $500 - $505 = -$5 (below $11 minimum)
+        const positions: Position[] = [
+          createPosition({
             symbol: "BTC/USDC:USDC",
             percentage: 0.5,
-            side: "buy" as const,
+            side: "buy",
             leverage: 2,
-            status: "modified" as const,
-          },
+            status: "modified",
+            currentNotional: 505,
+            currentSide: "buy",
+          }),
         ]
 
         const results = await client.rebalancePositions(positions, 1000)
@@ -888,24 +880,22 @@ describe("HyperliquidClient", () => {
       it("handles delta exactly at negligible threshold", async () => {
         client = new HyperliquidClient(mockCredentials, "testnet")
         mockExchange.setLeverage.mockResolvedValue({})
-        // Existing position of $500.5
-        mockExchange.fetchPositions.mockResolvedValue([
-          { symbol: "BTC/USDC:USDC", side: "long", notional: 500.5 },
-        ])
         mockExchange.fetchTickers.mockResolvedValue({
           "BTC/USDC:USDC": { last: 50000 },
         })
 
         // Target: 50% of $1000 = $500
-        // Delta: $500 - $500.5 = -$0.5 (negligible)
-        const positions = [
-          {
+        // Current: $500.5, Delta: $500 - $500.5 = -$0.5 (negligible)
+        const positions: Position[] = [
+          createPosition({
             symbol: "BTC/USDC:USDC",
             percentage: 0.5,
-            side: "buy" as const,
+            side: "buy",
             leverage: 2,
-            status: "modified" as const,
-          },
+            status: "modified",
+            currentNotional: 500.5,
+            currentSide: "buy",
+          }),
         ]
 
         const results = await client.rebalancePositions(positions, 1000)
@@ -921,10 +911,17 @@ describe("HyperliquidClient", () => {
       it("handles mix of increase, decrease, and close in single rebalance", async () => {
         client = new HyperliquidClient(mockCredentials, "testnet")
         mockExchange.setLeverage.mockResolvedValue({})
-        mockExchange.fetchPositions.mockResolvedValue([
-          { symbol: "BTC/USDC:USDC", side: "long", notional: 200 },
-          { symbol: "ETH/USDC:USDC", side: "long", notional: 400 },
-        ])
+        const allPositions = [
+          { symbol: "BTC/USDC:USDC", side: "long", notional: 200, contracts: 0.004 },
+          { symbol: "ETH/USDC:USDC", side: "long", notional: 400, contracts: 0.1 },
+        ]
+        mockExchange.fetchPositions.mockImplementation((syms?: string[]) =>
+          Promise.resolve(
+            syms?.length
+              ? allPositions.filter(p => syms.includes(p.symbol))
+              : allPositions,
+          ),
+        )
         mockExchange.fetchTickers.mockResolvedValue({
           "BTC/USDC:USDC": { last: 50000 },
           "ETH/USDC:USDC": { last: 4000 },
@@ -978,32 +975,32 @@ describe("HyperliquidClient", () => {
 
       it("continues processing after one position fails", async () => {
         client = new HyperliquidClient(mockCredentials, "testnet")
-        // First leverage call fails, second succeeds
         mockExchange.setLeverage
           .mockRejectedValueOnce(new Error("Leverage too high"))
           .mockResolvedValueOnce({})
-        mockExchange.fetchPositions.mockResolvedValue([])
         mockExchange.fetchTickers.mockResolvedValue({
           "BTC/USDC:USDC": { last: 50000 },
           "ETH/USDC:USDC": { last: 4000 },
         })
         mockExchange.createOrder.mockResolvedValue({})
 
-        const positions = [
-          {
+        const positions: Position[] = [
+          createPosition({
             symbol: "BTC/USDC:USDC",
             percentage: 0.5,
-            side: "buy" as const,
-            leverage: 100, // Will fail
-            status: "idle" as const,
-          },
-          {
+            side: "buy",
+            leverage: 100,
+            status: "idle",
+            leverageChanged: true,
+          }),
+          createPosition({
             symbol: "ETH/USDC:USDC",
             percentage: 0.3,
-            side: "buy" as const,
+            side: "buy",
             leverage: 2,
-            status: "idle" as const,
-          },
+            status: "idle",
+            leverageChanged: true,
+          }),
         ]
 
         const results = await client.rebalancePositions(positions, 1000)
@@ -1032,14 +1029,15 @@ describe("HyperliquidClient", () => {
         })
         mockExchange.createOrder.mockResolvedValue({})
 
-        const positions = [
-          {
+        const positions: Position[] = [
+          createPosition({
             symbol: "BTC/USDC:USDC",
             percentage: 0.5,
-            side: "buy" as const,
+            side: "buy",
             leverage: 3,
-            status: "idle" as const,
-          },
+            status: "idle",
+            leverageChanged: true,
+          }),
         ]
 
         await client.rebalancePositions(positions, 1000)
@@ -1071,14 +1069,14 @@ describe("HyperliquidClient", () => {
         ])
         mockExchange.createOrder.mockResolvedValue({})
 
-        const positions = [
-          {
+        const positions: Position[] = [
+          createPosition({
             symbol: "BTC/USDC:USDC",
             percentage: 0,
-            side: "buy" as const,
+            side: "buy",
             leverage: 2,
-            status: "deleted" as const,
-          },
+            status: "deleted",
+          }),
         ]
 
         await client.rebalancePositions(positions, 1000)

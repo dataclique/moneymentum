@@ -1,6 +1,112 @@
 import ccxt from "ccxt"
 import type { NetworkMode, WalletCredentials } from "@/contexts/wallet-context"
 
+const MARKETS_CACHE_KEY = "hyperliquid_markets_cache"
+const MARKETS_CACHE_TTL_MS = 24 * 60 * 60 * 1000
+
+interface MarketsCache {
+  markets: Record<string, unknown>
+  timestamp: number
+  networkMode: NetworkMode
+}
+
+const createTempExchange = (networkMode: NetworkMode): HyperliquidExchange => {
+  const HyperliquidClass = ccxt.hyperliquid as unknown as new (
+    config: Record<string, unknown>,
+  ) => HyperliquidExchange
+
+  const exchange = new HyperliquidClass({
+    enableRateLimit: true,
+  })
+
+  if (networkMode === "testnet") {
+    exchange.setSandboxMode(true)
+  }
+
+  return exchange
+}
+
+const getCachedMarkets = (
+  networkMode: NetworkMode,
+): Record<string, unknown> | null => {
+  try {
+    const cached = localStorage.getItem(MARKETS_CACHE_KEY)
+    if (!cached) {
+      console.log("[getCachedMarkets] No cache found in localStorage")
+      return null
+    }
+
+    const parsed: MarketsCache = JSON.parse(cached) as MarketsCache
+    const { markets, timestamp, networkMode: cachedMode } = parsed
+
+    if (cachedMode !== networkMode) {
+      console.log(
+        `[getCachedMarkets] Cache miss: network mismatch (cached: ${cachedMode}, requested: ${networkMode})`,
+      )
+      return null
+    }
+
+    const ageMs = Date.now() - timestamp
+    if (ageMs >= MARKETS_CACHE_TTL_MS) {
+      console.log(
+        `[getCachedMarkets] Cache miss: expired (age: ${Math.round(ageMs / 1000 / 60)}min)`,
+      )
+      return null
+    }
+
+    console.log(
+      `[getCachedMarkets] Cache HIT! Age: ${Math.round(ageMs / 1000 / 60)}min, ${Object.keys(markets).length} markets`,
+    )
+    return markets
+  } catch {
+    console.log("[getCachedMarkets] Cache miss: parse error")
+    return null
+  }
+}
+
+const setCachedMarkets = (
+  markets: Record<string, unknown>,
+  networkMode: NetworkMode,
+): void => {
+  console.log(
+    `[setCachedMarkets] Saving ${Object.keys(markets).length} markets to cache (${networkMode})`,
+  )
+  const cacheData: MarketsCache = {
+    markets,
+    timestamp: Date.now(),
+    networkMode,
+  }
+  localStorage.setItem(MARKETS_CACHE_KEY, JSON.stringify(cacheData))
+}
+
+export const preloadMarkets = async (
+  networkMode: NetworkMode,
+): Promise<Record<string, unknown> | null> => {
+  console.log(`[preloadMarkets] Starting preload for ${networkMode}...`)
+  const cached = getCachedMarkets(networkMode)
+  if (cached) {
+    console.log("[preloadMarkets] Using cached markets, no API call needed")
+    return cached
+  }
+
+  try {
+    console.log("[preloadMarkets] Cache miss, fetching from API...")
+    const tempExchange = createTempExchange(networkMode)
+    const markets = await tempExchange.loadMarkets()
+    console.log(
+      `[preloadMarkets] Fetched ${Object.keys(markets).length} markets from API`,
+    )
+
+    setCachedMarkets(markets, networkMode)
+    return markets
+  } catch (error) {
+    // Network errors are expected when offline or API is unreachable
+    // Markets will be loaded on-demand when needed
+    console.warn("[preloadMarkets] Failed to preload markets:", error)
+    return null
+  }
+}
+
 export type OrderSide = "buy" | "sell"
 export type PositionStatus =
   | "untouched"
@@ -14,6 +120,9 @@ export interface Position {
   percentage: number
   side: OrderSide
   leverage: number
+  leverageChanged: boolean
+  currentNotional?: number
+  currentSide?: OrderSide
   status: PositionStatus
 }
 
@@ -48,7 +157,10 @@ interface HyperliquidExchange {
   options: Record<string, unknown>
   walletAddress?: string
   loadMarkets: () => Promise<Record<string, unknown>>
-  fetchBalance: () => Promise<{ total: Record<string, unknown> }>
+  fetchBalance: () => Promise<{
+    total: Record<string, unknown>
+    info?: Record<string, unknown>
+  }>
   fetchTickers: (
     symbols?: string[],
   ) => Promise<
@@ -89,7 +201,11 @@ export class HyperliquidClient {
   private networkMode: NetworkMode
   private vaultAddress: string | undefined
 
-  constructor(credentials: WalletCredentials, networkMode: NetworkMode) {
+  constructor(
+    credentials: WalletCredentials,
+    networkMode: NetworkMode,
+    markets?: Record<string, unknown>,
+  ) {
     this.networkMode = networkMode
     this.vaultAddress = credentials.vaultAddress
 
@@ -102,10 +218,27 @@ export class HyperliquidClient {
     const effectiveWalletAddress =
       credentials.vaultAddress ?? credentials.accountAddress
 
+    // Use pre-loaded markets if available, otherwise ccxt will load them on first use
+    console.log(
+      "[HyperliquidClient] Creating client, checking for cached markets...",
+    )
+    const cachedMarkets = markets ?? getCachedMarkets(networkMode)
+
+    if (cachedMarkets) {
+      console.log(
+        `[HyperliquidClient] Passing ${Object.keys(cachedMarkets).length} cached markets to ccxt`,
+      )
+    } else {
+      console.log(
+        "[HyperliquidClient] No cached markets, ccxt will fetch on first use",
+      )
+    }
+
     this.exchange = new HyperliquidClass({
       walletAddress: effectiveWalletAddress,
       privateKey: credentials.privateKey,
       enableRateLimit: true,
+      ...(cachedMarkets && { markets: cachedMarkets }),
     })
 
     if (networkMode === "testnet") {
@@ -115,6 +248,8 @@ export class HyperliquidClient {
     this.exchange.options["builderFee"] = false
     this.exchange.options["approvedBuilderFee"] = false
     this.exchange.options["defaultSlippage"] = SLIPPAGE
+    // Skip the setRef() call that wastes ~2.4 seconds trying to set a referral code
+    this.exchange.options["refSet"] = true
   }
 
   async getBalance(): Promise<number> {
@@ -126,8 +261,51 @@ export class HyperliquidClient {
     return 0
   }
 
+  async getAccountSummary(): Promise<{
+    accountValue: number
+    totalNotionalPosition: number
+    withdrawable: number
+  }> {
+    const balance = await this.exchange.fetchBalance()
+    const info = balance.info
+
+    let accountValue = 0
+    let totalNotionalPosition = 0
+    let withdrawable = 0
+
+    if (info?.marginSummary) {
+      const marginSummary = info.marginSummary as Record<string, unknown>
+      accountValue = this.parseNumericValue(marginSummary.accountValue, 0)
+      totalNotionalPosition = this.parseNumericValue(
+        marginSummary.totalNtlPos,
+        0,
+      )
+    }
+
+    if (info?.withdrawable !== undefined) {
+      withdrawable = this.parseNumericValue(info.withdrawable, 0)
+    }
+
+    return { accountValue, totalNotionalPosition, withdrawable }
+  }
+
+  private parseNumericValue(value: unknown, fallback: number): number {
+    if (value === undefined || value === null) return fallback
+    if (typeof value === "number") return value
+    if (typeof value === "string") return parseFloat(value)
+    return fallback
+  }
+
   async listPerpTickers(): Promise<string[]> {
+    console.log("[listPerpTickers] Calling exchange.loadMarkets()...")
     const markets = await this.exchange.loadMarkets()
+    console.log(
+      `[listPerpTickers] loadMarkets() returned ${Object.keys(markets).length} markets`,
+    )
+
+    // Update cache with fresh markets data
+    setCachedMarkets(markets, this.networkMode)
+
     const perpSymbols = Object.entries(markets)
       .filter(
         ([symbol, data]) =>
@@ -199,13 +377,54 @@ export class HyperliquidClient {
     return processed
   }
 
+  private buildCurrentPositionsMapFromPayload(
+    positions: Position[],
+  ): Record<string, CurrentPosition> {
+    const result: Record<string, CurrentPosition> = {}
+    for (const pos of positions) {
+      if (
+        pos.currentNotional !== undefined &&
+        pos.currentNotional > 0 &&
+        pos.currentSide !== undefined
+      ) {
+        result[pos.symbol] = {
+          symbol: pos.symbol,
+          side: pos.currentSide,
+          notional: pos.currentNotional,
+          entryPrice: 0,
+          unrealizedPnl: 0,
+          leverage: pos.leverage,
+        }
+      }
+    }
+    return result
+  }
+
   private async fetchSymbolPrices(
     symbols: string[],
   ): Promise<Record<string, number>> {
     if (symbols.length === 0) return {}
 
     const prices: Record<string, number> = {}
+
+    // Check markets state before fetchTickers
+    const exchange = this.exchange as unknown as {
+      markets?: Record<string, unknown>
+      markets_by_id?: Record<string, unknown>
+    }
+    console.log("[fetchSymbolPrices] Before fetchTickers", {
+      hasMarkets: !!exchange.markets,
+      marketsCount: exchange.markets ? Object.keys(exchange.markets).length : 0,
+      hasMarketsById: !!exchange.markets_by_id,
+    })
+
+    const fetchTickersStart = performance.now()
+    console.log("[fetchSymbolPrices] Calling fetchTickers...", { symbols })
     const tickers = await this.exchange.fetchTickers(symbols)
+    console.log("[fetchSymbolPrices] fetchTickers completed", {
+      elapsed: `${(performance.now() - fetchTickersStart).toFixed(2)}ms`,
+      tickerCount: Object.keys(tickers).length,
+    })
 
     for (const symbol of symbols) {
       const lastPrice = tickers[symbol].last
@@ -345,16 +564,25 @@ export class HyperliquidClient {
     }
   }
 
+  /** Close a portion of position by notional (USD). Bypasses MIN_ORDER_VALUE for reduce-only. */
   private async closeReduceOnlyNotional(
     symbol: string,
     price: number,
-    notionalToClose: number,
+    usdAmount: number,
     closeSide: OrderSide,
-    resultSide: OrderSide,
+    _targetSide: OrderSide,
     percentage: number,
   ): Promise<OrderResult> {
-    const usdAmount = Math.abs(notionalToClose)
     const coinAmount = usdAmount / price
+    if (coinAmount <= 0) {
+      return {
+        symbol,
+        side: closeSide,
+        percentage,
+        status: "filled",
+        message: "No close needed: amount is zero.",
+      }
+    }
 
     try {
       const slippagePrice =
@@ -372,16 +600,11 @@ export class HyperliquidClient {
         },
       )
 
-      return {
-        symbol,
-        side: resultSide,
-        percentage,
-        status: "filled",
-      }
+      return { symbol, side: closeSide, percentage, status: "filled" }
     } catch (error) {
       return {
         symbol,
-        side: resultSide,
+        side: closeSide,
         percentage,
         status: "failed",
         message: error instanceof Error ? error.message : String(error),
@@ -391,15 +614,48 @@ export class HyperliquidClient {
 
   async rebalancePositions(
     positions: Position[],
-    budget: number,
+    accountValue: number,
+    crossAccountLeverage: number = 1,
     precise: boolean = false,
   ): Promise<OrderResult[]> {
-    if (budget <= 0) {
-      throw new Error("Budget must be positive")
+    const rebalanceStartTime = performance.now()
+    console.log("[Rebalance] client.rebalancePositions() started", {
+      timestamp: new Date().toISOString(),
+      positionCount: positions.length,
+      accountValue,
+      crossAccountLeverage,
+      precise,
+    })
+
+    if (accountValue <= 0) {
+      throw new Error("Account value must be positive")
     }
 
+    // Pre-load markets once so subsequent ccxt calls don't re-fetch them
+    const marketsStartTime = performance.now()
+    console.log("[Rebalance] Step 0: Loading markets (if not cached)")
+    await this.exchange.loadMarkets()
+    console.log("[Rebalance] Step 0 completed", {
+      elapsed: `${(performance.now() - marketsStartTime).toFixed(2)}ms`,
+    })
+
+    const totalNotional = accountValue * crossAccountLeverage
+
+    const results: OrderResult[] = []
+
     // 1. Process deletions first
-    const deletionResults = await this.processDeletions(positions)
+    const deletionsStartTime = performance.now()
+    const deletions = positions.filter(p => p.status === "deleted")
+    console.log("[Rebalance] Step 1: Processing deletions", {
+      count: deletions.length,
+    })
+    for (const position of deletions) {
+      const closeResult = await this.closePosition(position)
+      results.push(closeResult)
+    }
+    console.log("[Rebalance] Step 1 completed", {
+      elapsed: `${(performance.now() - deletionsStartTime).toFixed(2)}ms`,
+    })
 
     // 2. Filter for positions that need rebalancing
     const positionsToRebalance = positions.filter(
@@ -407,121 +663,167 @@ export class HyperliquidClient {
     )
 
     if (positionsToRebalance.length === 0) {
-      return deletionResults
+      console.log("[Rebalance] No positions to rebalance, returning early", {
+        totalElapsed: `${(performance.now() - rebalanceStartTime).toFixed(2)}ms`,
+      })
+      return results
     }
 
-    // 3. Set leverages and collect results
-    const { successful: successfulPositions, failed: leverageFailures } =
-      await this.setLeveragesWithResults(positionsToRebalance)
+    // 3. Set leverages only where changed (using leverageChanged flag from hook)
+    const leverageStartTime = performance.now()
+    const positionsNeedingLeverageChange = positionsToRebalance.filter(
+      p => p.leverageChanged,
+    )
+    const positionsWithUnchangedLeverage = positionsToRebalance.filter(
+      p => !p.leverageChanged,
+    )
+    console.log("[Rebalance] Step 3: Setting leverages (parallel)", {
+      needChange: positionsNeedingLeverageChange.length,
+      skipped: positionsWithUnchangedLeverage.length,
+    })
+
+    const successfulPositions: Position[] = [...positionsWithUnchangedLeverage]
+
+    if (positionsNeedingLeverageChange.length > 0) {
+      const leverageResults = await Promise.allSettled(
+        positionsNeedingLeverageChange.map(async position => {
+          await this.setLeverage(position.symbol, position.leverage)
+          return position
+        }),
+      )
+      for (let i = 0; i < leverageResults.length; i++) {
+        const result = leverageResults[i]
+        const position = positionsNeedingLeverageChange[i]
+        if (result.status === "fulfilled") {
+          successfulPositions.push(result.value)
+        } else {
+          results.push({
+            symbol: position.symbol,
+            side: position.side,
+            percentage: position.percentage,
+            status: "failed",
+            message:
+              result.reason instanceof Error
+                ? result.reason.message
+                : String(result.reason),
+          })
+        }
+      }
+    }
+    console.log("[Rebalance] Step 3 completed", {
+      elapsed: `${(performance.now() - leverageStartTime).toFixed(2)}ms`,
+      successful: successfulPositions.length,
+      failed: positionsToRebalance.length - successfulPositions.length,
+    })
 
     if (successfulPositions.length === 0) {
-      return [...deletionResults, ...leverageFailures]
+      console.log("[Rebalance] No successful positions, returning", {
+        totalElapsed: `${(performance.now() - rebalanceStartTime).toFixed(2)}ms`,
+      })
+      return results
     }
 
-    // 4. Build notional maps
-    const targetNotional = this.buildTargetNotionalMap(
-      successfulPositions,
-      budget,
-    )
-    const currentPositions = await this.getCurrentPositions()
-    const currentNotional = this.buildCurrentNotionalMap(currentPositions)
-
-    // 5. Fetch prices and process positions
-    const prices = await this.fetchSymbolPrices(
-      successfulPositions.map(p => p.symbol),
-    )
-
-    const orderResults = await this.processPositions(
-      successfulPositions,
-      prices,
-      targetNotional,
-      currentNotional,
-      currentPositions,
-      precise,
-    )
-
-    return [...deletionResults, ...leverageFailures, ...orderResults]
-  }
-
-  private async processDeletions(
-    positions: Position[],
-  ): Promise<OrderResult[]> {
-    const deletedPositions = positions.filter(p => p.status === "deleted")
-    const results: OrderResult[] = []
-    for (const position of deletedPositions) {
-      const result = await this.closePosition(position)
-      results.push(result)
-    }
-    return results
-  }
-
-  private async setLeveragesWithResults(positions: Position[]): Promise<{
-    successful: Position[]
-    failed: OrderResult[]
-  }> {
-    const successful: Position[] = []
-    const failed: OrderResult[] = []
-
-    for (const position of positions) {
-      try {
-        await this.setLeverage(position.symbol, position.leverage)
-        successful.push(position)
-      } catch (error) {
-        failed.push({
-          symbol: position.symbol,
-          side: position.side,
-          percentage: position.percentage,
-          status: "failed",
-          message: error instanceof Error ? error.message : String(error),
-        })
+    // 4. Build target and current notional values
+    const targetNotional: Record<string, number> = {}
+    const currentNotional: Record<string, number> = {}
+    for (const position of successfulPositions) {
+      targetNotional[position.symbol] = this.signedNotional(
+        position.side,
+        position.percentage * totalNotional,
+      )
+      // Use passed currentNotional (from cached positions), default to 0 for new positions
+      // Sign with currentSide when available (actual exchange side), else position.side
+      if (position.currentNotional !== undefined) {
+        const sideForSign = position.currentSide ?? position.side
+        currentNotional[position.symbol] = this.signedNotional(
+          sideForSign,
+          position.currentNotional,
+        )
       }
     }
 
-    return { successful, failed }
-  }
+    // 5. Fetch prices only (positions data already passed from cache)
+    const fetchPricesStartTime = performance.now()
+    const symbolsToRebalance = successfulPositions.map(p => p.symbol)
+    console.log("[Rebalance] Step 5: Fetching prices", {
+      symbols: symbolsToRebalance,
+    })
+    const prices = await this.fetchSymbolPrices(symbolsToRebalance)
+    console.log("[Rebalance] Step 5 completed", {
+      elapsed: `${(performance.now() - fetchPricesStartTime).toFixed(2)}ms`,
+    })
 
-  private buildTargetNotionalMap(
-    positions: Position[],
-    budget: number,
-  ): Record<string, number> {
-    return Object.fromEntries(
-      positions.map(p => [
-        p.symbol,
-        this.signedNotional(p.side, p.percentage * budget),
-      ]),
-    )
-  }
+    const ordersStartTime = performance.now()
+    console.log("[Rebalance] Step 6: Placing orders", {
+      count: successfulPositions.length,
+      precise,
+    })
 
-  private buildCurrentNotionalMap(
-    positions: CurrentPosition[],
-  ): Record<string, number> {
-    return Object.fromEntries(
-      positions.map(p => [p.symbol, this.signedNotional(p.side, p.notional)]),
-    )
-  }
+    const currentPositionsMap: Record<string, CurrentPosition> = precise
+      ? this.buildCurrentPositionsMapFromPayload(successfulPositions)
+      : {}
 
-  private async processPositions(
-    positions: Position[],
-    prices: Record<string, number>,
-    targetNotional: Record<string, number>,
-    currentNotional: Record<string, number>,
-    currentPositions: CurrentPosition[],
-    precise: boolean,
-  ): Promise<OrderResult[]> {
-    const results: OrderResult[] = []
+    if (successfulPositions.length > 0) {
+      const orderPreview = successfulPositions.map(position => {
+        const symbol = position.symbol
+        const price = prices[symbol]
+        const targetValue = targetNotional[symbol] ?? 0
+        const currentValue = currentNotional[symbol] ?? 0
+        const notionalDelta = targetValue - currentValue
+        return {
+          symbol,
+          side: position.side,
+          leverage: position.leverage,
+          targetNotional: Number(targetValue.toFixed(2)),
+          currentNotional: Number(currentValue.toFixed(2)),
+          deltaNotional: Number(notionalDelta.toFixed(2)),
+          price: Number(price.toFixed(4)),
+          percentage: Number(position.percentage.toFixed(2)),
+        }
+      })
+      console.log(
+        "%c[Rebalance] Order preview:",
+        "background: purple; color: white; padding: 2px 6px; border-radius: 3px",
+      )
+      console.table(orderPreview)
+    }
+    for (const position of successfulPositions) {
+      const symbol = position.symbol
+      const price = prices[symbol]
 
-    for (const position of positions) {
-      const positionResults = await this.processPosition(
+      const targetValue = targetNotional[symbol] ?? 0
+      const currentValue = currentNotional[symbol] ?? 0
+      const currentPosition = currentPositionsMap[symbol]
+
+      const orderStartTime = performance.now()
+      const orderResults = await this.processPosition(
         position,
-        prices[position.symbol],
-        targetNotional[position.symbol] ?? 0,
-        currentNotional[position.symbol] ?? 0,
-        currentPositions.find(p => p.symbol === position.symbol),
+        price,
+        targetValue,
+        currentValue,
+        currentPosition,
         currentNotional,
         precise,
       )
-      results.push(...positionResults)
+      console.log("[Rebalance] Order placed", {
+        symbol,
+        elapsed: `${(performance.now() - orderStartTime).toFixed(2)}ms`,
+        status: orderResults[0]?.status,
+      })
+
+      for (const orderResult of orderResults) {
+        results.push(orderResult)
+      }
     }
+    console.log("[Rebalance] Step 6 completed", {
+      elapsed: `${(performance.now() - ordersStartTime).toFixed(2)}ms`,
+      orderCount: results.length,
+    })
+
+    console.log("[Rebalance] client.rebalancePositions() completed", {
+      totalElapsed: `${(performance.now() - rebalanceStartTime).toFixed(2)}ms`,
+      resultsCount: results.length,
+    })
 
     return results
   }
@@ -553,7 +855,8 @@ export class HyperliquidClient {
 
     // Precise mode for small changes
     if (precise && Math.abs(notionalDelta) < MIN_ORDER_VALUE) {
-      const currentNotionalAbs = Math.abs(currentNotional[symbol] ?? 0)
+      const currentNotionalAbs =
+        currentPosition?.notional ?? Math.abs(currentNotional[symbol] ?? 0)
       return this.processPositionPreciseMode(
         position,
         price,
@@ -671,22 +974,14 @@ export class HyperliquidClient {
     // Close amount exceeds or equals position size - close fully and open target
     if (closeAmount >= currentNotionalAbs) {
       const actualCloseAmount = Math.min(closeAmount, currentNotionalAbs)
-      const closeResult =
-        actualCloseAmount < MIN_ORDER_VALUE
-          ? await this.closeReduceOnlyNotional(
-              symbol,
-              price,
-              actualCloseAmount,
-              closeSide,
-              targetSide,
-              percentage,
-            )
-          : await this.placeOrder(
-              symbol,
-              price,
-              closeSide === "buy" ? actualCloseAmount : -actualCloseAmount,
-              percentage,
-            )
+      const closeResult = await this.closeReduceOnlyNotional(
+        symbol,
+        price,
+        actualCloseAmount,
+        closeSide,
+        targetSide,
+        percentage,
+      )
 
       const openNotional =
         targetNotionalAbs >= MIN_ORDER_VALUE
@@ -707,11 +1002,12 @@ export class HyperliquidClient {
     }
 
     // Normal increasing: close $11, open ($11 + delta)
-    const closeNotional = closeSide === "buy" ? closeAmount : -closeAmount
-    const closeResult = await this.placeOrder(
+    const closeResult = await this.closeReduceOnlyNotional(
       symbol,
       price,
-      closeNotional,
+      closeAmount,
+      closeSide,
+      targetSide,
       percentage,
     )
 

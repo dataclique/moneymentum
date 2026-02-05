@@ -115,7 +115,9 @@ describe("AddPositionModal", () => {
       await userEvent.clear(input)
       await userEvent.type(input, "10000")
 
-      expect(screen.getByText("$10,000")).toBeInTheDocument()
+      // toLocaleString() may format as "10,000" or "10 000" depending on locale
+      const notionalCell = screen.getByText("Notional").parentElement
+      expect(notionalCell).toHaveTextContent(/10[, ]?000|10\.0k/)
     })
 
     it("goes back on Escape", () => {

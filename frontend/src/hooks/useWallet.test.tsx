@@ -14,6 +14,7 @@ vi.mock("@/services/hyperliquid-client", () => ({
     getNetworkMode = vi.fn()
     getWalletAddress = vi.fn()
   },
+  preloadMarkets: vi.fn().mockResolvedValue(undefined),
 }))
 
 const wrapper = ({ children }: { children: React.ReactNode }) => (

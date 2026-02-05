@@ -61,7 +61,7 @@ export default tseslint.config(
       ],
 
       // General code quality
-      "no-console": ["warn", { allow: ["warn", "error"] }],
+      "no-console": "off",
       "prefer-const": "error",
       "no-var": "error",
       "eqeqeq": ["error", "always"],

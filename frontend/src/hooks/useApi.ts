@@ -162,7 +162,6 @@ export const useReloadData = () => {
           const readResult = await reader.read()
           done = readResult.done
           if (readResult.value) {
-            // eslint-disable-next-line no-console
             console.log(decoder.decode(readResult.value, { stream: true }))
           }
         }

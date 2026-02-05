@@ -15,7 +15,10 @@ import {
   type WalletCredentials,
   type StoredWallet,
 } from "./wallet-context"
-import { HyperliquidClient } from "@/services/hyperliquid-client"
+import {
+  HyperliquidClient,
+  preloadMarkets,
+} from "@/services/hyperliquid-client"
 
 export const WalletProvider = ({ children }: { children: ReactNode }) => {
   const [credentials, setCredentials] = useState<WalletCredentials | null>(() =>
@@ -24,6 +27,11 @@ export const WalletProvider = ({ children }: { children: ReactNode }) => {
   const [networkMode, setNetworkModeState] = useState<NetworkMode>(() =>
     getStoredNetworkMode(),
   )
+
+  // Preload markets on mount and when network mode changes (cached for 24h)
+  useEffect(() => {
+    void preloadMarkets(networkMode)
+  }, [networkMode])
 
   const isConnected = credentials !== null
 

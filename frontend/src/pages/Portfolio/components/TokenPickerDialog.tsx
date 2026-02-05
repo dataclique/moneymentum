@@ -42,18 +42,18 @@ export const TokenPickerDialog = ({
   return (
     <Dialog>
       <DialogTrigger asChild>
-        <Button>Add New Token</Button>
+        <Button>Add Position</Button>
       </DialogTrigger>
       <DialogContent className="flex h-[90vh] max-w-2xl flex-col">
         <DialogHeader>
-          <DialogTitle>Select a Token</DialogTitle>
+          <DialogTitle>Select Market</DialogTitle>
           <DialogDescription>
-            Search and select a token to add to your portfolio allocation.
+            Search and select a market to add to your portfolio.
           </DialogDescription>
         </DialogHeader>
         <input
           type="text"
-          placeholder="Search by ticker"
+          placeholder="Search markets"
           value={searchTerm}
           onChange={event => {
             setSearchTerm(event.target.value)
@@ -66,7 +66,7 @@ export const TokenPickerDialog = ({
         <div className="min-h-0 flex-1 overflow-y-auto rounded-lg border border-border">
           {isTickersLoading ? (
             <div className="p-4 text-sm text-muted-foreground">
-              Loading tickers...
+              Loading markets...
             </div>
           ) : filteredTickers.length ? (
             filteredTickers.map(symbol => {

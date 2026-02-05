@@ -1,4 +1,5 @@
-import { Trash2, Undo2 } from "lucide-react"
+import { useState, useEffect, useRef } from "react"
+import { Trash2, Undo2, AlertCircle } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import {
@@ -9,106 +10,138 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog"
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
 import { Slider } from "@/components/ui/slider"
 import { clsx } from "clsx"
 import { twMerge } from "tailwind-merge"
 import type { OrderSide } from "@/hooks/useTrading"
-import { type TokenAllocation, MIN_USD } from "../hooks/usePortfolioState"
+import {
+  type TokenAllocation,
+  MIN_CHANGE_DELTA,
+  MIN_USD,
+} from "../hooks/usePortfolioState"
 
 const getSideColor = (side: OrderSide) =>
   side === "buy" ? "rgba(34, 197, 94, 0.8)" : "rgba(239, 68, 68, 0.8)"
 
-const getTokenUsdAllocation = (
-  token: TokenAllocation,
-  currentBudget: number,
-) => {
-  if (token.notional !== undefined && token.notional > 0) return token.notional
-  if (token.lockedUsd !== undefined) return token.lockedUsd
-  if (currentBudget > 0) return (token.percentage / 100) * currentBudget
-  return 0
-}
-
 interface TokenCardProps {
   token: TokenAllocation
-  budgetForUi: number
-  activeTokens: TokenAllocation[]
+  displayNotional: number
   maxLeverage: number | undefined
+  isRebalancing: boolean
+  isPrecise: boolean
   onRemove: (symbol: string) => void
   onUndoRemove: (symbol: string) => void
-  onSliderChange: (symbol: string, usdValue: number) => void
   onSideChange: (symbol: string, side: OrderSide) => void
   onLeverageChange: (symbol: string, leverage: number) => void
+  onNotionalChange: (symbol: string, notional: number) => void
+  onWeightChange: (symbol: string, percentage: number) => void
 }
 
 export const TokenCard = ({
   token,
-  budgetForUi,
-  activeTokens,
+  displayNotional,
   maxLeverage,
+  isRebalancing,
+  isPrecise,
   onRemove,
   onUndoRemove,
-  onSliderChange,
   onSideChange,
   onLeverageChange,
+  onNotionalChange,
+  onWeightChange,
 }: TokenCardProps) => {
-  const tokenUsdValue = getTokenUsdAllocation(token, budgetForUi)
-  const effectivePercent =
-    budgetForUi > 0 ? (tokenUsdValue / budgetForUi) * 100 : token.percentage
   const sideColor = getSideColor(token.side)
+  const borderColor =
+    token.status === "deleted" ? sideColor.replace("0.8", "0.2") : sideColor
+  const showProgressAnimation =
+    token.status === "working" || (token.status === "deleted" && isRebalancing)
+  const cardStyle = {
+    borderLeftColor: borderColor,
+  }
   const isLong = token.side === "buy"
-  const usdAmount = Number.isFinite(tokenUsdValue)
-    ? tokenUsdValue.toFixed(2)
-    : "0.00"
-  const sliderMaxValue =
-    budgetForUi > 0 ? budgetForUi : Math.max(tokenUsdValue, MIN_USD)
-  const sliderMinValue = Math.min(MIN_USD, sliderMaxValue)
-  const sliderValue = Math.min(
-    sliderMaxValue,
-    Math.max(tokenUsdValue, sliderMinValue),
+  // Always show target notional based on percentage and displayNotional
+  // When leverage changes, percentage stays fixed and notional is recalculated
+  const usdAmount =
+    displayNotional > 0
+      ? ((token.percentage / 100) * displayNotional).toFixed(2)
+      : "0.00"
+
+  // Local state for notional input to allow empty field while typing
+  const [notionalInput, setNotionalInput] = useState(() =>
+    (token.notional ?? parseFloat(usdAmount)).toFixed(2),
   )
 
-  const otherTokensAllocatedUsd = activeTokens.reduce((acc, t) => {
-    if (t.symbol === token.symbol) {
-      return acc
+  // Local state for weight input to allow empty field while typing
+  const [weightInput, setWeightInput] = useState(() => String(token.percentage))
+
+  // Sync local state when token.notional changes from outside
+  const externalNotional = token.notional ?? parseFloat(usdAmount)
+  const prevExternalNotionalRef = useRef(externalNotional)
+  useEffect(() => {
+    if (prevExternalNotionalRef.current !== externalNotional) {
+      prevExternalNotionalRef.current = externalNotional
+      setNotionalInput(externalNotional.toFixed(2))
     }
-    return acc + getTokenUsdAllocation(t, budgetForUi)
-  }, 0)
-  const maxUsdForToken = Math.max(0, budgetForUi - otherTokensAllocatedUsd)
+  }, [externalNotional])
+
+  // Sync local weight state when token.percentage changes from outside
+  const prevPercentageRef = useRef(token.percentage)
+  useEffect(() => {
+    if (prevPercentageRef.current !== token.percentage) {
+      prevPercentageRef.current = token.percentage
+      setWeightInput(String(token.percentage))
+    }
+  }, [token.percentage])
 
   return (
     <Card
       className={twMerge(
         clsx(
-          "overflow-hidden",
+          "card-border relative overflow-hidden",
           token.status === "idle" && "border-l-4",
-          token.status === "filled" && "border-2 border-emerald-500",
-          token.status === "working" && "border-animated-gradient",
-          token.status === "failed" && "border-2 border-rose-500",
+          token.status === "filled" && "border-l-4 border-emerald-500",
+          token.status === "working" && "border-l-4",
+          token.status === "failed" && "border-l-4 border-rose-500",
           token.status === "untouched" && "border-l-4 border-blue-500/50",
+          token.status === "modified" && "border-l-4 border-transparent",
+          token.status === "deleted" && "border-l-4",
         ),
       )}
-      style={{
-        borderLeftColor:
-          token.status === "idle" || token.status === "untouched"
-            ? sideColor
-            : "transparent",
-      }}
+      style={cardStyle}
     >
-      <div
-        className={twMerge(
-          clsx(
-            token.status === "working"
-              ? "rounded-[--radius] bg-background"
-              : "",
-          ),
-        )}
-      >
-        <div className="flex items-center gap-2 px-3">
+      {showProgressAnimation && (
+        <svg
+          className="card-border-svg"
+          height="100%"
+          width="100%"
+          xmlns="http://www.w3.org/2000/svg"
+          aria-hidden="true"
+        >
+          <rect
+            rx="14"
+            ry="14"
+            className="card-border-line"
+            height="100%"
+            width="100%"
+            fill="transparent"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+      )}
+      <div className="relative z-[2]">
+        <div className="grid grid-cols-[8rem_7rem_7rem_6rem_4rem] items-center gap-2 px-3">
           {/* Coin Name and Leverage */}
           <div
             className={twMerge(
               clsx(
-                "flex w-32 items-center gap-2",
+                "flex items-center gap-2",
                 token.status === "deleted" && "opacity-50",
               ),
             )}
@@ -155,34 +188,113 @@ export const TokenCard = ({
             </Dialog>
           </div>
 
-          {/* Percentage */}
+          {/* Weight - percentage of total notional */}
           <div
             className={twMerge(
               clsx(
-                "w-24 text-center",
+                "flex items-center justify-center gap-1",
                 token.status === "deleted" && "opacity-50",
               ),
             )}
           >
-            <span className="text-sm">{effectivePercent.toFixed(2)}%</span>
+            <input
+              type="number"
+              value={weightInput}
+              onChange={event => {
+                const rawValue = event.target.value
+                setWeightInput(rawValue)
+                const value = rawValue === "" ? 0 : parseFloat(rawValue)
+                if (!Number.isNaN(value)) {
+                  onWeightChange(token.symbol, value)
+                }
+              }}
+              disabled={token.status === "deleted"}
+              step={0.5}
+              min={0}
+              max={100}
+              className="w-16 rounded-md border border-border bg-transparent px-2 py-1 text-sm text-center [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+            />
+            <span className="text-sm text-muted-foreground">%</span>
           </div>
 
-          {/* Position Value */}
+          {/* Position Notional */}
           <div
             className={twMerge(
               clsx(
-                "w-24 text-center",
+                "flex items-center justify-center gap-1",
                 token.status === "deleted" && "opacity-50",
               ),
             )}
           >
-            <span className="text-sm">${usdAmount}</span>
+            <span className="text-sm text-muted-foreground">$</span>
+            <input
+              type="number"
+              value={notionalInput}
+              onChange={event => {
+                const rawValue = event.target.value
+                setNotionalInput(rawValue)
+                const value = rawValue === "" ? 0 : parseFloat(rawValue)
+                if (!Number.isNaN(value)) {
+                  onNotionalChange(token.symbol, value)
+                }
+              }}
+              disabled={token.status === "deleted"}
+              step={1}
+              min={0}
+              className="w-20 rounded-md border border-border bg-transparent px-2 py-1 text-sm text-center [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+            />
+            {(() => {
+              const targetValue =
+                token.targetNotional ?? token.notional ?? parseFloat(usdAmount)
+              const showDeltaWarning =
+                !isPrecise &&
+                token.deltaInsufficient === true &&
+                token.status === "modified"
+              const showSmallPositionWarning =
+                token.status !== "untouched" &&
+                token.status !== "deleted" &&
+                targetValue > 0 &&
+                targetValue < MIN_USD
+              const showWarning = showDeltaWarning || showSmallPositionWarning
+              return (
+                <TooltipProvider delayDuration={0}>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <AlertCircle
+                        className={twMerge(
+                          "h-3.5 w-3.5 text-amber-500 ml-[2px]",
+                          !showWarning && "pointer-events-none opacity-0",
+                        )}
+                      />
+                    </TooltipTrigger>
+                    <TooltipContent className="space-y-2">
+                      {showDeltaWarning && (
+                        <p className="text-[16px]">
+                          Delta $
+                          {Math.abs(
+                            (token.targetNotional ?? 0) -
+                              (token.currentNotional ?? 0),
+                          ).toFixed(2)}{" "}
+                          is below ${MIN_CHANGE_DELTA} minimum.
+                        </p>
+                      )}
+                      {showSmallPositionWarning && (
+                        <p className="text-[16px] mb-[0px]">
+                          Position value ${targetValue.toFixed(2)} is below $
+                          {MIN_USD} minimum.
+                        </p>
+                      )}
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              )
+            })()}
           </div>
 
           {/* Long/Short Select */}
           <div
             className={twMerge(
-              clsx("w-24", token.status === "deleted" && "opacity-50"),
+              clsx(token.status === "deleted" && "opacity-50"),
             )}
           >
             <select
@@ -205,27 +317,8 @@ export const TokenCard = ({
             </select>
           </div>
 
-          {/* Slider */}
-          <div
-            className={twMerge(
-              clsx("flex-1 px-2", token.status === "deleted" && "opacity-50"),
-            )}
-          >
-            <Slider
-              value={[sliderValue]}
-              onValueChange={([value]) => {
-                onSliderChange(token.symbol, value)
-              }}
-              min={sliderMinValue}
-              max={sliderMaxValue}
-              step={0.01}
-              limitValue={maxUsdForToken}
-              disabled={token.status === "deleted"}
-            />
-          </div>
-
           {/* Remove Button */}
-          <div className="flex w-16 items-center justify-end gap-2">
+          <div className="flex items-center justify-center gap-1">
             <Button
               variant="ghost"
               size="icon"

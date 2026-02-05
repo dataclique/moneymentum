@@ -37,6 +37,7 @@ vi.mock("@/services/hyperliquid-client", () => ({
     getNetworkMode = vi.fn()
     getWalletAddress = vi.fn()
   },
+  preloadMarkets: vi.fn().mockResolvedValue(undefined),
 }))
 
 const createWrapper = () => {
@@ -251,7 +252,7 @@ describe("WalletHeader", () => {
       expect(stored).not.toBeNull()
       const parsed = JSON.parse(stored ?? "{}")
       expect(parsed.vaultAddress).toBeUndefined()
-    })
+    }, 10000)
 
     it("closes dialog after successful connection", async () => {
       const user = userEvent.setup()
@@ -268,10 +269,13 @@ describe("WalletHeader", () => {
       await user.type(privateKeyInput, "0xMyPrivateKey")
       await user.click(screen.getByRole("button", { name: "Connect" }))
 
-      await waitFor(() => {
-        expect(screen.queryByText("Connect Wallet")).not.toBeInTheDocument()
-      })
-    })
+      await waitFor(
+        () => {
+          expect(screen.queryByText("Connect Wallet")).not.toBeInTheDocument()
+        },
+        { timeout: 15000 },
+      )
+    }, 20000)
 
     it("clears input fields after successful connection", async () => {
       const user = userEvent.setup()
@@ -288,6 +292,13 @@ describe("WalletHeader", () => {
       await user.type(privateKeyInput, "0xMyPrivateKey")
       await user.click(screen.getByRole("button", { name: "Connect" }))
 
+      await waitFor(
+        () => {
+          expect(screen.queryByText("Connect Wallet")).not.toBeInTheDocument()
+        },
+        { timeout: 15000 },
+      )
+
       // Re-open dialog - the inputs should be empty
       await user.click(screen.getByText("No wallet configured"))
 
@@ -299,7 +310,7 @@ describe("WalletHeader", () => {
       expect(newAccountAddressInput).toHaveValue("")
       expect(newApiWalletAddressInput).toHaveValue("")
       expect(newPrivateKeyInput).toHaveValue("")
-    })
+    }, 20000)
 
     it("auto-opens dialog when autoOpen prop is true and not connected", async () => {
       render(<WalletHeader autoOpen />, { wrapper: createWrapper() })

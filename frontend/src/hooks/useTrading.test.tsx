@@ -36,6 +36,7 @@ vi.mock("@/services/hyperliquid-client", () => ({
     getNetworkMode = mockMethods.getNetworkMode
     getPublicKey = mockMethods.getPublicKey
   },
+  preloadMarkets: vi.fn().mockResolvedValue(undefined),
 }))
 
 const createWrapper = () => {
@@ -266,7 +267,8 @@ describe("useTrading hooks", () => {
 
       await act(async () => {
         result.current.mutate({
-          budget: 1000,
+          accountValue: 1000,
+          crossAccountLeverage: 1,
           precise: false,
           positions: [],
         })
@@ -303,7 +305,8 @@ describe("useTrading hooks", () => {
 
       await act(async () => {
         result.current.mutate({
-          budget: 1000,
+          accountValue: 1000,
+          crossAccountLeverage: 2,
           precise: false,
           positions: [
             {
@@ -311,6 +314,7 @@ describe("useTrading hooks", () => {
               percentage: 0.5,
               side: "buy",
               leverage: 2,
+              leverageChanged: false,
               status: "modified",
             },
           ],
@@ -323,16 +327,17 @@ describe("useTrading hooks", () => {
 
       expect(mockMethods.rebalancePositions).toHaveBeenCalledWith(
         [
-          {
+          expect.objectContaining({
             symbol: "BTC/USDC:USDC",
             percentage: 0.5,
             side: "buy",
             leverage: 2,
             status: "modified",
-          },
+          }),
         ],
         1000,
-        false, // precise parameter defaults to false
+        2,
+        false,
       )
 
       expect(result.current.data?.orders).toHaveLength(1)
@@ -356,7 +361,8 @@ describe("useTrading hooks", () => {
 
       await act(async () => {
         result.current.mutate({
-          budget: 1000,
+          accountValue: 1000,
+          crossAccountLeverage: 1,
           precise: false,
           positions: [
             {
@@ -364,6 +370,7 @@ describe("useTrading hooks", () => {
               percentage: 0.5,
               side: "buy",
               leverage: 2,
+              leverageChanged: false,
               status: "working",
             },
           ],
@@ -381,10 +388,14 @@ describe("useTrading hooks", () => {
             percentage: 0.5,
             side: "buy",
             leverage: 2,
+            leverageChanged: false,
+            currentNotional: undefined,
+            currentSide: undefined,
             status: "idle",
           },
         ],
         1000,
+        1,
         false, // precise parameter defaults to false
       )
     })

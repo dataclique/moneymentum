@@ -35,7 +35,7 @@ const LEVERAGE_MAX = 5
 const LEVERAGE_STEP = 0.1
 const DEFAULT_LEVERAGE = 1
 
-const sortTokens = (tokens: TokenAllocation[], sortState: SortState) => {
+export const sortTokens = (tokens: TokenAllocation[], sortState: SortState) => {
   if (!sortState) {
     return tokens
   }

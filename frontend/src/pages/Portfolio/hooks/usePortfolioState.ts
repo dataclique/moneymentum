@@ -168,7 +168,8 @@ const redistributeWeights = (
 
     // Proportionally adjust other tokens' weights
     // Each token absorbs a share of the delta proportional to its weight
-    const proportion = otherTotalPercent > 0 ? t.percentage / otherTotalPercent : 0
+    const proportion =
+      otherTotalPercent > 0 ? t.percentage / otherTotalPercent : 0
     const adjustedPercentage = Math.max(0, t.percentage - delta * proportion)
     return {
       ...t,
@@ -400,8 +401,10 @@ export const usePortfolioState = (
       }
 
       // Recalculate percentages and leverage for all tokens
-      const { tokens: tokensWithPercentages, totalNotional: fullTotalNotional } =
-        recalculateFromNotionals(mergedTokens)
+      const {
+        tokens: tokensWithPercentages,
+        totalNotional: fullTotalNotional,
+      } = recalculateFromNotionals(mergedTokens)
 
       if (accountValue > 0) {
         const newLeverage = calcLeverage(fullTotalNotional, accountValue)
@@ -436,12 +439,6 @@ export const usePortfolioState = (
     positionsLoadedFromExchange,
     accountValue,
   ])
-
-  // Initialize budget from balance if not set from positions
-  useEffect(() => {
-    if (positionsLoadedFromExchange) {
-    }
-  }, [positionsLoadedFromExchange])
 
   const tokensWithComputedStatus = useMemo(() => {
     // If no exchange data to compare against, treat "untouched" tokens as "idle"
@@ -554,9 +551,7 @@ export const usePortfolioState = (
 
       // Target notional based on percentage and fixed target total (accountValue * leverage)
       const computedTargetNotional =
-        targetNotional > 0
-          ? (token.percentage / 100) * targetNotional
-          : 0
+        targetNotional > 0 ? (token.percentage / 100) * targetNotional : 0
 
       // Check if the delta is too small to execute
       const delta = Math.abs(computedTargetNotional - currentNotional)
@@ -671,7 +666,8 @@ export const usePortfolioState = (
 
             const restoredNotional = tokenToRestore.notional ?? MIN_USD
             const hasExchangeNotional =
-              tokenToRestore.notional !== undefined && tokenToRestore.notional > 0
+              tokenToRestore.notional !== undefined &&
+              tokenToRestore.notional > 0
 
             const tokensWithRestored = prev.map(t =>
               t.symbol === symbol

@@ -586,9 +586,7 @@ export class HyperliquidClient {
 
     try {
       const slippagePrice =
-        closeSide === "buy"
-          ? price * (1 + SLIPPAGE)
-          : price * (1 - SLIPPAGE)
+        closeSide === "buy" ? price * (1 + SLIPPAGE) : price * (1 - SLIPPAGE)
 
       await this.exchange.createOrder(
         symbol,
@@ -779,17 +777,19 @@ export class HyperliquidClient {
           targetNotional: Number(targetValue.toFixed(2)),
           currentNotional: Number(currentValue.toFixed(2)),
           deltaNotional: Number(notionalDelta.toFixed(2)),
-          price: Number(price?.toFixed(4) ?? 0),
+          price: Number(price.toFixed(4)),
           percentage: Number(position.percentage.toFixed(2)),
         }
       })
-      console.log("%c[Rebalance] Order preview:", "background: purple; color: white; padding: 2px 6px; border-radius: 3px");
+      console.log(
+        "%c[Rebalance] Order preview:",
+        "background: purple; color: white; padding: 2px 6px; border-radius: 3px",
+      )
       console.table(orderPreview)
     }
     for (const position of successfulPositions) {
       const symbol = position.symbol
       const price = prices[symbol]
-      if (price === undefined) continue
 
       const targetValue = targetNotional[symbol] ?? 0
       const currentValue = currentNotional[symbol] ?? 0
@@ -1009,9 +1009,9 @@ export class HyperliquidClient {
       closeSide,
       targetSide,
       percentage,
-      )
+    )
 
-      const openNotional = targetSide === "buy" ? openAmount : -openAmount
+    const openNotional = targetSide === "buy" ? openAmount : -openAmount
     const openResult = await this.placeOrder(
       symbol,
       price,

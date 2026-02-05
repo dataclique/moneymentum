@@ -41,7 +41,8 @@ import type { WalletCredentials } from "@/contexts/wallet-context"
 import type { Position } from "./hyperliquid-client"
 
 const createPosition = (
-  overrides: Partial<Position> & Pick<Position, "symbol" | "percentage" | "side" | "leverage" | "status">,
+  overrides: Partial<Position> &
+    Pick<Position, "symbol" | "percentage" | "side" | "leverage" | "status">,
 ): Position => ({
   leverageChanged: false,
   ...overrides,
@@ -912,8 +913,18 @@ describe("HyperliquidClient", () => {
         client = new HyperliquidClient(mockCredentials, "testnet")
         mockExchange.setLeverage.mockResolvedValue({})
         const allPositions = [
-          { symbol: "BTC/USDC:USDC", side: "long", notional: 200, contracts: 0.004 },
-          { symbol: "ETH/USDC:USDC", side: "long", notional: 400, contracts: 0.1 },
+          {
+            symbol: "BTC/USDC:USDC",
+            side: "long",
+            notional: 200,
+            contracts: 0.004,
+          },
+          {
+            symbol: "ETH/USDC:USDC",
+            side: "long",
+            notional: 400,
+            contracts: 0.1,
+          },
         ]
         mockExchange.fetchPositions.mockImplementation((syms?: string[]) =>
           Promise.resolve(
@@ -937,6 +948,7 @@ describe("HyperliquidClient", () => {
             percentage: 0.4,
             side: "buy" as const,
             leverage: 2,
+            leverageChanged: false,
             status: "modified" as const,
           },
           // ETH: close entirely (delete)
@@ -945,6 +957,7 @@ describe("HyperliquidClient", () => {
             percentage: 0,
             side: "buy" as const,
             leverage: 1,
+            leverageChanged: false,
             status: "deleted" as const,
           },
           // SOL: new position $300
@@ -953,6 +966,7 @@ describe("HyperliquidClient", () => {
             percentage: 0.3,
             side: "sell" as const,
             leverage: 3,
+            leverageChanged: false,
             status: "idle" as const,
           },
         ]

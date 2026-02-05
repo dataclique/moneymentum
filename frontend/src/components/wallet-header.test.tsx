@@ -233,96 +233,84 @@ describe("WalletHeader", () => {
       })
     }, 15000)
 
-    it(
-      "connects without vault address when not provided",
-      async () => {
-        const user = userEvent.setup()
-        render(<WalletHeader />, { wrapper: createWrapper() })
+    it("connects without vault address when not provided", async () => {
+      const user = userEvent.setup()
+      render(<WalletHeader />, { wrapper: createWrapper() })
 
-        await user.click(screen.getByText("No wallet configured"))
+      await user.click(screen.getByText("No wallet configured"))
 
-        const accountAddressInput = screen.getByLabelText("Account Address")
-        const apiWalletAddressInput = screen.getByLabelText("API Wallet Address")
-        const privateKeyInput = screen.getByLabelText("API Private Key")
+      const accountAddressInput = screen.getByLabelText("Account Address")
+      const apiWalletAddressInput = screen.getByLabelText("API Wallet Address")
+      const privateKeyInput = screen.getByLabelText("API Private Key")
 
-        await user.type(accountAddressInput, "0xMyAccountAddress")
-        await user.type(apiWalletAddressInput, "0xMyApiWalletAddress")
-        await user.type(privateKeyInput, "0xMyPrivateKey")
-        await user.click(screen.getByRole("button", { name: "Connect" }))
+      await user.type(accountAddressInput, "0xMyAccountAddress")
+      await user.type(apiWalletAddressInput, "0xMyApiWalletAddress")
+      await user.type(privateKeyInput, "0xMyPrivateKey")
+      await user.click(screen.getByRole("button", { name: "Connect" }))
 
-        const stored = localStorage.getItem("hyperliquid-wallet")
-        expect(stored).not.toBeNull()
-        const parsed = JSON.parse(stored ?? "{}")
-        expect(parsed.vaultAddress).toBeUndefined()
-      },
-      10000,
-    )
+      const stored = localStorage.getItem("hyperliquid-wallet")
+      expect(stored).not.toBeNull()
+      const parsed = JSON.parse(stored ?? "{}")
+      expect(parsed.vaultAddress).toBeUndefined()
+    }, 10000)
 
-    it(
-      "closes dialog after successful connection",
-      async () => {
-        const user = userEvent.setup()
-        render(<WalletHeader />, { wrapper: createWrapper() })
+    it("closes dialog after successful connection", async () => {
+      const user = userEvent.setup()
+      render(<WalletHeader />, { wrapper: createWrapper() })
 
-        await user.click(screen.getByText("No wallet configured"))
+      await user.click(screen.getByText("No wallet configured"))
 
-        const accountAddressInput = screen.getByLabelText("Account Address")
-        const apiWalletAddressInput = screen.getByLabelText("API Wallet Address")
-        const privateKeyInput = screen.getByLabelText("API Private Key")
+      const accountAddressInput = screen.getByLabelText("Account Address")
+      const apiWalletAddressInput = screen.getByLabelText("API Wallet Address")
+      const privateKeyInput = screen.getByLabelText("API Private Key")
 
-        await user.type(accountAddressInput, "0xMyAccountAddress")
-        await user.type(apiWalletAddressInput, "0xMyApiWalletAddress")
-        await user.type(privateKeyInput, "0xMyPrivateKey")
-        await user.click(screen.getByRole("button", { name: "Connect" }))
+      await user.type(accountAddressInput, "0xMyAccountAddress")
+      await user.type(apiWalletAddressInput, "0xMyApiWalletAddress")
+      await user.type(privateKeyInput, "0xMyPrivateKey")
+      await user.click(screen.getByRole("button", { name: "Connect" }))
 
-        await waitFor(
-          () => {
-            expect(screen.queryByText("Connect Wallet")).not.toBeInTheDocument()
-          },
-          { timeout: 15000 },
-        )
-      },
-      20000,
-    )
+      await waitFor(
+        () => {
+          expect(screen.queryByText("Connect Wallet")).not.toBeInTheDocument()
+        },
+        { timeout: 15000 },
+      )
+    }, 20000)
 
-    it(
-      "clears input fields after successful connection",
-      async () => {
-        const user = userEvent.setup()
-        render(<WalletHeader />, { wrapper: createWrapper() })
+    it("clears input fields after successful connection", async () => {
+      const user = userEvent.setup()
+      render(<WalletHeader />, { wrapper: createWrapper() })
 
-        await user.click(screen.getByText("No wallet configured"))
+      await user.click(screen.getByText("No wallet configured"))
 
-        const accountAddressInput = screen.getByLabelText("Account Address")
-        const apiWalletAddressInput = screen.getByLabelText("API Wallet Address")
-        const privateKeyInput = screen.getByLabelText("API Private Key")
+      const accountAddressInput = screen.getByLabelText("Account Address")
+      const apiWalletAddressInput = screen.getByLabelText("API Wallet Address")
+      const privateKeyInput = screen.getByLabelText("API Private Key")
 
-        await user.type(accountAddressInput, "0xMyAccountAddress")
-        await user.type(apiWalletAddressInput, "0xMyApiWalletAddress")
-        await user.type(privateKeyInput, "0xMyPrivateKey")
-        await user.click(screen.getByRole("button", { name: "Connect" }))
+      await user.type(accountAddressInput, "0xMyAccountAddress")
+      await user.type(apiWalletAddressInput, "0xMyApiWalletAddress")
+      await user.type(privateKeyInput, "0xMyPrivateKey")
+      await user.click(screen.getByRole("button", { name: "Connect" }))
 
-        await waitFor(
-          () => {
-            expect(screen.queryByText("Connect Wallet")).not.toBeInTheDocument()
-          },
-          { timeout: 15000 },
-        )
+      await waitFor(
+        () => {
+          expect(screen.queryByText("Connect Wallet")).not.toBeInTheDocument()
+        },
+        { timeout: 15000 },
+      )
 
-        // Re-open dialog - the inputs should be empty
-        await user.click(screen.getByText("No wallet configured"))
+      // Re-open dialog - the inputs should be empty
+      await user.click(screen.getByText("No wallet configured"))
 
-        const newAccountAddressInput = screen.getByLabelText("Account Address")
-        const newApiWalletAddressInput =
-          screen.getByLabelText("API Wallet Address")
-        const newPrivateKeyInput = screen.getByLabelText("API Private Key")
+      const newAccountAddressInput = screen.getByLabelText("Account Address")
+      const newApiWalletAddressInput =
+        screen.getByLabelText("API Wallet Address")
+      const newPrivateKeyInput = screen.getByLabelText("API Private Key")
 
-        expect(newAccountAddressInput).toHaveValue("")
-        expect(newApiWalletAddressInput).toHaveValue("")
-        expect(newPrivateKeyInput).toHaveValue("")
-      },
-      20000,
-    )
+      expect(newAccountAddressInput).toHaveValue("")
+      expect(newApiWalletAddressInput).toHaveValue("")
+      expect(newPrivateKeyInput).toHaveValue("")
+    }, 20000)
 
     it("auto-opens dialog when autoOpen prop is true and not connected", async () => {
       render(<WalletHeader autoOpen />, { wrapper: createWrapper() })

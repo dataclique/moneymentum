@@ -750,7 +750,6 @@ describe("usePortfolioState", () => {
       // With empty positions, leverage is 0, token gets MIN_USD = 11, percentage = 100%
       // When leverage increases: percentage stays fixed, notional scales with targetNotional
       const initialPercentage = result.current.selectedTokens[0].percentage
-      const initialNotional = result.current.selectedTokens[0].notional ?? 0
 
       await act(async () => {
         result.current.handleCrossAccountLeverageChange(2)
@@ -759,7 +758,9 @@ describe("usePortfolioState", () => {
       await waitFor(() => {
         // Percentage stays fixed, notional = (percentage/100) * targetNotional
         // targetNotional = 1000 * 2 = 2000, so for 100% token: notional = 2000
-        expect(result.current.selectedTokens[0].percentage).toBe(initialPercentage)
+        expect(result.current.selectedTokens[0].percentage).toBe(
+          initialPercentage,
+        )
         const newNotional = result.current.selectedTokens[0].notional ?? 0
         const expectedNotional = (initialPercentage / 100) * 2000 // targetNotional at 2x
         expect(newNotional).toBeCloseTo(expectedNotional, 0)
@@ -1470,8 +1471,6 @@ describe("usePortfolioState", () => {
 
       expect(result.current.crossAccountLeverage).toBe(2.5)
     })
-
-
 
     it("clamps crossAccountLeverage to maximum of 5", async () => {
       vi.mocked(useHyperliquidAccountSummary).mockReturnValue({
@@ -2514,8 +2513,20 @@ describe("usePortfolioState", () => {
       vi.mocked(useHyperliquidPositions).mockReturnValue({
         data: {
           positions: [
-            { symbol: "BTC/USDC:USDC", percentage: 30, side: "buy", leverage: 1, notional: 300 },
-            { symbol: "ETH/USDC:USDC", percentage: 70, side: "buy", leverage: 1, notional: 700 },
+            {
+              symbol: "BTC/USDC:USDC",
+              percentage: 30,
+              side: "buy",
+              leverage: 1,
+              notional: 300,
+            },
+            {
+              symbol: "ETH/USDC:USDC",
+              percentage: 70,
+              side: "buy",
+              leverage: 1,
+              notional: 700,
+            },
           ],
           totalNotional: 1000,
         },
@@ -2568,8 +2579,20 @@ describe("usePortfolioState", () => {
       vi.mocked(useHyperliquidPositions).mockReturnValue({
         data: {
           positions: [
-            { symbol: "BTC/USDC:USDC", percentage: 30, side: "buy", leverage: 1, notional: 300 },
-            { symbol: "ETH/USDC:USDC", percentage: 70, side: "buy", leverage: 1, notional: 700 },
+            {
+              symbol: "BTC/USDC:USDC",
+              percentage: 30,
+              side: "buy",
+              leverage: 1,
+              notional: 300,
+            },
+            {
+              symbol: "ETH/USDC:USDC",
+              percentage: 70,
+              side: "buy",
+              leverage: 1,
+              notional: 700,
+            },
           ],
           totalNotional: 1000,
         },
@@ -2620,8 +2643,20 @@ describe("usePortfolioState", () => {
       vi.mocked(useHyperliquidPositions).mockReturnValue({
         data: {
           positions: [
-            { symbol: "BTC/USDC:USDC", percentage: 30, side: "buy", leverage: 1, notional: 300 },
-            { symbol: "ETH/USDC:USDC", percentage: 70, side: "buy", leverage: 1, notional: 700 },
+            {
+              symbol: "BTC/USDC:USDC",
+              percentage: 30,
+              side: "buy",
+              leverage: 1,
+              notional: 300,
+            },
+            {
+              symbol: "ETH/USDC:USDC",
+              percentage: 70,
+              side: "buy",
+              leverage: 1,
+              notional: 700,
+            },
           ],
           totalNotional: 1000,
         },
@@ -2671,8 +2706,20 @@ describe("usePortfolioState", () => {
       vi.mocked(useHyperliquidPositions).mockReturnValue({
         data: {
           positions: [
-            { symbol: "BTC/USDC:USDC", percentage: 30, side: "buy", leverage: 1, notional: 300 },
-            { symbol: "ETH/USDC:USDC", percentage: 70, side: "buy", leverage: 1, notional: 700 },
+            {
+              symbol: "BTC/USDC:USDC",
+              percentage: 30,
+              side: "buy",
+              leverage: 1,
+              notional: 300,
+            },
+            {
+              symbol: "ETH/USDC:USDC",
+              percentage: 70,
+              side: "buy",
+              leverage: 1,
+              notional: 700,
+            },
           ],
           totalNotional: 1000,
         },
@@ -2777,10 +2824,9 @@ describe("usePortfolioState", () => {
       } as unknown as ReturnType<typeof useHyperliquidPositions>)
 
       // isWeightRedistribution: false so changing one token doesn't affect the other
-      const { result } = renderHook(
-        () => usePortfolioState(false, false),
-        { wrapper: createWrapper() },
-      )
+      const { result } = renderHook(() => usePortfolioState(false, false), {
+        wrapper: createWrapper(),
+      })
 
       await waitFor(() => {
         expect(result.current.selectedTokens).toHaveLength(2)
@@ -2971,10 +3017,9 @@ describe("usePortfolioState", () => {
       } as unknown as ReturnType<typeof useHyperliquidPositions>)
 
       // With isWeightRedistribution: false, changing ETH doesn't affect BTC
-      const { result } = renderHook(
-        () => usePortfolioState(false, false),
-        { wrapper: createWrapper() },
-      )
+      const { result } = renderHook(() => usePortfolioState(false, false), {
+        wrapper: createWrapper(),
+      })
 
       await waitFor(() => {
         expect(result.current.selectedTokens).toHaveLength(2)

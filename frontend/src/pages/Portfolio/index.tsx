@@ -79,8 +79,7 @@ const PortfolioPage = () => {
   const [leverageInput, setLeverageInput] = useState(() =>
     crossAccountLeverage.toFixed(2),
   )
-  const [isLeverageInputFocused, setIsLeverageInputFocused] =
-    useState(false)
+  const [isLeverageInputFocused, setIsLeverageInputFocused] = useState(false)
 
   useEffect(() => {
     if (!isLeverageInputFocused) {
@@ -92,17 +91,13 @@ const PortfolioPage = () => {
     (raw: string) => {
       setLeverageInput(raw)
       if (raw === "") {
-        const emptyValue =
-          initialCrossAccountLeverage ?? DEFAULT_LEVERAGE
+        const emptyValue = initialCrossAccountLeverage ?? DEFAULT_LEVERAGE
         handleCrossAccountLeverageChange(emptyValue)
         return
       }
       const value = parseFloat(raw)
       if (!Number.isNaN(value)) {
-        const clamped = Math.max(
-          LEVERAGE_MIN,
-          Math.min(LEVERAGE_MAX, value),
-        )
+        const clamped = Math.max(LEVERAGE_MIN, Math.min(LEVERAGE_MAX, value))
         handleCrossAccountLeverageChange(clamped)
       }
     },
@@ -275,8 +270,12 @@ const PortfolioPage = () => {
                       onChange={event => {
                         applyLeverageInput(event.target.value)
                       }}
-                      onBlur={() => setIsLeverageInputFocused(false)}
-                      onFocus={() => setIsLeverageInputFocused(true)}
+                      onBlur={() => {
+                        setIsLeverageInputFocused(false)
+                      }}
+                      onFocus={() => {
+                        setIsLeverageInputFocused(true)
+                      }}
                       min={LEVERAGE_MIN}
                       max={LEVERAGE_MAX}
                       step={LEVERAGE_STEP}

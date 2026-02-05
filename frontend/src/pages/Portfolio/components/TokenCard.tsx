@@ -58,12 +58,9 @@ export const TokenCard = ({
 }: TokenCardProps) => {
   const sideColor = getSideColor(token.side)
   const borderColor =
-    token.status === "deleted"
-      ? sideColor.replace("0.8", "0.2")
-      : sideColor
+    token.status === "deleted" ? sideColor.replace("0.8", "0.2") : sideColor
   const showProgressAnimation =
-    token.status === "working" ||
-    (token.status === "deleted" && isRebalancing)
+    token.status === "working" || (token.status === "deleted" && isRebalancing)
   const cardStyle = {
     borderLeftColor: borderColor,
   }
@@ -81,16 +78,14 @@ export const TokenCard = ({
   )
 
   // Local state for weight input to allow empty field while typing
-  const [weightInput, setWeightInput] = useState(() =>
-    String(token.percentage),
-  )
+  const [weightInput, setWeightInput] = useState(() => String(token.percentage))
 
   // Sync local state when token.notional changes from outside
   useEffect(() => {
     const externalValue = token.notional ?? parseFloat(usdAmount)
     const localValue = notionalInput === "" ? 0 : parseFloat(notionalInput)
     if (Math.abs(externalValue - localValue) > 0.001) {
-      setNotionalInput(Number(externalValue).toFixed(2))
+      setNotionalInput(externalValue.toFixed(2))
     }
   }, [token.notional, usdAmount])
 
@@ -251,15 +246,14 @@ export const TokenCard = ({
                 token.targetNotional ?? token.notional ?? parseFloat(usdAmount)
               const showDeltaWarning =
                 !isPrecise &&
-                token.deltaInsufficient &&
+                token.deltaInsufficient === true &&
                 token.status === "modified"
               const showSmallPositionWarning =
                 token.status !== "untouched" &&
                 token.status !== "deleted" &&
                 targetValue > 0 &&
                 targetValue < MIN_USD
-              const showWarning =
-                showDeltaWarning || showSmallPositionWarning
+              const showWarning = showDeltaWarning || showSmallPositionWarning
               return (
                 <TooltipProvider delayDuration={0}>
                   <Tooltip>
@@ -284,9 +278,8 @@ export const TokenCard = ({
                       )}
                       {showSmallPositionWarning && (
                         <p className="text-[16px] mb-[0px]">
-                          Position value $
-                          {targetValue.toFixed(2)} is below ${MIN_USD}{" "}
-                          minimum.
+                          Position value ${targetValue.toFixed(2)} is below $
+                          {MIN_USD} minimum.
                         </p>
                       )}
                     </TooltipContent>
@@ -298,7 +291,9 @@ export const TokenCard = ({
 
           {/* Long/Short Select */}
           <div
-            className={twMerge(clsx(token.status === "deleted" && "opacity-50"))}
+            className={twMerge(
+              clsx(token.status === "deleted" && "opacity-50"),
+            )}
           >
             <select
               value={token.side}

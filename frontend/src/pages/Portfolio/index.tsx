@@ -12,8 +12,15 @@ import { Switch } from "@/components/ui/switch"
 import { ChevronUp } from "lucide-react"
 import { clsx } from "clsx"
 import { twMerge } from "tailwind-merge"
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useRef } from "react"
 import { useNetwork } from "@/hooks/useNetwork"
+import type { TokenAllocation } from "./hooks/usePortfolioState"
+import {
+  SortableHeaderButton,
+  type SortColumn,
+  type SortDirection,
+  type SortState,
+} from "./components/SortableHeaderButton"
 
 import { usePortfolioState } from "./hooks/usePortfolioState"
 import { AllocationBar } from "./components/AllocationBar"
@@ -28,8 +35,57 @@ const LEVERAGE_MAX = 5
 const LEVERAGE_STEP = 0.1
 const DEFAULT_LEVERAGE = 1
 
+const sortTokens = (tokens: TokenAllocation[], sortState: SortState) => {
+  if (!sortState) {
+    return tokens
+  }
+
+  const directionMultiplier = sortState.direction === "asc" ? 1 : -1
+
+  const getComparable = (token: TokenAllocation) => {
+    switch (sortState.column) {
+      case "market": {
+        const [base] = token.symbol.split("/")
+        return base.toUpperCase()
+      }
+      case "weight":
+        return token.percentage
+      case "notional":
+        return token.notional ?? token.targetNotional ?? 0
+      case "side":
+        return token.side === "buy" ? 1 : 0
+      default:
+        return 0
+    }
+  }
+
+  return [...tokens].sort((a, b) => {
+    const aValue = getComparable(a)
+    const bValue = getComparable(b)
+
+    if (aValue < bValue) return -1 * directionMultiplier
+    if (aValue > bValue) return 1 * directionMultiplier
+
+    const [aBase] = a.symbol.split("/")
+    const [bBase] = b.symbol.split("/")
+    return aBase.localeCompare(bBase) * directionMultiplier
+  })
+}
+
 const PortfolioPage = () => {
   const { isNetworkSwitching } = useNetwork()
+  const [sortState, setSortState] = useState<SortState>(null)
+  const [sortedSymbols, setSortedSymbols] = useState<string[] | null>(null)
+  const lastSortSnapshotRef = useRef<string | null>(null)
+  const [needsResort, setNeedsResort] = useState<{
+    weight: boolean
+    notional: boolean
+    side: boolean
+  }>({
+    weight: false,
+    notional: false,
+    side: false,
+  })
   const [isPrecise, setIsPrecise] = useState(() => {
     const stored = localStorage.getItem(PRECISE_TOGGLE_STORAGE_KEY)
     return stored === "true"
@@ -103,6 +159,143 @@ const PortfolioPage = () => {
     },
     [handleCrossAccountLeverageChange, initialCrossAccountLeverage],
   )
+
+  const applySorting = useCallback(
+    (nextSortState: SortState) => {
+      if (!nextSortState) {
+        setSortedSymbols(null)
+        lastSortSnapshotRef.current = null
+        return
+      }
+
+      const sortedTokens = sortTokens(selectedTokens, nextSortState)
+      setSortedSymbols(sortedTokens.map(token => token.symbol))
+
+      const snapshot = sortedTokens
+        .map(token => {
+          switch (nextSortState.column) {
+            case "market": {
+              const [base] = token.symbol.split("/")
+              return `${token.symbol}:${base.toUpperCase()}`
+            }
+            case "weight":
+              return `${token.symbol}:${token.percentage}`
+            case "notional": {
+              const value = token.notional ?? token.targetNotional ?? 0
+              return `${token.symbol}:${value}`
+            }
+            case "side":
+              return `${token.symbol}:${token.side}`
+            default:
+              return token.symbol
+          }
+        })
+        .join("|")
+
+      lastSortSnapshotRef.current = snapshot
+    },
+    [selectedTokens],
+  )
+
+  const handleHeaderClick = (column: SortColumn) => {
+    setSortState(previous => {
+      if (!previous || previous.column !== column) {
+        const next = { column, direction: "desc" as SortDirection }
+        applySorting(next)
+        setNeedsResort({ weight: false, notional: false, side: false })
+        return next
+      }
+
+      if (previous.direction === "desc") {
+        const next = { column, direction: "asc" as SortDirection }
+        applySorting(next)
+        setNeedsResort({ weight: false, notional: false, side: false })
+        return next
+      }
+
+      applySorting(null)
+      setNeedsResort({ weight: false, notional: false, side: false })
+      return null
+    })
+  }
+
+  const handleResort = (column: SortColumn) => {
+    if (!sortState || sortState.column !== column) {
+      return
+    }
+
+    applySorting(sortState)
+    if (column === "weight") {
+      setNeedsResort(current => ({ ...current, weight: false }))
+    }
+    if (column === "notional") {
+      setNeedsResort(current => ({ ...current, notional: false }))
+    }
+    if (column === "side") {
+      setNeedsResort(current => ({ ...current, side: false }))
+    }
+  }
+
+  const handleWeightChangeWithSort = (symbol: string, percentage: number) => {
+    handleWeightChange(symbol, percentage)
+    if (sortState?.column === "weight") {
+      setNeedsResort(current => ({ ...current, weight: true }))
+    }
+  }
+
+  const handleNotionalChangeWithSort = (symbol: string, notional: number) => {
+    handleNotionalChange(symbol, notional)
+    if (sortState?.column === "notional") {
+      setNeedsResort(current => ({ ...current, notional: true }))
+    }
+  }
+
+  useEffect(() => {
+    if (!sortState || !sortedSymbols) {
+      return
+    }
+
+    const sortedTokens = sortTokens(selectedTokens, sortState)
+    const snapshot = sortedTokens
+      .map(token => {
+        switch (sortState.column) {
+          case "market": {
+            const [base] = token.symbol.split("/")
+            return `${token.symbol}:${base.toUpperCase()}`
+          }
+          case "weight":
+            return `${token.symbol}:${token.percentage}`
+          case "notional": {
+            const value = token.notional ?? token.targetNotional ?? 0
+            return `${token.symbol}:${value}`
+          }
+          case "side":
+            return `${token.symbol}:${token.side}`
+          default:
+            return token.symbol
+        }
+      })
+      .join("|")
+
+    if (lastSortSnapshotRef.current !== null && snapshot !== lastSortSnapshotRef.current) {
+      if (sortState.column === "weight") {
+        setNeedsResort(current => ({ ...current, weight: true }))
+      }
+      if (sortState.column === "notional") {
+        setNeedsResort(current => ({ ...current, notional: true }))
+      }
+      if (sortState.column === "side") {
+        setNeedsResort(current => ({ ...current, side: true }))
+      }
+    }
+  }, [selectedTokens, sortState, sortedSymbols])
+
+  const tokensToRender =
+    sortState && sortedSymbols
+      ? sortedSymbols
+          .map(symbol => selectedTokens.find(token => token.symbol === symbol))
+          .filter((token): token is TokenAllocation => Boolean(token))
+      : selectedTokens
 
   return (
     <>
@@ -190,14 +383,44 @@ const PortfolioPage = () => {
               <>
                 {/* Column Headers */}
                 <div className="grid grid-cols-[8rem_7rem_7rem_6rem_4rem] gap-2 px-3 text-xs font-semibold text-muted-foreground">
-                  <div>MARKET</div>
-                  <div className="text-center">WEIGHT</div>
-                  <div className="text-center">NOTIONAL</div>
-                  <div className="text-center">SIDE</div>
+                  <SortableHeaderButton
+                    label="MARKET"
+                    column="market"
+                    sortState={sortState}
+                    onHeaderClick={handleHeaderClick}
+                    className="text-left"
+                  />
+                  <SortableHeaderButton
+                    label="WEIGHT"
+                    column="weight"
+                    sortState={sortState}
+                    onHeaderClick={handleHeaderClick}
+                    className="justify-center"
+                    needsResort={needsResort.weight}
+                    onResort={handleResort}
+                  />
+                  <SortableHeaderButton
+                    label="NOTIONAL"
+                    column="notional"
+                    sortState={sortState}
+                    onHeaderClick={handleHeaderClick}
+                    className="justify-center"
+                    needsResort={needsResort.notional}
+                    onResort={handleResort}
+                  />
+                  <SortableHeaderButton
+                    label="SIDE"
+                    column="side"
+                    sortState={sortState}
+                    onHeaderClick={handleHeaderClick}
+                    className="justify-center"
+                    needsResort={needsResort.side}
+                    onResort={handleResort}
+                  />
                   <div className="text-right">ACTIONS</div>
                 </div>
                 <div className="space-y-2">
-                  {selectedTokens.map(token => (
+                  {tokensToRender.map(token => (
                     <TokenCard
                       key={token.symbol}
                       token={token}
@@ -209,8 +432,8 @@ const PortfolioPage = () => {
                       onUndoRemove={handleUndoRemoveToken}
                       onSideChange={handleSideChange}
                       onLeverageChange={handleLeverageChange}
-                      onNotionalChange={handleNotionalChange}
-                      onWeightChange={handleWeightChange}
+                      onNotionalChange={handleNotionalChangeWithSort}
+                      onWeightChange={handleWeightChangeWithSort}
                     />
                   ))}
                 </div>

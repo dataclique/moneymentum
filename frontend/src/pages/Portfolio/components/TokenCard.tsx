@@ -83,10 +83,15 @@ export const TokenCard = ({
   // Sync local state when token.notional changes from outside
   const externalNotional = token.notional ?? parseFloat(usdAmount)
   const prevExternalNotionalRef = useRef(externalNotional)
+  const isWeightFocusedRef = useRef(false)
+  const isNotionalFocusedRef = useRef(false)
+
   useEffect(() => {
     if (prevExternalNotionalRef.current !== externalNotional) {
       prevExternalNotionalRef.current = externalNotional
-      setNotionalInput(externalNotional.toFixed(2))
+      if (!isNotionalFocusedRef.current) {
+        setNotionalInput(externalNotional.toFixed(2))
+      }
     }
   }, [externalNotional])
 
@@ -95,7 +100,9 @@ export const TokenCard = ({
   useEffect(() => {
     if (prevPercentageRef.current !== token.percentage) {
       prevPercentageRef.current = token.percentage
-      setWeightInput(String(token.percentage))
+      if (!isWeightFocusedRef.current) {
+        setWeightInput(String(token.percentage))
+      }
     }
   }, [token.percentage])
 
@@ -208,6 +215,12 @@ export const TokenCard = ({
                   onWeightChange(token.symbol, value)
                 }
               }}
+              onFocus={() => {
+                isWeightFocusedRef.current = true
+              }}
+              onBlur={() => {
+                isWeightFocusedRef.current = false
+              }}
               disabled={token.status === "deleted"}
               step={0.5}
               min={0}
@@ -237,6 +250,12 @@ export const TokenCard = ({
                 if (!Number.isNaN(value)) {
                   onNotionalChange(token.symbol, value)
                 }
+              }}
+              onFocus={() => {
+                isNotionalFocusedRef.current = true
+              }}
+              onBlur={() => {
+                isNotionalFocusedRef.current = false
               }}
               disabled={token.status === "deleted"}
               step={1}

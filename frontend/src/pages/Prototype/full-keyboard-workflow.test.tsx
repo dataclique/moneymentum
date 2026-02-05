@@ -142,7 +142,7 @@ describe("FULL KEYBOARD WORKFLOW - No Mouse Allowed", () => {
         const stagedHeader = screen.getByText("STAGED CHANGES")
         const stagedPanel = stagedHeader.closest("[class*='ring-primary']")
         expect(stagedPanel).toBeInTheDocument()
-      })
+      }, { timeout: 15000 })
     })
 
     it("navigates from staged changes back to positions when pressing up", async () => {

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { Trash2, Undo2, AlertCircle } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
@@ -81,18 +81,20 @@ export const TokenCard = ({
   const [weightInput, setWeightInput] = useState(() => String(token.percentage))
 
   // Sync local state when token.notional changes from outside
+  const externalNotional = token.notional ?? parseFloat(usdAmount)
+  const prevExternalNotionalRef = useRef(externalNotional)
   useEffect(() => {
-    const externalValue = token.notional ?? parseFloat(usdAmount)
-    const localValue = notionalInput === "" ? 0 : parseFloat(notionalInput)
-    if (Math.abs(externalValue - localValue) > 0.001) {
-      setNotionalInput(externalValue.toFixed(2))
+    if (prevExternalNotionalRef.current !== externalNotional) {
+      prevExternalNotionalRef.current = externalNotional
+      setNotionalInput(externalNotional.toFixed(2))
     }
-  }, [token.notional, usdAmount])
+  }, [externalNotional])
 
   // Sync local weight state when token.percentage changes from outside
+  const prevPercentageRef = useRef(token.percentage)
   useEffect(() => {
-    const localValue = weightInput === "" ? 0 : parseFloat(weightInput)
-    if (Math.abs(token.percentage - localValue) > 0.001) {
+    if (prevPercentageRef.current !== token.percentage) {
+      prevPercentageRef.current = token.percentage
       setWeightInput(String(token.percentage))
     }
   }, [token.percentage])

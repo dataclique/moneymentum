@@ -706,7 +706,12 @@ export const usePortfolioState = (
         return updateByNotionalChange(tokensWithNew)
       })
     },
-    [leverageLimitsMap, updateByNotionalChange, setSelectedTokensAndPersist],
+    [
+      selectedTokens,
+      leverageLimitsMap,
+      updateByNotionalChange,
+      setSelectedTokensAndPersist,
+    ],
   )
 
   const handleRemoveToken = useCallback(
@@ -1094,6 +1099,8 @@ export const usePortfolioState = (
     })
   }, [
     tokensWithDeltaTracking,
+    tokensWithDerivedPercentages,
+    targetNotional,
     accountValue,
     crossAccountLeverage,
     hasBlockingNotionalIssue,

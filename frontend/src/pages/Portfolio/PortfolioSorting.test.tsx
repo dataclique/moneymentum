@@ -23,7 +23,7 @@ const createToken = (overrides: Partial<TokenAllocation>): TokenAllocation => {
 }
 
 const applySort = (tokens: TokenAllocation[], sortState: SortState) =>
-  sortTokens(tokens, sortState!).map(token => token.symbol)
+  sortTokens(tokens, sortState).map(token => token.symbol)
 
 const buildWeightSnapshot = (tokens: TokenAllocation[]) =>
   tokens.map(token => `${token.symbol}:${token.percentage}`).join("|")
@@ -144,7 +144,7 @@ describe("Portfolio table sorting", () => {
 
     const sortState: SortState = { column: "weight", direction: "desc" }
 
-    const sortedInitial = sortTokens(initialTokens, sortState!)
+    const sortedInitial = sortTokens(initialTokens, sortState)
     const snapshotBefore = buildWeightSnapshot(sortedInitial)
 
     // User changes notional for SOL, making it the heaviest position by percentage
@@ -154,7 +154,7 @@ describe("Portfolio table sorting", () => {
       createToken({ symbol: "SOL/USDC:USDC", percentage: 40, notional: 400 }),
     ]
 
-    const sortedUpdated = sortTokens(updatedTokens, sortState!)
+    const sortedUpdated = sortTokens(updatedTokens, sortState)
     const snapshotAfter = buildWeightSnapshot(sortedUpdated)
 
     // Snapshot mismatch ⇒ needsResort.weight должно стать true
@@ -179,7 +179,7 @@ describe("Portfolio table sorting", () => {
 
     const sortState: SortState = { column: "notional", direction: "desc" }
 
-    const sortedInitial = sortTokens(initialTokens, sortState!)
+    const sortedInitial = sortTokens(initialTokens, sortState)
     const snapshotBefore = buildNotionalSnapshot(sortedInitial)
 
     // User changes weight for ETH to become heaviest; hook логика пересчитает ее notional
@@ -189,7 +189,7 @@ describe("Portfolio table sorting", () => {
       createToken({ symbol: "SOL/USDC:USDC", percentage: 20, notional: 200 }),
     ]
 
-    const sortedUpdated = sortTokens(updatedTokens, sortState!)
+    const sortedUpdated = sortTokens(updatedTokens, sortState)
     const snapshotAfter = buildNotionalSnapshot(sortedUpdated)
 
     // Snapshot mismatch ⇒ needsResort.notional должно стать true
@@ -212,7 +212,7 @@ describe("Portfolio table sorting", () => {
 
     const sortState: SortState = { column: "notional", direction: "desc" }
 
-    const sortedInitial = sortTokens(initialTokens, sortState!)
+    const sortedInitial = sortTokens(initialTokens, sortState)
     const snapshotBefore = buildNotionalSnapshot(sortedInitial)
 
     // Пользователь меняет notional напрямую (например, через инпут)
@@ -222,7 +222,7 @@ describe("Portfolio table sorting", () => {
       createToken({ symbol: "SOL/USDC:USDC", notional: 50 }),
     ]
 
-    const sortedUpdated = sortTokens(updatedTokens, sortState!)
+    const sortedUpdated = sortTokens(updatedTokens, sortState)
     const snapshotAfter = buildNotionalSnapshot(sortedUpdated)
 
     // Snapshot mismatch ⇒ needsResort.notional должно стать true
@@ -245,7 +245,7 @@ describe("Portfolio table sorting", () => {
 
     const sortState: SortState = { column: "weight", direction: "desc" }
 
-    const sortedInitial = sortTokens(initialTokens, sortState!)
+    const sortedInitial = sortTokens(initialTokens, sortState)
     const snapshotBefore = buildWeightSnapshot(sortedInitial)
 
     // Пользователь меняет weight напрямую
@@ -255,7 +255,7 @@ describe("Portfolio table sorting", () => {
       createToken({ symbol: "SOL/USDC:USDC", percentage: 45 }),
     ]
 
-    const sortedUpdated = sortTokens(updatedTokens, sortState!)
+    const sortedUpdated = sortTokens(updatedTokens, sortState)
     const snapshotAfter = buildWeightSnapshot(sortedUpdated)
 
     // Snapshot mismatch ⇒ needsResort.weight должно стать true
@@ -278,7 +278,7 @@ describe("Portfolio table sorting", () => {
 
     const sortState: SortState = { column: "side", direction: "asc" }
 
-    const sortedInitial = sortTokens(initialTokens, sortState!)
+    const sortedInitial = sortTokens(initialTokens, sortState)
     const snapshotBefore = buildSideSnapshot(sortedInitial)
 
     // Пользователь меняет направление позиции
@@ -288,7 +288,7 @@ describe("Portfolio table sorting", () => {
       createToken({ symbol: "SOL/USDC:USDC", side: "sell" }),
     ]
 
-    const sortedUpdated = sortTokens(updatedTokens, sortState!)
+    const sortedUpdated = sortTokens(updatedTokens, sortState)
     const snapshotAfter = buildSideSnapshot(sortedUpdated)
 
     // Snapshot mismatch ⇒ needsResort.side должно стать true

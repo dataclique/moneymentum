@@ -277,7 +277,10 @@ const PortfolioPage = () => {
       })
       .join("|")
 
-    if (lastSortSnapshotRef.current !== null && snapshot !== lastSortSnapshotRef.current) {
+    if (
+      lastSortSnapshotRef.current !== null &&
+      snapshot !== lastSortSnapshotRef.current
+    ) {
       if (sortState.column === "weight") {
         setNeedsResort(current => ({ ...current, weight: true }))
       }

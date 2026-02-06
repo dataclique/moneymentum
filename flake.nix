@@ -78,7 +78,7 @@
           inherit inputs pkgs;
           modules = [{
             # https://devenv.sh/reference/options/
-            packages = with pkgs; deps ++ [ ruff mypy git-lfs ];
+            packages = with pkgs; deps ++ [ ruff mypy git git-lfs pre-commit ];
             # deps ++ [ ruff-lsp mypy git-lfs timescaledb-tune ];
 
             languages = {

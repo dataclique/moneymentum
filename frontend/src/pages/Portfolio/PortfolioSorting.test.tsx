@@ -26,9 +26,7 @@ const applySort = (tokens: TokenAllocation[], sortState: SortState) =>
   sortTokens(tokens, sortState!).map(token => token.symbol)
 
 const buildWeightSnapshot = (tokens: TokenAllocation[]) =>
-  tokens
-    .map(token => `${token.symbol}:${token.percentage}`)
-    .join("|")
+  tokens.map(token => `${token.symbol}:${token.percentage}`).join("|")
 
 const buildNotionalSnapshot = (tokens: TokenAllocation[]) =>
   tokens
@@ -88,7 +86,11 @@ describe("Portfolio table sorting", () => {
   it("sorts by notional using notional then targetNotional fallback", () => {
     const tokens = [
       createToken({ symbol: "BTC/USDC:USDC", notional: 200 }),
-      createToken({ symbol: "ETH/USDC:USDC", targetNotional: 150, notional: undefined }),
+      createToken({
+        symbol: "ETH/USDC:USDC",
+        targetNotional: 150,
+        notional: undefined,
+      }),
       createToken({ symbol: "SOL/USDC:USDC", notional: 50 }),
     ]
 
@@ -300,4 +302,3 @@ describe("Portfolio table sorting", () => {
     ])
   })
 })
-

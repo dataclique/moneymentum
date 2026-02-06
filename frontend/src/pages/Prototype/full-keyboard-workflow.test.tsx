@@ -138,11 +138,14 @@ describe("FULL KEYBOARD WORKFLOW - No Mouse Allowed", () => {
       }
 
       // Verify staged changes is now focused (reached boundary and moved to staged)
-      await waitFor(() => {
-        const stagedHeader = screen.getByText("STAGED CHANGES")
-        const stagedPanel = stagedHeader.closest("[class*='ring-primary']")
-        expect(stagedPanel).toBeInTheDocument()
-      }, { timeout: 15000 })
+      await waitFor(
+        () => {
+          const stagedHeader = screen.getByText("STAGED CHANGES")
+          const stagedPanel = stagedHeader.closest("[class*='ring-primary']")
+          expect(stagedPanel).toBeInTheDocument()
+        },
+        { timeout: 15000 },
+      )
     })
 
     it("navigates from staged changes back to positions when pressing up", async () => {

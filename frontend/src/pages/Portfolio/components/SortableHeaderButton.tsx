@@ -31,7 +31,9 @@ export const SortableHeaderButton = ({
     onHeaderClick(column)
   }
 
-  const handleResortClick: React.MouseEventHandler<HTMLButtonElement> = event => {
+  const handleResortClick: React.MouseEventHandler<
+    HTMLButtonElement
+  > = event => {
     event.stopPropagation()
     if (onResort) {
       onResort(column)

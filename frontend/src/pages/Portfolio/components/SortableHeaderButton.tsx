@@ -54,7 +54,7 @@ export const SortableHeaderButton = ({
       >
         <span>{label}</span>
         {isActive && !needsResort ? (
-          sortState?.direction === "desc" ? (
+          sortState.direction === "desc" ? (
             <ArrowDown className="h-3 w-3" />
           ) : (
             <ArrowUp className="h-3 w-3" />

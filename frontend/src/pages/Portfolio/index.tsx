@@ -35,7 +35,7 @@ const LEVERAGE_MAX = 5
 const LEVERAGE_STEP = 0.1
 const DEFAULT_LEVERAGE = 1
 
-export const sortTokens = (tokens: TokenAllocation[], sortState: SortState) => {
+const sortTokens = (tokens: TokenAllocation[], sortState: SortState) => {
   if (!sortState) {
     return tokens
   }
@@ -199,7 +199,7 @@ const PortfolioPage = () => {
 
   const handleHeaderClick = (column: SortColumn) => {
     setSortState(previous => {
-      if (!previous || previous.column !== column) {
+      if (previous?.column !== column) {
         const next = { column, direction: "desc" as SortDirection }
         applySorting(next)
         setNeedsResort({ weight: false, notional: false, side: false })
@@ -220,7 +220,7 @@ const PortfolioPage = () => {
   }
 
   const handleResort = (column: SortColumn) => {
-    if (!sortState || sortState.column !== column) {
+    if (sortState?.column !== column) {
       return
     }
 

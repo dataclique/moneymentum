@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest"
 import type { SortState } from "./components/SortableHeaderButton"
-import { sortTokens } from "./index"
+import { sortTokens } from "./PortfolioSorting"
 import type { TokenAllocation } from "./hooks/usePortfolioState"
 
 const createToken = (overrides: Partial<TokenAllocation>): TokenAllocation => {

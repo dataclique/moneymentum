@@ -23,6 +23,7 @@ import {
 } from "./components/SortableHeaderButton"
 
 import { usePortfolioState } from "./hooks/usePortfolioState"
+import { sortTokens } from "./PortfolioSorting"
 import { AllocationBar } from "./components/AllocationBar"
 import { TokenCard } from "./components/TokenCard"
 import { TokenPickerDialog } from "./components/TokenPickerDialog"
@@ -34,43 +35,6 @@ const LEVERAGE_MIN = 0.001
 const LEVERAGE_MAX = 5
 const LEVERAGE_STEP = 0.1
 const DEFAULT_LEVERAGE = 1
-
-export const sortTokens = (tokens: TokenAllocation[], sortState: SortState) => {
-  if (!sortState) {
-    return tokens
-  }
-
-  const directionMultiplier = sortState.direction === "asc" ? 1 : -1
-
-  const getComparable = (token: TokenAllocation) => {
-    switch (sortState.column) {
-      case "market": {
-        const [base] = token.symbol.split("/")
-        return base.toUpperCase()
-      }
-      case "weight":
-        return token.percentage
-      case "notional":
-        return token.notional ?? token.targetNotional ?? 0
-      case "side":
-        return token.side === "buy" ? 1 : 0
-      default:
-        return 0
-    }
-  }
-
-  return [...tokens].sort((a, b) => {
-    const aValue = getComparable(a)
-    const bValue = getComparable(b)
-
-    if (aValue < bValue) return -1 * directionMultiplier
-    if (aValue > bValue) return 1 * directionMultiplier
-
-    const [aBase] = a.symbol.split("/")
-    const [bBase] = b.symbol.split("/")
-    return aBase.localeCompare(bBase) * directionMultiplier
-  })
-}
 
 const PortfolioPage = () => {
   const { isNetworkSwitching } = useNetwork()

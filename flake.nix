@@ -1,22 +1,36 @@
 {
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.05";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
     flake-utils.url = "github:numtide/flake-utils";
 
     git-hooks.url = "github:cachix/git-hooks.nix";
     git-hooks.inputs.nixpkgs.follows = "nixpkgs";
 
-    devenv.url = "github:cachix/devenv/v1.7";
+    devenv.url = "github:cachix/devenv";
     devenv.inputs = {
       nixpkgs.follows = "nixpkgs";
       git-hooks.follows = "git-hooks";
     };
+
+    rust-overlay.url = "github:oxalica/rust-overlay";
+    rust-overlay.inputs.nixpkgs.follows = "nixpkgs";
+
+    crane.url = "github:ipetkov/crane";
   };
 
-  outputs = { self, nixpkgs, flake-utils, git-hooks, devenv, ... }@inputs:
+  outputs = { self, nixpkgs, flake-utils, git-hooks, devenv, rust-overlay, crane
+    , ... }@inputs:
     flake-utils.lib.eachDefaultSystem (system:
       let
-        pkgs = import nixpkgs { inherit system; };
+        pkgs = import nixpkgs {
+          inherit system;
+          overlays = [ rust-overlay.overlays.default ];
+        };
+
+        rustToolchain = pkgs.rust-bin.stable.latest.default;
+        craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
+
+        rustPkgs = pkgs.callPackage ./rust.nix { inherit craneLib; };
 
         hooks = {
           # Nix
@@ -45,6 +59,14 @@
             name = "denofmt";
             entry = "${pkgs.deno}/bin/deno fmt";
             files = "\\.md$";
+            pass_filenames = true;
+          };
+
+          # Rust - custom entry to avoid git-hooks.nix/nixpkgs version mismatch
+          rustfmt = {
+            enable = true;
+            entry = "${rustToolchain}/bin/cargo fmt --";
+            files = "\\.rs$";
             pass_filenames = true;
           };
         };
@@ -109,6 +131,10 @@
                   install.enable = true;
                 };
               };
+              rust = {
+                enable = true;
+                channel = "stable";
+              };
             };
 
             inherit env;
@@ -142,7 +168,9 @@
         };
         packages = {
           devenv-up = devShell.config.procfileScript;
-          default = devShell.config.procfileScript;
+          default = rustPkgs.package;
+          moneymentum = rustPkgs.package;
+          moneymentum-clippy = rustPkgs.clippy;
         };
       });
 

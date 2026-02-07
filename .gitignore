@@ -14,3 +14,8 @@ venv/
 /public/data/
 /frontend/node_modules/
 /frontend/dist/
+
+
+# Added by cargo
+
+/target

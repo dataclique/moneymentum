@@ -109,7 +109,7 @@ Spark requires Scala 2. We considered Scala 3 for the domain library and API (be
 | Domain               | Responsibility                                                                                       |
 | -------------------- | ---------------------------------------------------------------------------------------------------- |
 | **Data Ingestion**   | Fetch market data from venues, normalize to canonical schemas. Thin adapters with no business logic. |
-| **Analytics Engine** | Factor calculations, risk metrics, Greeks computation. All the math lives here.                      |
+| **Analytics Engine** | Factor calculations, risk metrics. All the math lives here.                                          |
 | **Plan Generation**  | Given current portfolio and target, compute the trades needed to rebalance. Venue-agnostic.          |
 | **Execution**        | Translate plans to venue-specific orders, sign transactions, submit. Lives in frontend.              |
 
@@ -131,11 +131,6 @@ Spark requires Scala 2. We considered Scala 3 for the domain library and API (be
 - Effective number of bets (true diversification accounting for correlations)
 - Stress testing against historical scenarios
 
-**Greeks Engine**: For instruments with optionality
-
-- Per-instrument Greeks (delta, gamma, theta, vega)
-- Aggregation by underlying across all instrument types
-
 ---
 
 ## Venue Support
@@ -151,13 +146,21 @@ Hyperliquid covers both perpetuals and spot trading, which unlocks significant c
 
 ---
 
+## UI/UX Principles
+
+**Keyboard-first, mouse-friendly.** Professional trading tools need speed. Power users get vim-style and Bloomberg-style keyboard navigation—hjkl movement, single-key actions, modal editing. But unlike vim, you shouldn't need to google "how to quit" on day one. Everything is also clickable. Power comes from learning the shortcuts, not from requiring them.
+
+**Staged changes with instant feedback.** Never execute blind. Every portfolio change is staged first, with immediate visualization of impact on factor exposures, risk metrics, and the specific trades required. Commit when satisfied.
+
+---
+
 ## Future Directions
 
 These are areas we know we want to explore but haven't designed in detail:
 
-| Area                     | Notes                                                                                          |
-| ------------------------ | ---------------------------------------------------------------------------------------------- |
-| **Options**              | Important for advanced risk management. UI/UX, pricing models, and pre-bundled strategies TBD. |
-| **Tokenized Equities**   | SPY, TLT exposure for factor hedging. Depends on st0x or similar.                              |
-| **Fixed Income / Yield** | Pendle PT/YT, staking yields. Very early stage thinking.                                       |
-| **Multi-account**        | Sub-accounts with isolated risk but shared infrastructure.                                     |
+| Area                     | Notes                                                                                                                  |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------------- |
+| **Options**              | Important for advanced risk management. Includes Greeks engine. UI/UX, pricing models, and pre-bundled strategies TBD. |
+| **Tokenized Equities**   | SPY, TLT exposure for factor hedging. Depends on st0x or similar.                                                      |
+| **Fixed Income / Yield** | Pendle PT/YT, staking yields. Very early stage thinking.                                                               |
+| **Multi-account**        | Sub-accounts with isolated risk but shared infrastructure.                                                             |

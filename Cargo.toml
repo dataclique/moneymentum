@@ -4,16 +4,25 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+clap = { version = "4.5.57", features = ["derive", "env"] }
 rocket = { version = "0.5.1", features = ["json"] }
+serde = { version = "1.0.228", features = ["derive"] }
+thiserror = "2.0.18"
 tokio = { version = "1.49.0", features = ["rt-multi-thread", "macros"] }
+toml = "0.9.11"
 
 [lints.rust]
 unsafe_code = "forbid"
 
 [lints.clippy]
+# Zero tolerance for panics in non-test code
 unwrap_used = "deny"
 expect_used = "deny"
 panic = "deny"
+unreachable = "deny"
+unimplemented = "deny"
+indexing_slicing = "deny"
+
 enum_glob_use = "deny"
 
 pedantic = { level = "deny", priority = -1 }
@@ -27,3 +36,9 @@ missing_errors_doc = "allow"
 missing_panics_doc = "allow"
 must_use_candidate = "allow"
 redundant_pub_crate = "allow"
+
+[dev-dependencies]
+proptest = "1.10.0"
+reqwest = { version = "0.13.2", features = ["blocking"] }
+tempfile = "3.24.0"
+toml = "0.9.11"

@@ -1,14 +1,10 @@
 # Moneymentum Architecture Specification
 
----
-
 ## Terminology Standard
 
 Use proper financial terminology throughout—docs, code, UI. It's precise,
 expected by institutional traders, and avoids ambiguity. Define terms in context
 when first introduced. The system should educate, not gate-keep or oversimplify.
-
----
 
 ## The Problem
 
@@ -45,8 +41,6 @@ The alternative—thinking in position sizes ("2.5 BTC, 10 ETH")—obscures risk
 Your weights change silently as prices move. "Rebalancing" becomes ambiguous.
 This tool enforces proportion-based thinking.
 
----
-
 ## Core Workflow
 
 **Monitor → Screen → Stage → Simulate → Execute → Repeat**
@@ -68,8 +62,6 @@ This tool enforces proportion-based thinking.
 6. **Repeat**: Market moves change your realized weights. Hit rebalance to
    return to target proportions, or adjust the target and rebalance to that
 
----
-
 ## Core Architectural Principle
 
 **Dual abstraction**: The system abstracts away both **data sources** and
@@ -87,50 +79,68 @@ This tool enforces proportion-based thinking.
 flowchart LR
     T[/"Trader: Rebalance<br/>to 60/20/20"/]
 
-    subgraph Backend["Backend (No Credentials)"]
+    subgraph Backend["Backend (Scala 2 + Spark)"]
         direction TB
         DATA[(Market Data)]
         ANAL[Analytics Engine]
         PLAN[Execution<br/>Plan Generator]
-        DATA --> ANAL --> PLAN
+        ROUTE[Venue Router]
+        DATA --> ANAL --> PLAN --> ROUTE
     end
 
-    subgraph Frontend["Frontend (Holds Credentials)"]
+    subgraph Privy["Privy (Policy Enforcement)"]
         direction TB
-        UI[Review Plan]
-        EX[Execute]
-        UI --> EX
+        POL[Policy Engine]
+        WALLET[Server Wallets]
+        POL --> WALLET
     end
 
     V[Venues]
 
     T --> PLAN
-    PLAN -->|execution plan| UI
-    EX -->|orders| V
+    ROUTE -->|signing requests| POL
+    WALLET -->|transactions| V
 ```
-
----
 
 ## Security Model
 
-**Backend never handles credentials.** All execution happens client-side.
+**Policy-enforced custody via Privy server wallets.** The backend orchestrates
+execution but never holds raw private keys.
 
-- Backend pre-computes global market metrics (betas, correlations, etc.)
-- Client provides portfolio-specific parameters in requests
-- Backend returns user-specific analytics (portfolio beta, VaR, execution plans)
-- Frontend holds credentials and executes orders directly to venues
-- Credentials never leave the browser
+- **Policy engine**: Contract allowlists, calldata restrictions, deny rules.
+  Even if the backend is compromised, it cannot execute transactions outside
+  policy bounds.
+- **Credential separation**: Trading credentials are scoped to trade-only
+  operations. Withdrawal credentials are held at a higher privilege tier.
+
+The backend pre-computes global market metrics (betas, correlations, etc.) and
+returns user-specific analytics (portfolio beta, VaR, execution plans). The
+frontend is a monitoring and control dashboard.
 
 ---
 
+## Fee Structure
+
+Fees are the commercialization mechanism. Personal use is free (0/0 fees).
+Revenue comes from PMs managing other people's money.
+
+- **Management fee**: Annual percentage of AUM (assets under management),
+  deducted at withdrawal
+- **Performance fee**: Percentage of profits above high-water mark (HWM)—ensures
+  fees only on new profits
+- **Platform fee**: Percentage of PM's collected fees (not investor capital),
+  creating aligned incentives
+
 ## Technology Stack
 
-| Layer        | Technology             | Rationale                                                      |
-| ------------ | ---------------------- | -------------------------------------------------------------- |
-| Backend      | Scala 2 + Spark + cats | See below.                                                     |
-| Frontend     | TypeScript + React     | Execution engine lives here—credentials never leave browser.   |
-| Dependencies | Nix                    | Reproducible builds across all environments. Non-negotiable.   |
-| Storage      | TBD                    | Start simple, add Iceberg when historical analysis needs grow. |
+| Layer         | Technology             | Rationale                              |
+| ------------- | ---------------------- | -------------------------------------- |
+| Backend       | Scala 2 + Spark + cats | See below.                             |
+| Frontend      | TypeScript + React     | Monitoring dashboard, PM controls.     |
+| Vault Program | Anchor (Rust)          | Deposits, withdrawals, fees, NAV.      |
+| Custody       | Privy server wallets   | Policy-enforced signing.               |
+| Dependencies  | Nix                    | Reproducible builds. Non-negotiable.   |
+| Storage       | TBD                    | Start simple, add Iceberg when needed. |
 
 **Why Scala?**
 
@@ -148,18 +158,15 @@ Spark requires Scala 2. We considered Scala 3 for the domain library and API
 (better syntax, modern type system), but Scala 2/3 interop adds complexity for
 marginal benefit. Single Scala 2 codebase is simpler.
 
----
-
 ## Domain Boundaries
 
-| Domain               | Responsibility                                                                                       |
-| -------------------- | ---------------------------------------------------------------------------------------------------- |
-| **Data Ingestion**   | Fetch market data from venues, normalize to canonical schemas. Thin adapters with no business logic. |
-| **Analytics Engine** | Factor calculations, risk metrics. All the math lives here.                                          |
-| **Plan Generation**  | Given current portfolio and target, compute the trades needed to rebalance. Venue-agnostic.          |
-| **Execution**        | Translate plans to venue-specific orders, sign transactions, submit. Lives in frontend.              |
-
----
+| Domain               | Responsibility                                     |
+| -------------------- | -------------------------------------------------- |
+| **Data Ingestion**   | Fetch and normalize market data. Thin adapters.    |
+| **Analytics Engine** | Factor calculations, risk metrics.                 |
+| **Plan Generation**  | Compute rebalancing trades. Venue-agnostic.        |
+| **Venue Router**     | Route orders to Privy wallets, handle cross-chain. |
+| **Vault Accounting** | NAV oracle, fees, share tokens.                    |
 
 ## Analytics Capabilities
 
@@ -178,8 +185,6 @@ marginal benefit. Single Scala 2 codebase is simpler.
 - Effective number of bets (true diversification accounting for correlations)
 - Stress testing against historical scenarios
 
----
-
 ## Venue Support
 
 **Starting point**: Hyperliquid (perps + spot)
@@ -192,8 +197,6 @@ additional venues can be added independently:
 - Other spot venues
 - Options venues (future)
 - Tokenized equities (future)
-
----
 
 ## UI/UX Principles
 
@@ -208,15 +211,13 @@ change is staged first, with immediate visualization of impact on factor
 exposures, risk metrics, and the specific trades required. Commit when
 satisfied.
 
----
-
 ## Future Directions
 
 These are areas we know we want to explore but haven't designed in detail:
 
-| Area                     | Notes                                                                                          |
-| ------------------------ | ---------------------------------------------------------------------------------------------- |
-| **Options**              | Advanced risk management. Greeks engine (price sensitivities). UI/UX, pricing, strategies TBD. |
-| **Tokenized Equities**   | SPY (S&P 500), TLT (Treasury bonds) for factor hedging. Depends on st0x or similar.            |
-| **Fixed Income / Yield** | Yield-bearing positions, staking.                                                              |
-| **Multi-account**        | Sub-accounts with isolated risk but shared infrastructure.                                     |
+| Area                     | Notes                                    |
+| ------------------------ | ---------------------------------------- |
+| **Options**              | Greeks engine, advanced risk management. |
+| **Tokenized Equities**   | SPY, TLT for factor hedging.             |
+| **Fixed Income / Yield** | Yield-bearing positions, staking.        |
+| **Multi-account**        | Isolated risk, shared infrastructure.    |

@@ -1,3 +1,5 @@
+mod ingestion;
+
 use clap::Parser;
 use rocket::config::Config as RocketConfig;
 use serde::Deserialize;

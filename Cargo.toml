@@ -4,7 +4,12 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+async-trait = "0.1.89"
+chrono = { version = "0.4.43", features = ["serde"] }
 clap = { version = "4.5.57", features = ["derive", "env"] }
+futures = "0.3.31"
+hyperliquid_rust_sdk = "0.6.0"
+polars = { version = "0.51", features = ["parquet", "lazy", "dtype-datetime"] }
 rocket = { version = "0.5.1", features = ["json"] }
 serde = { version = "1.0.228", features = ["derive"] }
 thiserror = "2.0.18"

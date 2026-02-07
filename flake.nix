@@ -16,10 +16,13 @@
     rust-overlay.inputs.nixpkgs.follows = "nixpkgs";
 
     crane.url = "github:ipetkov/crane";
+
+    ragenix.url = "github:yaxitech/ragenix";
+    ragenix.inputs.nixpkgs.follows = "nixpkgs";
   };
 
   outputs = { self, nixpkgs, flake-utils, git-hooks, devenv, rust-overlay, crane
-    , ... }@inputs:
+    , ragenix, ... }@inputs:
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs {
@@ -31,6 +34,8 @@
         craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
 
         rustPkgs = pkgs.callPackage ./rust.nix { inherit craneLib; };
+
+        infraPkgs = import ./infra { inherit pkgs ragenix system; };
 
         hooks = {
           # Nix
@@ -90,6 +95,7 @@
             pkgs.libffi
             pkgs.stdenv.cc.cc.lib
           ]}";
+          DATABASE_URL = "sqlite:moneymentum.db";
         };
 
         frontendShell = devenv.lib.mkShell {
@@ -110,7 +116,14 @@
           inherit inputs pkgs;
           modules = [{
             # https://devenv.sh/reference/options/
-            packages = with pkgs; deps ++ [ ruff mypy git-lfs ];
+            packages = with pkgs;
+              deps ++ [
+                ruff
+                mypy
+                git-lfs
+                terraform
+                ragenix.packages.${system}.default
+              ];
             # deps ++ [ ruff-lsp mypy git-lfs timescaledb-tune ];
 
             languages = {
@@ -171,6 +184,9 @@
           default = rustPkgs.package;
           moneymentum = rustPkgs.package;
           moneymentum-clippy = rustPkgs.clippy;
+
+          inherit (infraPkgs)
+            tfInit tfPlan tfApply tfDestroy tfEditVars tfCreateVars;
         };
       });
 

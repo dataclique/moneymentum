@@ -26,6 +26,8 @@ terms might still have massive BTC beta. Without beta, hedging is guesswork.
 
 ## Phase 1: Backend Foundation + Portfolio Beta
 
+> See SPEC.md: Technology Stack, Domain Architecture
+
 **Goal**: Users can see their portfolio's beta exposure, enabling proper
 hedging.
 
@@ -65,6 +67,8 @@ Wire portfolio beta into the rebalancer:
 
 ## Phase 2: Risk Analytics
 
+> See SPEC.md: Analytics Capabilities > Risk Engine
+
 **Goal**: Users can assess portfolio risk beyond just beta.
 
 - Monte Carlo simulation of portfolio returns
@@ -76,6 +80,8 @@ Wire portfolio beta into the rebalancer:
 
 ## Phase 3: Screener + Staged Trade Simulation
 
+> See SPEC.md: Core Workflow > Screen, Stage, Simulate
+
 **Goal**: Users can find assets by factor characteristics and preview portfolio
 changes before executing.
 
@@ -86,6 +92,8 @@ changes before executing.
 ---
 
 ## Phase 4: Spot Trading
+
+> See SPEC.md: Domain Architecture > Spot Trading
 
 **Goal**: Unified perp + spot portfolio management.
 

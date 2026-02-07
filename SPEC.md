@@ -205,14 +205,15 @@ Revenue comes from PMs managing other people's money.
 
 ## Technology Stack
 
-| Layer         | Technology           | Rationale                            |
-| ------------- | -------------------- | ------------------------------------ |
-| Backend       | Rust                 | See below.                           |
-| Frontend      | TypeScript + React   | Monitoring dashboard, PM controls.   |
-| Vault Program | Anchor (Rust)        | Deposits, withdrawals, fees, NAV.    |
-| Custody       | Privy server wallets | Policy-enforced signing.             |
-| Dependencies  | Nix                  | Reproducible builds. Non-negotiable. |
-| Storage       | SQLite → Postgres    | Start simple, migrate when needed.   |
+| Layer         | Technology           | Rationale                                |
+| ------------- | -------------------- | ---------------------------------------- |
+| Backend       | Rust                 | See below.                               |
+| Frontend      | TypeScript + React   | Monitoring dashboard, PM controls.       |
+| Vault Program | Anchor (Rust)        | Deposits, withdrawals, fees, NAV.        |
+| Custody       | Privy server wallets | Policy-enforced signing.                 |
+| Dependencies  | Nix                  | Reproducible builds. Non-negotiable.     |
+| Storage       | SQLite > Postgres    | Start simple, migrate when needed.       |
+| Analytics     | Parquet              | Historical prices for VaR, stress tests. |
 
 **Why Rust?**
 
@@ -274,12 +275,7 @@ improve build times, and enable testing with mocks.
 
 ## Analytics Capabilities
 
-**Factor Engine**: Decompose returns into systematic factors
-
-- Multi-asset beta (BTC, ETH, SPY)
-- Momentum (autocorrelation—do past returns predict future returns?)
-- Carry (funding rates)
-- Volatility
+**Factor Engine**: TBD
 
 **Risk Engine**: Portfolio-level risk metrics
 

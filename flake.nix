@@ -32,7 +32,6 @@
 
         rustToolchain = pkgs.rust-bin.stable.latest.default;
         craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
-
         rustPkgs = pkgs.callPackage ./rust.nix { inherit craneLib; };
 
         infraPkgs = import ./infra { inherit pkgs ragenix system; };
@@ -85,6 +84,7 @@
           gcc-unwrapped
           stdenv.cc.cc.lib
         ];
+
         # jdbcPath = "${pkgs.postgresql_jdbc}/share/java/postgresql-jdbc.jar";
         # injectJdbc = " --driver-class-path ${jdbcPath} --jars ${jdbcPath}";
         env = {
@@ -95,7 +95,6 @@
             pkgs.libffi
             pkgs.stdenv.cc.cc.lib
           ]}";
-          DATABASE_URL = "sqlite:moneymentum.db";
         };
 
         frontendShell = devenv.lib.mkShell {
@@ -114,61 +113,53 @@
 
         devShell = devenv.lib.mkShell {
           inherit inputs pkgs;
-          modules = [{
-            # https://devenv.sh/reference/options/
-            packages = with pkgs;
-              deps ++ [
-                ruff
-                mypy
-                git-lfs
-                terraform
-                ragenix.packages.${system}.default
-              ];
-            # deps ++ [ ruff-lsp mypy git-lfs timescaledb-tune ];
+          modules = [
+            ({ config, ... }: {
+              # https://devenv.sh/reference/options/
+              packages = with pkgs;
+                deps ++ [ terraform ragenix.packages.${system}.default ];
 
-            languages = {
-              nix.enable = true;
-              python = {
-                enable = true;
-                package = pkgs.python311;
-                venv.enable = true;
-                venv.requirements = builtins.readFile ./requirements.txt;
-                libraries = deps
-                  ++ [ pkgs.zlib pkgs.libffi pkgs.stdenv.cc.cc.lib ];
-              };
-              javascript = {
-                enable = true;
-                directory = "frontend";
-                bun = {
+              languages = {
+                nix.enable = true;
+
+                python = {
                   enable = true;
-                  install.enable = true;
+                  package = pkgs.python311;
+                  venv.enable = true;
+                  venv.requirements = builtins.readFile ./requirements.txt;
+                  libraries = deps
+                    ++ [ pkgs.zlib pkgs.libffi pkgs.stdenv.cc.cc.lib ];
+                };
+
+                javascript = {
+                  enable = true;
+                  directory = "frontend";
+                  bun = {
+                    enable = true;
+                    install.enable = true;
+                  };
+                };
+
+                rust = {
+                  enable = true;
+                  toolchain.rustc = rustToolchain;
+                  toolchain.cargo = rustToolchain;
+                  toolchain.rustfmt = rustToolchain;
+                  toolchain.clippy = rustToolchain;
                 };
               };
-              rust = {
-                enable = true;
-                channel = "stable";
+
+              env = env // {
+                DATABASE_URL = "sqlite:${config.devenv.root}/moneymentum.db";
               };
-            };
 
-            inherit env;
+              # Use pre-commit instead of git-hooks
+              git-hooks = { inherit hooks; };
 
-            # Use pre-commit instead of git-hooks
-            git-hooks = { inherit hooks; };
-
-            difftastic.enable = true;
-            cachix.enable = true;
-
-            # services.postgres = {
-            #   enable = false;
-            #   extensions = extensions: [ extensions.timescaledb ];
-            #   initialDatabases = [{
-            #     name = "yangdb";
-            #     # schema = ./price_db.sql;
-            #   }];
-            #   initialScript = "CREATE EXTENSION IF NOT EXISTS timescaledb;";
-            #   settings.shared_preload_libraries = "timescaledb";
-            # };
-          }];
+              difftastic.enable = true;
+              cachix.enable = true;
+            })
+          ];
         };
 
       in {

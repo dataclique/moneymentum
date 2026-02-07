@@ -117,7 +117,79 @@ The backend pre-computes global market metrics (betas, correlations, etc.) and
 returns user-specific analytics (portfolio beta, VaR, execution plans). The
 frontend is a monitoring and control dashboard.
 
+## Custody & Execution
+
+**Privy server wallets** provide the custody layer with policy enforcement at
+the signing layer. The backend routes orders to venues but cannot withdraw funds
+or interact with non-whitelisted contracts.
+
+**Solana vault program** (Anchor) handles investor deposits/withdrawals, share
+token accounting, and fee deductions. Capital flows from the vault to Privy
+wallets for trading across venues.
+
+**NAV oracle**: The backend aggregates positions across all venues, computes
+total NAV, and posts signed attestations to the vault program.
+
+```mermaid
 ---
+title: "Flow of Funds: Deposits, Rebalancing & Withdrawals"
+---
+graph TB
+    subgraph Solana["── Solana ──"]
+        Investor["Investor"]
+        Vault["Vault Program<br/>─────────────<br/>share tokens<br/>fee accounting<br/>NAV attestations"]
+        SOLWallet["Privy SOL Wallet<br/>(vault custody)"]
+        HumidiFi["HumidiFi<br/>spot trading"]
+        PMFee["PM Fee Wallet"]
+
+        Investor -- "1. deposit USDC" --> Vault
+        Vault -- "2. mint shares,<br/>forward USDC" --> SOLWallet
+        SOLWallet -- "spot swap" --> HumidiFi
+        HumidiFi -- "return tokens" --> SOLWallet
+
+        %% Withdrawal return
+        SOLWallet -. "return USDC" .-> Vault
+        Vault -. "3. burn shares,<br/>deduct fees,<br/>send net USDC" .-> Investor
+        Vault -. "mgmt + perf fee" .-> PMFee
+    end
+
+    subgraph Bridge["── deBridge ──"]
+        deBridge["Solana ↔ Hyperliquid<br/>direct USDC"]
+    end
+
+    subgraph Hyperliquid["── Hyperliquid L1 ──"]
+        EVMWallet["Privy EVM Wallet<br/>(HyperEVM home)"]
+        HyperCore["HyperCore<br/>perps + spot"]
+
+        EVMWallet -- "deposit USDC" --> HyperCore
+        HyperCore -- "withdraw USDC" --> EVMWallet
+    end
+
+    subgraph DeriveChain["── Derive Chain ──"]
+        DeriveDeposit["Derive Native Deposit<br/>from HyperEVM"]
+        DeriveProtocol["Derive Protocol<br/>options"]
+
+        DeriveDeposit --> DeriveProtocol
+    end
+
+    %% Cross-chain: Solana to Hyperliquid
+    SOLWallet -- "bridge USDC" --> deBridge
+    deBridge -- "receive USDC" --> EVMWallet
+
+    %% Cross-chain: Hyperliquid to Derive
+    EVMWallet -- "deposit USDC" --> DeriveDeposit
+    DeriveProtocol -- "withdraw USDC" --> EVMWallet
+
+    %% Withdrawal: bridge back
+    EVMWallet -. "bridge back" .-> deBridge
+    deBridge -. "return USDC" .-> SOLWallet
+
+    %% Styles
+    style Solana fill:#0f1419,stroke:#10b981,color:#e2e8f0
+    style Hyperliquid fill:#0f1419,stroke:#06b6d4,color:#e2e8f0
+    style DeriveChain fill:#0f1419,stroke:#a855f7,color:#e2e8f0
+    style Bridge fill:#1a1a2e,stroke:#ef4444,color:#e2e8f0
+```
 
 ## Fee Structure
 

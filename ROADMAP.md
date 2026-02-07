@@ -1,6 +1,7 @@
 # Roadmap
 
-> **Purpose**: Practical path from where we are today to the north star in [SPEC.md](./SPEC.md).
+> **Purpose**: Practical path from where we are today to the north star in
+> [SPEC.md](./SPEC.md).
 
 ---
 
@@ -8,19 +9,25 @@
 
 **What we have:**
 
-- **Portfolio rebalancer at `/`**: Set positions by weight, adjust cross-account leverage while maintaining proportions. Simple but already useful daily.
-- **Historical data**: OHLCV and funding rates accumulated via collection scripts (more depth than Hyperliquid API provides directly).
-- **Prototype at `/prototype`**: Design reference for target UI/UX. Like Figma but in code.
+- **Portfolio rebalancer at `/`**: Set positions by weight, adjust cross-account
+  leverage while maintaining proportions. Simple but already useful daily.
+- **Historical data**: OHLCV and funding rates accumulated via collection
+  scripts (more depth than Hyperliquid API provides directly).
+- **Prototype at `/prototype`**: Design reference for target UI/UX. Like Figma
+  but in code.
 
 **What's missing:**
 
-The rebalancer shows market exposure as `net = long notional - short notional`. This ignores correlations entirely—a portfolio that's "net neutral" in notional terms might still have massive BTC beta. Without beta, hedging is guesswork.
+The rebalancer shows market exposure as `net = long notional - short notional`.
+This ignores correlations entirely—a portfolio that's "net neutral" in notional
+terms might still have massive BTC beta. Without beta, hedging is guesswork.
 
 ---
 
 ## Phase 1: Backend Foundation + Portfolio Beta
 
-**Goal**: Users can see their portfolio's beta exposure, enabling proper hedging.
+**Goal**: Users can see their portfolio's beta exposure, enabling proper
+hedging.
 
 ### 1.1 Backend Infrastructure
 
@@ -69,7 +76,8 @@ Wire portfolio beta into the rebalancer:
 
 ## Phase 3: Screener + Staged Trade Simulation
 
-**Goal**: Users can find assets by factor characteristics and preview portfolio changes before executing.
+**Goal**: Users can find assets by factor characteristics and preview portfolio
+changes before executing.
 
 - Screener: rank assets by beta, momentum, carry, volatility
 - Staged trades: add/remove positions, see simulated impact on risk metrics

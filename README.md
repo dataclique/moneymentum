@@ -2,15 +2,19 @@
 
 [![His name is Yang](https://img.youtube.com/vi/FoYC_8cutb0/0.jpg)](https://www.youtube.com/watch?v=FoYC_8cutb0)
 
-A factor-based portfolio management toolkit for DeFi trading. Think in terms of exposures (beta, momentum, carry) rather than individual positions.
+A factor-based portfolio management toolkit for DeFi trading. Think in terms of
+exposures (beta, momentum, carry) rather than individual positions.
 
-See [SPEC.md](./SPEC.md) for the vision and [ROADMAP.md](./ROADMAP.md) for the path there.
+See [SPEC.md](./SPEC.md) for the vision and [ROADMAP.md](./ROADMAP.md) for the
+path there.
 
 ---
 
 ## What Works Today
 
-**Portfolio Rebalancer** (`/`): Set positions by weight, adjust cross-account leverage while maintaining proportions. Currently shows net notional exposure; beta-aware hedging coming soon.
+**Portfolio Rebalancer** (`/`): Set positions by weight, adjust cross-account
+leverage while maintaining proportions. Currently shows net notional exposure;
+beta-aware hedging coming soon.
 
 **Design Reference** (`/prototype`): Interactive mockup of the target UI/UX.
 
@@ -24,7 +28,8 @@ See [SPEC.md](./SPEC.md) for the vision and [ROADMAP.md](./ROADMAP.md) for the p
 | Backend        | Scala 2 + Spark + cats | Building       |
 | Legacy Backend | Python + PySpark       | Being replaced |
 
-The frontend holds credentials and executes trades directly to venues. The backend provides analytics and execution plans but never touches credentials.
+The frontend holds credentials and executes trades directly to venues. The
+backend provides analytics and execution plans but never touches credentials.
 
 ---
 
@@ -75,7 +80,8 @@ pytest
 pre-commit run -a
 ```
 
-All dependencies managed through Nix. Do not use pip install or bun install directly.
+All dependencies managed through Nix. Do not use pip install or bun install
+directly.
 
 ---
 

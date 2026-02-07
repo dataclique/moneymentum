@@ -4,12 +4,16 @@ Guidelines for the professional trading dashboard prototype.
 
 ## 1. Efficient Space Usage
 
-Every pixel matters for institutional traders who need dense information displays.
+Every pixel matters for institutional traders who need dense information
+displays.
 
-- **No verbose badges** - Use single characters or symbols (e.g., "L" not "LONG")
+- **No verbose badges** - Use single characters or symbols (e.g., "L" not
+  "LONG")
 - **No wrapping or misalignment** - Instrument rows must align with parent rows
-- **Dropdown menus over inline buttons/chips** - Options belong in dropdowns, not sprawled across the UI
-- **Collapse features behind icons/dropdowns** - Don't display everything at once
+- **Dropdown menus over inline buttons/chips** - Options belong in dropdowns,
+  not sprawled across the UI
+- **Collapse features behind icons/dropdowns** - Don't display everything at
+  once
 
 ## 2. Flexibility
 
@@ -26,7 +30,8 @@ Global leverage is a core risk management feature.
 - **Global leverage slider scales ALL positions proportionally**
 - **Weights stay constant, notionals scale with leverage**
 - **Formula: notional = NAV x weight x leverage**
-- **Allows traders to reduce/increase risk without changing portfolio composition**
+- **Allows traders to reduce/increase risk without changing portfolio
+  composition**
 
 This feature must never be removed.
 
@@ -36,7 +41,8 @@ Same information should have the same format everywhere.
 
 - **Child rows inherit parent styling patterns**
 - **Badges must be compact and aligned in their column**
-- **Numbers use consistent formatting** - Same decimal places for same metric types
+- **Numbers use consistent formatting** - Same decimal places for same metric
+  types
 
 ## 5. Instrument Display
 
@@ -73,8 +79,11 @@ ETH       [LONG]                                  $40.0k     ...
 
 Structure code around features and domain concepts, not technical layers.
 
-- **No `types.ts` files or `types/` directories** - Types belong with the code that uses them
-- **Colocate related code** - A feature's types, hooks, components, and utilities live together
-- **Export types from the primary file** - If `MetricDefinition` is used by metrics code, export it from `metrics/registry.ts`
+- **No `types.ts` files or `types/` directories** - Types belong with the code
+  that uses them
+- **Colocate related code** - A feature's types, hooks, components, and
+  utilities live together
+- **Export types from the primary file** - If `MetricDefinition` is used by
+  metrics code, export it from `metrics/registry.ts`
 
 This keeps related code discoverable and reduces import complexity.

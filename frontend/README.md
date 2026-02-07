@@ -1,6 +1,7 @@
 # Moneymentum Frontend
 
-React + TypeScript trading dashboard built with Vite, TailwindCSS 4, and Radix UI.
+React + TypeScript trading dashboard built with Vite, TailwindCSS 4, and Radix
+UI.
 
 ## Development
 
@@ -13,8 +14,9 @@ bun --cwd frontend run test   # Run tests
 
 ## Design Philosophy
 
-The prototype dashboard targets professional institutional traders. Design decisions
-prioritize information density and operational efficiency over aesthetic polish.
+The prototype dashboard targets professional institutional traders. Design
+decisions prioritize information density and operational efficiency over
+aesthetic polish.
 
 ### Information Density
 
@@ -26,8 +28,8 @@ Screen real estate is precious. Every element must earn its space:
 
 ### Risk Management First
 
-Global leverage is a core feature, not a nice-to-have. Traders scale risk
-by adjusting leverage while keeping portfolio composition intact. The formula
+Global leverage is a core feature, not a nice-to-have. Traders scale risk by
+adjusting leverage while keeping portfolio composition intact. The formula
 `notional = NAV x weight x leverage` ensures proportional scaling.
 
 ### Flexibility Over Assumptions
@@ -38,8 +40,7 @@ hardcoded assumptions about what factors matter.
 
 ### Consistency
 
-Same information, same format. Numbers align. Badges have uniform width.
-Child rows match parent styling patterns. Visual consistency reduces
-cognitive load.
+Same information, same format. Numbers align. Badges have uniform width. Child
+rows match parent styling patterns. Visual consistency reduces cognitive load.
 
 See `AGENTS.md` for detailed guidelines for AI agents working on this codebase.

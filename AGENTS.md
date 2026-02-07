@@ -170,6 +170,12 @@ const openModal = () => setIsOpen(true);
 - Documentation comments (docstrings, API docs) are good
 - Implementation comments are last resort - refactor to make code clear
 
+### Descriptive names
+
+- Avoid generic names like `result`, `data`, `value`, `item` - name what it IS
+- No single-letter variables in closures: `|r|` is unreadable, use `|rate|`
+- No abbreviations unless universally understood (`id`, `url`, `http` are fine)
+
 ### Colocate types
 
 Keep types with the code that uses them, not in separate files.
@@ -237,7 +243,9 @@ impl ApiKey {
 
 ### Avoid deep nesting
 
-Use early returns and `let-else` for flat code:
+Keep code flat in function bodies, module structure, and test organization.
+
+**Function bodies**: Use early returns and `let-else`:
 
 ```rust
 fn validate(d: Option<&Data>) -> Result<(), Error> {
@@ -246,6 +254,22 @@ fn validate(d: Option<&Data>) -> Result<(), Error> {
     Ok(())
 }
 ```
+
+**Modules**: Don't nest modules inside modules. Keep hierarchy shallow.
+
+**Tests**: No nested modules inside `mod tests`. Use descriptive function names:
+
+```rust
+// Bad
+mod tests { mod symbol { fn normalizes() { ... } } }
+
+// Good
+mod tests { fn symbol_normalizes_hyperliquid_format() { ... } }
+```
+
+**Exception - types**: Nesting in type definitions is fine when it makes invalid
+states unrepresentable. An enum with struct variants is better than flattening
+into mutually exclusive optional fields.
 
 ### Error handling
 

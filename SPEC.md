@@ -2,15 +2,29 @@
 
 ---
 
+## Terminology Standard
+
+Use proper financial terminology throughout—docs, code, UI. It's precise, expected by institutional traders, and avoids ambiguity. Define terms in context when first introduced. The system should educate, not gate-keep or oversimplify.
+
+---
+
 ## The Problem
 
-A portfolio of 10 crypto assets looks diversified, but if they all move in lockstep with BTC, you effectively have one bet. Professional traders think in **factor exposures**—beta, momentum, carry—rather than individual positions. This lets them:
+A portfolio of 10 crypto assets looks diversified, but if they all move in lockstep with BTC, you effectively have one bet. Professional traders think in **factor exposures**—systematic drivers of returns like beta (correlation to a benchmark), momentum (tendency of winners to keep winning), and carry (yield from holding a position)—rather than individual positions. This lets them:
 
-- **Reason about risk**: "What's my actual BTC exposure across spot and perps combined?"
+- **Reason about risk**: "What's my actual BTC exposure across spot and perps (perpetual futures) combined?"
 - **Construct portfolios intentionally**: "I want momentum exposure without adding market beta"
 - **Define targets as proportions**: "60% BTC beta, 20% high-momentum, 20% carry" rather than "2.5 BTC, 10 ETH, 50 SOL"
 
 This tool provides factor-based screening, portfolio construction, risk analytics, and simulation of changes before execution.
+
+**Portfolios as proportions, not positions.** Professional portfolio managers define targets as weights (40% asset A, 30% asset B, 30% asset C) and a leverage multiplier—not as fixed position sizes. This matters because:
+
+- **Rebalancing has meaning**: When prices move, weights drift. Rebalancing means returning to target proportions, which is a deliberate risk management action.
+- **Scaling is trivial**: Double your capital? Same weights, same risk profile. No need to recalculate position sizes.
+- **Leverage is explicit**: Total exposure = NAV (net asset value) × leverage. A 2x leveraged portfolio at 40/30/30 weights is immediately understandable.
+
+The alternative—thinking in position sizes ("2.5 BTC, 10 ETH")—obscures risk. Your weights change silently as prices move. "Rebalancing" becomes ambiguous. This tool enforces proportion-based thinking.
 
 ---
 
@@ -22,8 +36,8 @@ This tool provides factor-based screening, portfolio construction, risk analytic
 2. **Screen**: Search for positions based on what you want to change:
    - Direct exposure to specific assets
    - Beta to assets (BTC, ETH, SPY)
-   - Funding rates (carry)
-   - Sharpe ratio, volatility
+   - Funding rates (periodic payments between long and short holders in perps—positive = longs pay shorts)
+   - Sharpe ratio (risk-adjusted return), volatility
 3. **Stage**: Add/remove positions, adjust weights and leverage. Portfolio is defined as **proportions + leverage**, not dollar amounts
 4. **Simulate**: Instantly see how staged portfolio compares to current—historical performance, factor decomposition, risk metrics, and the specific trades needed to rebalance
 5. **Execute**: Hit rebalance when satisfied
@@ -120,13 +134,13 @@ Spark requires Scala 2. We considered Scala 3 for the domain library and API (be
 **Factor Engine**: Decompose returns into systematic factors
 
 - Multi-asset beta (BTC, ETH, SPY)
-- Momentum (return autocorrelation)
+- Momentum (autocorrelation—do past returns predict future returns?)
 - Carry (funding rates)
 - Volatility
 
 **Risk Engine**: Portfolio-level risk metrics
 
-- VaR/CVaR
+- VaR/CVaR (Value at Risk: maximum expected loss at a confidence level; Conditional VaR: expected loss when VaR is exceeded)
 - Correlation matrix
 - Effective number of bets (true diversification accounting for correlations)
 - Stress testing against historical scenarios
@@ -158,9 +172,9 @@ Hyperliquid covers both perpetuals and spot trading, which unlocks significant c
 
 These are areas we know we want to explore but haven't designed in detail:
 
-| Area                     | Notes                                                                                                                  |
-| ------------------------ | ---------------------------------------------------------------------------------------------------------------------- |
-| **Options**              | Important for advanced risk management. Includes Greeks engine. UI/UX, pricing models, and pre-bundled strategies TBD. |
-| **Tokenized Equities**   | SPY, TLT exposure for factor hedging. Depends on st0x or similar.                                                      |
-| **Fixed Income / Yield** | Pendle PT/YT, staking yields. Very early stage thinking.                                                               |
-| **Multi-account**        | Sub-accounts with isolated risk but shared infrastructure.                                                             |
+| Area                     | Notes                                                                                          |
+| ------------------------ | ---------------------------------------------------------------------------------------------- |
+| **Options**              | Advanced risk management. Greeks engine (price sensitivities). UI/UX, pricing, strategies TBD. |
+| **Tokenized Equities**   | SPY (S&P 500), TLT (Treasury bonds) for factor hedging. Depends on st0x or similar.            |
+| **Fixed Income / Yield** | Yield-bearing positions, staking.                                                              |
+| **Multi-account**        | Sub-accounts with isolated risk but shared infrastructure.                                     |

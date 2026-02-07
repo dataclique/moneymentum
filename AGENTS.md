@@ -145,9 +145,17 @@ assume current behavior is correct - it may have bugs.
 
 ### Functional programming
 
-- Prefer `map`, `filter`, `reduce` over imperative loops
+Prefer declarative, expression-oriented code:
+
+- `map`, `filter`, `fold`/`reduce`, `collect` over imperative loops
 - Pure functions, immutable data
-- `const` by default, `let` only when necessary
+- `const` by default, `let` only when mutation is unavoidable
+- Method chaining over intermediate variables
+
+**The smell to avoid**:
+`let mut vec = Vec::new(); for x in xs { vec.push(...) }` when you could just
+`.map(...).collect()`. But `mut` is fine in idiomatic contexts like `.scan()`,
+`.try_fold()`, or builder patterns (`.with_x()` methods).
 
 ### No boolean blindness
 
@@ -279,6 +287,23 @@ into mutually exclusive optional fields.
 - Use `#[from]` with thiserror to preserve error chains
 - Don't think ahead about error variants - use `?` wherever needed, then
   `cargo check` tells you exactly which `#[from]` variants to add
+
+**Never fabricate errors from other crates.** If you need to signal a condition,
+define your own error type. Manually constructing `std::io::Error::new(...)` or
+similar is data corruption - it lies about the error's origin and misleads
+anyone debugging:
+
+```rust
+// FORBIDDEN: pretending std::io produced this error
+Err(std::io::Error::new(ErrorKind::InvalidInput, "bad path"))
+
+// CORRECT: define your own error variant
+#[derive(Debug, Error)]
+enum MyError {
+    #[error("invalid path encoding")]
+    InvalidPathEncoding,
+}
+```
 
 **`#[from]` variant naming**: When using thiserror's `#[from]` attribute,
 variant names must be generic (matching the source error type) and MUST NOT

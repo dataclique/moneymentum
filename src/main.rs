@@ -3,9 +3,9 @@ use moneymentum::{Config, rocket};
 
 #[derive(Parser)]
 struct Env {
-    #[arg(long, env = "CONFIG_PATH", default_value = "config.toml")]
+    #[arg(long = "config", env)]
     config_path: String,
-    #[arg(long, env = "DATABASE_URL")]
+    #[arg(long, env)]
     database_url: String,
 }
 

@@ -114,8 +114,15 @@ Explain WHY the PR exists, not what changed.
 
 ### Quality checks
 
-Never disable or relax lints, type checks, tests, or pre-commit hooks without
-explicit approval. Fix the underlying issue.
+**NEVER disable or relax any quality checks without explicit permission.** This
+applies to:
+
+- Clippy lints (`#[allow(clippy::*)]`)
+- Compiler warnings (`#[allow(dead_code)]`, `#[allow(unused)]`)
+- All linters in all languages (eslint, ruff, etc.)
+- Test coverage - should not decrease without permission
+
+Fix the underlying code, don't suppress warnings.
 
 ### Dependencies
 
@@ -307,18 +314,6 @@ Blank line between groups. No function-level imports.
 ### Spacing
 
 Leave empty lines between code blocks for readability and vim navigation.
-
-### Quality control policy
-
-**NEVER disable or relax any quality checks without explicit permission.** This
-applies to:
-
-- Clippy lints (`#[allow(clippy::*)]`)
-- Compiler warnings (`#[allow(dead_code)]`, `#[allow(unused)]`)
-- All linters in all languages (eslint, ruff, etc.)
-- Test coverage - should not decrease without permission
-
-Fix the underlying code, don't suppress warnings.
 
 ---
 

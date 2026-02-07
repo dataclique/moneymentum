@@ -1,45 +1,59 @@
-name: CI/CD
+name: CI
+on: [push]
 
 concurrency:
   group: ${{ github.ref }}-ci
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}
 
-on:
-  workflow_dispatch:
-  pull_request:
-  push:
-    branches:
-      - master
+permissions:
+  id-token: write
+  contents: read
 
 jobs:
-  pipeline:
+  rust:
     runs-on: ubuntu-latest
-    env:
-      NIXPKGS_ALLOW_UNFREE: 1
     steps:
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@v1.3.1
+
       - uses: actions/checkout@v4
 
       - uses: DeterminateSystems/nix-installer-action@main
-      - uses: DeterminateSystems/flakehub-cache-action@main
-      - uses: DeterminateSystems/flake-checker-action@main
+      - uses: DeterminateSystems/magic-nix-cache-action@main
 
-      - name: Nix Flake check
-        run: nix flake check --impure --accept-flake-config --show-trace
+      - name: Build and test
+        run: nix build --impure .#moneymentum
+
+      - name: Clippy
+        run: nix build --impure .#moneymentum-clippy
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@v1.3.1
+
+      - uses: actions/checkout@v4
+
+      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: DeterminateSystems/magic-nix-cache-action@main
 
       - name: Lint frontend
-        run: |
-          nix develop .#frontend \
-            --impure --accept-flake-config --show-trace \
-            --command bash -c "cd frontend && bun run lint"
+        run: nix develop .#frontend --impure -c bash -c "cd frontend && bun run lint"
 
       - name: Run frontend tests
-        run: |
-          nix develop .#frontend \
-            --impure --accept-flake-config --show-trace \
-            --command bash -c "cd frontend && bun run test --run"
+        run: nix develop .#frontend --impure -c bash -c "cd frontend && bun run test --run"
 
-      # - name: Run tests
-      #   run: |
-      #     nix develop \
-      #       --impure --accept-flake-config --show-trace \
-      #       --command pytest
+  flake-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@v1.3.1
+
+      - uses: actions/checkout@v4
+
+      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+
+      - name: Flake checks
+        run: nix flake check --impure

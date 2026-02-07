@@ -122,8 +122,6 @@ in {
   '';
 
   tfCreateVars = mkTask "tf-create-vars" ''
-    ${parseIdentity}
-
     if [ -f ${tfVars}.age ]; then
       echo "Error: ${tfVars}.age already exists. Use tf-edit-vars to modify it."
       exit 1

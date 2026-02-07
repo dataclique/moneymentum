@@ -22,7 +22,7 @@ reviews:
         boundaries. Code should generally be organized based on business concerns rather than
         technical aspects - suggest improvements if you find violations. Point out gaps in test
         coverage but suggest tests that are not too coupled to the implementation and actually test
-        domain invariants and business logic.
+        domain invariants and business logic
     - path: "**/*.md"
       instructions: >-
         Focus on the contents of the docs and not on cosmetic things like markdown formatting. We

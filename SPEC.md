@@ -79,7 +79,7 @@ This tool enforces proportion-based thinking.
 flowchart LR
     T[/"Trader: Rebalance<br/>to 60/20/20"/]
 
-    subgraph Backend["Backend (Scala 2 + Spark)"]
+    subgraph Backend["Backend (Rust)"]
         direction TB
         DATA[(Market Data)]
         ANAL[Analytics Engine]
@@ -205,30 +205,35 @@ Revenue comes from PMs managing other people's money.
 
 ## Technology Stack
 
-| Layer         | Technology             | Rationale                              |
-| ------------- | ---------------------- | -------------------------------------- |
-| Backend       | Scala 2 + Spark + cats | See below.                             |
-| Frontend      | TypeScript + React     | Monitoring dashboard, PM controls.     |
-| Vault Program | Anchor (Rust)          | Deposits, withdrawals, fees, NAV.      |
-| Custody       | Privy server wallets   | Policy-enforced signing.               |
-| Dependencies  | Nix                    | Reproducible builds. Non-negotiable.   |
-| Storage       | TBD                    | Start simple, add Iceberg when needed. |
+| Layer         | Technology           | Rationale                            |
+| ------------- | -------------------- | ------------------------------------ |
+| Backend       | Rust                 | See below.                           |
+| Frontend      | TypeScript + React   | Monitoring dashboard, PM controls.   |
+| Vault Program | Anchor (Rust)        | Deposits, withdrawals, fees, NAV.    |
+| Custody       | Privy server wallets | Policy-enforced signing.             |
+| Dependencies  | Nix                  | Reproducible builds. Non-negotiable. |
+| Storage       | SQLite → Postgres    | Start simple, migrate when needed.   |
 
-**Why Scala?**
+**Why Rust?**
 
-- Solid FP support for writing safe, robust, testable code—required for serious
-  financial infrastructure
-- Spark for heavy data analytics and simulations—required for a quantitative
-  financial tool
+- Official SDKs for Hyperliquid, Derive, deBridge, Jupiter—no client-building
+- Polars for analytics—Rust-native DataFrames, no JVM overhead
+- Alloy for HyperEVM, solana-sdk for Solana—transaction building in one language
+- Single binary deployment, instant startup, minimal runtime dependencies
+- Type safety and memory safety without garbage collector pauses
 
-Selection criteria: type safety, FP ecosystem maturity, Spark compatibility.
-Scala fits all three.
+**Key crates:**
 
-**Why Scala 2?**
-
-Spark requires Scala 2. We considered Scala 3 for the domain library and API
-(better syntax, modern type system), but Scala 2/3 interop adds complexity for
-marginal benefit. Single Scala 2 codebase is simpler.
+| Purpose   | Crate                                            |
+| --------- | ------------------------------------------------ |
+| API       | rocket                                           |
+| Analytics | polars, linfa                                    |
+| State     | cqrs-es                                          |
+| EVM       | alloy                                            |
+| Solana    | solana-sdk, anchor-client                        |
+| Venues    | hyperliquid-rs, cockpit, jupiter-swap-api-client |
+| DB        | sqlx                                             |
+| Types     | ts-rs (TypeScript bindings)                      |
 
 ## Domain Boundaries
 

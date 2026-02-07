@@ -235,15 +235,42 @@ Revenue comes from PMs managing other people's money.
 | DB        | sqlx                                             |
 | Types     | ts-rs (TypeScript bindings)                      |
 
-## Domain Boundaries
+## Domain Architecture
 
-| Domain               | Responsibility                                     |
-| -------------------- | -------------------------------------------------- |
-| **Data Ingestion**   | Fetch and normalize market data. Thin adapters.    |
-| **Analytics Engine** | Factor calculations, risk metrics.                 |
-| **Plan Generation**  | Compute rebalancing trades. Venue-agnostic.        |
-| **Venue Router**     | Route orders to Privy wallets, handle cross-chain. |
-| **Vault Accounting** | NAV oracle, fees, share tokens.                    |
+**Bounded contexts:**
+
+| Domain              | Responsibility                                          |
+| ------------------- | ------------------------------------------------------- |
+| **Portfolio**       | Target weights, current positions, NAV computation      |
+| **Chain**           | Blockchain abstraction—tx formats, RPC, confirmations   |
+| **Analytics**       | Factor exposures, risk metrics, correlations            |
+| **Spot Trading**    | Buy/sell tokens on spot venues                          |
+| **Perps Trading**   | Open/close perpetual futures positions                  |
+| **Options Trading** | Options contracts, Greeks                               |
+| **Bridging**        | Cross-chain asset transfers                             |
+| **Signing**         | Transaction signing, policy enforcement                 |
+| **Vault**           | Investor deposits, share tokens, fee accounting         |
+| **Rebalancing**     | Orchestrate trades across venues/chains to reach target |
+
+**Crate mapping:**
+
+| Crate      | Trait          | Implementations                  |
+| ---------- | -------------- | -------------------------------- |
+| portfolio  | —              | —                                |
+| chain      | `Chain`        | `solana`, `evm`, `mock`          |
+| analytics  | `Analytics`    | `polars`, `mock`                 |
+| spot       | `SpotVenue`    | `hyperliquid`, `jupiter`, `mock` |
+| perps      | `PerpsVenue`   | `hyperliquid`, `mock`            |
+| options    | `OptionsVenue` | `derive`, `mock`                 |
+| bridging   | `Bridge`       | `debridge`, `mock`               |
+| signing    | `Signer`       | `privy`, `mock`                  |
+| vault      | `VaultClient`  | `anchor`, `mock`                 |
+| rebalancer | —              | —                                |
+| api        | —              | —                                |
+
+Each crate exposes a trait and common types. Implementations are behind feature
+flags (e.g., `spot/hyperliquid`, `spot/mock`) to enforce domain boundaries,
+improve build times, and enable testing with mocks.
 
 ## Analytics Capabilities
 
@@ -262,19 +289,6 @@ Revenue comes from PMs managing other people's money.
 - Effective number of bets (true diversification accounting for correlations)
 - Stress testing against historical scenarios
 
-## Venue Support
-
-**Starting point**: Hyperliquid (perps + spot)
-
-Hyperliquid covers both perpetuals and spot trading, which unlocks significant
-capability without venue complexity. The integration is abstracted cleanly so
-additional venues can be added independently:
-
-- Other perp venues
-- Other spot venues
-- Options venues (future)
-- Tokenized equities (future)
-
 ## UI/UX Principles
 
 **Keyboard-first, mouse-friendly.** Professional trading tools need speed. Power
@@ -292,9 +306,8 @@ satisfied.
 
 These are areas we know we want to explore but haven't designed in detail:
 
-| Area                     | Notes                                    |
-| ------------------------ | ---------------------------------------- |
-| **Options**              | Greeks engine, advanced risk management. |
-| **Tokenized Equities**   | SPY, TLT for factor hedging.             |
-| **Fixed Income / Yield** | Yield-bearing positions, staking.        |
-| **Multi-account**        | Isolated risk, shared infrastructure.    |
+| Area                     | Notes                                 |
+| ------------------------ | ------------------------------------- |
+| **Tokenized Equities**   | SPY, TLT for factor hedging.          |
+| **Fixed Income / Yield** | Yield-bearing positions, staking.     |
+| **Multi-account**        | Isolated risk, shared infrastructure. |

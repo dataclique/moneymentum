@@ -18,7 +18,7 @@ A portfolio of 10 crypto assets looks diversified, but if they all move in locks
 
 This tool provides factor-based screening, portfolio construction, risk analytics, and simulation of changes before execution.
 
-**Portfolios as proportions, not positions.** Professional portfolio managers define targets as weights (40% asset A, 30% asset B, 30% asset C) and a leverage multiplier—not as fixed position sizes. This matters because:
+**Portfolios as proportions, not positions.** Professional portfolio managers define targets as weights (40% asset A, 30% asset B, 30% asset C) and a leverage multiplier (total exposure as a multiple of capital)—not as fixed position sizes. This matters because:
 
 - **Rebalancing has meaning**: When prices move, weights drift. Rebalancing means returning to target proportions, which is a deliberate risk management action.
 - **Scaling is trivial**: Double your capital? Same weights, same risk profile. No need to recalculate position sizes.
@@ -89,8 +89,8 @@ flowchart LR
 
 **Backend never handles credentials.** All execution happens client-side.
 
-- Backend reads market data and chain state to track positions
-- Backend generates execution plans (what trades to make)
+- Client provides portfolio configuration in requests
+- Backend processes analytics and generates execution plans
 - Frontend holds credentials and executes orders directly to venues
 - Credentials never leave the browser
 
@@ -110,7 +110,7 @@ flowchart LR
 - Solid FP support for writing safe, robust, testable code—required for serious financial infrastructure
 - Spark for heavy data analytics and simulations—required for a quantitative financial tool
 
-Rust if we needed efficiency in our own code. Haskell for the cleanest business logic DSL. Python if we hated ourselves and loved debugging at 3am. TypeScript for full-stack type coherence. None of those fit the project requirements as well as Scala.
+Selection criteria: type safety, FP ecosystem maturity, Spark compatibility. Scala fits all three.
 
 **Why Scala 2?**
 

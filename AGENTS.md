@@ -174,7 +174,8 @@ const openModal = () => setIsOpen(true);
 
 - Avoid generic names like `result`, `data`, `value`, `item` - name what it IS
 - No single-letter variables in closures: `|r|` is unreadable, use `|rate|`
-- No abbreviations unless universally understood (`id`, `url`, `http` are fine)
+- No abbreviations unless universally understood (`id`, `url`, `http`, `msg`,
+  `tx` are fine)
 
 ### Colocate types
 

@@ -1,10 +1,9 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use polars::prelude::{
     DataFrame, IntoLazy, ParquetReader, ParquetWriter, PlSmallStr, PolarsError, Selector,
-    SerReader, SortMultipleOptions, UniqueKeepStrategy, col, df,
+    SerReader, SortMultipleOptions, UniqueKeepStrategy, col, df, lit,
 };
 use thiserror::Error;
 
@@ -14,10 +13,10 @@ pub enum IngestionError {
     Polars(#[from] PolarsError),
     #[error(transparent)]
     Io(#[from] std::io::Error),
-    #[error("SDK error: {0}")]
-    Sdk(String),
-    #[error("No data available")]
-    NoData,
+    #[error(transparent)]
+    Hyperliquid(#[from] hyperliquid_rust_sdk::Error),
+    #[error(transparent)]
+    IntConversion(#[from] std::num::TryFromIntError),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -29,7 +28,7 @@ pub enum Timeframe {
 }
 
 impl Timeframe {
-    pub fn interval_string(&self) -> &'static str {
+    fn interval_string(self) -> &'static str {
         match self {
             Self::FifteenMin => "15m",
             Self::OneHour => "1h",
@@ -38,7 +37,7 @@ impl Timeframe {
         }
     }
 
-    pub fn lookback_days(&self) -> i64 {
+    fn lookback_days(self) -> i64 {
         match self {
             Self::FifteenMin => 30,
             Self::OneHour => 90,
@@ -47,7 +46,7 @@ impl Timeframe {
         }
     }
 
-    pub fn file_name(&self) -> &'static str {
+    fn file_name(self) -> &'static str {
         match self {
             Self::FifteenMin => "ohlcv_15m.parquet",
             Self::OneHour => "ohlcv_1h.parquet",
@@ -58,61 +57,31 @@ impl Timeframe {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Symbol(String);
+struct Symbol(String);
 
 impl Symbol {
-    pub fn from_raw(raw: &str) -> Self {
+    fn from_raw(raw: &str) -> Self {
         let base = raw.split('/').next().unwrap_or(raw);
         Self(base.to_uppercase())
     }
 
-    pub fn as_str(&self) -> &str {
+    fn as_str(&self) -> &str {
         &self.0
     }
 }
 
 #[derive(Debug, Clone)]
-pub struct Candle {
-    pub timestamp: DateTime<Utc>,
-    pub open: f64,
-    pub high: f64,
-    pub low: f64,
-    pub close: f64,
-    pub volume: f64,
-    pub symbol: Symbol,
+struct Candle {
+    timestamp: DateTime<Utc>,
+    open: f64,
+    high: f64,
+    low: f64,
+    close: f64,
+    volume: f64,
+    symbol: Symbol,
 }
 
-#[derive(Debug, Clone)]
-pub struct FundingRate {
-    pub timestamp: DateTime<Utc>,
-    pub rate: f64,
-    pub symbol: Symbol,
-}
-
-#[async_trait]
-pub trait HyperliquidDataSource: Send + Sync {
-    async fn fetch_candles(
-        &self,
-        symbol: &str,
-        timeframe: Timeframe,
-        start: DateTime<Utc>,
-    ) -> Result<Vec<Candle>, IngestionError>;
-
-    async fn fetch_funding_rates(
-        &self,
-        symbol: &str,
-        start: DateTime<Utc>,
-    ) -> Result<Vec<FundingRate>, IngestionError>;
-
-    async fn list_markets(&self) -> Result<Vec<String>, IngestionError>;
-}
-
-pub trait Storage: Send + Sync {
-    fn read(&self, path: &PathBuf) -> Result<Option<DataFrame>, IngestionError>;
-    fn write(&self, path: &PathBuf, df: &mut DataFrame) -> Result<(), IngestionError>;
-}
-
-pub fn candles_to_dataframe(candles: &[Candle]) -> Result<DataFrame, IngestionError> {
+fn candles_to_dataframe(candles: &[Candle]) -> Result<DataFrame, IngestionError> {
     let timestamps: Vec<i64> = candles
         .iter()
         .map(|candle| candle.timestamp.timestamp_millis())
@@ -138,22 +107,7 @@ pub fn candles_to_dataframe(candles: &[Candle]) -> Result<DataFrame, IngestionEr
     }?)
 }
 
-pub fn funding_rates_to_dataframe(rates: &[FundingRate]) -> Result<DataFrame, IngestionError> {
-    let timestamps: Vec<i64> = rates
-        .iter()
-        .map(|rate| rate.timestamp.timestamp_millis())
-        .collect();
-    let funding_rates: Vec<f64> = rates.iter().map(|rate| rate.rate).collect();
-    let symbols: Vec<&str> = rates.iter().map(|rate| rate.symbol.as_str()).collect();
-
-    Ok(df! {
-        "timestamp" => timestamps,
-        "funding_rate" => funding_rates,
-        "symbol" => symbols,
-    }?)
-}
-
-pub fn merge_and_deduplicate(
+fn merge_and_deduplicate(
     existing: Option<DataFrame>,
     new: DataFrame,
 ) -> Result<DataFrame, IngestionError> {
@@ -188,48 +142,150 @@ pub fn merge_and_deduplicate(
     Ok(deduped)
 }
 
-pub struct ParquetStorage {
-    pub data_dir: PathBuf,
-}
-
-impl Storage for ParquetStorage {
-    fn read(&self, path: &PathBuf) -> Result<Option<DataFrame>, IngestionError> {
-        if !path.exists() {
-            return Ok(None);
-        }
-
-        let file = std::fs::File::open(path)?;
-        let df = ParquetReader::new(file).finish()?;
-        Ok(Some(df))
+fn read_parquet(path: &Path) -> Result<Option<DataFrame>, IngestionError> {
+    if !path.exists() {
+        return Ok(None);
     }
 
-    fn write(&self, path: &PathBuf, df: &mut DataFrame) -> Result<(), IngestionError> {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
+    let file = std::fs::File::open(path)?;
+    let dataframe = ParquetReader::new(file).finish()?;
+    Ok(Some(dataframe))
+}
+
+fn write_parquet(path: &Path, df: &mut DataFrame) -> Result<(), IngestionError> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    let file = std::fs::File::create(path)?;
+    ParquetWriter::new(file).finish(df)?;
+    Ok(())
+}
+
+pub struct HyperliquidClient {
+    info: hyperliquid_rust_sdk::InfoClient,
+}
+
+impl HyperliquidClient {
+    pub async fn new() -> Result<Self, IngestionError> {
+        let info = hyperliquid_rust_sdk::InfoClient::new(None, None).await?;
+        Ok(Self { info })
+    }
+
+    async fn fetch_candles(
+        &self,
+        symbol: &str,
+        timeframe: Timeframe,
+        start: DateTime<Utc>,
+    ) -> Result<Vec<Candle>, IngestionError> {
+        let start_ms = u64::try_from(start.timestamp_millis())?;
+        let end_ms = u64::try_from(Utc::now().timestamp_millis())?;
+
+        let response = self
+            .info
+            .candles_snapshot(
+                symbol.to_string(),
+                timeframe.interval_string().to_string(),
+                start_ms,
+                end_ms,
+            )
+            .await?;
+
+        let candles = response
+            .into_iter()
+            .filter_map(|snapshot| {
+                let timestamp = DateTime::from_timestamp_millis(snapshot.time_open.cast_signed())?;
+                let open = snapshot.open.parse().ok()?;
+                let high = snapshot.high.parse().ok()?;
+                let low = snapshot.low.parse().ok()?;
+                let close = snapshot.close.parse().ok()?;
+                let volume = snapshot.vlm.parse().ok()?;
+
+                Some(Candle {
+                    timestamp,
+                    open,
+                    high,
+                    low,
+                    close,
+                    volume,
+                    symbol: Symbol::from_raw(symbol),
+                })
+            })
+            .collect();
+
+        Ok(candles)
+    }
+
+    async fn list_markets(&self) -> Result<Vec<String>, IngestionError> {
+        let meta = self.info.meta().await?;
+
+        let symbols = meta.universe.into_iter().map(|asset| asset.name).collect();
+
+        Ok(symbols)
+    }
+}
+
+pub struct CandleIngester {
+    client: HyperliquidClient,
+    storage: ParquetStorage,
+}
+
+impl CandleIngester {
+    pub fn new(client: HyperliquidClient, storage: ParquetStorage) -> Self {
+        Self { client, storage }
+    }
+
+    pub async fn ingest(
+        &self,
+        timeframe: Timeframe,
+        data_dir: &Path,
+    ) -> Result<(), IngestionError> {
+        let markets = self.client.list_markets().await?;
+        let path = data_dir.join(timeframe.file_name());
+
+        let existing = self.storage.read(&path)?;
+
+        let default_start = Utc::now() - chrono::Duration::days(timeframe.lookback_days());
+
+        let mut all_candles = Vec::new();
+
+        for market in markets {
+            let start =
+                get_last_timestamp_for_symbol(existing.as_ref(), &market).unwrap_or(default_start);
+
+            let candles = self.client.fetch_candles(&market, timeframe, start).await?;
+
+            all_candles.extend(candles);
+
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
         }
 
-        let file = std::fs::File::create(path)?;
-        ParquetWriter::new(file).finish(df)?;
+        if all_candles.is_empty() {
+            return Ok(());
+        }
+
+        let new_df = candles_to_dataframe(&all_candles)?;
+        let mut merged = merge_and_deduplicate(existing, new_df)?;
+        self.storage.write(&path, &mut merged)?;
+
         Ok(())
     }
 }
 
-pub struct CandleIngester<D: HyperliquidDataSource, S: Storage> {
-    data_source: D,
-    storage: S,
-}
+fn get_last_timestamp_for_symbol(df: Option<&DataFrame>, symbol: &str) -> Option<DateTime<Utc>> {
+    let df = df?;
 
-impl<D: HyperliquidDataSource, S: Storage> CandleIngester<D, S> {
-    pub fn new(data_source: D, storage: S) -> Self {
-        Self {
-            data_source,
-            storage,
-        }
-    }
+    let filtered = df
+        .clone()
+        .lazy()
+        .filter(col("symbol").eq(lit(symbol)))
+        .select([col("timestamp").max()])
+        .collect()
+        .ok()?;
 
-    pub async fn ingest(&self, _timeframe: Timeframe) -> Result<(), IngestionError> {
-        todo!()
-    }
+    let max_ts = filtered.column("timestamp").ok()?.i64().ok()?.get(0)?;
+
+    DateTime::from_timestamp_millis(max_ts)
 }
 
 #[cfg(test)]
@@ -327,13 +383,13 @@ mod tests {
         let df = candles_to_dataframe(&candles).unwrap();
 
         let columns = df.get_column_names();
-        assert!(columns.iter().any(|c| c.as_str() == "timestamp"));
-        assert!(columns.iter().any(|c| c.as_str() == "open"));
-        assert!(columns.iter().any(|c| c.as_str() == "high"));
-        assert!(columns.iter().any(|c| c.as_str() == "low"));
-        assert!(columns.iter().any(|c| c.as_str() == "close"));
-        assert!(columns.iter().any(|c| c.as_str() == "volume"));
-        assert!(columns.iter().any(|c| c.as_str() == "symbol"));
+        assert!(columns.iter().any(|column| column.as_str() == "timestamp"));
+        assert!(columns.iter().any(|column| column.as_str() == "open"));
+        assert!(columns.iter().any(|column| column.as_str() == "high"));
+        assert!(columns.iter().any(|column| column.as_str() == "low"));
+        assert!(columns.iter().any(|column| column.as_str() == "close"));
+        assert!(columns.iter().any(|column| column.as_str() == "volume"));
+        assert!(columns.iter().any(|column| column.as_str() == "symbol"));
     }
 
     #[test]
@@ -346,29 +402,29 @@ mod tests {
     #[test]
     fn merge_keeps_latest_for_duplicate_timestamp_symbol() {
         let existing = create_test_df(
-            &[1704067200000, 1704070800000],
+            &[1_704_067_200_000, 1_704_070_800_000],
             &["BTC", "BTC"],
             &[100.0, 105.0],
         );
 
         let new = create_test_df(
-            &[1704070800000, 1704074400000],
+            &[1_704_070_800_000, 1_704_074_400_000],
             &["BTC", "BTC"],
             &[106.0, 110.0],
         );
 
-        let result = merge_and_deduplicate(Some(existing), new).unwrap();
+        let merged = merge_and_deduplicate(Some(existing), new).unwrap();
 
-        assert_eq!(result.height(), 3);
+        assert_eq!(merged.height(), 3);
     }
 
     #[test]
     fn merge_handles_none_existing() {
-        let new = create_test_df(&[1704067200000], &["BTC"], &[100.0]);
+        let new = create_test_df(&[1_704_067_200_000], &["BTC"], &[100.0]);
 
-        let result = merge_and_deduplicate(None, new).unwrap();
+        let merged = merge_and_deduplicate(None, new).unwrap();
 
-        assert_eq!(result.height(), 1);
+        assert_eq!(merged.height(), 1);
     }
 
     #[test]
@@ -380,7 +436,7 @@ mod tests {
 
         let path = temp_dir.path().join("test.parquet");
         let mut original = df! {
-            "timestamp" => &[1704067200000i64, 1704070800000],
+            "timestamp" => &[1_704_067_200_000_i64, 1_704_070_800_000],
             "symbol" => &["BTC", "ETH"],
             "close" => &[100.0, 2000.0],
         }
@@ -401,8 +457,8 @@ mod tests {
         };
 
         let path = temp_dir.path().join("nonexistent.parquet");
-        let result = storage.read(&path).unwrap();
+        let loaded = storage.read(&path).unwrap();
 
-        assert!(result.is_none());
+        assert!(loaded.is_none());
     }
 }

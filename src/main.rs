@@ -1,9 +1,8 @@
-mod ingestion;
+use std::net::Ipv4Addr;
 
 use clap::Parser;
 use rocket::config::Config as RocketConfig;
 use serde::Deserialize;
-use std::net::Ipv4Addr;
 use thiserror::Error;
 
 #[macro_use]
@@ -68,7 +67,6 @@ mod tests {
     use rocket::http::Status;
     use rocket::local::blocking::Client;
 
-    // Property test: port parsing is valid for any u16
     proptest! {
         #[test]
         fn port_round_trips_through_toml(port in 1u16..=65535u16) {
@@ -78,7 +76,6 @@ mod tests {
         }
     }
 
-    // Unit test: config parsing
     #[test]
     fn example_toml_is_valid() {
         let content = include_str!("../example.toml");
@@ -87,14 +84,12 @@ mod tests {
         assert_eq!(config.port, 8000);
     }
 
-    // Unit test: config error handling
     #[test]
     fn config_load_returns_error_for_missing_file() {
         let result = Config::load("/nonexistent/path.toml");
         assert!(matches!(result, Err(ConfigError::Io(_))));
     }
 
-    // Integration test: health endpoint
     #[test]
     fn health_returns_ok() {
         let rocket = rocket::build().mount("/", routes![health]);

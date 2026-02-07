@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use chrono::{DateTime, Utc};
 use polars::prelude::{
@@ -227,12 +227,11 @@ impl HyperliquidClient {
 
 pub struct CandleIngester {
     client: HyperliquidClient,
-    storage: ParquetStorage,
 }
 
 impl CandleIngester {
-    pub fn new(client: HyperliquidClient, storage: ParquetStorage) -> Self {
-        Self { client, storage }
+    pub fn new(client: HyperliquidClient) -> Self {
+        Self { client }
     }
 
     pub async fn ingest(
@@ -243,7 +242,7 @@ impl CandleIngester {
         let markets = self.client.list_markets().await?;
         let path = data_dir.join(timeframe.file_name());
 
-        let existing = self.storage.read(&path)?;
+        let existing = read_parquet(&path)?;
 
         let default_start = Utc::now() - chrono::Duration::days(timeframe.lookback_days());
 
@@ -266,7 +265,7 @@ impl CandleIngester {
 
         let new_df = candles_to_dataframe(&all_candles)?;
         let mut merged = merge_and_deduplicate(existing, new_df)?;
-        self.storage.write(&path, &mut merged)?;
+        write_parquet(&path, &mut merged)?;
 
         Ok(())
     }
@@ -428,13 +427,10 @@ mod tests {
     }
 
     #[test]
-    fn storage_roundtrip_preserves_data() {
+    fn parquet_roundtrip_preserves_data() {
         let temp_dir = TempDir::new().unwrap();
-        let storage = ParquetStorage {
-            data_dir: temp_dir.path().to_path_buf(),
-        };
-
         let path = temp_dir.path().join("test.parquet");
+
         let mut original = df! {
             "timestamp" => &[1_704_067_200_000_i64, 1_704_070_800_000],
             "symbol" => &["BTC", "ETH"],
@@ -442,22 +438,19 @@ mod tests {
         }
         .unwrap();
 
-        storage.write(&path, &mut original).unwrap();
-        let loaded = storage.read(&path).unwrap().unwrap();
+        write_parquet(&path, &mut original).unwrap();
+        let loaded = read_parquet(&path).unwrap().unwrap();
 
         assert_eq!(loaded.height(), original.height());
         assert_eq!(loaded.width(), original.width());
     }
 
     #[test]
-    fn storage_read_nonexistent_returns_none() {
+    fn read_parquet_nonexistent_returns_none() {
         let temp_dir = TempDir::new().unwrap();
-        let storage = ParquetStorage {
-            data_dir: temp_dir.path().to_path_buf(),
-        };
-
         let path = temp_dir.path().join("nonexistent.parquet");
-        let loaded = storage.read(&path).unwrap();
+
+        let loaded = read_parquet(&path).unwrap();
 
         assert!(loaded.is_none());
     }

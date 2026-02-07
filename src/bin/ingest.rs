@@ -1,10 +1,7 @@
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand, ValueEnum};
-use moneymentum::ingestion::{
-    CandleIngester, HyperliquidClient, IngestionError, ParquetStorage,
-    Timeframe as IngestionTimeframe,
-};
+use moneymentum::ingestion::{CandleIngester, HyperliquidClient, IngestionError};
 
 #[derive(Parser)]
 struct Cli {
@@ -38,7 +35,7 @@ enum Timeframe {
     OneWeek,
 }
 
-impl From<Timeframe> for IngestionTimeframe {
+impl From<Timeframe> for moneymentum::ingestion::Timeframe {
     fn from(timeframe: Timeframe) -> Self {
         match timeframe {
             Timeframe::FifteenMin => Self::FifteenMin,
@@ -59,10 +56,7 @@ async fn main() -> Result<(), IngestionError> {
             data_dir,
         } => {
             let client = HyperliquidClient::new().await?;
-            let storage = ParquetStorage {
-                data_dir: data_dir.clone(),
-            };
-            let ingester = CandleIngester::new(client, storage);
+            let ingester = CandleIngester::new(client);
 
             ingester.ingest(timeframe.into(), &data_dir).await?;
 

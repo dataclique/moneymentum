@@ -336,6 +336,18 @@ Two groups only:
 
 Blank line between groups. No function-level imports.
 
+**No import aliases for name conflicts.** When two types have the same name, use
+qualified paths instead of `as` aliases. Aliases require jumping around to
+figure out what's what:
+
+```rust
+// Bad: reader must find the alias to understand the code
+use crate::ingestion::Timeframe as IngestionTimeframe;
+
+// Good: meaning is clear at the usage site
+impl From<Timeframe> for crate::ingestion::Timeframe { ... }
+```
+
 ### Spacing
 
 Leave empty lines between code blocks for readability and vim navigation.

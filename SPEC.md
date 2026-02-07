@@ -89,8 +89,9 @@ flowchart LR
 
 **Backend never handles credentials.** All execution happens client-side.
 
-- Client provides portfolio configuration in requests
-- Backend processes analytics and generates execution plans
+- Backend pre-computes global market metrics (betas, correlations, etc.)
+- Client provides portfolio-specific parameters in requests
+- Backend returns user-specific analytics (portfolio beta, VaR, execution plans)
 - Frontend holds credentials and executes orders directly to venues
 - Credentials never leave the browser
 

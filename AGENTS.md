@@ -163,9 +163,9 @@ const openModal = () => setIsOpen(true);
 - Documentation comments (docstrings, API docs) are good
 - Implementation comments are last resort - refactor to make code clear
 
-### No `types.ts` files
+### Colocate types
 
-Colocate types with the code that uses them.
+Keep types with the code that uses them, not in separate files.
 
 ### Avoid useEffect
 
@@ -179,11 +179,22 @@ useEffect IS right, add a comment explaining why.
 
 ### Package by feature, not by layer
 
-**FORBIDDEN**: `types.rs`, `error.rs`, `models.rs`, `utils.rs`, `helpers.rs`
+Organize code by business domain, not by language primitives or technical
+layers.
+
+**FORBIDDEN file names** (Rust): `types.rs`, `error.rs`, `errors.rs`,
+`models.rs`, `utils.rs`, `helpers.rs`, `impl.rs`, `traits.rs`, `structs.rs`,
+`enums.rs`, `config.rs`, `constants.rs`, `common.rs`, `shared.rs`, `core.rs`
+
+**FORBIDDEN file names** (TypeScript): `types.ts`, `interfaces.ts`, `utils.ts`,
+`helpers.ts`, `constants.ts`, `common.ts`, `shared.ts`
 
 **CORRECT**: `portfolio.rs`, `position.rs`, `rebalancer.rs` (organized by
 business domain). Each feature module contains all related code: types, errors,
 logic.
+
+When a project is small, put everything in `main.rs` or `lib.rs`. Only split
+into modules when there are clear domain boundaries.
 
 ### Type modeling
 
@@ -234,6 +245,23 @@ fn validate(d: Option<&Data>) -> Result<(), Error> {
 - Use `?` operator and proper error types
 - Never create `SomeError(String)` variants that throw away type information
 - Use `#[from]` with thiserror to preserve error chains
+- Don't think ahead about error variants - use `?` wherever needed, then
+  `cargo check` tells you exactly which `#[from]` variants to add
+
+**`#[from]` variant naming**: When using thiserror's `#[from]` attribute,
+variant names must be generic (matching the source error type) and MUST NOT
+claim what operation failed. The `?` operator auto-converts any matching error
+type to the variant, so specific claims become false if another operation
+produces the same error type.
+
+- **FORBIDDEN**: `ReadConfig(#[from] std::io::Error)` - claims config reading
+  failed, but any `?` on io::Error will use this variant
+- **CORRECT**: `Io(#[from] std::io::Error)` - generic, makes no false claims
+- **FORBIDDEN**: `ParseConfig(#[from] toml::de::Error)` - claims config parsing
+- **CORRECT**: `Toml(#[from] toml::de::Error)` - generic, truthful
+
+Rule: If `#[from]` is used, the variant name should mirror the error type, not
+the operation.
 
 ### Zero tolerance for panics in non-test code
 
@@ -252,8 +280,20 @@ unacceptable.
 
 ### Module organization
 
-Public API first, private helpers below. Keep visibility as restrictive as
-possible (`pub(crate)` over `pub`, private over `pub(crate)`).
+Public API first, private helpers below.
+
+### Minimal visibility
+
+Always use the most restrictive visibility possible:
+
+- Private (default) over `pub(super)`
+- `pub(super)` over `pub(crate)`
+- `pub(crate)` over `pub`
+
+This enables robust dead code detection by the compiler. When something is
+`pub`, the compiler can't know if external code uses it, so it won't warn about
+unused items. Restrictive visibility makes the relevance scope explicit and lets
+tooling catch unused code.
 
 ### Import organization
 
@@ -293,6 +333,35 @@ Follow the pyramid - more tests at lower levels, fewer at higher:
 3. **Integration tests** - Components working together, mocked externals
 4. **E2E tests** - Fewest, but essential for full system orchestration
 
+The pyramid is about quantity, not avoidance. You should have MANY property/unit
+tests, SOME integration tests, and a FEW e2e tests. But e2e tests are still
+required when testing full system orchestration.
+
+**When e2e tests ARE required:**
+
+- Testing that multiple async processes coordinate correctly
+- Testing startup/shutdown behavior and recovery
+- Testing flows that span multiple components AND external systems
+- Testing that the service handles events that occurred before it started
+
+A single well-designed e2e test can cover orchestration, while dozens of unit
+tests cover edge cases in each component.
+
+### E2E tests: strict definition
+
+E2E tests live in `./tests/`, not in `src/`.
+
+A test is ONLY e2e if it:
+
+1. Spins up the full HTTP service
+2. Uses ONLY the public API as an external consumer would
+3. Mocks only truly external systems
+4. Asserts correctness via API responses
+
+A test is NOT e2e if it touches implementation details for setup or
+verification. If a test requires internal types, it belongs in `src/` as a unit
+or integration test.
+
 ### Testing guidelines
 
 - Tests must assert CORRECT behavior, never "document gaps"
@@ -300,6 +369,20 @@ Follow the pyramid - more tests at lower levels, fewer at higher:
 - Never test language features - test business logic
 - Only cover happy paths in integration/e2e tests; cover edge cases in unit
   tests
+
+```rust
+// Bad: tests struct assignment, not our code
+fn test_fields() {
+    let r = Request { qty: 100, symbol: "AAPL".into() };
+    assert_eq!(r.qty, 100);
+}
+
+// Good: tests our validation logic
+fn test_validates_quantity() {
+    let result = validate_order(OrderRequest { qty: -10, .. });
+    assert!(matches!(result, Err(OrderError::InvalidQuantity)));
+}
+```
 
 ---
 

@@ -22,11 +22,11 @@ beta-aware hedging coming soon.
 
 ## Architecture
 
-| Layer          | Technology             | Status         |
-| -------------- | ---------------------- | -------------- |
-| Frontend       | TypeScript + React     | Active         |
-| Backend        | Scala 2 + Spark + cats | Building       |
-| Legacy Backend | Python + PySpark       | Being replaced |
+| Layer          | Technology         | Status         |
+| -------------- | ------------------ | -------------- |
+| Frontend       | TypeScript + React | Active         |
+| Backend        | Rust               | Building       |
+| Legacy Backend | Python             | Being replaced |
 
 The frontend holds credentials and executes trades directly to venues. The
 backend provides analytics and execution plans but never touches credentials.

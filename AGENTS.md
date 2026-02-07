@@ -16,18 +16,18 @@ institutional-grade quant toolkit. See [SPEC.md](./SPEC.md) for the vision and
   cross-account leverage). Used daily.
 - Frontend at `/prototype` is a design reference (like Figma in code).
 - Python backend (`yang/`, `pipeline.py`, `server.py`) exists but is being
-  replaced by a Scala 2 backend.
+  replaced by a Rust backend.
 
 **What's being built:**
 
-- Scala 2 + Spark + cats backend for analytics and API
+- Rust backend for analytics and API (polars, cqrs-es, rocket)
 - First priority: portfolio beta calculation (current tool shows net notional,
   which ignores correlations and makes hedging guesswork)
 
 **Key architectural decisions:**
 
-- **No Python for new code**: CCXT has footguns and only covers 2 of 4+ planned
-  venue integrations. Single Scala 2 service is simpler than Scala 2/3 interop.
+- **All Rust**: Official SDKs for Hyperliquid, Derive, deBridge, Jupiter. Polars
+  for analytics. Single language from API to blockchain interactions.
 - **Frontend holds credentials**: Backend generates execution plans, frontend
   executes. Credentials never leave the browser.
 - **Portfolios as proportions**: Target portfolios are defined as weights +
@@ -50,7 +50,7 @@ bun run build      # Full build
 bun run dev        # Dev server (port 5173) - only when explicitly asked
 ```
 
-### Backend (Scala - being built)
+### Backend (Rust - being built)
 
 TBD - see ROADMAP.md Phase 1 for infrastructure setup.
 

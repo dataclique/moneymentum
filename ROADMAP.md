@@ -31,18 +31,18 @@ hedging.
 
 ### 1.1 Backend Infrastructure
 
-Set up Scala 2 + Spark project with Nix:
+Set up Rust project with Nix:
 
-- Build configuration (sbt)
+- Cargo workspace structure
 - Nix flake for reproducible dev environment
-- Basic HTTP server (http4s) that can serve a health check
+- Basic HTTP server (rocket) that can serve a health check
 
 ### 1.2 Data Ingestion
 
-Fetch Hyperliquid market data in Scala:
+Fetch Hyperliquid market data:
 
 - OHLCV candles for all perp markets
-- Store in a format Spark can read (Parquet or similar)
+- Store in Parquet format for polars
 - Scheduled refresh (cron or simple loop)
 
 ### 1.3 Beta Calculation

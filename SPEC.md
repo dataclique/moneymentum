@@ -84,12 +84,23 @@ flowchart LR
 
 ## Technology Stack
 
-| Layer        | Technology             | Rationale                                                                                                   |
-| ------------ | ---------------------- | ----------------------------------------------------------------------------------------------------------- |
-| Backend      | Scala 2 + Spark + cats | Type safety for financial calculations. Spark for analytics. Single language/runtime simplifies deployment. |
-| Frontend     | TypeScript + React     | Execution engine lives here—credentials never leave browser.                                                |
-| Dependencies | Nix                    | Reproducible builds across all environments. Non-negotiable.                                                |
-| Storage      | TBD                    | Start simple, add Iceberg when historical analysis needs grow.                                              |
+| Layer        | Technology             | Rationale                                                      |
+| ------------ | ---------------------- | -------------------------------------------------------------- |
+| Backend      | Scala 2 + Spark + cats | See below.                                                     |
+| Frontend     | TypeScript + React     | Execution engine lives here—credentials never leave browser.   |
+| Dependencies | Nix                    | Reproducible builds across all environments. Non-negotiable.   |
+| Storage      | TBD                    | Start simple, add Iceberg when historical analysis needs grow. |
+
+**Why Scala?**
+
+- Solid FP support for writing safe, robust, testable code—required for serious financial infrastructure
+- Spark for heavy data analytics and simulations—required for a quantitative financial tool
+
+Rust if we needed efficiency in our own code. Haskell for the cleanest business logic DSL. Python if we hated ourselves and loved debugging at 3am. TypeScript for full-stack type coherence. None of those fit the project requirements as well as Scala.
+
+**Why Scala 2?**
+
+Spark requires Scala 2. We considered Scala 3 for the domain library and API (better syntax, modern type system), but Scala 2/3 interop adds complexity for marginal benefit. Single Scala 2 codebase is simpler.
 
 ---
 

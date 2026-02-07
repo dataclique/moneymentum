@@ -58,6 +58,11 @@
             enable = true;
             excludes = [ "\\.md$" ];
           };
+
+          # TOML
+          taplo.enable = true;
+
+          # Markdown
           denofmt = {
             enable = true;
             name = "denofmt";

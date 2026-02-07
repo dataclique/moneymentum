@@ -1,21 +1,13 @@
 .devenv
 .direnv
 .pre-commit-config.yaml
-__pycache__
-.stack-work/
-*.cabal
 *~
 .DS_Store
 *.log
 .env
 /data/
-venv/
 /node_modules
 /public/data/
 /frontend/node_modules/
 /frontend/dist/
-
-
-# Added by cargo
-
 /target

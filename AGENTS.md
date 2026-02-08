@@ -282,6 +282,41 @@ Use log levels semantically:
   `debug!("hyperliquid client
   ready")` instead
 
+### Data quality verification
+
+When verifying ingested or processed data, follow these checks:
+
+**Structural integrity:**
+
+- Row counts match expectations (compare before/after for incremental loads)
+- No duplicate records on primary key (e.g., timestamp + symbol)
+- Schema matches expected columns and types
+- No null/empty values in required fields
+
+**Temporal validity:**
+
+- Most recent records are current (within expected lag of real-time)
+- No gaps in time series where data should be continuous
+- Timestamps are in expected format and timezone
+
+**Value reasonableness:**
+
+- Cross-reference key values against external sources (e.g., check BTC price
+  against exchange APIs, not against training data or assumptions)
+- Numeric values are within plausible ranges for the domain
+- No obvious outliers that suggest data corruption (e.g., prices of 0 or
+  negative values where impossible)
+
+**Referential integrity:**
+
+- Foreign keys reference valid records
+- Symbol/ticker names match expected universe
+
+**Never assume values "look reasonable" without verification.** If you can't
+verify against an external source, say "I cannot verify this value" rather than
+guessing. Training data cutoffs make historical knowledge unreliable for current
+market prices.
+
 ---
 
 ## Rust Code Style

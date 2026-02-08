@@ -24,7 +24,7 @@ use rocket::{Rocket, State, get, post, routes};
 use serde::Deserialize;
 use sqlx::SqlitePool;
 use thiserror::Error;
-use tracing::error;
+use tracing::{debug, error, info};
 use tracing_subscriber::EnvFilter;
 
 use ingestion::{
@@ -70,6 +70,8 @@ pub struct Config {
     database_url: String,
     hyperliquid_base_url: Option<url::Url>,
     log_level: LogLevel,
+    max_concurrent_requests: usize,
+    max_retries: usize,
 }
 
 impl Config {
@@ -151,6 +153,7 @@ pub async fn rocket(
     };
 
     let pool = SqlitePool::connect(&config.database_url).await?;
+    debug!("database connected");
 
     // IMPORTANT: Migration ordering matters here.
     //
@@ -160,20 +163,35 @@ pub async fn rocket(
     // migrations first, apalis's migrator will fail with `VersionMissing`
     // because it doesn't recognize our migrations.
     //
-    // Solution: Run apalis first, then our migrations with `ignore_missing`
-    // so we don't fail on apalis's migrations being in the table.
-    SqliteStorage::setup(&pool).await?;
+    // Solution: Run apalis first (if not already set up), then our migrations
+    // with `ignore_missing` so we don't fail on apalis's migrations.
+    let apalis_tables_exist: bool = sqlx::query_scalar!(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='Jobs')"
+    )
+    .fetch_one(&pool)
+    .await?
+        != 0;
+
+    if !apalis_tables_exist {
+        SqliteStorage::setup(&pool).await?;
+    }
     sqlx::migrate!().set_ignore_missing(true).run(&pool).await?;
+    debug!("migrations applied");
+
     let storage = SqliteStorage::<IngestionJob>::new(pool.clone());
 
     let view: IngestionView = wire::View::new(pool.clone());
     let query = GenericQuery::new(view.repo());
 
-    let hyperliquid_client =
-        hyperliquid::HyperliquidClient::new(config.hyperliquid_base_url.as_ref()).await?;
+    let hyperliquid_client = hyperliquid::HyperliquidClient::new(
+        config.hyperliquid_base_url.as_ref(),
+        config.max_retries,
+    )
+    .await?;
     let services = Arc::new(IngestionServices {
         hyperliquid: Arc::new(hyperliquid_client),
         data_dir: config.data_dir.clone(),
+        max_concurrent_requests: config.max_concurrent_requests,
     });
 
     type QueryDeps = Cons<Ingestion, Nil>;
@@ -183,6 +201,7 @@ pub async fn rocket(
         .build(IngestionServices {
             hyperliquid: Arc::clone(&services.hyperliquid),
             data_dir: services.data_dir.clone(),
+            max_concurrent_requests: services.max_concurrent_requests,
         });
 
     // Proves all query dependencies are satisfied at compile time
@@ -208,7 +227,9 @@ pub async fn rocket(
             }
         }
     });
+    debug!("ingestion worker started");
 
+    info!(port = config.port, "moneymentum ready");
     Ok(rocket::custom(rocket_config)
         .manage(config)
         .manage(cqrs)
@@ -257,6 +278,8 @@ mod tests {
             database_url: "sqlite::memory:".to_string(),
             hyperliquid_base_url: None,
             log_level: LogLevel::Info,
+            max_concurrent_requests: 3,
+            max_retries: 5,
         };
         rocket::build()
             .manage(config)
@@ -271,6 +294,8 @@ mod tests {
                 data_dir = "data"
                 database_url = "sqlite::memory:"
                 log_level = "info"
+                max_concurrent_requests = 3
+                max_retries = 5
             "#);
             let config: Config = toml::from_str(&toml).unwrap();
             prop_assert_eq!(config.port, port);

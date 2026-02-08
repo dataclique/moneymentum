@@ -12,3 +12,5 @@
 /frontend/dist/
 /target
 *.db
+*.db-shm
+*.db-wal

@@ -5,7 +5,7 @@
 //! [`crate::dataframe`].
 
 use chrono::{DateTime, Utc};
-use polars::prelude::{DataFrame, IntoLazy, PolarsError, SortMultipleOptions, col, df, lit};
+use polars::prelude::{DataFrame, IntoLazy, PolarsError, col, df, lit};
 use rust_decimal::Decimal;
 use thiserror::Error;
 use tracing::{debug, instrument};
@@ -38,9 +38,10 @@ pub(crate) async fn funding_rates_to_dataframe(
         use rust_decimal::prelude::ToPrimitive;
 
         debug!("converting funding rates to dataframe");
-        let timestamps: Vec<i64> = rates
+        // ISO 8601 format to match Python pipeline output
+        let timestamps: Vec<String> = rates
             .iter()
-            .map(|rate| rate.timestamp.timestamp_millis())
+            .map(|rate| rate.timestamp.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string())
             .collect();
 
         // Convert Decimal to f64 for CSV storage (polars doesn't support Decimal natively)
@@ -60,23 +61,32 @@ pub(crate) async fn funding_rates_to_dataframe(
 }
 
 pub(crate) fn get_last_timestamp_for_symbol(
-    dataframe: Option<&DataFrame>,
+    df: Option<&DataFrame>,
     symbol: &str,
 ) -> Option<DateTime<Utc>> {
-    let df = dataframe?;
+    let df = df?;
 
     let filtered = df
         .clone()
         .lazy()
         .filter(col("symbol").eq(lit(symbol)))
-        .sort_by_exprs([col("timestamp")], SortMultipleOptions::default())
+        .select([col("timestamp").max()])
         .collect()
         .ok()?;
 
-    let timestamps = filtered.column("timestamp").ok()?;
-    let last_timestamp = timestamps.i64().ok()?.last()?;
+    let ts_col = filtered.column("timestamp").ok()?;
 
-    DateTime::from_timestamp_millis(last_timestamp)
+    // Handle both ISO 8601 strings (legacy Python format) and i64 milliseconds
+    if let Ok(str_col) = ts_col.str() {
+        let ts_str = str_col.get(0)?;
+        DateTime::parse_from_rfc3339(ts_str)
+            .ok()
+            .map(|dt| dt.with_timezone(&Utc))
+    } else if let Ok(i64_col) = ts_col.i64() {
+        DateTime::from_timestamp_millis(i64_col.get(0)?)
+    } else {
+        None
+    }
 }
 
 pub(crate) fn file_name() -> &'static str {
@@ -132,7 +142,7 @@ mod tests {
     #[test]
     fn get_last_timestamp_returns_none_for_missing_symbol() {
         let df = df! {
-            "timestamp" => &[1_704_067_200_000_i64],
+            "timestamp" => &["2024-01-01T00:00:00.000Z"],
             "symbol" => &["BTC"],
         }
         .unwrap();

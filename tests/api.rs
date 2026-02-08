@@ -69,6 +69,8 @@ async fn create_test_client(mock_server: &MockServer, data_dir: &TempDir) -> Cli
         database_url = "sqlite::memory:"
         hyperliquid_base_url = "{}"
         log_level = "debug"
+        max_concurrent_requests = 3
+        max_retries = 2
         "#,
         data_dir.path().display(),
         mock_server.uri()
@@ -157,7 +159,6 @@ async fn status_shows_running_after_restart_from_failed() {
         .and(path("/info"))
         .and(body_partial_json(json!({"type": "candleSnapshot"})))
         .respond_with(ResponseTemplate::new(500))
-        .expect(1)
         .mount(&mock_server)
         .await;
 

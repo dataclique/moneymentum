@@ -62,20 +62,26 @@ pub(crate) trait Hyperliquid: Send + Sync {
 
 pub(crate) struct HyperliquidClient {
     info: InfoClient,
+    max_retries: usize,
 }
 
 impl HyperliquidClient {
-    #[instrument(skip_all)]
-    pub(crate) async fn new(base_url: Option<&Url>) -> Result<Self, HyperliquidError> {
-        debug!("initializing");
+    pub(crate) async fn new(
+        base_url: Option<&Url>,
+        max_retries: usize,
+    ) -> Result<Self, HyperliquidError> {
         let mut info = InfoClient::new(None, None).await?;
         if let Some(url) = base_url {
             url.to_string()
                 .trim_end_matches('/')
                 .clone_into(&mut info.http_client.base_url);
         }
-        info!("initialized");
-        Ok(Self { info })
+        debug!(
+            base_url = %info.http_client.base_url,
+            max_retries,
+            "hyperliquid client ready"
+        );
+        Ok(Self { info, max_retries })
     }
 }
 
@@ -113,7 +119,11 @@ impl Hyperliquid for HyperliquidClient {
                 )
                 .await
         })
-        .retry(ExponentialBuilder::default().with_jitter())
+        .retry(
+            ExponentialBuilder::default()
+                .with_jitter()
+                .with_max_times(self.max_retries),
+        )
         .notify(|err, dur| {
             debug!(error = %err, delay = ?dur, "retrying candle fetch");
         })
@@ -162,7 +172,11 @@ impl Hyperliquid for HyperliquidClient {
                 .funding_history(market.as_str().to_string(), start_ms, Some(end_ms))
                 .await
         })
-        .retry(ExponentialBuilder::default().with_jitter())
+        .retry(
+            ExponentialBuilder::default()
+                .with_jitter()
+                .with_max_times(self.max_retries),
+        )
         .notify(|err, dur| {
             debug!(error = %err, delay = ?dur, "retrying funding rate fetch");
         })
@@ -193,11 +207,15 @@ impl Hyperliquid for HyperliquidClient {
 /// writes back to CSV.
 pub(crate) struct CandleIngester<H: ?Sized> {
     client: Arc<H>,
+    max_concurrent_requests: usize,
 }
 
 impl<H: ?Sized + Hyperliquid> CandleIngester<H> {
-    pub(crate) fn new(client: Arc<H>) -> Self {
-        Self { client }
+    pub(crate) fn new(client: Arc<H>, max_concurrent_requests: usize) -> Self {
+        Self {
+            client,
+            max_concurrent_requests,
+        }
     }
 
     #[instrument(skip(self, data_dir), fields(timeframe = ?timeframe))]
@@ -223,19 +241,31 @@ impl<H: ?Sized + Hyperliquid> CandleIngester<H> {
 
         let default_start = Utc::now() - Duration::days(timeframe.lookback_days());
 
-        let candle_batches: Vec<Vec<Candle>> = stream::iter(markets)
-            .then(|market| async {
-                debug!(market = market.as_str(), "fetching candles");
+        // Pre-compute start times to avoid borrowing existing across async boundary
+        let market_starts: Vec<(Market, DateTime<Utc>)> = markets
+            .iter()
+            .map(|market| {
                 let start = get_last_timestamp_for_symbol(existing.as_ref(), market.as_str())
                     .unwrap_or(default_start);
-                let candles = self.client.fetch_candles(market, timeframe, start).await?;
-                debug!(
-                    market = market.as_str(),
-                    count = candles.len(),
-                    "fetched candles"
-                );
-                Ok::<_, HyperliquidError>(candles)
+                (market.clone(), start)
             })
+            .collect();
+
+        let candle_batches: Vec<Vec<Candle>> = stream::iter(market_starts)
+            .map(|(market, start)| {
+                let client = Arc::clone(&self.client);
+                async move {
+                    debug!(market = market.as_str(), "fetching candles");
+                    let candles = client.fetch_candles(&market, timeframe, start).await?;
+                    debug!(
+                        market = market.as_str(),
+                        count = candles.len(),
+                        "fetched candles"
+                    );
+                    Ok::<_, HyperliquidError>(candles)
+                }
+            })
+            .buffer_unordered(self.max_concurrent_requests)
             .try_collect()
             .await?;
 
@@ -267,11 +297,15 @@ impl<H: ?Sized + Hyperliquid> CandleIngester<H> {
 /// Same incremental pattern as [`CandleIngester`].
 pub(crate) struct FundingRateIngester<H: ?Sized> {
     client: Arc<H>,
+    max_concurrent_requests: usize,
 }
 
 impl<H: ?Sized + Hyperliquid> FundingRateIngester<H> {
-    pub(crate) fn new(client: Arc<H>) -> Self {
-        Self { client }
+    pub(crate) fn new(client: Arc<H>, max_concurrent_requests: usize) -> Self {
+        Self {
+            client,
+            max_concurrent_requests,
+        }
     }
 
     #[instrument(skip(self, data_dir))]
@@ -290,23 +324,32 @@ impl<H: ?Sized + Hyperliquid> FundingRateIngester<H> {
         let existing = dataframe::read_csv(path.clone()).await?;
         let default_start = Utc::now() - Duration::days(30);
 
-        let rate_batches: Vec<Vec<FundingRate>> = stream::iter(markets)
-            .then(|market| async {
-                debug!(market = market.as_str(), "fetching funding rates");
-
+        // Pre-compute start times to avoid borrowing existing across async boundary
+        let market_starts: Vec<(Market, DateTime<Utc>)> = markets
+            .iter()
+            .map(|market| {
                 let start =
                     funding::get_last_timestamp_for_symbol(existing.as_ref(), market.as_str())
                         .unwrap_or(default_start);
-
-                let rates = self.client.fetch_funding_rates(market, start).await?;
-
-                debug!(
-                    market = market.as_str(),
-                    count = rates.len(),
-                    "fetched funding rates"
-                );
-                Ok::<_, HyperliquidError>(rates)
+                (market.clone(), start)
             })
+            .collect();
+
+        let rate_batches: Vec<Vec<FundingRate>> = stream::iter(market_starts)
+            .map(|(market, start)| {
+                let client = Arc::clone(&self.client);
+                async move {
+                    debug!(market = market.as_str(), "fetching funding rates");
+                    let rates = client.fetch_funding_rates(&market, start).await?;
+                    debug!(
+                        market = market.as_str(),
+                        count = rates.len(),
+                        "fetched funding rates"
+                    );
+                    Ok::<_, HyperliquidError>(rates)
+                }
+            })
+            .buffer_unordered(self.max_concurrent_requests)
             .try_collect()
             .await?;
 
@@ -415,7 +458,7 @@ mod tests {
     async fn candle_ingester_writes_csv_and_logs() {
         let data_dir = TempDir::new().unwrap();
         let mock = Arc::new(MockHyperliquid::new());
-        let ingester = CandleIngester::new(mock);
+        let ingester = CandleIngester::new(mock, 10);
 
         ingester
             .ingest(Timeframe::OneHour, data_dir.path())
@@ -435,7 +478,7 @@ mod tests {
     async fn candle_ingester_logs_when_no_new_candles() {
         let data_dir = TempDir::new().unwrap();
         let mock = Arc::new(MockHyperliquid::new().with_empty_data());
-        let ingester = CandleIngester::new(mock);
+        let ingester = CandleIngester::new(mock, 10);
 
         ingester
             .ingest(Timeframe::OneHour, data_dir.path())
@@ -450,7 +493,7 @@ mod tests {
     async fn funding_ingester_writes_csv_and_logs() {
         let data_dir = TempDir::new().unwrap();
         let mock = Arc::new(MockHyperliquid::new());
-        let ingester = FundingRateIngester::new(mock);
+        let ingester = FundingRateIngester::new(mock, 10);
 
         ingester.ingest(data_dir.path()).await.unwrap();
 
@@ -476,7 +519,7 @@ mod tests {
     async fn funding_ingester_logs_when_no_new_rates() {
         let data_dir = TempDir::new().unwrap();
         let mock = Arc::new(MockHyperliquid::new().with_empty_data());
-        let ingester = FundingRateIngester::new(mock);
+        let ingester = FundingRateIngester::new(mock, 10);
 
         ingester.ingest(data_dir.path()).await.unwrap();
 
@@ -495,7 +538,7 @@ mod tests {
             ..MockHyperliquid::new()
         });
         let call_count = Arc::clone(&mock);
-        let ingester = CandleIngester::new(mock);
+        let ingester = CandleIngester::new(mock, 10);
 
         ingester
             .ingest(Timeframe::OneHour, data_dir.path())
@@ -520,7 +563,7 @@ mod tests {
             ..MockHyperliquid::new()
         });
         let call_count = Arc::clone(&mock);
-        let ingester = FundingRateIngester::new(mock);
+        let ingester = FundingRateIngester::new(mock, 10);
 
         ingester.ingest(data_dir.path()).await.unwrap();
 
@@ -541,7 +584,7 @@ mod tests {
 
         // Ingest new candles (should merge with existing legacy data)
         let mock = Arc::new(MockHyperliquid::new());
-        let ingester = CandleIngester::new(mock);
+        let ingester = CandleIngester::new(mock, 10);
 
         let result = ingester.ingest(Timeframe::OneHour, data_dir.path()).await;
 
@@ -557,7 +600,7 @@ mod tests {
         // Python pipeline produces: timestamp (ISO 8601), open, high, low, close, volume, symbol, ticker
         let data_dir = TempDir::new().unwrap();
         let mock = Arc::new(MockHyperliquid::new());
-        let ingester = CandleIngester::new(mock);
+        let ingester = CandleIngester::new(mock, 10);
 
         ingester
             .ingest(Timeframe::OneHour, data_dir.path())
@@ -569,6 +612,54 @@ mod tests {
 
         assert_eq!(
             header, "timestamp,open,high,low,close,volume,symbol,ticker",
+            "schema must match Python pipeline output"
+        );
+
+        // Check timestamp format is ISO 8601, not milliseconds
+        let first_row = csv_content.lines().nth(1).unwrap();
+        let timestamp = first_row.split(',').next().unwrap();
+        assert!(
+            timestamp.contains('T') && timestamp.contains('Z'),
+            "timestamp should be ISO 8601 format like '2024-01-01T00:00:00.000Z', got: {timestamp}"
+        );
+    }
+
+    #[tokio::test]
+    async fn funding_ingester_merges_with_legacy_python_format() {
+        // Copy fixture (legacy format from Python pipeline) to temp dir
+        let data_dir = TempDir::new().unwrap();
+        let fixture = std::path::Path::new("fixtures/funding_rate_1h.csv");
+        let target = data_dir.path().join("funding_rate_1h.csv");
+        std::fs::copy(fixture, &target).unwrap();
+
+        // Ingest new funding rates (should merge with existing legacy data)
+        let mock = Arc::new(MockHyperliquid::new());
+        let ingester = FundingRateIngester::new(mock, 10);
+
+        let result = ingester.ingest(data_dir.path()).await;
+
+        assert!(
+            result.is_ok(),
+            "should merge with legacy Python format: {:?}",
+            result.err()
+        );
+    }
+
+    #[tokio::test]
+    async fn funding_output_matches_python_schema() {
+        // Python pipeline produces: timestamp (ISO 8601), funding_rate, symbol
+        let data_dir = TempDir::new().unwrap();
+        let mock = Arc::new(MockHyperliquid::new());
+        let ingester = FundingRateIngester::new(mock, 10);
+
+        ingester.ingest(data_dir.path()).await.unwrap();
+
+        let csv_content =
+            std::fs::read_to_string(data_dir.path().join("funding_rate_1h.csv")).unwrap();
+        let header = csv_content.lines().next().unwrap();
+
+        assert_eq!(
+            header, "timestamp,funding_rate,symbol",
             "schema must match Python pipeline output"
         );
 

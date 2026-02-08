@@ -13,7 +13,7 @@ use chrono::{DateTime, Utc};
 use cqrs_es::{Aggregate, DomainEvent};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use tracing::{error, info, warn};
+use tracing::{error, info};
 
 use crate::hyperliquid::{CandleIngester, FundingRateIngester, Hyperliquid, HyperliquidError};
 use crate::lifecycle::{Lifecycle, LifecycleError, Never};
@@ -51,12 +51,18 @@ pub(crate) async fn handle_ingestion(
         .execute::<IngestionId>((), IngestionCommand::Start)
         .await
     {
-        warn!(error = %err, "failed to start ingestion");
+        error!(error = %err, "failed to start ingestion");
         return;
     }
 
-    let candle_ingester = CandleIngester::new(Arc::clone(&services.hyperliquid));
-    let funding_ingester = FundingRateIngester::new(Arc::clone(&services.hyperliquid));
+    let candle_ingester = CandleIngester::new(
+        Arc::clone(&services.hyperliquid),
+        services.max_concurrent_requests,
+    );
+    let funding_ingester = FundingRateIngester::new(
+        Arc::clone(&services.hyperliquid),
+        services.max_concurrent_requests,
+    );
 
     match ingest_all(&candle_ingester, &funding_ingester, &services.data_dir).await {
         Ok(last_record) => {
@@ -69,7 +75,7 @@ pub(crate) async fn handle_ingestion(
             }
         }
         Err(err) => {
-            warn!(error = %err, "ingestion failed");
+            error!(error = %err, "ingestion failed");
             if let Err(err) = cqrs
                 .execute::<IngestionId>(
                     (),
@@ -153,6 +159,7 @@ pub(crate) enum IngestionError {
 pub(crate) struct IngestionServices {
     pub(crate) hyperliquid: Arc<dyn Hyperliquid>,
     pub(crate) data_dir: PathBuf,
+    pub(crate) max_concurrent_requests: usize,
 }
 
 #[async_trait]
@@ -301,6 +308,7 @@ mod tests {
         IngestionServices {
             hyperliquid: Arc::new(MockHyperliquid),
             data_dir: std::env::temp_dir(),
+            max_concurrent_requests: 10,
         }
     }
 

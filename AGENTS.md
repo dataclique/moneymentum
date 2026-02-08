@@ -1,6 +1,7 @@
 # AGENTS.md
 
-Guidance for AI agents working in this repository.
+Rules and guidelines for AI agents working in this repository. Everything in
+this document is a directive, not a suggestion.
 
 ---
 
@@ -105,7 +106,7 @@ ruff format .      # Format
 
 ---
 
-## Agent Rules
+## Workflow & Policies
 
 ### When issues are pointed out
 
@@ -146,6 +147,15 @@ the allow is necessary.
 ### When stuck
 
 If a fix doesn't work after three attempts, look up the official documentation.
+
+### No hidden defaults
+
+Never add default values (e.g., `#[serde(default)]`, `Option::unwrap_or`)
+without being explicitly asked. Required configuration should fail loudly if
+missing, not silently use a value the user didn't choose. Default values can be
+grabbed from example.toml if needed. This makes it so that configuration
+parameters are explicit by default while at the same time providing an easy
+starting point for new setups.
 
 ### Testing
 
@@ -230,6 +240,47 @@ Keep types with the code that uses them, not in separate files.
 Before adding `useEffect`, consider: TanStack Query for data fetching,
 `use-local-storage-state` for localStorage, `useMemo` for derived state. When
 useEffect IS right, add a comment explaining why.
+
+### Logging
+
+Use log levels semantically:
+
+- **ERROR**: Something failed that requires attention (unrecoverable failures,
+  unexpected exceptions)
+- **WARN**: Something unexpected happened but the system recovered (retries
+  exhausted, fallback used, deprecated feature accessed)
+- **INFO**: High-level service lifecycle events only (service ready, graceful
+  shutdown). One or two lines per service startup, not per component
+- **DEBUG**: Operational details useful for troubleshooting (component
+  initialized, request handled, configuration applied)
+- **TRACE**: Fine-grained execution flow for deep debugging (variable values,
+  loop iterations, function entry/exit)
+
+**Message quality:**
+
+- Log when something completes, not when it starts. "hyperliquid client ready"
+  not "initializing hyperliquid client"
+- Messages should be grep-friendly and unique. Avoid generic "error occurred" or
+  "operation failed"
+- Include relevant context as structured fields, not interpolated strings:
+  `info!(port = config.port, "server ready")` not
+  `info!("server ready on port
+  {}", config.port)`
+- Use past tense or state descriptions: "request processed", "connection
+  established", "cache invalidated"
+
+**Anti-patterns:**
+
+- Logging both "starting X" and "X complete" at the same level - pick one
+  (prefer completion)
+- INFO-level logs for internal component setup (use DEBUG)
+- Logging sensitive data (credentials, tokens, PII)
+- Empty or near-empty messages: `debug!("here")`, `info!("")`
+- Vague messages without subject: `info!("initialized")` - initialized what?
+  Yes, tracing adds module prefixes, but logs should be clear at a glance
+  without parsing `moneymentum::hyperliquid::client`. Say
+  `debug!("hyperliquid client
+  ready")` instead
 
 ---
 

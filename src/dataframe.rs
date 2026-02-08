@@ -27,7 +27,7 @@ pub(crate) enum DataFrameError {
 pub(crate) async fn read_csv(path: PathBuf) -> Result<Option<DataFrame>, DataFrameError> {
     tokio::task::spawn_blocking(move || {
         if !path.exists() {
-            debug!("file not found");
+            debug!(path = %path.display(), "no existing data");
             return Ok(None);
         }
 
@@ -123,14 +123,18 @@ mod tests {
 
     #[traced_test]
     #[tokio::test]
-    async fn read_csv_nonexistent_returns_none() {
+    async fn read_csv_nonexistent_returns_none_and_logs_path() {
         let temp_dir = TempDir::new().unwrap();
         let path = temp_dir.path().join("nonexistent.csv");
 
         let loaded = read_csv(path).await.unwrap();
 
         assert!(loaded.is_none());
-        assert!(logs_contain_at(Level::DEBUG, &["file not found"]));
+        // Log must include the filename so operators know what's missing
+        assert!(logs_contain_at(
+            Level::DEBUG,
+            &["no existing data", "nonexistent.csv"]
+        ));
     }
 
     #[traced_test]

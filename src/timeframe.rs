@@ -58,6 +58,21 @@ mod tests {
     }
 
     #[test]
+    fn interval_string_roundtrips() {
+        for timeframe in [
+            Timeframe::FifteenMin,
+            Timeframe::OneHour,
+            Timeframe::OneDay,
+            Timeframe::OneWeek,
+        ] {
+            assert_eq!(
+                Timeframe::from_interval_string(timeframe.interval_string()),
+                Some(timeframe)
+            );
+        }
+    }
+
+    #[test]
     fn lookback_increases_with_granularity() {
         assert!(Timeframe::FifteenMin.lookback_days() < Timeframe::OneHour.lookback_days());
         assert!(Timeframe::OneHour.lookback_days() < Timeframe::OneDay.lookback_days());

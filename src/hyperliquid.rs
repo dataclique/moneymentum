@@ -26,6 +26,8 @@ pub(crate) enum HyperliquidError {
     Sdk(#[from] hyperliquid_rust_sdk::Error),
     #[error(transparent)]
     IntConversion(#[from] TryFromIntError),
+    #[error(transparent)]
+    Join(#[from] tokio::task::JoinError),
 }
 
 #[async_trait]
@@ -124,11 +126,11 @@ impl Hyperliquid for HyperliquidClient {
     }
 }
 
-pub(crate) struct CandleIngester<H> {
+pub(crate) struct CandleIngester<H: ?Sized> {
     client: Arc<H>,
 }
 
-impl<H: Hyperliquid> CandleIngester<H> {
+impl<H: ?Sized + Hyperliquid> CandleIngester<H> {
     pub(crate) fn new(client: Arc<H>) -> Self {
         Self { client }
     }
@@ -140,11 +142,25 @@ impl<H: Hyperliquid> CandleIngester<H> {
         data_dir: &Path,
     ) -> Result<(), HyperliquidError> {
         let markets = self.client.list_markets().await?;
+        self.ingest_with_markets(timeframe, data_dir, &markets)
+            .await
+    }
+
+    #[instrument(skip(self, data_dir, markets), fields(timeframe = ?timeframe))]
+    pub(crate) async fn ingest_with_markets(
+        &self,
+        timeframe: Timeframe,
+        data_dir: &Path,
+        markets: &[Market],
+    ) -> Result<(), HyperliquidError> {
         let path = data_dir.join(timeframe.file_name());
-        let existing = read_csv(&path)?;
+
+        let read_path = path.clone();
+        let existing = tokio::task::spawn_blocking(move || read_csv(&read_path)).await??;
+
         let default_start = Utc::now() - Duration::days(timeframe.lookback_days());
 
-        let candle_batches: Vec<Vec<Candle>> = stream::iter(&markets)
+        let candle_batches: Vec<Vec<Candle>> = stream::iter(markets)
             .then(|market| async {
                 let start = get_last_timestamp_for_symbol(existing.as_ref(), market.as_str())
                     .unwrap_or(default_start);
@@ -159,36 +175,23 @@ impl<H: Hyperliquid> CandleIngester<H> {
             return Ok(());
         }
 
-        let new_df = candles_to_dataframe(&all_candles)?;
-        let mut merged = merge_and_deduplicate(existing, new_df)?;
-        write_csv(&path, &mut merged)?;
+        let market_count = markets.len();
+        let candle_count = all_candles.len();
+
+        tokio::task::spawn_blocking(move || {
+            let new_df = candles_to_dataframe(&all_candles)?;
+            let mut merged = merge_and_deduplicate(existing, new_df)?;
+            write_csv(&path, &mut merged)?;
+            Ok::<_, HyperliquidError>(())
+        })
+        .await??;
 
         info!(
-            markets = markets.len(),
-            candles = all_candles.len(),
+            markets = market_count,
+            candles = candle_count,
             "ingestion complete"
         );
 
         Ok(())
     }
-}
-
-#[instrument(skip_all)]
-pub(crate) async fn ingest_all_candles(
-    data_dir: &Path,
-    base_url: Option<&Url>,
-) -> Result<(), HyperliquidError> {
-    let client = Arc::new(HyperliquidClient::new(base_url).await?);
-    let ingester = CandleIngester::new(client);
-
-    for timeframe in [
-        Timeframe::FifteenMin,
-        Timeframe::OneHour,
-        Timeframe::OneDay,
-        Timeframe::OneWeek,
-    ] {
-        ingester.ingest(timeframe, data_dir).await?;
-    }
-
-    Ok(())
 }

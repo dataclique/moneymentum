@@ -97,6 +97,39 @@ directly.
 
 ---
 
-## License
+## Infrastructure
 
-See repository for license information.
+Terraform provisions the server, then NixOS is bootstrapped onto it.
+
+### First-time setup
+
+```bash
+# Create and encrypt terraform variables
+nix run .#tfCreateVars
+
+# Initialize terraform
+nix run .#tfInit
+
+# Plan and apply infrastructure
+nix run .#tfPlan
+nix run .#tfApply
+
+# Bootstrap NixOS on the provisioned server
+nix run .#bootstrap
+```
+
+### Ongoing operations
+
+```bash
+# SSH into the server
+nix run .#remote
+
+# Edit terraform variables
+nix run .#tfEditVars
+
+# Destroy infrastructure
+nix run .#tfDestroy
+```
+
+All infrastructure commands use age-encrypted state files. The `-i` flag can be
+passed to specify a custom SSH identity file (defaults to `~/.ssh/id_ed25519`).

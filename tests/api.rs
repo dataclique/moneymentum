@@ -17,7 +17,7 @@ use tempfile::TempDir;
 use wiremock::matchers::{body_partial_json, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-const DATABASE_URL: &str = "postgres://localhost:5432/moneymentum?sslmode=disable";
+const DATABASE_URL: &str = env!("DATABASE_URL");
 
 #[rocket::async_test]
 async fn ingest_and_query_candles() {
@@ -86,25 +86,50 @@ async fn ingest_and_query_candles() {
 
     let ingest_response = client.post("/ingest").dispatch().await;
     assert_eq!(ingest_response.status(), Status::Ok);
-    assert_eq!(ingest_response.into_string().await.unwrap(), "started");
+    assert_eq!(ingest_response.into_string().await.unwrap(), r#""started""#);
 
     // Poll status until ingestion completes
+    let mut last_body = String::new();
+    let mut completed = false;
     for _ in 0..100 {
         let status_response = client.get("/ingestion/status").dispatch().await;
-        let body = status_response.into_string().await.unwrap();
-        if body.contains("Completed") {
+        last_body = status_response.into_string().await.unwrap();
+        if last_body.contains("Completed") {
+            completed = true;
             break;
         }
-        if body.contains("Failed") {
-            panic!("ingestion failed: {body}");
+        if last_body.contains("Failed") {
+            panic!("ingestion failed: {last_body}");
         }
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    if !completed {
+        panic!("ingestion did not complete within timeout, last status: {last_body}");
     }
 
     let candles_response = client.get("/candles/1h").dispatch().await;
     assert_eq!(candles_response.status(), Status::Ok);
 
+    // Response is newline-delimited JSON (NDJSON) from polars JsonWriter
     let body = candles_response.into_string().await.unwrap();
-    assert!(body.contains("BTC"));
-    assert!(body.contains("42000"));
+    let candles: Vec<serde_json::Value> = body
+        .lines()
+        .filter(|line| !line.is_empty())
+        .map(|line| serde_json::from_str(line).expect("each line should be valid JSON"))
+        .collect();
+    assert!(!candles.is_empty(), "candles should not be empty");
+
+    let btc_candle = candles
+        .iter()
+        .find(|candle| candle.get("symbol").and_then(|s| s.as_str()) == Some("BTC"))
+        .expect("should have a BTC candle");
+
+    let open = btc_candle
+        .get("open")
+        .and_then(serde_json::Value::as_f64)
+        .expect("should have open field");
+    assert!(
+        (open - 42000.0).abs() < 0.01,
+        "open price should be 42000, got {open}"
+    );
 }

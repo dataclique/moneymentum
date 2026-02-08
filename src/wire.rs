@@ -214,12 +214,17 @@ impl<A: Aggregate> CqrsBuilder<A, ()> {
     }
 
     /// Builds the CQRS framework when no queries were wired.
-    pub(crate) fn build<S>(self, services: S) -> PostgresCqrs<A>
+    ///
+    /// Use this for aggregates that don't need materialized views - where
+    /// replaying events on demand is sufficient. Currently unused because
+    /// our only aggregate (Ingestion) has a view.
+    #[allow(dead_code)]
+    pub(crate) fn build<S>(self, services: S) -> Cqrs<A>
     where
         A: Aggregate<Services = S>,
     {
-        #[allow(clippy::disallowed_methods)] // the only authorized call site
-        postgres_cqrs(self.pool, self.queries, services)
+        #[allow(clippy::disallowed_methods)]
+        Cqrs::new(postgres_cqrs(self.pool, self.queries, services))
     }
 }
 
@@ -265,26 +270,15 @@ impl<A: Aggregate, H, T> CqrsBuilder<A, (H, T)> {
     ///
     /// Destructure the returned tuple to continue wiring to other builders
     /// or extract via [`UnwiredQuery::into_inner`].
-    pub(crate) fn build<S>(self, services: S) -> (PostgresCqrs<A>, (H, T))
+    pub(crate) fn build<S>(self, services: S) -> (Cqrs<A>, (H, T))
     where
         A: Aggregate<Services = S>,
     {
         // This is the only authorized call site for postgres_cqrs
         #[allow(clippy::disallowed_methods)]
-        let cqrs = postgres_cqrs(self.pool, self.queries, services);
+        let cqrs = Cqrs::new(postgres_cqrs(self.pool, self.queries, services));
         (cqrs, self.wired)
     }
-}
-
-/// Test-only escape hatch for creating CQRS frameworks directly.
-#[cfg(test)]
-pub(crate) fn test_cqrs<A: Aggregate>(
-    pool: PgPool,
-    queries: Vec<Box<dyn Query<A>>>,
-    services: A::Services,
-) -> PostgresCqrs<A> {
-    #[allow(clippy::disallowed_methods)] // Test-only escape hatch
-    postgres_cqrs(pool, queries, services)
 }
 
 #[cfg(test)]

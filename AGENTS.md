@@ -307,9 +307,9 @@ Keep code flat in function bodies, module structure, and test organization.
 **Function bodies**: Use early returns and `let-else`:
 
 ```rust
-fn validate(d: Option<&Data>) -> Result<(), Error> {
-    let d = d.ok_or(Error::NoData)?;
-    if d.qty <= 0 { return Err(Error::InvalidQty); }
+fn validate(data: Option<&Data>) -> Result<(), Error> {
+    let data = data.ok_or(Error::NoData)?;
+    if data.qty <= 0 { return Err(Error::InvalidQty); }
     Ok(())
 }
 ```
@@ -493,13 +493,13 @@ or integration test.
 ```rust
 // Bad: tests struct assignment, not our code
 fn test_fields() {
-    let r = Request { qty: 100, symbol: "AAPL".into() };
-    assert_eq!(r.qty, 100);
+    let request = Request { qty: 100, symbol: "AAPL".into() };
+    assert_eq!(request.qty, 100);
 }
 
 // Good: tests our validation logic
 fn test_validates_quantity() {
-    let result = validate_order(OrderRequest { qty: -10, .. });
+    let result = validate_order(OrderRequest { qty: -10, symbol: "AAPL".into() });
     assert!(matches!(result, Err(OrderError::InvalidQuantity)));
 }
 ```

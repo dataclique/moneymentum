@@ -12,6 +12,18 @@ impl Symbol {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Market(String);
+
+impl Market {
+    pub(crate) fn new(name: String) -> Self {
+        Self(name)
+    }
+
+    pub(crate) fn as_str(&self) -> &str {
+        &self.0
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;

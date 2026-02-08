@@ -1,6 +1,9 @@
+mod candle;
+mod finance;
+mod hyperliquid;
 mod ingestion;
-mod ingestion_aggregate;
 mod lifecycle;
+mod timeframe;
 mod wire;
 
 use std::net::Ipv4Addr;
@@ -21,10 +24,8 @@ use tracing::{error, warn};
 use tracing_subscriber::EnvFilter;
 use url::Url;
 
-use ingestion::Timeframe;
-use ingestion_aggregate::{
-    Ingestion, IngestionCommand, IngestionId, IngestionServices, IngestionStatus,
-};
+use ingestion::{Ingestion, IngestionCommand, IngestionId, IngestionServices, IngestionStatus};
+use timeframe::Timeframe;
 use wire::{Cons, Nil, UnwiredQuery};
 
 impl<'r> FromParam<'r> for Timeframe {
@@ -91,7 +92,7 @@ fn health() -> &'static str {
 
 #[get("/candles/<timeframe>")]
 fn get_candles(config: &State<Config>, timeframe: Timeframe) -> Result<RawJson<Vec<u8>>, Status> {
-    ingestion::read_candles_json(&config.data_dir, timeframe)
+    candle::read_candles_json(&config.data_dir, timeframe)
         .map_err(|err| {
             error!(error = %err, "failed to read candles");
             Status::InternalServerError
@@ -114,20 +115,10 @@ async fn start_ingestion(
 
     let data_dir = config.data_dir.clone();
     let base_url = config.hyperliquid_base_url.clone();
-    let cqrs = Arc::clone(cqrs.inner());
 
     tokio::spawn(async move {
-        let result = ingestion::ingest_all_candles(&data_dir, base_url.as_ref()).await;
-
-        let command = match result {
-            Ok(()) => IngestionCommand::Complete,
-            Err(err) => IngestionCommand::Fail {
-                reason: err.to_string(),
-            },
-        };
-
-        if let Err(err) = cqrs.execute::<IngestionId>((), command).await {
-            error!(error = %err, "failed to update ingestion status");
+        if let Err(err) = hyperliquid::ingest_all_candles(&data_dir, base_url.as_ref()).await {
+            error!(error = %err, "ingestion failed");
         }
     });
 

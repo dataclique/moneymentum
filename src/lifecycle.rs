@@ -243,7 +243,10 @@ where
     }
 }
 
+// Test code: panicking is allowed per project guidelines. Unlike unwrap/expect,
+// clippy has no `allow-panic-in-tests` config option.
 #[cfg(test)]
+#[allow(clippy::panic)]
 mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
 

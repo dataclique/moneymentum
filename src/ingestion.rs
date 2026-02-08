@@ -164,19 +164,20 @@ mod tests {
     #[test]
     fn can_restart_after_completion() {
         let services = IngestionServices;
-        IngestionTestFramework::with(services)
+        let events = IngestionTestFramework::with(services)
             .given(vec![sample_started(), sample_completed()])
             .when(IngestionCommand::Start)
-            .inspect_result(|events| {
-                assert_eq!(events.len(), 1);
-                assert!(matches!(events[0], IngestionEvent::Started { .. }));
-            });
+            .inspect_result()
+            .expect("should emit events");
+
+        assert_eq!(events.len(), 1);
+        assert!(matches!(events[0], IngestionEvent::Started { .. }));
     }
 
     #[test]
     fn can_restart_after_failure() {
         let services = IngestionServices;
-        IngestionTestFramework::with(services)
+        let events = IngestionTestFramework::with(services)
             .given(vec![
                 sample_started(),
                 IngestionEvent::Failed {
@@ -184,9 +185,10 @@ mod tests {
                 },
             ])
             .when(IngestionCommand::Start)
-            .inspect_result(|events| {
-                assert_eq!(events.len(), 1);
-                assert!(matches!(events[0], IngestionEvent::Started { .. }));
-            });
+            .inspect_result()
+            .expect("should emit events");
+
+        assert_eq!(events.len(), 1);
+        assert!(matches!(events[0], IngestionEvent::Started { .. }));
     }
 }

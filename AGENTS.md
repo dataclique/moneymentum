@@ -131,6 +131,12 @@ applies to:
 
 Fix the underlying code, don't suppress warnings.
 
+**When permission IS appropriate:** If fixing the underlying code is impossible
+or would be worse than suppressing (e.g., a false positive, or a lint that
+conflicts with project policy), STOP and ask for permission. Don't waste time on
+convoluted workarounds - just ask. When granted, add a comment explaining why
+the allow is necessary.
+
 ### Dependencies
 
 - Frontend: use bun commands (`bun add`, `bun remove`). Never manually write

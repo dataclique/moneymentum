@@ -1,15 +1,37 @@
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
+// Test code: panicking is allowed per project guidelines. Unlike unwrap/expect,
+// clippy has no `allow-panic-in-tests` config option.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic,
+    clippy::manual_assert
+)]
 
 use moneymentum::{Config, rocket};
 use rocket::http::Status;
 use rocket::local::asynchronous::Client;
 use serde_json::json;
+use sqlx::PgPool;
 use tempfile::TempDir;
 use wiremock::matchers::{body_partial_json, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
+const DATABASE_URL: &str = "postgres://localhost:5432/moneymentum?sslmode=disable";
+
 #[rocket::async_test]
 async fn ingest_and_query_candles() {
+    let pool = PgPool::connect(DATABASE_URL).await.unwrap();
+    sqlx::query("DELETE FROM events WHERE aggregate_type = 'ingestion'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM ingestion_view")
+        .execute(&pool)
+        .await
+        .unwrap();
+    drop(pool);
+
     let mock_server = MockServer::start().await;
 
     Mock::given(method("POST"))
@@ -51,7 +73,7 @@ async fn ingest_and_query_candles() {
         data_dir = "{}"
         hyperliquid_base_url = "{}"
         log_level = "debug"
-        database_url = "postgres://localhost:5432/moneymentum?sslmode=disable"
+        database_url = "{DATABASE_URL}"
         "#,
         data_dir.path().display(),
         mock_server.uri()

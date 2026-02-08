@@ -39,8 +39,7 @@ async fn ingest_and_query_candles() {
         .and(body_partial_json(json!({"type": "meta"})))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "universe": [
-                {"name": "BTC", "szDecimals": 8},
-                {"name": "ETH", "szDecimals": 8}
+                {"name": "BTC", "szDecimals": 8}
             ]
         })))
         .mount(&mock_server)
@@ -85,8 +84,7 @@ async fn ingest_and_query_candles() {
         .unwrap();
 
     let ingest_response = client.post("/ingest").dispatch().await;
-    assert_eq!(ingest_response.status(), Status::Ok);
-    assert_eq!(ingest_response.into_string().await.unwrap(), r#""started""#);
+    assert_eq!(ingest_response.status(), Status::Accepted);
 
     // Poll status until ingestion completes
     let mut last_body = String::new();

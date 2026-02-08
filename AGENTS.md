@@ -162,7 +162,8 @@ Prefer declarative, expression-oriented code:
 
 - `map`, `filter`, `fold`/`reduce`, `collect` over imperative loops
 - Pure functions, immutable data
-- `const` by default, `let` only when mutation is unavoidable
+- Immutability by default: in TypeScript use `const`, in Rust use `let`; only
+  use `let`/`let mut` respectively when mutation is necessary
 - Method chaining over intermediate variables
 
 **The smell to avoid**:

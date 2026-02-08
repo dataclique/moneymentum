@@ -171,7 +171,7 @@ in {
       )
 
       ${pkgs.gnused}/bin/sed -i \
-        's|host = "PLACEHOLDER";|host = "'"$new_key"'";|' \
+        's|host = "ssh-ed25519 [^"]*";|host = "'"$new_key"'";|' \
         keys.nix
 
       echo "Updated host key in keys.nix, rekeying secrets..."

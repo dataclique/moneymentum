@@ -37,12 +37,6 @@ in {
           [ "ssh-import-id" "keyboard" "runcmd" "disable_ec2_metadata" ];
         cloud_final_modules = [
           "write_files_deferred"
-          "puppet"
-          "chef"
-          "ansible"
-          "mcollective"
-          "salt_minion"
-          "reset_rmc"
           "scripts_per_once"
           "scripts_per_boot"
           "scripts_user"

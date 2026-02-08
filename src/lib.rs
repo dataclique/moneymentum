@@ -25,12 +25,6 @@ use tracing_subscriber::EnvFilter;
 use url::Url;
 
 use ingestion::{Ingestion, IngestionCommand, IngestionId, IngestionServices, IngestionStatus};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum IngestionResponse {
-    Started,
-}
 use timeframe::Timeframe;
 use wire::{Cons, Nil, UnwiredQuery};
 
@@ -108,7 +102,7 @@ fn get_candles(config: &State<Config>, timeframe: Timeframe) -> Result<RawJson<V
 }
 
 #[post("/ingest")]
-fn start_ingestion(cqrs: &State<IngestionCqrs>) -> Json<IngestionResponse> {
+fn start_ingestion(cqrs: &State<IngestionCqrs>) -> Status {
     let cqrs = Arc::clone(cqrs.inner());
     tokio::spawn(async move {
         if let Err(err) = cqrs
@@ -119,7 +113,7 @@ fn start_ingestion(cqrs: &State<IngestionCqrs>) -> Json<IngestionResponse> {
         }
     });
 
-    Json(IngestionResponse::Started)
+    Status::Accepted
 }
 
 #[get("/ingestion/status")]

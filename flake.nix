@@ -19,22 +19,37 @@
 
     ragenix.url = "github:yaxitech/ragenix";
     ragenix.inputs.nixpkgs.follows = "nixpkgs";
+
+    disko.url = "github:nix-community/disko";
+    disko.inputs.nixpkgs.follows = "nixpkgs";
+
+    nixos-anywhere.url = "github:nix-community/nixos-anywhere";
+    nixos-anywhere.inputs.nixpkgs.follows = "nixpkgs";
   };
 
   outputs = { self, nixpkgs, flake-utils, git-hooks, devenv, rust-overlay, crane
-    , ragenix, ... }@inputs:
-    flake-utils.lib.eachDefaultSystem (system:
+    , ragenix, disko, nixos-anywhere, ... }@inputs:
+    {
+      nixosConfigurations.moneymentum = nixpkgs.lib.nixosSystem {
+        system = "x86_64-linux";
+        modules =
+          [ disko.nixosModules.disko ragenix.nixosModules.default ./os.nix ];
+      };
+    } // flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs {
           inherit system;
           overlays = [ rust-overlay.overlays.default ];
+          config.allowUnfreePredicate = pkg:
+            builtins.elem (pkgs.lib.getName pkg) [ "terraform" ];
         };
 
         rustToolchain = pkgs.rust-bin.stable.latest.default;
         craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
         rustPkgs = pkgs.callPackage ./rust.nix { inherit craneLib; };
 
-        infraPkgs = import ./infra { inherit pkgs ragenix system; };
+        infraPkgs =
+          import ./infra { inherit pkgs ragenix nixos-anywhere system; };
 
         hooks = {
           # Nix
@@ -122,7 +137,11 @@
             ({ config, ... }: {
               # https://devenv.sh/reference/options/
               packages = with pkgs;
-                deps ++ [ ragenix.packages.${system}.default sqlx-cli ];
+                deps ++ [
+                  ragenix.packages.${system}.default
+                  sqlx-cli
+                  infraPkgs.remote
+                ];
 
               languages = {
                 nix.enable = true;
@@ -191,7 +210,8 @@
           moneymentum-clippy = rustPkgs.clippy;
 
           inherit (infraPkgs)
-            tfInit tfPlan tfApply tfDestroy tfEditVars tfCreateVars;
+            tfInit tfPlan tfApply tfDestroy tfEditVars tfCreateVars bootstrap
+            remote;
         };
       });
 

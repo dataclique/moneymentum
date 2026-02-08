@@ -1,4 +1,4 @@
-{ pkgs, ragenix, system }:
+{ pkgs, ragenix, nixos-anywhere, system }:
 
 let
   buildInputs =
@@ -135,4 +135,56 @@ in {
     ${encryptVars}
     echo "Created ${tfVars}.age"
   '';
+
+  bootstrap = pkgs.writeShellApplication {
+    name = "bootstrap-nixos";
+    runtimeInputs = [
+      pkgs.rage
+      pkgs.jq
+      ragenix.packages.${system}.default
+      nixos-anywhere.packages.${system}.default
+    ];
+    text = ''
+      ${resolveIp}
+      ssh_opts=(-o StrictHostKeyChecking=no -o ConnectTimeout=5 -i "$identity")
+
+      nixos-anywhere --flake ".#moneymentum" \
+        --option pure-eval false \
+        --ssh-option "IdentityFile=$identity" \
+        --target-host "root@$host_ip" "$@"
+
+      echo "Waiting for host to come back up..."
+      retries=0
+      until ssh "''${ssh_opts[@]}" "root@$host_ip" true 2>/dev/null; do
+        retries=$((retries + 1))
+        if [ "$retries" -ge 60 ]; then
+          echo "Host did not come back up after 5 minutes" >&2
+          exit 1
+        fi
+        sleep 5
+      done
+
+      new_key=$(
+        ssh "''${ssh_opts[@]}" "root@$host_ip" \
+          cat /etc/ssh/ssh_host_ed25519_key.pub \
+          | awk '{print $1 " " $2}'
+      )
+
+      ${pkgs.gnused}/bin/sed -i \
+        's|host = "PLACEHOLDER";|host = "'"$new_key"'";|' \
+        keys.nix
+
+      echo "Updated host key in keys.nix, rekeying secrets..."
+      ragenix --rules ./config/secrets.nix -i "$identity" -r
+    '';
+  };
+
+  remote = pkgs.writeShellApplication {
+    name = "remote";
+    runtimeInputs = [ pkgs.rage pkgs.jq pkgs.openssh ];
+    text = ''
+      ${resolveIp}
+      exec ssh -i "$identity" "root@$host_ip" "$@"
+    '';
+  };
 }

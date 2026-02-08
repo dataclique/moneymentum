@@ -63,17 +63,19 @@ pub(crate) fn merge_and_deduplicate(
     existing: Option<DataFrame>,
     new: DataFrame,
 ) -> Result<DataFrame, CandleError> {
+    let existing_rows = existing.as_ref().map_or(0, DataFrame::height);
+    let new_rows = new.height();
+    debug!(existing_rows, new_rows, "combining dataframes");
+
     let combined = match existing {
         Some(existing) => existing.vstack(&new)?,
         None => new,
     };
 
+    debug!(combined_rows = combined.height(), "deduplicating");
+
     let deduped = combined
         .lazy()
-        .sort_by_exprs(
-            [col("timestamp"), col("symbol")],
-            SortMultipleOptions::default().with_order_descending(true),
-        )
         .unique(
             Some(Selector::ByName {
                 names: [
@@ -83,13 +85,15 @@ pub(crate) fn merge_and_deduplicate(
                 .into(),
                 strict: true,
             }),
-            UniqueKeepStrategy::First,
+            UniqueKeepStrategy::Last,
         )
         .sort_by_exprs(
             [col("timestamp"), col("symbol")],
             SortMultipleOptions::default(),
         )
         .collect()?;
+
+    debug!(final_rows = deduped.height(), "merge complete");
 
     Ok(deduped)
 }
@@ -342,6 +346,180 @@ mod tests {
     #[test]
     fn get_last_timestamp_handles_none_dataframe() {
         assert!(get_last_timestamp_for_symbol(None, "BTC").is_none());
+    }
+
+    #[test]
+    fn merge_adds_new_token_not_in_existing() {
+        // Existing has BTC only
+        let existing = create_test_df(&[1_704_067_200_000], &["BTC"], &[100.0]);
+
+        // New has ETH (new token that appeared)
+        let new = create_test_df(&[1_704_067_200_000], &["ETH"], &[2000.0]);
+
+        let merged = merge_and_deduplicate(Some(existing), new).unwrap();
+
+        // Should have both BTC and ETH
+        assert_eq!(merged.height(), 2);
+        let symbols: Vec<&str> = merged
+            .column("symbol")
+            .unwrap()
+            .str()
+            .unwrap()
+            .into_no_null_iter()
+            .collect();
+        assert!(symbols.contains(&"BTC"));
+        assert!(symbols.contains(&"ETH"));
+    }
+
+    #[test]
+    fn merge_preserves_old_token_not_in_new() {
+        // Existing has BTC and FRIEND
+        let existing = df! {
+            "timestamp" => &[1_704_067_200_000_i64, 1_704_067_200_000],
+            "symbol" => &["BTC", "FRIEND"],
+            "close" => &[100.0, 5.0],
+        }
+        .unwrap();
+
+        // New only has BTC (FRIEND was delisted/disappeared)
+        let new = create_test_df(&[1_704_070_800_000], &["BTC"], &[105.0]);
+
+        let merged = merge_and_deduplicate(Some(existing), new).unwrap();
+
+        // Should preserve all data: BTC@t1, FRIEND@t1, BTC@t2
+        assert_eq!(merged.height(), 3);
+        let has_friend = merged
+            .column("symbol")
+            .unwrap()
+            .str()
+            .unwrap()
+            .into_no_null_iter()
+            .any(|s| s == "FRIEND");
+        assert!(has_friend);
+    }
+
+    #[test]
+    fn merge_updates_value_for_same_timestamp_symbol() {
+        // Existing has BTC at timestamp with close=100.0
+        let existing = create_test_df(&[1_704_067_200_000], &["BTC"], &[100.0]);
+
+        // New has same (timestamp, symbol) but updated close=150.0
+        let new = create_test_df(&[1_704_067_200_000], &["BTC"], &[150.0]);
+
+        let merged = merge_and_deduplicate(Some(existing), new).unwrap();
+
+        // Should have 1 row with the NEW value (150.0)
+        assert_eq!(merged.height(), 1);
+        let close_value = merged
+            .column("close")
+            .unwrap()
+            .f64()
+            .unwrap()
+            .get(0)
+            .unwrap();
+        assert!(
+            (close_value - 150.0).abs() < 0.001,
+            "should keep new value (150.0), got {close_value}"
+        );
+    }
+
+    #[test]
+    fn merge_mixed_scenario_updates_adds_and_preserves() {
+        // Existing: BTC@t1, ETH@t1, FRIEND@t1
+        let existing = df! {
+            "timestamp" => &[1_704_067_200_000_i64, 1_704_067_200_000, 1_704_067_200_000],
+            "symbol" => &["BTC", "ETH", "FRIEND"],
+            "close" => &[100.0, 2000.0, 5.0],
+        }
+        .unwrap();
+
+        // New: BTC@t1 (updated), ETH@t2 (new timestamp), SOL@t1 (new token)
+        // FRIEND not in new (should be preserved)
+        let new = df! {
+            "timestamp" => &[1_704_067_200_000_i64, 1_704_070_800_000, 1_704_067_200_000],
+            "symbol" => &["BTC", "ETH", "SOL"],
+            "close" => &[105.0, 2100.0, 50.0],
+        }
+        .unwrap();
+
+        let merged = merge_and_deduplicate(Some(existing), new).unwrap();
+
+        // Expected: 5 rows
+        // - BTC@t1 = 105.0 (updated from new)
+        // - ETH@t1 = 2000.0 (preserved from existing)
+        // - ETH@t2 = 2100.0 (added from new)
+        // - FRIEND@t1 = 5.0 (preserved, not in new)
+        // - SOL@t1 = 50.0 (added, new token)
+        assert_eq!(merged.height(), 5);
+
+        // Verify BTC was updated to new value
+        let btc_rows = merged
+            .clone()
+            .lazy()
+            .filter(col("symbol").eq(lit("BTC")))
+            .collect()
+            .unwrap();
+        let btc_close = btc_rows
+            .column("close")
+            .unwrap()
+            .f64()
+            .unwrap()
+            .get(0)
+            .unwrap();
+        assert!(
+            (btc_close - 105.0).abs() < 0.001,
+            "BTC should have updated value (105.0), got {btc_close}"
+        );
+
+        // Verify FRIEND was preserved
+        let friend_rows = merged
+            .clone()
+            .lazy()
+            .filter(col("symbol").eq(lit("FRIEND")))
+            .collect()
+            .unwrap();
+        assert_eq!(friend_rows.height(), 1, "FRIEND should be preserved");
+
+        // Verify SOL was added
+        let sol_rows = merged
+            .lazy()
+            .filter(col("symbol").eq(lit("SOL")))
+            .collect()
+            .unwrap();
+        assert_eq!(sol_rows.height(), 1, "SOL should be added");
+    }
+
+    #[test]
+    fn merge_result_is_sorted_by_timestamp_ascending() {
+        let existing = df! {
+            "timestamp" => &[1_704_070_800_000_i64, 1_704_067_200_000],
+            "symbol" => &["BTC", "BTC"],
+            "close" => &[105.0, 100.0],
+        }
+        .unwrap();
+
+        let new = df! {
+            "timestamp" => &[1_704_074_400_000_i64],
+            "symbol" => &["BTC"],
+            "close" => &[110.0],
+        }
+        .unwrap();
+
+        let merged = merge_and_deduplicate(Some(existing), new).unwrap();
+
+        let timestamps: Vec<i64> = merged
+            .column("timestamp")
+            .unwrap()
+            .i64()
+            .unwrap()
+            .into_no_null_iter()
+            .collect();
+
+        // Should be sorted ascending
+        assert_eq!(
+            timestamps,
+            vec![1_704_067_200_000, 1_704_070_800_000, 1_704_074_400_000]
+        );
     }
 
     #[test]

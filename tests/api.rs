@@ -12,6 +12,7 @@ use moneymentum::{Config, rocket};
 use rocket::http::Status;
 use rocket::local::asynchronous::Client;
 use serde_json::json;
+use serial_test::serial;
 use sqlx::PgPool;
 use tempfile::TempDir;
 use wiremock::matchers::{body_partial_json, method, path};

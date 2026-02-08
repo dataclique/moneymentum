@@ -185,12 +185,15 @@ mod tests {
     use chrono::{DateTime, TimeZone, Utc};
     use cqrs_es::test::TestFramework;
     use proptest::prelude::*;
+    use tracing_test::traced_test;
 
     use super::*;
     use crate::candle::Candle;
-    use crate::finance::Market;
+    use crate::finance::{Market, Symbol};
     use crate::hyperliquid::HyperliquidError;
+    use crate::logs_contain_at;
     use crate::timeframe::Timeframe;
+    use tracing::Level;
 
     type IngestionTestFramework = TestFramework<Ingestion>;
 
@@ -212,11 +215,19 @@ mod tests {
 
         async fn fetch_candles(
             &self,
-            _market: &Market,
+            market: &Market,
             _timeframe: Timeframe,
             _start: DateTime<Utc>,
         ) -> Result<Vec<Candle>, HyperliquidError> {
-            Ok(vec![])
+            Ok(vec![Candle {
+                timestamp: Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+                open: 100.0,
+                high: 105.0,
+                low: 95.0,
+                close: 102.0,
+                volume: 1000.0,
+                symbol: Symbol::from_raw(market.as_str()),
+            }])
         }
     }
 
@@ -246,6 +257,7 @@ mod tests {
         }
     }
 
+    #[traced_test]
     #[test]
     fn start_emits_started_then_completed_on_success() {
         let events = IngestionTestFramework::with(services_that_succeed())
@@ -257,6 +269,24 @@ mod tests {
         assert_eq!(events.len(), 2);
         assert!(matches!(events[0], IngestionEvent::Started { .. }));
         assert!(matches!(events[1], IngestionEvent::Completed { .. }));
+
+        // Observability: verify ingestion progress is logged
+        assert!(logs_contain_at(Level::DEBUG, &["fetching", "BTC"]));
+        assert!(logs_contain_at(Level::DEBUG, &["fetched", "1"]));
+        assert!(logs_contain_at(
+            Level::DEBUG,
+            &["combining", "existing_rows", "new_rows"]
+        ));
+        assert!(logs_contain_at(
+            Level::DEBUG,
+            &["deduplicating", "combined_rows"]
+        ));
+        assert!(logs_contain_at(
+            Level::DEBUG,
+            &["merge complete", "final_rows"]
+        ));
+        assert!(logs_contain_at(Level::DEBUG, &["wrote"]));
+        assert!(logs_contain_at(Level::INFO, &["ingestion complete"]));
     }
 
     #[test]

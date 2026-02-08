@@ -96,6 +96,9 @@ impl Hyperliquid for HyperliquidClient {
                 .await
         })
         .retry(ExponentialBuilder::default().with_jitter())
+        .notify(|err, dur| {
+            debug!(error = %err, delay = ?dur, "retrying candle fetch");
+        })
         .await?;
 
         let candles = response
@@ -162,9 +165,16 @@ impl<H: ?Sized + Hyperliquid> CandleIngester<H> {
 
         let candle_batches: Vec<Vec<Candle>> = stream::iter(markets)
             .then(|market| async {
+                debug!(market = market.as_str(), "fetching candles");
                 let start = get_last_timestamp_for_symbol(existing.as_ref(), market.as_str())
                     .unwrap_or(default_start);
-                self.client.fetch_candles(market, timeframe, start).await
+                let candles = self.client.fetch_candles(market, timeframe, start).await?;
+                debug!(
+                    market = market.as_str(),
+                    count = candles.len(),
+                    "fetched candles"
+                );
+                Ok::<_, HyperliquidError>(candles)
             })
             .try_collect()
             .await?;

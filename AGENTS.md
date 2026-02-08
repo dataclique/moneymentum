@@ -152,6 +152,28 @@ If a fix doesn't work after three attempts, look up the official documentation.
 Write tests before changing logic. When writing tests for existing code, don't
 assume current behavior is correct - it may have bugs.
 
+**Tests must verify both behavior and observability.** Every test that exercises
+business logic must also assert on expected log output (via `tracing-test`).
+Observability is not optional - if code should log something, the test must
+verify it does. Don't create separate test cases for logging; add log assertions
+alongside behavioral assertions in the same test.
+
+**Use `logs_contain_at` for log assertions.** The helper
+`logs_contain_at(level,
+&["snippet1", "snippet2"])` checks that a single log
+line at the given level contains all specified snippets. This ensures you're
+testing that the right information appears together in one log entry:
+
+```rust
+#[traced_test]
+#[test]
+fn ingestion_logs_progress() {
+    // ... trigger ingestion ...
+    assert!(logs_contain_at(Level::DEBUG, &["fetching", "BTC"]));
+    assert!(logs_contain_at(Level::DEBUG, &["fetched", "1"]));
+}
+```
+
 ---
 
 ## Code Style

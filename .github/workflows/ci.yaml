@@ -21,11 +21,32 @@ jobs:
       - uses: DeterminateSystems/nix-installer-action@main
       - uses: DeterminateSystems/magic-nix-cache-action@main
 
-      - name: Build and test
-        run: nix build --impure .#moneymentum
+      - name: Build
+        run: nix build .#moneymentum
+
+      - name: Start postgres
+        run: nix develop --impure -c devenv up &
+
+      - name: Wait for postgres
+        run: |
+          for i in {1..30}; do
+            if nix develop --impure -c bash -c 'pg_isready -d "$DATABASE_URL"' 2>/dev/null; then
+              echo "Postgres is ready"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Postgres failed to start"
+          exit 1
+
+      - name: Run migrations
+        run: nix develop --impure -c sqlx migrate run
+
+      - name: Test
+        run: nix develop --impure -c cargo test -q
 
       - name: Clippy
-        run: nix build --impure .#moneymentum-clippy
+        run: nix develop --impure -c cargo clippy --all-targets -- -D clippy::all
 
   frontend:
     runs-on: ubuntu-latest
@@ -39,9 +60,11 @@ jobs:
       - uses: DeterminateSystems/magic-nix-cache-action@main
 
       - name: Lint frontend
+        # --impure required: devenv uses impure features for caching and local state
         run: nix develop .#frontend --impure -c bash -c "cd frontend && bun run lint"
 
       - name: Run frontend tests
+        # --impure required: devenv uses impure features for caching and local state
         run: nix develop .#frontend --impure -c bash -c "cd frontend && bun run test --run"
 
   flake-check:
@@ -56,4 +79,5 @@ jobs:
       - uses: DeterminateSystems/magic-nix-cache-action@main
 
       - name: Flake checks
+        # --impure required: devenv devShells use impure features
         run: nix flake check --impure

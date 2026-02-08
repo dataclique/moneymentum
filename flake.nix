@@ -122,7 +122,7 @@
             ({ config, ... }: {
               # https://devenv.sh/reference/options/
               packages = with pkgs;
-                deps ++ [ terraform ragenix.packages.${system}.default ];
+                deps ++ [ ragenix.packages.${system}.default sqlx-cli ];
 
               languages = {
                 nix.enable = true;
@@ -154,8 +154,17 @@
                 };
               };
 
+              services.postgres = {
+                enable = true;
+                initialDatabases = [{ name = "moneymentum"; }];
+                listen_addresses = "127.0.0.1";
+              };
+
+              # DATABASE_URL is read by sqlx for compile-time query verification
+              # and by migration tooling. The runtime config uses database_url field.
               env = env // {
-                DATABASE_URL = "sqlite:${config.devenv.root}/moneymentum.db";
+                DATABASE_URL =
+                  "postgres://localhost:5432/moneymentum?sslmode=disable";
               };
 
               # Use pre-commit instead of git-hooks

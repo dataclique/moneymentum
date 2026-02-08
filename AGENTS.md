@@ -80,6 +80,13 @@ binary.
 **Dependencies**: Always use `cargo add <crate>` - never manually edit
 Cargo.toml versions.
 
+**Migrations**: Never manually create migration files. Always use sqlx CLI:
+
+```bash
+sqlx migrate add <migration_name>  # Creates timestamped migration file
+sqlx migrate run                   # Applies pending migrations
+```
+
 ### Legacy Python (still functional, being replaced)
 
 ```bash
@@ -220,8 +227,21 @@ into modules when there are clear domain boundaries.
 
 ### Type modeling
 
-**Make invalid states unrepresentable.** Use enums to encode valid states,
-newtypes for domain concepts:
+**Make invalid states unrepresentable.** This is non-negotiable. Every type must
+constrain its values to only valid states.
+
+**Never use String when the domain has a finite set of valid values:**
+
+```rust
+// FORBIDDEN: String accepts infinite invalid values
+struct Config { log_level: String }  // "info", "debug", but also "banana", ""
+
+// CORRECT: enum restricts to valid values only
+enum LogLevel { Trace, Debug, Info, Warn, Error }
+struct Config { log_level: LogLevel }
+```
+
+**Use enums to encode valid states, newtypes for domain concepts:**
 
 ```rust
 // Bad: fields can contradict each other
@@ -249,6 +269,30 @@ impl ApiKey {
     pub fn new(value: String) -> Result<Self, Error> { ... }  // Only way to create
 }
 ```
+
+**When deserializing from external sources** (config files, API requests), parse
+into proper types immediately at the boundary. Never pass raw strings through
+the system.
+
+**Aggregate IDs must be newtypes.** Never use raw `String` or `&str` for
+aggregate identifiers. cqrs-es uses stringly-typed IDs, but we wrap them:
+
+```rust
+// Bad: easy to mix up different aggregate IDs (banned by clippy)
+cqrs.execute("perp:hyperliquid", command).await;
+cqrs.execute("user:123", command).await;  // Oops, wrong ID type
+
+// Good: type system prevents mixing IDs
+struct IngestionId;
+impl AggregateId<Ingestion> for IngestionId {
+    type Args = ();
+    fn aggregate_id((): ()) -> String { "perp:hyperliquid".into() }
+}
+// Use typed execute: cqrs.execute::<IngestionId>((), command)
+```
+
+Use `wire::AggregateId` trait and `wire::Cqrs::execute` for type-safe ID
+construction. The stringly-typed version is banned via clippy.
 
 ### Avoid deep nesting
 
@@ -371,6 +415,19 @@ use crate::ingestion::Timeframe as IngestionTimeframe;
 
 // Good: meaning is clear at the usage site
 impl From<Timeframe> for crate::ingestion::Timeframe { ... }
+```
+
+**Tracing macros are unqualified.** We use tracing and nothing else for logging,
+so `tracing::error!` qualification adds no disambiguation value - it's just
+verbose bloat:
+
+```rust
+// Bad: verbose, no added clarity
+tracing::error!(error = %err, "failed");
+
+// Good
+use tracing::error;
+error!(error = %err, "failed");
 ```
 
 ### Spacing

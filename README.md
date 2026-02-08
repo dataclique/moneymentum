@@ -80,6 +80,18 @@ pytest
 pre-commit run -a
 ```
 
+### Running AI Coding Agents
+
+Launch agents directly via nix develop rather than relying on direnv:
+
+```bash
+# Example with Claude Code
+nix develop --impure -c claude
+```
+
+This avoids occasional shell initialization quirks that can occur when agents
+are spawned in a direnv-managed shell.
+
 All dependencies managed through Nix. Do not use pip install or bun install
 directly.
 

@@ -8,6 +8,7 @@ async-trait = "0.1.89"
 backon = "1.6.0"
 chrono = { version = "0.4.43", features = ["serde"] }
 clap = { version = "4.5.57", features = ["derive", "env"] }
+cqrs-es = "0.5.0"
 futures = "0.3.31"
 hyperliquid_rust_sdk = "0.6.0"
 polars = { version = "0.51", features = [
@@ -19,13 +20,15 @@ polars = { version = "0.51", features = [
   "temporal",
   "json",
 ] }
+postgres-es = "0.5.0"
 rocket = { version = "0.5.1", features = ["json"] }
 serde = { version = "1.0.228", features = ["derive"] }
+sqlx = { version = "0.8.6", features = ["postgres", "runtime-tokio-rustls"] }
 thiserror = "2.0.18"
 tokio = { version = "1.49.0", features = ["rt-multi-thread", "macros"] }
 toml = "0.9.11"
 tracing = "0.1.44"
-tracing-subscriber = "0.3.22"
+tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
 url = { version = "2.5.8", features = ["serde"] }
 
 [lints.rust]

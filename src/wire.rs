@@ -53,7 +53,7 @@
 //!
 //! # Clippy Enforcement
 //!
-//! Direct calls to `postgres_cqrs` are blocked via clippy's
+//! Direct calls to `sqlite_cqrs` are blocked via clippy's
 //! `disallowed-methods`. All CQRS construction must go through [`CqrsBuilder`],
 //! which contains the single `#[allow]` escape hatch.
 
@@ -62,8 +62,8 @@ use std::sync::Arc;
 
 use cqrs_es::persist::{PersistenceError, ViewRepository};
 use cqrs_es::{Aggregate, AggregateError, Query};
-use postgres_es::{PostgresCqrs, PostgresViewRepository, postgres_cqrs};
-use sqlx::PgPool;
+use sqlite_es::{SqliteCqrs, SqliteViewRepository, sqlite_cqrs};
+use sqlx::SqlitePool;
 
 /// Type-safe aggregate ID construction.
 ///
@@ -84,18 +84,18 @@ pub(crate) trait ViewTable: Aggregate {
 
 /// Type-safe CQRS wrapper that owns the `execute` namespace.
 ///
-/// Wraps `PostgresCqrs` to provide type-safe command execution with proper
+/// Wraps `SqliteCqrs` to provide type-safe command execution with proper
 /// aggregate ID types instead of raw strings.
-pub(crate) struct Cqrs<A: Aggregate>(PostgresCqrs<A>);
+pub(crate) struct Cqrs<A: Aggregate>(SqliteCqrs<A>);
 
 /// Type-safe view wrapper that owns the `load` namespace.
 ///
-/// Wraps `PostgresViewRepository` to provide type-safe view loading with proper
+/// Wraps `SqliteViewRepository` to provide type-safe view loading with proper
 /// aggregate ID types instead of raw strings.
-pub(crate) struct View<A: Aggregate>(Arc<PostgresViewRepository<A, A>>);
+pub(crate) struct View<A: Aggregate + cqrs_es::View<A>>(Arc<SqliteViewRepository<A, A>>);
 
 impl<A: Aggregate> Cqrs<A> {
-    pub(crate) fn new(inner: PostgresCqrs<A>) -> Self {
+    pub(crate) fn new(inner: SqliteCqrs<A>) -> Self {
         Self(inner)
     }
 
@@ -112,12 +112,15 @@ impl<A: Aggregate> Cqrs<A> {
 }
 
 impl<A: ViewTable + cqrs_es::View<A>> View<A> {
-    pub(crate) fn new(pool: PgPool) -> Self {
-        Self(Arc::new(PostgresViewRepository::new(A::TABLE, pool)))
+    pub(crate) fn new(pool: SqlitePool) -> Self {
+        Self(Arc::new(SqliteViewRepository::new(
+            pool,
+            A::TABLE.to_string(),
+        )))
     }
 
     /// Returns a clone of the inner repository for sharing with queries.
-    pub(crate) fn repo(&self) -> Arc<PostgresViewRepository<A, A>> {
+    pub(crate) fn repo(&self) -> Arc<SqliteViewRepository<A, A>> {
         Arc::clone(&self.0)
     }
 
@@ -198,14 +201,14 @@ impl<Q> UnwiredQuery<Q, Nil> {
 /// at the type level in the `Wired` parameter. Call [`build`](Self::build) to
 /// construct the framework and get back wired queries for continued wiring.
 pub(crate) struct CqrsBuilder<A: Aggregate, Wired = ()> {
-    pool: PgPool,
+    pool: SqlitePool,
     queries: Vec<Box<dyn Query<A>>>,
     wired: Wired,
 }
 
 impl<A: Aggregate> CqrsBuilder<A, ()> {
     /// Creates a new builder for aggregate type `A`.
-    pub(crate) fn new(pool: PgPool) -> Self {
+    pub(crate) fn new(pool: SqlitePool) -> Self {
         Self {
             pool,
             queries: vec![],
@@ -224,7 +227,7 @@ impl<A: Aggregate> CqrsBuilder<A, ()> {
         A: Aggregate<Services = S>,
     {
         #[allow(clippy::disallowed_methods)]
-        Cqrs::new(postgres_cqrs(self.pool, self.queries, services))
+        Cqrs::new(sqlite_cqrs(self.pool, self.queries, services))
     }
 }
 
@@ -274,9 +277,9 @@ impl<A: Aggregate, H, T> CqrsBuilder<A, (H, T)> {
     where
         A: Aggregate<Services = S>,
     {
-        // This is the only authorized call site for postgres_cqrs
+        // This is the only authorized call site for sqlite_cqrs
         #[allow(clippy::disallowed_methods)]
-        let cqrs = Cqrs::new(postgres_cqrs(self.pool, self.queries, services));
+        let cqrs = Cqrs::new(sqlite_cqrs(self.pool, self.queries, services));
         (cqrs, self.wired)
     }
 }
@@ -284,22 +287,11 @@ impl<A: Aggregate, H, T> CqrsBuilder<A, (H, T)> {
 #[cfg(test)]
 mod tests {
     use async_trait::async_trait;
-    use cqrs_es::event_sink::EventSink;
     use cqrs_es::{DomainEvent, EventEnvelope};
     use serde::{Deserialize, Serialize};
-    use sqlx::postgres::PgPoolOptions;
 
     use super::*;
     use crate::lifecycle::{Lifecycle, Never};
-
-    const TEST_DATABASE_URL: &str = env!("DATABASE_URL");
-
-    fn test_pool() -> PgPool {
-        PgPoolOptions::new()
-            .max_connections(1)
-            .connect_lazy(TEST_DATABASE_URL)
-            .expect("lazy pool creation should not fail")
-    }
 
     #[derive(Debug, Clone, Default, Serialize, Deserialize)]
     struct AggregateA;
@@ -333,39 +325,45 @@ mod tests {
         }
     }
 
+    #[async_trait]
     impl Aggregate for Lifecycle<AggregateA, Never> {
-        const TYPE: &'static str = "AggregateA";
         type Command = ();
         type Event = EventA;
         type Error = Never;
         type Services = ();
 
+        fn aggregate_type() -> String {
+            "AggregateA".to_string()
+        }
+
         async fn handle(
-            &mut self,
+            &self,
             _cmd: Self::Command,
             _svc: &Self::Services,
-            _sink: &EventSink<Self>,
-        ) -> Result<(), Self::Error> {
-            Ok(())
+        ) -> Result<Vec<Self::Event>, Self::Error> {
+            Ok(vec![])
         }
 
         fn apply(&mut self, _event: Self::Event) {}
     }
 
+    #[async_trait]
     impl Aggregate for Lifecycle<AggregateB, Never> {
-        const TYPE: &'static str = "AggregateB";
         type Command = ();
         type Event = EventB;
         type Error = Never;
         type Services = ();
 
+        fn aggregate_type() -> String {
+            "AggregateB".to_string()
+        }
+
         async fn handle(
-            &mut self,
+            &self,
             _cmd: Self::Command,
             _svc: &Self::Services,
-            _sink: &EventSink<Self>,
-        ) -> Result<(), Self::Error> {
-            Ok(())
+        ) -> Result<Vec<Self::Event>, Self::Error> {
+            Ok(vec![])
         }
 
         fn apply(&mut self, _event: Self::Event) {}
@@ -440,6 +438,9 @@ mod tests {
 
     #[tokio::test]
     async fn full_wiring_flow_with_builders() {
+        let pool = SqlitePool::connect(":memory:").await.unwrap();
+        sqlx::migrate!().run(&pool).await.unwrap();
+
         // Create queries with their full dependencies
         type MultiDeps = Cons<AggA, Cons<AggB, Nil>>;
         type SingleDeps = Cons<AggA, Nil>;
@@ -451,7 +452,7 @@ mod tests {
 
         // Build AggregateA CQRS - multi needs further wiring, single doesn't
         // Use build to get multi back for continued wiring
-        let (cqrs_a, (single, (multi, ()))) = CqrsBuilder::<AggA>::new(test_pool())
+        let (cqrs_a, (single, (multi, ()))) = CqrsBuilder::<AggA>::new(pool.clone())
             .wire(multi)
             .wire(single)
             .build(());
@@ -460,7 +461,7 @@ mod tests {
         let _single_arc: Arc<SingleAggregateQuery> = single.into_inner();
 
         // Build AggregateB CQRS - multi's last dependency
-        let (_cqrs_b, (multi, ())) = CqrsBuilder::<AggB>::new(test_pool()).wire(multi).build(());
+        let (_cqrs_b, (multi, ())) = CqrsBuilder::<AggB>::new(pool).wire(multi).build(());
 
         // multi is now Nil, can extract
         let _multi_arc: Arc<MultiAggregateQuery> = multi.into_inner();

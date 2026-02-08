@@ -250,7 +250,7 @@ where
 mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
 
-    use cqrs_es::event_sink::EventSink;
+    use async_trait::async_trait;
     use cqrs_es::{Aggregate, DomainEvent};
 
     use super::*;
@@ -289,12 +289,16 @@ mod tests {
     #[error("test command error")]
     struct TestCommandError;
 
+    #[async_trait]
     impl Aggregate for Lifecycle<TestState, TestError> {
-        const TYPE: &'static str = "TestState";
         type Command = ();
         type Event = TestEvent;
         type Error = TestCommandError;
         type Services = ();
+
+        fn aggregate_type() -> String {
+            "TestState".to_string()
+        }
 
         fn apply(&mut self, event: Self::Event) {
             *self = self.clone().transition(&event, |ev, cur| match ev {
@@ -308,12 +312,11 @@ mod tests {
         }
 
         async fn handle(
-            &mut self,
+            &self,
             _command: Self::Command,
             _services: &Self::Services,
-            _sink: &EventSink<Self>,
-        ) -> Result<(), Self::Error> {
-            Ok(())
+        ) -> Result<Vec<Self::Event>, Self::Error> {
+            Ok(vec![])
         }
     }
 

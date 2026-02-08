@@ -173,17 +173,10 @@
                 };
               };
 
-              services.postgres = {
-                enable = true;
-                initialDatabases = [{ name = "moneymentum"; }];
-                listen_addresses = "127.0.0.1";
-              };
-
               # DATABASE_URL is read by sqlx for compile-time query verification
-              # and by migration tooling. The runtime config uses database_url field.
+              # and by migration tooling. The runtime config uses db_path field.
               env = env // {
-                DATABASE_URL =
-                  "postgres://localhost:5432/moneymentum?sslmode=disable";
+                DATABASE_URL = "sqlite:./moneymentum.db?mode=rwc";
               };
 
               # Use pre-commit instead of git-hooks

@@ -3,5 +3,5 @@ allow-expect-in-tests = true
 allow-indexing-slicing-in-tests = true
 
 disallowed-methods = [
-  { path = "postgres_es::postgres_cqrs", reason = "use wire::CqrsBuilder for type-safe query wiring" },
+  { path = "sqlite_es::sqlite_cqrs", reason = "use wire::CqrsBuilder for type-safe query wiring" },
 ]

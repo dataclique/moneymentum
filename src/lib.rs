@@ -10,6 +10,8 @@ use std::net::Ipv4Addr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use apalis::prelude::{Monitor, Storage, WorkerBuilder, WorkerFactoryFn};
+use apalis_sql::sqlite::SqliteStorage;
 use cqrs_es::persist::GenericQuery;
 use rocket::config::Config as RocketConfig;
 use rocket::http::Status;
@@ -18,13 +20,14 @@ use rocket::response::content::RawJson;
 use rocket::serde::json::Json;
 use rocket::{Rocket, State, get, post, routes};
 use serde::Deserialize;
-use sqlx::postgres::PgPoolOptions;
+use sqlx::SqlitePool;
 use thiserror::Error;
-use tracing::{error, warn};
+use tracing::error;
 use tracing_subscriber::EnvFilter;
-use url::Url;
 
-use ingestion::{Ingestion, IngestionCommand, IngestionId, IngestionServices, IngestionStatus};
+use ingestion::{
+    Ingestion, IngestionId, IngestionJob, IngestionServices, IngestionStatus, handle_ingestion,
+};
 use timeframe::Timeframe;
 use wire::{Cons, Nil, UnwiredQuery};
 
@@ -62,8 +65,8 @@ impl LogLevel {
 pub struct Config {
     port: u16,
     data_dir: PathBuf,
-    database_url: Url,
-    hyperliquid_base_url: Option<Url>,
+    database_url: String,
+    hyperliquid_base_url: Option<url::Url>,
     log_level: LogLevel,
 }
 
@@ -84,6 +87,7 @@ pub enum ConfigError {
 
 type IngestionCqrs = Arc<wire::Cqrs<Ingestion>>;
 type IngestionView = wire::View<Ingestion>;
+type IngestionStorage = SqliteStorage<IngestionJob>;
 
 #[get("/health")]
 fn health() -> &'static str {
@@ -102,17 +106,11 @@ fn get_candles(config: &State<Config>, timeframe: Timeframe) -> Result<RawJson<V
 }
 
 #[post("/ingest")]
-fn start_ingestion(cqrs: &State<IngestionCqrs>) -> Status {
-    let cqrs = Arc::clone(cqrs.inner());
-    tokio::spawn(async move {
-        if let Err(err) = cqrs
-            .execute::<IngestionId>((), IngestionCommand::Start)
-            .await
-        {
-            warn!(error = %err, "ingestion failed");
-        }
-    });
-
+async fn start_ingestion(storage: &State<IngestionStorage>) -> Status {
+    if let Err(err) = storage.inner().clone().push(IngestionJob).await {
+        error!(error = %err, "failed to queue ingestion job");
+        return Status::InternalServerError;
+    }
     Status::Accepted
 }
 
@@ -137,9 +135,8 @@ pub async fn rocket(
     config: Config,
 ) -> Result<Rocket<rocket::Build>, Box<dyn std::error::Error + Send + Sync>> {
     let filter = EnvFilter::new(format!("moneymentum={}", config.log_level.as_str()));
-    tracing_subscriber::fmt()
-        .with_env_filter(filter)
-        .try_init()?;
+    // Ignore error if subscriber already set (e.g., multiple tests running)
+    let _ = tracing_subscriber::fmt().with_env_filter(filter).try_init();
 
     let rocket_config = RocketConfig {
         port: config.port,
@@ -147,36 +144,70 @@ pub async fn rocket(
         ..RocketConfig::default()
     };
 
-    let pool = PgPoolOptions::new()
-        .max_connections(5)
-        .acquire_timeout(std::time::Duration::from_secs(3))
-        .connect(config.database_url.as_str())
-        .await?;
+    let pool = SqlitePool::connect(&config.database_url).await?;
+
+    // IMPORTANT: Migration ordering matters here.
+    //
+    // Both apalis and our code use sqlx migrations, which share a single
+    // `_sqlx_migrations` table. Each migrator validates that all previously
+    // applied migrations exist in its own migration set. If we run our
+    // migrations first, apalis's migrator will fail with `VersionMissing`
+    // because it doesn't recognize our migrations.
+    //
+    // Solution: Run apalis first, then our migrations with `ignore_missing`
+    // so we don't fail on apalis's migrations being in the table.
+    SqliteStorage::setup(&pool).await?;
+    sqlx::migrate!().set_ignore_missing(true).run(&pool).await?;
+    let storage = SqliteStorage::<IngestionJob>::new(pool.clone());
+
     let view: IngestionView = wire::View::new(pool.clone());
     let query = GenericQuery::new(view.repo());
 
     let hyperliquid_client =
         hyperliquid::HyperliquidClient::new(config.hyperliquid_base_url.as_ref()).await?;
-    let services = IngestionServices {
+    let services = Arc::new(IngestionServices {
         hyperliquid: Arc::new(hyperliquid_client),
         data_dir: config.data_dir.clone(),
-    };
+    });
 
     type QueryDeps = Cons<Ingestion, Nil>;
     let unwired = UnwiredQuery::<_, QueryDeps>::new(query);
     let (cqrs, (wired, ())) = wire::CqrsBuilder::<Ingestion>::new(pool)
         .wire(unwired)
-        .build(services);
+        .build(IngestionServices {
+            hyperliquid: Arc::clone(&services.hyperliquid),
+            data_dir: services.data_dir.clone(),
+        });
 
     // Proves all query dependencies are satisfied at compile time
     drop(wired.into_inner());
 
     let cqrs: IngestionCqrs = Arc::new(cqrs);
 
+    // Spawn apalis worker
+    tokio::spawn({
+        let cqrs = Arc::clone(&cqrs);
+        let services = Arc::clone(&services);
+        let storage = storage.clone();
+        async move {
+            let monitor = Monitor::new().register(
+                WorkerBuilder::new("ingestion")
+                    .data(cqrs)
+                    .data(services)
+                    .backend(storage)
+                    .build_fn(handle_ingestion),
+            );
+            if let Err(err) = monitor.run().await {
+                error!(error = %err, "ingestion monitor crashed");
+            }
+        }
+    });
+
     Ok(rocket::custom(rocket_config)
         .manage(config)
         .manage(cqrs)
         .manage(view)
+        .manage(storage)
         .mount(
             "/",
             routes![health, get_candles, start_ingestion, get_ingestion_status],
@@ -213,13 +244,11 @@ mod tests {
     use rocket::local::blocking::Client;
     use tempfile::TempDir;
 
-    const TEST_DATABASE_URL: &str = env!("DATABASE_URL");
-
     fn test_rocket(data_dir: &std::path::Path) -> rocket::Rocket<rocket::Build> {
         let config = Config {
             port: 0,
             data_dir: data_dir.to_path_buf(),
-            database_url: TEST_DATABASE_URL.parse().unwrap(),
+            database_url: "sqlite::memory:".to_string(),
             hyperliquid_base_url: None,
             log_level: LogLevel::Info,
         };
@@ -234,7 +263,7 @@ mod tests {
             let toml = format!(r#"
                 port = {port}
                 data_dir = "data"
-                database_url = "{TEST_DATABASE_URL}"
+                database_url = "sqlite::memory:"
                 log_level = "info"
             "#);
             let config: Config = toml::from_str(&toml).unwrap();

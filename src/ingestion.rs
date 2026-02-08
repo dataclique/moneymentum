@@ -1,15 +1,74 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use cqrs_es::event_sink::EventSink;
+use apalis::prelude::Data;
+use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use cqrs_es::{Aggregate, DomainEvent};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use tracing::{error, info, warn};
 
 use crate::hyperliquid::{CandleIngester, Hyperliquid};
 use crate::lifecycle::{Lifecycle, LifecycleError, Never};
 use crate::timeframe::Timeframe;
-use crate::wire::{AggregateId, ViewTable};
+use crate::wire::{AggregateId, Cqrs, ViewTable};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct IngestionJob;
+
+pub(crate) async fn handle_ingestion(
+    _job: IngestionJob,
+    cqrs: Data<Arc<Cqrs<Ingestion>>>,
+    services: Data<Arc<IngestionServices>>,
+) {
+    if let Err(err) = cqrs
+        .execute::<IngestionId>((), IngestionCommand::Start)
+        .await
+    {
+        warn!(error = %err, "failed to start ingestion");
+        return;
+    }
+
+    let ingester = CandleIngester::new(Arc::clone(&services.hyperliquid));
+    let mut last_record = Utc::now();
+
+    for timeframe in [
+        Timeframe::FifteenMin,
+        Timeframe::OneHour,
+        Timeframe::OneDay,
+        Timeframe::OneWeek,
+    ] {
+        match ingester.ingest(timeframe, &services.data_dir).await {
+            Ok(()) => {
+                last_record = Utc::now();
+            }
+            Err(err) => {
+                warn!(error = %err, "ingestion failed");
+                if let Err(err) = cqrs
+                    .execute::<IngestionId>(
+                        (),
+                        IngestionCommand::Fail {
+                            reason: err.to_string(),
+                        },
+                    )
+                    .await
+                {
+                    error!(error = %err, "failed to record ingestion failure");
+                }
+                return;
+            }
+        }
+    }
+
+    info!("ingestion complete");
+    if let Err(err) = cqrs
+        .execute::<IngestionId>((), IngestionCommand::Complete { last_record })
+        .await
+    {
+        error!(error = %err, "failed to record ingestion completion");
+    }
+}
 
 /// Type-safe aggregate ID for the singleton ingestion process.
 pub(crate) struct IngestionId;
@@ -39,6 +98,8 @@ pub(crate) type Ingestion = Lifecycle<IngestionState, Never>;
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) enum IngestionCommand {
     Start,
+    Complete { last_record: DateTime<Utc> },
+    Fail { reason: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -79,19 +140,22 @@ pub(crate) struct IngestionServices {
     pub(crate) data_dir: PathBuf,
 }
 
+#[async_trait]
 impl Aggregate for Ingestion {
-    const TYPE: &'static str = "ingestion";
     type Command = IngestionCommand;
     type Event = IngestionEvent;
     type Error = IngestionError;
     type Services = IngestionServices;
 
+    fn aggregate_type() -> String {
+        "ingestion".to_string()
+    }
+
     async fn handle(
-        &mut self,
+        &self,
         command: Self::Command,
-        services: &Self::Services,
-        sink: &EventSink<Self>,
-    ) -> Result<(), Self::Error> {
+        _services: &Self::Services,
+    ) -> Result<Vec<Self::Event>, Self::Error> {
         match command {
             IngestionCommand::Start => {
                 let is_running = matches!(
@@ -104,45 +168,15 @@ impl Aggregate for Ingestion {
                     return Err(IngestionError::AlreadyRunning);
                 }
 
-                sink.write(
-                    IngestionEvent::Started {
-                        started_at: chrono::Utc::now(),
-                    },
-                    self,
-                )
-                .await;
-
-                let ingester = CandleIngester::new(Arc::clone(&services.hyperliquid));
-                let mut last_record = chrono::Utc::now();
-
-                for timeframe in [
-                    Timeframe::FifteenMin,
-                    Timeframe::OneHour,
-                    Timeframe::OneDay,
-                    Timeframe::OneWeek,
-                ] {
-                    match ingester.ingest(timeframe, &services.data_dir).await {
-                        Ok(()) => {
-                            last_record = chrono::Utc::now();
-                        }
-                        Err(error) => {
-                            sink.write(
-                                IngestionEvent::Failed {
-                                    reason: error.to_string(),
-                                },
-                                self,
-                            )
-                            .await;
-                            return Ok(());
-                        }
-                    }
-                }
-
-                sink.write(IngestionEvent::Completed { last_record }, self)
-                    .await;
+                Ok(vec![IngestionEvent::Started {
+                    started_at: Utc::now(),
+                }])
             }
+            IngestionCommand::Complete { last_record } => {
+                Ok(vec![IngestionEvent::Completed { last_record }])
+            }
+            IngestionCommand::Fail { reason } => Ok(vec![IngestionEvent::Failed { reason }]),
         }
-        Ok(())
     }
 
     fn apply(&mut self, event: Self::Event) {
@@ -185,32 +219,21 @@ mod tests {
     use chrono::{DateTime, TimeZone, Utc};
     use cqrs_es::test::TestFramework;
     use proptest::prelude::*;
-    use tracing_test::traced_test;
 
     use super::*;
     use crate::candle::Candle;
     use crate::finance::{Market, Symbol};
     use crate::hyperliquid::HyperliquidError;
-    use crate::logs_contain_at;
     use crate::timeframe::Timeframe;
-    use tracing::Level;
 
     type IngestionTestFramework = TestFramework<Ingestion>;
 
-    struct MockHyperliquid {
-        should_fail: bool,
-    }
+    struct MockHyperliquid;
 
     #[async_trait]
     impl Hyperliquid for MockHyperliquid {
         async fn list_markets(&self) -> Result<Vec<Market>, HyperliquidError> {
-            if self.should_fail {
-                Err(HyperliquidError::Sdk(
-                    hyperliquid_rust_sdk::Error::GenericRequest("mock error".into()),
-                ))
-            } else {
-                Ok(vec![Market::new("BTC".into())])
-            }
+            Ok(vec![Market::new("BTC".into())])
         }
 
         async fn fetch_candles(
@@ -243,68 +266,57 @@ mod tests {
         }
     }
 
-    fn services_that_succeed() -> IngestionServices {
+    fn test_services() -> IngestionServices {
         IngestionServices {
-            hyperliquid: Arc::new(MockHyperliquid { should_fail: false }),
+            hyperliquid: Arc::new(MockHyperliquid),
             data_dir: std::env::temp_dir(),
         }
     }
 
-    fn services_that_fail() -> IngestionServices {
-        IngestionServices {
-            hyperliquid: Arc::new(MockHyperliquid { should_fail: true }),
-            data_dir: std::env::temp_dir(),
-        }
-    }
-
-    #[traced_test]
     #[test]
-    fn start_emits_started_then_completed_on_success() {
-        let events = IngestionTestFramework::with(services_that_succeed())
+    fn start_emits_started() {
+        let events = IngestionTestFramework::with(test_services())
             .given_no_previous_events()
             .when(IngestionCommand::Start)
             .inspect_result()
             .expect("should emit events");
 
-        assert_eq!(events.len(), 2);
+        assert_eq!(events.len(), 1);
         assert!(matches!(events[0], IngestionEvent::Started { .. }));
-        assert!(matches!(events[1], IngestionEvent::Completed { .. }));
-
-        // Observability: verify ingestion progress is logged
-        assert!(logs_contain_at(Level::DEBUG, &["fetching", "BTC"]));
-        assert!(logs_contain_at(Level::DEBUG, &["fetched", "1"]));
-        assert!(logs_contain_at(
-            Level::DEBUG,
-            &["combining", "existing_rows", "new_rows"]
-        ));
-        assert!(logs_contain_at(
-            Level::DEBUG,
-            &["deduplicating", "combined_rows"]
-        ));
-        assert!(logs_contain_at(
-            Level::DEBUG,
-            &["merge complete", "final_rows"]
-        ));
-        assert!(logs_contain_at(Level::DEBUG, &["wrote"]));
-        assert!(logs_contain_at(Level::INFO, &["ingestion complete"]));
     }
 
     #[test]
-    fn start_emits_started_then_failed_on_error() {
-        let events = IngestionTestFramework::with(services_that_fail())
-            .given_no_previous_events()
-            .when(IngestionCommand::Start)
+    fn complete_emits_completed() {
+        let last_record = Utc.with_ymd_and_hms(2024, 1, 1, 2, 0, 0).unwrap();
+        let events = IngestionTestFramework::with(test_services())
+            .given(vec![sample_started()])
+            .when(IngestionCommand::Complete { last_record })
             .inspect_result()
             .expect("should emit events");
 
-        assert_eq!(events.len(), 2);
-        assert!(matches!(events[0], IngestionEvent::Started { .. }));
-        assert!(matches!(events[1], IngestionEvent::Failed { .. }));
+        assert_eq!(events.len(), 1);
+        assert!(matches!(events[0], IngestionEvent::Completed { .. }));
+    }
+
+    #[test]
+    fn fail_emits_failed() {
+        let events = IngestionTestFramework::with(test_services())
+            .given(vec![sample_started()])
+            .when(IngestionCommand::Fail {
+                reason: "connection timeout".to_string(),
+            })
+            .inspect_result()
+            .expect("should emit events");
+
+        assert_eq!(events.len(), 1);
+        assert!(
+            matches!(&events[0], IngestionEvent::Failed { reason } if reason == "connection timeout")
+        );
     }
 
     #[test]
     fn start_when_running_returns_error() {
-        IngestionTestFramework::with(services_that_succeed())
+        IngestionTestFramework::with(test_services())
             .given(vec![sample_started()])
             .when(IngestionCommand::Start)
             .then_expect_error_message("ingestion already running");
@@ -312,20 +324,19 @@ mod tests {
 
     #[test]
     fn can_restart_after_completion() {
-        let events = IngestionTestFramework::with(services_that_succeed())
+        let events = IngestionTestFramework::with(test_services())
             .given(vec![sample_started(), sample_completed()])
             .when(IngestionCommand::Start)
             .inspect_result()
             .expect("should emit events");
 
-        assert_eq!(events.len(), 2);
+        assert_eq!(events.len(), 1);
         assert!(matches!(events[0], IngestionEvent::Started { .. }));
-        assert!(matches!(events[1], IngestionEvent::Completed { .. }));
     }
 
     #[test]
     fn can_restart_after_failure() {
-        let events = IngestionTestFramework::with(services_that_succeed())
+        let events = IngestionTestFramework::with(test_services())
             .given(vec![
                 sample_started(),
                 IngestionEvent::Failed {
@@ -336,9 +347,8 @@ mod tests {
             .inspect_result()
             .expect("should emit events");
 
-        assert_eq!(events.len(), 2);
+        assert_eq!(events.len(), 1);
         assert!(matches!(events[0], IngestionEvent::Started { .. }));
-        assert!(matches!(events[1], IngestionEvent::Completed { .. }));
     }
 
     #[test]

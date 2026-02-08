@@ -163,7 +163,10 @@ mod tests {
     use polars::prelude::df;
     use proptest::prelude::*;
     use tempfile::TempDir;
+    use tracing::Level;
     use tracing_test::traced_test;
+
+    use crate::logs_contain_at;
 
     fn sample_candles() -> Vec<Candle> {
         vec![
@@ -565,7 +568,7 @@ mod tests {
         let loaded = read_csv(&path).unwrap();
 
         assert!(loaded.is_none());
-        assert!(logs_contain("file not found"));
+        assert!(logs_contain_at(Level::DEBUG, &["file not found"]));
     }
 
     #[traced_test]
@@ -583,7 +586,10 @@ mod tests {
         assert!(columns.iter().any(|column| column.as_str() == "volume"));
         assert!(columns.iter().any(|column| column.as_str() == "symbol"));
         assert_eq!(df.height(), 2);
-        assert!(logs_contain("converting candles to dataframe"));
+        assert!(logs_contain_at(
+            Level::DEBUG,
+            &["converting candles to dataframe"]
+        ));
     }
 
     #[traced_test]
@@ -604,7 +610,7 @@ mod tests {
 
         assert_eq!(loaded.height(), original.height());
         assert_eq!(loaded.width(), original.width());
-        assert!(logs_contain("wrote csv"));
-        assert!(logs_contain("loaded csv"));
+        assert!(logs_contain_at(Level::DEBUG, &["wrote csv"]));
+        assert!(logs_contain_at(Level::DEBUG, &["loaded csv"]));
     }
 }

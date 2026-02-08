@@ -12,27 +12,12 @@ use moneymentum::{Config, rocket};
 use rocket::http::Status;
 use rocket::local::asynchronous::Client;
 use serde_json::json;
-use serial_test::serial;
-use sqlx::PgPool;
 use tempfile::TempDir;
 use wiremock::matchers::{body_partial_json, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-const DATABASE_URL: &str = env!("DATABASE_URL");
-
 #[rocket::async_test]
 async fn ingest_and_query_candles() {
-    let pool = PgPool::connect(DATABASE_URL).await.unwrap();
-    sqlx::query("DELETE FROM events WHERE aggregate_type = 'ingestion'")
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query("DELETE FROM ingestion_view")
-        .execute(&pool)
-        .await
-        .unwrap();
-    drop(pool);
-
     let mock_server = MockServer::start().await;
 
     Mock::given(method("POST"))
@@ -71,9 +56,9 @@ async fn ingest_and_query_candles() {
         r#"
         port = 0
         data_dir = "{}"
+        database_url = "sqlite::memory:"
         hyperliquid_base_url = "{}"
         log_level = "debug"
-        database_url = "{DATABASE_URL}"
         "#,
         data_dir.path().display(),
         mock_server.uri()
@@ -130,5 +115,132 @@ async fn ingest_and_query_candles() {
     assert!(
         (open - 42000.0).abs() < 0.01,
         "open price should be 42000, got {open}"
+    );
+}
+
+/// After a previous failed ingestion, restarting should show "Running" status,
+/// not the old "Failed" status.
+#[rocket::async_test]
+async fn status_shows_running_after_restart_from_failed() {
+    let mock_server = MockServer::start().await;
+
+    // First run: mock returns error to cause failure
+    Mock::given(method("POST"))
+        .and(path("/info"))
+        .and(body_partial_json(json!({"type": "meta"})))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "universe": [{"name": "BTC", "szDecimals": 8}]
+        })))
+        .mount(&mock_server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/info"))
+        .and(body_partial_json(json!({"type": "candleSnapshot"})))
+        .respond_with(ResponseTemplate::new(500))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let data_dir = TempDir::new().unwrap();
+    let toml_str = format!(
+        r#"
+        port = 0
+        data_dir = "{}"
+        database_url = "sqlite::memory:"
+        hyperliquid_base_url = "{}"
+        log_level = "debug"
+        "#,
+        data_dir.path().display(),
+        mock_server.uri()
+    );
+    let config: Config = toml::from_str(&toml_str).unwrap();
+
+    let client = Client::tracked(rocket(config).await.unwrap())
+        .await
+        .unwrap();
+
+    // Trigger first ingestion (will fail)
+    client.post("/ingest").dispatch().await;
+
+    // Wait for failure (retries take ~12s with exponential backoff)
+    let mut failed = false;
+    for _ in 0..200 {
+        let status_response = client.get("/ingestion/status").dispatch().await;
+        let body = status_response.into_string().await.unwrap();
+        if body.contains("Failed") {
+            failed = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+
+    // Verify it's failed
+    let status_response = client.get("/ingestion/status").dispatch().await;
+    let body = status_response.into_string().await.unwrap();
+    assert!(
+        failed && body.contains("Failed"),
+        "first ingestion should fail, got: {body}"
+    );
+
+    // Now set up successful mock for second run
+    mock_server.reset().await;
+
+    Mock::given(method("POST"))
+        .and(path("/info"))
+        .and(body_partial_json(json!({"type": "meta"})))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "universe": [{"name": "BTC", "szDecimals": 8}]
+        })))
+        .mount(&mock_server)
+        .await;
+
+    // Make candle fetch slow so we can check Running status
+    Mock::given(method("POST"))
+        .and(path("/info"))
+        .and(body_partial_json(json!({"type": "candleSnapshot"})))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!([{
+                    "t": 1_700_000_000_000_u64,
+                    "T": 1_700_003_600_000_u64,
+                    "s": "BTC",
+                    "i": "1h",
+                    "o": "42000.0",
+                    "c": "42500.0",
+                    "h": "43000.0",
+                    "l": "41500.0",
+                    "v": "1000.0",
+                    "n": 500
+                }]))
+                .set_delay(std::time::Duration::from_millis(500)),
+        )
+        .mount(&mock_server)
+        .await;
+
+    // Trigger second ingestion
+    let ingest_response = client.post("/ingest").dispatch().await;
+    assert_eq!(ingest_response.status(), Status::Accepted);
+
+    // Poll for Running/Completed status (second ingestion takes ~2s with mock delays)
+    let mut saw_running = false;
+    for _ in 0..50 {
+        let status_response = client.get("/ingestion/status").dispatch().await;
+        let body = status_response.into_string().await.unwrap();
+        if body.contains("Running") {
+            saw_running = true;
+            break;
+        }
+        if body.contains("Completed") {
+            // Ingestion finished before we could catch Running - that's ok
+            saw_running = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+
+    assert!(
+        saw_running,
+        "status should transition to Running (or Completed) after restart from Failed"
     );
 }

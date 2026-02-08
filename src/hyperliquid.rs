@@ -1,3 +1,8 @@
+//! Hyperliquid API client and data ingesters.
+//!
+//! Provides market data fetching (candles, funding rates) from Hyperliquid's
+//! perpetual futures exchange, with automatic retry and incremental ingestion.
+
 use std::num::TryFromIntError;
 use std::path::Path;
 use std::sync::Arc;
@@ -11,11 +16,13 @@ use thiserror::Error;
 use tracing::{debug, info, instrument};
 use url::Url;
 
-use crate::candle::{
-    Candle, CandleError, candles_to_dataframe, get_last_timestamp_for_symbol,
-    merge_and_deduplicate, read_csv, write_csv,
-};
+use rust_decimal::Decimal;
+use std::str::FromStr;
+
+use crate::candle::{Candle, CandleError, candles_to_dataframe, get_last_timestamp_for_symbol};
+use crate::dataframe::{self, DataFrameError};
 use crate::finance::{Market, Symbol};
+use crate::funding::{self, FundingError, FundingRate};
 use crate::timeframe::Timeframe;
 
 #[derive(Debug, Error)]
@@ -23,13 +30,18 @@ pub(crate) enum HyperliquidError {
     #[error(transparent)]
     Candle(#[from] CandleError),
     #[error(transparent)]
+    Funding(#[from] FundingError),
+    #[error(transparent)]
+    DataFrame(#[from] DataFrameError),
+    #[error(transparent)]
     Sdk(#[from] hyperliquid_rust_sdk::Error),
     #[error(transparent)]
     IntConversion(#[from] TryFromIntError),
-    #[error(transparent)]
-    Join(#[from] tokio::task::JoinError),
 }
 
+/// Abstraction over Hyperliquid's market data API.
+///
+/// Enables testing with mock implementations.
 #[async_trait]
 pub(crate) trait Hyperliquid: Send + Sync {
     async fn list_markets(&self) -> Result<Vec<Market>, HyperliquidError>;
@@ -40,6 +52,12 @@ pub(crate) trait Hyperliquid: Send + Sync {
         timeframe: Timeframe,
         start: DateTime<Utc>,
     ) -> Result<Vec<Candle>, HyperliquidError>;
+
+    async fn fetch_funding_rates(
+        &self,
+        market: &Market,
+        start: DateTime<Utc>,
+    ) -> Result<Vec<FundingRate>, HyperliquidError>;
 }
 
 pub(crate) struct HyperliquidClient {
@@ -127,8 +145,50 @@ impl Hyperliquid for HyperliquidClient {
 
         Ok(candles)
     }
+
+    #[instrument(skip(self))]
+    async fn fetch_funding_rates(
+        &self,
+        market: &Market,
+        start: DateTime<Utc>,
+    ) -> Result<Vec<FundingRate>, HyperliquidError> {
+        let start_ms = u64::try_from(start.timestamp_millis())?;
+        let end_ms = u64::try_from(Utc::now().timestamp_millis())?;
+
+        let response = (|| async {
+            self.info
+                .funding_history(market.as_str().to_string(), start_ms, Some(end_ms))
+                .await
+        })
+        .retry(ExponentialBuilder::default().with_jitter())
+        .notify(|err, dur| {
+            debug!(error = %err, delay = ?dur, "retrying funding rate fetch");
+        })
+        .await?;
+
+        let rates = response
+            .into_iter()
+            .filter_map(|entry| {
+                let timestamp = DateTime::from_timestamp_millis(entry.time.cast_signed())?;
+                let rate = Decimal::from_str(&entry.funding_rate).ok()?;
+
+                Some(FundingRate {
+                    timestamp,
+                    rate,
+                    symbol: Symbol::from_raw(market.as_str()),
+                })
+            })
+            .collect();
+
+        Ok(rates)
+    }
 }
 
+/// Fetches and persists OHLCV candle data for all markets.
+///
+/// Performs incremental ingestion: reads existing data, fetches only new
+/// candles since the last timestamp per symbol, merges, deduplicates, and
+/// writes back to CSV.
 pub(crate) struct CandleIngester<H: ?Sized> {
     client: Arc<H>,
 }
@@ -157,9 +217,7 @@ impl<H: ?Sized + Hyperliquid> CandleIngester<H> {
         markets: &[Market],
     ) -> Result<(), HyperliquidError> {
         let path = data_dir.join(timeframe.file_name());
-
-        let read_path = path.clone();
-        let existing = tokio::task::spawn_blocking(move || read_csv(&read_path)).await??;
+        let existing = dataframe::read_csv(path.clone()).await?;
 
         let default_start = Utc::now() - Duration::days(timeframe.lookback_days());
 
@@ -188,13 +246,9 @@ impl<H: ?Sized + Hyperliquid> CandleIngester<H> {
         let market_count = markets.len();
         let candle_count = all_candles.len();
 
-        tokio::task::spawn_blocking(move || {
-            let new_df = candles_to_dataframe(&all_candles)?;
-            let mut merged = merge_and_deduplicate(existing, new_df)?;
-            write_csv(&path, &mut merged)?;
-            Ok::<_, HyperliquidError>(())
-        })
-        .await??;
+        let new_df = candles_to_dataframe(all_candles).await?;
+        let merged = dataframe::merge_and_deduplicate(existing, new_df).await?;
+        dataframe::write_csv(path, merged).await?;
 
         info!(
             markets = market_count,
@@ -203,5 +257,274 @@ impl<H: ?Sized + Hyperliquid> CandleIngester<H> {
         );
 
         Ok(())
+    }
+}
+
+/// Fetches and persists funding rate data for all markets.
+///
+/// Same incremental pattern as [`CandleIngester`].
+pub(crate) struct FundingRateIngester<H: ?Sized> {
+    client: Arc<H>,
+}
+
+impl<H: ?Sized + Hyperliquid> FundingRateIngester<H> {
+    pub(crate) fn new(client: Arc<H>) -> Self {
+        Self { client }
+    }
+
+    #[instrument(skip(self, data_dir))]
+    pub(crate) async fn ingest(&self, data_dir: &Path) -> Result<(), HyperliquidError> {
+        let markets = self.client.list_markets().await?;
+        self.ingest_with_markets(data_dir, &markets).await
+    }
+
+    #[instrument(skip(self, data_dir, markets))]
+    async fn ingest_with_markets(
+        &self,
+        data_dir: &Path,
+        markets: &[Market],
+    ) -> Result<(), HyperliquidError> {
+        let path = data_dir.join(funding::file_name());
+        let existing = dataframe::read_csv(path.clone()).await?;
+        let default_start = Utc::now() - Duration::days(30);
+
+        let rate_batches: Vec<Vec<FundingRate>> = stream::iter(markets)
+            .then(|market| async {
+                debug!(market = market.as_str(), "fetching funding rates");
+
+                let start =
+                    funding::get_last_timestamp_for_symbol(existing.as_ref(), market.as_str())
+                        .unwrap_or(default_start);
+
+                let rates = self.client.fetch_funding_rates(market, start).await?;
+
+                debug!(
+                    market = market.as_str(),
+                    count = rates.len(),
+                    "fetched funding rates"
+                );
+                Ok::<_, HyperliquidError>(rates)
+            })
+            .try_collect()
+            .await?;
+
+        let all_rates: Vec<FundingRate> = rate_batches.into_iter().flatten().collect();
+        if all_rates.is_empty() {
+            info!("no new funding rates");
+            return Ok(());
+        }
+
+        let market_count = markets.len();
+        let rate_count = all_rates.len();
+
+        let new_df = funding::funding_rates_to_dataframe(all_rates).await?;
+        let merged = dataframe::merge_and_deduplicate(existing, new_df).await?;
+        dataframe::write_csv(path, merged).await?;
+
+        info!(
+            markets = market_count,
+            rates = rate_count,
+            "funding rate ingestion complete"
+        );
+
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::TimeZone;
+    use rust_decimal_macros::dec;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tempfile::TempDir;
+    use tracing::Level;
+    use tracing_test::traced_test;
+
+    use crate::logs_contain_at;
+
+    struct MockHyperliquid {
+        markets: Vec<Market>,
+        candles: Vec<Candle>,
+        funding_rates: Vec<FundingRate>,
+        fetch_candles_calls: AtomicUsize,
+        fetch_funding_calls: AtomicUsize,
+    }
+
+    impl MockHyperliquid {
+        fn new() -> Self {
+            Self {
+                markets: vec![Market::new("BTC".to_string())],
+                candles: vec![Candle {
+                    timestamp: Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+                    open: 42000.0,
+                    high: 43000.0,
+                    low: 41000.0,
+                    close: 42500.0,
+                    volume: 1000.0,
+                    symbol: Symbol::from_raw("BTC"),
+                }],
+                funding_rates: vec![FundingRate {
+                    timestamp: Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+                    rate: dec!(0.0001),
+                    symbol: Symbol::from_raw("BTC"),
+                }],
+                fetch_candles_calls: AtomicUsize::new(0),
+                fetch_funding_calls: AtomicUsize::new(0),
+            }
+        }
+
+        fn with_empty_data(mut self) -> Self {
+            self.candles = vec![];
+            self.funding_rates = vec![];
+            self
+        }
+    }
+
+    #[async_trait]
+    impl Hyperliquid for MockHyperliquid {
+        async fn list_markets(&self) -> Result<Vec<Market>, HyperliquidError> {
+            Ok(self.markets.clone())
+        }
+
+        async fn fetch_candles(
+            &self,
+            _market: &Market,
+            _timeframe: Timeframe,
+            _start: DateTime<Utc>,
+        ) -> Result<Vec<Candle>, HyperliquidError> {
+            self.fetch_candles_calls.fetch_add(1, Ordering::Relaxed);
+            Ok(self.candles.clone())
+        }
+
+        async fn fetch_funding_rates(
+            &self,
+            _market: &Market,
+            _start: DateTime<Utc>,
+        ) -> Result<Vec<FundingRate>, HyperliquidError> {
+            self.fetch_funding_calls.fetch_add(1, Ordering::Relaxed);
+            Ok(self.funding_rates.clone())
+        }
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn candle_ingester_writes_csv_and_logs() {
+        let data_dir = TempDir::new().unwrap();
+        let mock = Arc::new(MockHyperliquid::new());
+        let ingester = CandleIngester::new(mock);
+
+        ingester
+            .ingest(Timeframe::OneHour, data_dir.path())
+            .await
+            .unwrap();
+
+        let csv_path = data_dir.path().join("ohlcv_1h.csv");
+        assert!(csv_path.exists(), "CSV file should be created");
+
+        assert!(logs_contain_at(Level::DEBUG, &["fetching candles", "BTC"]));
+        assert!(logs_contain_at(Level::DEBUG, &["fetched candles", "1"]));
+        assert!(logs_contain_at(Level::INFO, &["ingestion complete", "1"]));
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn candle_ingester_logs_when_no_new_candles() {
+        let data_dir = TempDir::new().unwrap();
+        let mock = Arc::new(MockHyperliquid::new().with_empty_data());
+        let ingester = CandleIngester::new(mock);
+
+        ingester
+            .ingest(Timeframe::OneHour, data_dir.path())
+            .await
+            .unwrap();
+
+        assert!(logs_contain_at(Level::INFO, &["no new candles"]));
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn funding_ingester_writes_csv_and_logs() {
+        let data_dir = TempDir::new().unwrap();
+        let mock = Arc::new(MockHyperliquid::new());
+        let ingester = FundingRateIngester::new(mock);
+
+        ingester.ingest(data_dir.path()).await.unwrap();
+
+        let csv_path = data_dir.path().join("funding_rate_1h.csv");
+        assert!(csv_path.exists(), "CSV file should be created");
+
+        assert!(logs_contain_at(
+            Level::DEBUG,
+            &["fetching funding rates", "BTC"]
+        ));
+        assert!(logs_contain_at(
+            Level::DEBUG,
+            &["fetched funding rates", "1"]
+        ));
+        assert!(logs_contain_at(
+            Level::INFO,
+            &["funding rate ingestion complete", "1"]
+        ));
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn funding_ingester_logs_when_no_new_rates() {
+        let data_dir = TempDir::new().unwrap();
+        let mock = Arc::new(MockHyperliquid::new().with_empty_data());
+        let ingester = FundingRateIngester::new(mock);
+
+        ingester.ingest(data_dir.path()).await.unwrap();
+
+        assert!(logs_contain_at(Level::INFO, &["no new funding rates"]));
+    }
+
+    #[tokio::test]
+    async fn candle_ingester_fetches_for_each_market() {
+        let data_dir = TempDir::new().unwrap();
+        let mock = Arc::new(MockHyperliquid {
+            markets: vec![
+                Market::new("BTC".to_string()),
+                Market::new("ETH".to_string()),
+                Market::new("SOL".to_string()),
+            ],
+            ..MockHyperliquid::new()
+        });
+        let call_count = Arc::clone(&mock);
+        let ingester = CandleIngester::new(mock);
+
+        ingester
+            .ingest(Timeframe::OneHour, data_dir.path())
+            .await
+            .unwrap();
+
+        assert_eq!(
+            call_count.fetch_candles_calls.load(Ordering::Relaxed),
+            3,
+            "should fetch candles for each market"
+        );
+    }
+
+    #[tokio::test]
+    async fn funding_ingester_fetches_for_each_market() {
+        let data_dir = TempDir::new().unwrap();
+        let mock = Arc::new(MockHyperliquid {
+            markets: vec![
+                Market::new("BTC".to_string()),
+                Market::new("ETH".to_string()),
+            ],
+            ..MockHyperliquid::new()
+        });
+        let call_count = Arc::clone(&mock);
+        let ingester = FundingRateIngester::new(mock);
+
+        ingester.ingest(data_dir.path()).await.unwrap();
+
+        assert_eq!(
+            call_count.fetch_funding_calls.load(Ordering::Relaxed),
+            2,
+            "should fetch funding rates for each market"
+        );
     }
 }

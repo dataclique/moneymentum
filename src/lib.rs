@@ -1,5 +1,7 @@
 mod candle;
+mod dataframe;
 mod finance;
+mod funding;
 mod hyperliquid;
 mod ingestion;
 mod lifecycle;
@@ -95,8 +97,12 @@ fn health() -> &'static str {
 }
 
 #[get("/candles/<timeframe>")]
-fn get_candles(config: &State<Config>, timeframe: Timeframe) -> Result<RawJson<Vec<u8>>, Status> {
+async fn get_candles(
+    config: &State<Config>,
+    timeframe: Timeframe,
+) -> Result<RawJson<Vec<u8>>, Status> {
     candle::read_candles_json(&config.data_dir, timeframe)
+        .await
         .map_err(|err| {
             error!(error = %err, "failed to read candles");
             Status::InternalServerError

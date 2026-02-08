@@ -1,13 +1,17 @@
+//! OHLCV candle types and conversion to DataFrame.
+//!
+//! This module defines the [`Candle`] domain type and converts it to a Polars
+//! DataFrame for persistence. Generic DataFrame operations (read/write/merge)
+//! live in [`crate::dataframe`].
+
 use std::path::Path;
 
 use chrono::{DateTime, Utc};
-use polars::prelude::{
-    CsvReader, CsvWriter, DataFrame, IntoLazy, JsonWriter, PlSmallStr, PolarsError, Selector,
-    SerReader, SerWriter, SortMultipleOptions, UniqueKeepStrategy, col, df, lit,
-};
+use polars::prelude::{DataFrame, IntoLazy, JsonWriter, PolarsError, SerWriter, col, df, lit};
 use thiserror::Error;
 use tracing::{debug, instrument};
 
+use crate::dataframe::{self, DataFrameError};
 use crate::finance::Symbol;
 use crate::timeframe::Timeframe;
 
@@ -16,7 +20,9 @@ pub(crate) enum CandleError {
     #[error(transparent)]
     Polars(#[from] PolarsError),
     #[error(transparent)]
-    Io(#[from] std::io::Error),
+    DataFrame(#[from] DataFrameError),
+    #[error(transparent)]
+    Join(#[from] tokio::task::JoinError),
 }
 
 #[derive(Debug, Clone)]
@@ -31,111 +37,50 @@ pub(crate) struct Candle {
 }
 
 #[instrument(skip_all, fields(count = candles.len()))]
-pub(crate) fn candles_to_dataframe(candles: &[Candle]) -> Result<DataFrame, CandleError> {
-    debug!("converting candles to dataframe");
-    let timestamps: Vec<i64> = candles
-        .iter()
-        .map(|candle| candle.timestamp.timestamp_millis())
-        .collect();
+pub(crate) async fn candles_to_dataframe(candles: Vec<Candle>) -> Result<DataFrame, CandleError> {
+    tokio::task::spawn_blocking(move || {
+        debug!("converting candles to dataframe");
+        let timestamps: Vec<i64> = candles
+            .iter()
+            .map(|candle| candle.timestamp.timestamp_millis())
+            .collect();
 
-    let opens: Vec<f64> = candles.iter().map(|candle| candle.open).collect();
-    let highs: Vec<f64> = candles.iter().map(|candle| candle.high).collect();
-    let lows: Vec<f64> = candles.iter().map(|candle| candle.low).collect();
-    let closes: Vec<f64> = candles.iter().map(|candle| candle.close).collect();
-    let volumes: Vec<f64> = candles.iter().map(|candle| candle.volume).collect();
-    let symbols: Vec<&str> = candles
-        .iter()
-        .map(|candle| candle.symbol.as_str())
-        .collect();
+        let opens: Vec<f64> = candles.iter().map(|candle| candle.open).collect();
+        let highs: Vec<f64> = candles.iter().map(|candle| candle.high).collect();
+        let lows: Vec<f64> = candles.iter().map(|candle| candle.low).collect();
+        let closes: Vec<f64> = candles.iter().map(|candle| candle.close).collect();
+        let volumes: Vec<f64> = candles.iter().map(|candle| candle.volume).collect();
+        let symbols: Vec<&str> = candles
+            .iter()
+            .map(|candle| candle.symbol.as_str())
+            .collect();
 
-    Ok(df! {
-        "timestamp" => timestamps,
-        "open" => opens,
-        "high" => highs,
-        "low" => lows,
-        "close" => closes,
-        "volume" => volumes,
-        "symbol" => symbols,
-    }?)
-}
-
-pub(crate) fn merge_and_deduplicate(
-    existing: Option<DataFrame>,
-    new: DataFrame,
-) -> Result<DataFrame, CandleError> {
-    let existing_rows = existing.as_ref().map_or(0, DataFrame::height);
-    let new_rows = new.height();
-    debug!(existing_rows, new_rows, "combining dataframes");
-
-    let combined = match existing {
-        Some(existing) => existing.vstack(&new)?,
-        None => new,
-    };
-
-    debug!(combined_rows = combined.height(), "deduplicating");
-
-    let deduped = combined
-        .lazy()
-        .unique(
-            Some(Selector::ByName {
-                names: [
-                    PlSmallStr::from_static("timestamp"),
-                    PlSmallStr::from_static("symbol"),
-                ]
-                .into(),
-                strict: true,
-            }),
-            UniqueKeepStrategy::Last,
-        )
-        .sort_by_exprs(
-            [col("timestamp"), col("symbol")],
-            SortMultipleOptions::default(),
-        )
-        .collect()?;
-
-    debug!(final_rows = deduped.height(), "merge complete");
-
-    Ok(deduped)
-}
-
-#[instrument(skip_all, fields(path = %path.display()))]
-pub(crate) fn read_csv(path: &Path) -> Result<Option<DataFrame>, CandleError> {
-    if !path.exists() {
-        debug!("file not found");
-        return Ok(None);
-    }
-
-    let file = std::fs::File::open(path)?;
-    let dataframe = CsvReader::new(file).finish()?;
-    debug!(rows = dataframe.height(), "loaded csv");
-    Ok(Some(dataframe))
+        Ok(df! {
+            "timestamp" => timestamps,
+            "open" => opens,
+            "high" => highs,
+            "low" => lows,
+            "close" => closes,
+            "volume" => volumes,
+            "symbol" => symbols,
+        }?)
+    })
+    .await?
 }
 
 #[instrument(skip_all)]
-pub(crate) fn read_candles_json(
+pub(crate) async fn read_candles_json(
     data_dir: &Path,
     timeframe: Timeframe,
 ) -> Result<Option<Vec<u8>>, CandleError> {
     let path = data_dir.join(timeframe.file_name());
-    let Some(mut dataframe) = read_csv(&path)? else {
+    let Some(mut dataframe) = dataframe::read_csv(path).await? else {
         return Ok(None);
     };
 
     let mut buffer = Vec::new();
     JsonWriter::new(&mut buffer).finish(&mut dataframe)?;
     Ok(Some(buffer))
-}
-
-#[instrument(skip_all, fields(path = %path.display()))]
-pub(crate) fn write_csv(path: &Path, df: &mut DataFrame) -> Result<(), CandleError> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-
-    let file = std::fs::File::create(path)?;
-    CsvWriter::new(file).finish(df)?;
-    debug!(rows = df.height(), "wrote csv");
-    Ok(())
 }
 
 pub(crate) fn get_last_timestamp_for_symbol(
@@ -162,7 +107,6 @@ mod tests {
     use chrono::TimeZone;
     use polars::prelude::df;
     use proptest::prelude::*;
-    use tempfile::TempDir;
     use tracing::Level;
     use tracing_test::traced_test;
 
@@ -191,56 +135,7 @@ mod tests {
         ]
     }
 
-    fn create_test_df(timestamps: &[i64], symbols: &[&str], closes: &[f64]) -> DataFrame {
-        df! {
-            "timestamp" => timestamps,
-            "symbol" => symbols,
-            "close" => closes,
-        }
-        .unwrap()
-    }
-
     proptest! {
-        #[test]
-        fn deduplication_is_idempotent(
-            ts1 in 1_600_000_000_000_i64..1_800_000_000_000,
-            ts2 in 1_600_000_000_000_i64..1_800_000_000_000,
-        ) {
-            let df = df! {
-                "timestamp" => &[ts1, ts2, ts1],
-                "symbol" => &["BTC", "BTC", "BTC"],
-                "close" => &[100.0, 200.0, 150.0],
-            }.unwrap();
-
-            let once = merge_and_deduplicate(None, df).unwrap();
-            let twice = merge_and_deduplicate(None, once.clone()).unwrap();
-
-            prop_assert_eq!(once.height(), twice.height());
-        }
-
-        #[test]
-        fn deduplication_never_increases_rows(
-            ts1 in 1_600_000_000_000_i64..1_800_000_000_000,
-            ts2 in 1_600_000_000_000_i64..1_800_000_000_000,
-            ts3 in 1_600_000_000_000_i64..1_800_000_000_000,
-        ) {
-            let existing = df! {
-                "timestamp" => &[ts1, ts2],
-                "symbol" => &["BTC", "ETH"],
-                "close" => &[100.0, 200.0],
-            }.unwrap();
-
-            let new = df! {
-                "timestamp" => &[ts2, ts3],
-                "symbol" => &["ETH", "BTC"],
-                "close" => &[250.0, 300.0],
-            }.unwrap();
-
-            let merged = merge_and_deduplicate(Some(existing.clone()), new.clone()).unwrap();
-
-            prop_assert!(merged.height() <= existing.height() + new.height());
-        }
-
         #[test]
         fn get_last_timestamp_returns_max(
             ts1 in 1_600_000_000_000_i64..1_700_000_000_000,
@@ -257,325 +152,35 @@ mod tests {
 
         #[test]
         fn candles_to_dataframe_preserves_count(count in 1_usize..50) {
-            let candles: Vec<Candle> = (0..count)
-                .map(|i| {
-                    let offset = i64::try_from(i).unwrap() * 3_600_000;
-                    Candle {
-                        timestamp: DateTime::from_timestamp_millis(1_700_000_000_000 + offset).unwrap(),
-                        open: 100.0,
-                        high: 110.0,
-                        low: 90.0,
-                        close: 105.0,
-                        volume: 1000.0,
-                        symbol: Symbol::from_raw("BTC"),
-                    }
-                })
-                .collect();
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(async {
+                let candles: Vec<Candle> = (0..count)
+                    .map(|i| {
+                        let offset = i64::try_from(i).unwrap() * 3_600_000;
+                        Candle {
+                            timestamp: DateTime::from_timestamp_millis(1_700_000_000_000 + offset).unwrap(),
+                            open: 100.0,
+                            high: 110.0,
+                            low: 90.0,
+                            close: 105.0,
+                            volume: 1000.0,
+                            symbol: Symbol::from_raw("BTC"),
+                        }
+                    })
+                    .collect();
 
-            let df = candles_to_dataframe(&candles).unwrap();
-            prop_assert_eq!(df.height(), count);
+                let df = candles_to_dataframe(candles).await.unwrap();
+                prop_assert_eq!(df.height(), count);
+                Ok(())
+            })?;
         }
-    }
-
-    #[test]
-    fn merge_keeps_latest_for_duplicate_timestamp_symbol() {
-        let existing = create_test_df(
-            &[1_704_067_200_000, 1_704_070_800_000],
-            &["BTC", "BTC"],
-            &[100.0, 105.0],
-        );
-
-        let new = create_test_df(
-            &[1_704_070_800_000, 1_704_074_400_000],
-            &["BTC", "BTC"],
-            &[106.0, 110.0],
-        );
-
-        let merged = merge_and_deduplicate(Some(existing), new).unwrap();
-
-        assert_eq!(merged.height(), 3);
-    }
-
-    #[test]
-    fn merge_handles_none_existing() {
-        let new = create_test_df(&[1_704_067_200_000], &["BTC"], &[100.0]);
-
-        let merged = merge_and_deduplicate(None, new).unwrap();
-
-        assert_eq!(merged.height(), 1);
-    }
-
-    #[test]
-    fn merge_with_multiple_symbols_deduplicates_per_symbol() {
-        let existing = df! {
-            "timestamp" => &[1_722_553_200_000_i64, 1_722_553_200_000, 1_722_556_800_000],
-            "symbol" => &["BTC", "FRIEND", "BTC"],
-            "close" => &[65215.0, 8.7362, 65402.0],
-        }
-        .unwrap();
-
-        let new = df! {
-            "timestamp" => &[1_722_556_800_000_i64, 1_722_556_800_000, 1_722_560_400_000],
-            "symbol" => &["BTC", "FRIEND", "BTC"],
-            "close" => &[65402.0, 8.7265, 64902.0],
-        }
-        .unwrap();
-
-        let merged = merge_and_deduplicate(Some(existing), new).unwrap();
-
-        assert_eq!(merged.height(), 5);
-    }
-
-    #[test]
-    fn get_last_timestamp_finds_max_per_symbol() {
-        let df = df! {
-            "timestamp" => &[1_722_553_200_000_i64, 1_722_556_800_000, 1_722_560_400_000, 1_722_553_200_000],
-            "symbol" => &["BTC", "BTC", "BTC", "FRIEND"],
-        }
-        .unwrap();
-
-        let btc_last = get_last_timestamp_for_symbol(Some(&df), "BTC");
-        let friend_last = get_last_timestamp_for_symbol(Some(&df), "FRIEND");
-        let eth_last = get_last_timestamp_for_symbol(Some(&df), "ETH");
-
-        assert_eq!(btc_last, DateTime::from_timestamp_millis(1_722_560_400_000));
-        assert_eq!(
-            friend_last,
-            DateTime::from_timestamp_millis(1_722_553_200_000)
-        );
-        assert!(eth_last.is_none());
-    }
-
-    #[test]
-    fn get_last_timestamp_handles_none_dataframe() {
-        assert!(get_last_timestamp_for_symbol(None, "BTC").is_none());
-    }
-
-    #[test]
-    fn merge_adds_new_token_not_in_existing() {
-        // Existing has BTC only
-        let existing = create_test_df(&[1_704_067_200_000], &["BTC"], &[100.0]);
-
-        // New has ETH (new token that appeared)
-        let new = create_test_df(&[1_704_067_200_000], &["ETH"], &[2000.0]);
-
-        let merged = merge_and_deduplicate(Some(existing), new).unwrap();
-
-        // Should have both BTC and ETH
-        assert_eq!(merged.height(), 2);
-        let symbols: Vec<&str> = merged
-            .column("symbol")
-            .unwrap()
-            .str()
-            .unwrap()
-            .into_no_null_iter()
-            .collect();
-        assert!(symbols.contains(&"BTC"));
-        assert!(symbols.contains(&"ETH"));
-    }
-
-    #[test]
-    fn merge_preserves_old_token_not_in_new() {
-        // Existing has BTC and FRIEND
-        let existing = df! {
-            "timestamp" => &[1_704_067_200_000_i64, 1_704_067_200_000],
-            "symbol" => &["BTC", "FRIEND"],
-            "close" => &[100.0, 5.0],
-        }
-        .unwrap();
-
-        // New only has BTC (FRIEND was delisted/disappeared)
-        let new = create_test_df(&[1_704_070_800_000], &["BTC"], &[105.0]);
-
-        let merged = merge_and_deduplicate(Some(existing), new).unwrap();
-
-        // Should preserve all data: BTC@t1, FRIEND@t1, BTC@t2
-        assert_eq!(merged.height(), 3);
-        let has_friend = merged
-            .column("symbol")
-            .unwrap()
-            .str()
-            .unwrap()
-            .into_no_null_iter()
-            .any(|s| s == "FRIEND");
-        assert!(has_friend);
-    }
-
-    #[test]
-    fn merge_updates_value_for_same_timestamp_symbol() {
-        // Existing has BTC at timestamp with close=100.0
-        let existing = create_test_df(&[1_704_067_200_000], &["BTC"], &[100.0]);
-
-        // New has same (timestamp, symbol) but updated close=150.0
-        let new = create_test_df(&[1_704_067_200_000], &["BTC"], &[150.0]);
-
-        let merged = merge_and_deduplicate(Some(existing), new).unwrap();
-
-        // Should have 1 row with the NEW value (150.0)
-        assert_eq!(merged.height(), 1);
-        let close_value = merged
-            .column("close")
-            .unwrap()
-            .f64()
-            .unwrap()
-            .get(0)
-            .unwrap();
-        assert!(
-            (close_value - 150.0).abs() < 0.001,
-            "should keep new value (150.0), got {close_value}"
-        );
-    }
-
-    #[test]
-    fn merge_mixed_scenario_updates_adds_and_preserves() {
-        // Existing: BTC@t1, ETH@t1, FRIEND@t1
-        let existing = df! {
-            "timestamp" => &[1_704_067_200_000_i64, 1_704_067_200_000, 1_704_067_200_000],
-            "symbol" => &["BTC", "ETH", "FRIEND"],
-            "close" => &[100.0, 2000.0, 5.0],
-        }
-        .unwrap();
-
-        // New: BTC@t1 (updated), ETH@t2 (new timestamp), SOL@t1 (new token)
-        // FRIEND not in new (should be preserved)
-        let new = df! {
-            "timestamp" => &[1_704_067_200_000_i64, 1_704_070_800_000, 1_704_067_200_000],
-            "symbol" => &["BTC", "ETH", "SOL"],
-            "close" => &[105.0, 2100.0, 50.0],
-        }
-        .unwrap();
-
-        let merged = merge_and_deduplicate(Some(existing), new).unwrap();
-
-        // Expected: 5 rows
-        // - BTC@t1 = 105.0 (updated from new)
-        // - ETH@t1 = 2000.0 (preserved from existing)
-        // - ETH@t2 = 2100.0 (added from new)
-        // - FRIEND@t1 = 5.0 (preserved, not in new)
-        // - SOL@t1 = 50.0 (added, new token)
-        assert_eq!(merged.height(), 5);
-
-        // Verify BTC was updated to new value
-        let btc_rows = merged
-            .clone()
-            .lazy()
-            .filter(col("symbol").eq(lit("BTC")))
-            .collect()
-            .unwrap();
-        let btc_close = btc_rows
-            .column("close")
-            .unwrap()
-            .f64()
-            .unwrap()
-            .get(0)
-            .unwrap();
-        assert!(
-            (btc_close - 105.0).abs() < 0.001,
-            "BTC should have updated value (105.0), got {btc_close}"
-        );
-
-        // Verify FRIEND was preserved
-        let friend_rows = merged
-            .clone()
-            .lazy()
-            .filter(col("symbol").eq(lit("FRIEND")))
-            .collect()
-            .unwrap();
-        assert_eq!(friend_rows.height(), 1, "FRIEND should be preserved");
-
-        // Verify SOL was added
-        let sol_rows = merged
-            .lazy()
-            .filter(col("symbol").eq(lit("SOL")))
-            .collect()
-            .unwrap();
-        assert_eq!(sol_rows.height(), 1, "SOL should be added");
-    }
-
-    #[test]
-    fn merge_result_is_sorted_by_timestamp_ascending() {
-        let existing = df! {
-            "timestamp" => &[1_704_070_800_000_i64, 1_704_067_200_000],
-            "symbol" => &["BTC", "BTC"],
-            "close" => &[105.0, 100.0],
-        }
-        .unwrap();
-
-        let new = df! {
-            "timestamp" => &[1_704_074_400_000_i64],
-            "symbol" => &["BTC"],
-            "close" => &[110.0],
-        }
-        .unwrap();
-
-        let merged = merge_and_deduplicate(Some(existing), new).unwrap();
-
-        let timestamps: Vec<i64> = merged
-            .column("timestamp")
-            .unwrap()
-            .i64()
-            .unwrap()
-            .into_no_null_iter()
-            .collect();
-
-        // Should be sorted ascending
-        assert_eq!(
-            timestamps,
-            vec![1_704_067_200_000, 1_704_070_800_000, 1_704_074_400_000]
-        );
-    }
-
-    #[test]
-    fn reads_real_ohlcv_fixture() {
-        let path = std::path::Path::new("fixtures/ohlcv_1h.csv");
-        let df = read_csv(path).unwrap().unwrap();
-
-        assert_eq!(df.height(), 50);
-        assert!(
-            df.get_column_names()
-                .iter()
-                .any(|c| c.as_str() == "timestamp")
-        );
-        assert!(df.get_column_names().iter().any(|c| c.as_str() == "symbol"));
-        assert!(df.get_column_names().iter().any(|c| c.as_str() == "close"));
-    }
-
-    #[test]
-    fn reads_real_funding_rate_fixture() {
-        let path = std::path::Path::new("fixtures/funding_rate_1h.csv");
-        let df = read_csv(path).unwrap().unwrap();
-
-        assert_eq!(df.height(), 50);
-        assert!(
-            df.get_column_names()
-                .iter()
-                .any(|c| c.as_str() == "timestamp")
-        );
-        assert!(df.get_column_names().iter().any(|c| c.as_str() == "symbol"));
-        assert!(
-            df.get_column_names()
-                .iter()
-                .any(|c| c.as_str() == "funding_rate")
-        );
     }
 
     #[traced_test]
-    #[test]
-    fn read_csv_nonexistent_returns_none() {
-        let temp_dir = TempDir::new().unwrap();
-        let path = temp_dir.path().join("nonexistent.csv");
-
-        let loaded = read_csv(&path).unwrap();
-
-        assert!(loaded.is_none());
-        assert!(logs_contain_at(Level::DEBUG, &["file not found"]));
-    }
-
-    #[traced_test]
-    #[test]
-    fn candle_to_dataframe_produces_correct_output() {
+    #[tokio::test]
+    async fn candle_to_dataframe_produces_correct_output() {
         let candles = sample_candles();
-        let df = candles_to_dataframe(&candles).unwrap();
+        let df = candles_to_dataframe(candles).await.unwrap();
 
         let columns = df.get_column_names();
         assert!(columns.iter().any(|column| column.as_str() == "timestamp"));
@@ -592,25 +197,21 @@ mod tests {
         ));
     }
 
-    #[traced_test]
     #[test]
-    fn csv_roundtrip_preserves_data() {
-        let temp_dir = TempDir::new().unwrap();
-        let path = temp_dir.path().join("test.csv");
-
-        let mut original = df! {
-            "timestamp" => &[1_704_067_200_000_i64, 1_704_070_800_000],
-            "symbol" => &["BTC", "ETH"],
-            "close" => &[100.0, 2000.0],
+    fn get_last_timestamp_returns_none_for_missing_symbol() {
+        let df = df! {
+            "timestamp" => &[1_704_067_200_000_i64],
+            "symbol" => &["BTC"],
         }
         .unwrap();
 
-        write_csv(&path, &mut original).unwrap();
-        let loaded = read_csv(&path).unwrap().unwrap();
+        let last = get_last_timestamp_for_symbol(Some(&df), "ETH");
+        assert!(last.is_none());
+    }
 
-        assert_eq!(loaded.height(), original.height());
-        assert_eq!(loaded.width(), original.width());
-        assert!(logs_contain_at(Level::DEBUG, &["wrote csv"]));
-        assert!(logs_contain_at(Level::DEBUG, &["loaded csv"]));
+    #[test]
+    fn get_last_timestamp_returns_none_for_none_df() {
+        let last = get_last_timestamp_for_symbol(None, "BTC");
+        assert!(last.is_none());
     }
 }

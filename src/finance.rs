@@ -1,3 +1,15 @@
+//! Financial domain types for cross-exchange data normalization.
+//!
+//! Exchanges use inconsistent naming conventions for the same assets:
+//! - Hyperliquid uses base symbol: `BTC`
+//! - CCXT derivatives use full notation: `BTC/USDC:USDC`
+//!
+//! [`Symbol`] normalizes these representations for consistent storage and lookup.
+//! [`Market`] preserves the exchange's native identifier for API calls.
+
+/// Normalized trading symbol (e.g., "BTC", "ETH").
+///
+/// Normalizes input like "BTC/USDC:USDC" to just "BTC".
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Symbol(String);
 
@@ -12,6 +24,7 @@ impl Symbol {
     }
 }
 
+/// A tradeable market identifier from an exchange.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Market(String);
 

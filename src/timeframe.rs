@@ -1,3 +1,10 @@
+//! OHLCV candle timeframes with lookback configuration.
+//!
+//! Each timeframe has a different historical lookback depth: shorter intervals
+//! have shorter lookbacks (30 days for 15m) while longer intervals go further
+//! back (3 years for weekly). This balances storage costs against analytical
+//! utility - higher-frequency data is most relevant for recent periods.
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Timeframe {
     FifteenMin,

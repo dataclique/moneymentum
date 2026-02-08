@@ -1,4 +1,10 @@
-use std::path::PathBuf;
+//! Ingestion orchestration and CQRS aggregate.
+//!
+//! The [`Ingestion`] aggregate tracks ingestion lifecycle (Running → Completed/Failed).
+//! Status transitions are persisted as events, enabling the API to report progress
+//! immediately rather than waiting for the entire operation to complete.
+
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use apalis::prelude::Data;
@@ -9,13 +15,32 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tracing::{error, info, warn};
 
-use crate::hyperliquid::{CandleIngester, Hyperliquid};
+use crate::hyperliquid::{CandleIngester, FundingRateIngester, Hyperliquid, HyperliquidError};
 use crate::lifecycle::{Lifecycle, LifecycleError, Never};
 use crate::timeframe::Timeframe;
 use crate::wire::{AggregateId, Cqrs, ViewTable};
 
+const TIMEFRAMES: &[Timeframe] = &[
+    Timeframe::FifteenMin,
+    Timeframe::OneHour,
+    Timeframe::OneDay,
+    Timeframe::OneWeek,
+];
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct IngestionJob;
+
+async fn ingest_all(
+    candle_ingester: &CandleIngester<dyn Hyperliquid>,
+    funding_ingester: &FundingRateIngester<dyn Hyperliquid>,
+    data_dir: &Path,
+) -> Result<DateTime<Utc>, HyperliquidError> {
+    for timeframe in TIMEFRAMES {
+        candle_ingester.ingest(*timeframe, data_dir).await?;
+    }
+    funding_ingester.ingest(data_dir).await?;
+    Ok(Utc::now())
+}
 
 pub(crate) async fn handle_ingestion(
     _job: IngestionJob,
@@ -30,43 +55,33 @@ pub(crate) async fn handle_ingestion(
         return;
     }
 
-    let ingester = CandleIngester::new(Arc::clone(&services.hyperliquid));
-    let mut last_record = Utc::now();
+    let candle_ingester = CandleIngester::new(Arc::clone(&services.hyperliquid));
+    let funding_ingester = FundingRateIngester::new(Arc::clone(&services.hyperliquid));
 
-    for timeframe in [
-        Timeframe::FifteenMin,
-        Timeframe::OneHour,
-        Timeframe::OneDay,
-        Timeframe::OneWeek,
-    ] {
-        match ingester.ingest(timeframe, &services.data_dir).await {
-            Ok(()) => {
-                last_record = Utc::now();
-            }
-            Err(err) => {
-                warn!(error = %err, "ingestion failed");
-                if let Err(err) = cqrs
-                    .execute::<IngestionId>(
-                        (),
-                        IngestionCommand::Fail {
-                            reason: err.to_string(),
-                        },
-                    )
-                    .await
-                {
-                    error!(error = %err, "failed to record ingestion failure");
-                }
-                return;
+    match ingest_all(&candle_ingester, &funding_ingester, &services.data_dir).await {
+        Ok(last_record) => {
+            info!("ingestion complete");
+            if let Err(err) = cqrs
+                .execute::<IngestionId>((), IngestionCommand::Complete { last_record })
+                .await
+            {
+                error!(error = %err, "failed to record ingestion completion");
             }
         }
-    }
-
-    info!("ingestion complete");
-    if let Err(err) = cqrs
-        .execute::<IngestionId>((), IngestionCommand::Complete { last_record })
-        .await
-    {
-        error!(error = %err, "failed to record ingestion completion");
+        Err(err) => {
+            warn!(error = %err, "ingestion failed");
+            if let Err(err) = cqrs
+                .execute::<IngestionId>(
+                    (),
+                    IngestionCommand::Fail {
+                        reason: err.to_string(),
+                    },
+                )
+                .await
+            {
+                error!(error = %err, "failed to record ingestion failure");
+            }
+        }
     }
 }
 
@@ -220,9 +235,12 @@ mod tests {
     use cqrs_es::test::TestFramework;
     use proptest::prelude::*;
 
+    use rust_decimal_macros::dec;
+
     use super::*;
     use crate::candle::Candle;
     use crate::finance::{Market, Symbol};
+    use crate::funding::FundingRate;
     use crate::hyperliquid::HyperliquidError;
     use crate::timeframe::Timeframe;
 
@@ -249,6 +267,18 @@ mod tests {
                 low: 95.0,
                 close: 102.0,
                 volume: 1000.0,
+                symbol: Symbol::from_raw(market.as_str()),
+            }])
+        }
+
+        async fn fetch_funding_rates(
+            &self,
+            market: &Market,
+            _start: DateTime<Utc>,
+        ) -> Result<Vec<FundingRate>, HyperliquidError> {
+            Ok(vec![FundingRate {
+                timestamp: Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+                rate: dec!(0.0001),
                 symbol: Symbol::from_raw(market.as_str()),
             }])
         }

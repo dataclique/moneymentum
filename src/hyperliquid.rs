@@ -138,7 +138,9 @@ impl Hyperliquid for HyperliquidClient {
                     low,
                     close,
                     volume,
-                    symbol: Symbol::from_raw(market.as_str()),
+                    // CCXT perpetual format: BASE/USDC:USDC
+                    symbol: format!("{}/USDC:USDC", market.as_str()),
+                    ticker: Symbol::from_raw(market.as_str()),
                 })
             })
             .collect();
@@ -362,7 +364,8 @@ mod tests {
                     low: 41000.0,
                     close: 42500.0,
                     volume: 1000.0,
-                    symbol: Symbol::from_raw("BTC"),
+                    symbol: "BTC/USDC:USDC".to_string(),
+                    ticker: Symbol::from_raw("BTC"),
                 }],
                 funding_rates: vec![FundingRate {
                     timestamp: Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
@@ -525,6 +528,56 @@ mod tests {
             call_count.fetch_funding_calls.load(Ordering::Relaxed),
             2,
             "should fetch funding rates for each market"
+        );
+    }
+
+    #[tokio::test]
+    async fn candle_ingester_merges_with_legacy_python_format() {
+        // Copy fixture (8-column legacy format from Python pipeline) to temp dir
+        let data_dir = TempDir::new().unwrap();
+        let fixture = std::path::Path::new("fixtures/ohlcv_1h.csv");
+        let target = data_dir.path().join("ohlcv_1h.csv");
+        std::fs::copy(fixture, &target).unwrap();
+
+        // Ingest new candles (should merge with existing legacy data)
+        let mock = Arc::new(MockHyperliquid::new());
+        let ingester = CandleIngester::new(mock);
+
+        let result = ingester.ingest(Timeframe::OneHour, data_dir.path()).await;
+
+        assert!(
+            result.is_ok(),
+            "should merge with legacy Python format: {:?}",
+            result.err()
+        );
+    }
+
+    #[tokio::test]
+    async fn candle_output_matches_python_schema() {
+        // Python pipeline produces: timestamp (ISO 8601), open, high, low, close, volume, symbol, ticker
+        let data_dir = TempDir::new().unwrap();
+        let mock = Arc::new(MockHyperliquid::new());
+        let ingester = CandleIngester::new(mock);
+
+        ingester
+            .ingest(Timeframe::OneHour, data_dir.path())
+            .await
+            .unwrap();
+
+        let csv_content = std::fs::read_to_string(data_dir.path().join("ohlcv_1h.csv")).unwrap();
+        let header = csv_content.lines().next().unwrap();
+
+        assert_eq!(
+            header, "timestamp,open,high,low,close,volume,symbol,ticker",
+            "schema must match Python pipeline output"
+        );
+
+        // Check timestamp format is ISO 8601, not milliseconds
+        let first_row = csv_content.lines().nth(1).unwrap();
+        let timestamp = first_row.split(',').next().unwrap();
+        assert!(
+            timestamp.contains('T') && timestamp.contains('Z'),
+            "timestamp should be ISO 8601 format like '2024-01-01T00:00:00.000Z', got: {timestamp}"
         );
     }
 }

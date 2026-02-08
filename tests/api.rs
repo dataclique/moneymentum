@@ -132,7 +132,7 @@ async fn ingest_and_query_candles() {
 
     let btc_candle = candles
         .iter()
-        .find(|candle| candle.get("symbol").and_then(|s| s.as_str()) == Some("BTC"))
+        .find(|candle| candle.get("ticker").and_then(|s| s.as_str()) == Some("BTC"))
         .expect("should have a BTC candle");
 
     let open = btc_candle

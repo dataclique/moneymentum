@@ -33,16 +33,25 @@ pub(crate) struct Candle {
     pub(crate) low: f64,
     pub(crate) close: f64,
     pub(crate) volume: f64,
-    pub(crate) symbol: Symbol,
+    /// Full market identifier in CCXT format (e.g., "BTC/USDC:USDC")
+    pub(crate) symbol: String,
+    /// Normalized base symbol (e.g., "BTC")
+    pub(crate) ticker: Symbol,
 }
 
 #[instrument(skip_all, fields(count = candles.len()))]
 pub(crate) async fn candles_to_dataframe(candles: Vec<Candle>) -> Result<DataFrame, CandleError> {
     tokio::task::spawn_blocking(move || {
         debug!("converting candles to dataframe");
-        let timestamps: Vec<i64> = candles
+        // ISO 8601 format to match Python pipeline output
+        let timestamps: Vec<String> = candles
             .iter()
-            .map(|candle| candle.timestamp.timestamp_millis())
+            .map(|candle| {
+                candle
+                    .timestamp
+                    .format("%Y-%m-%dT%H:%M:%S%.3fZ")
+                    .to_string()
+            })
             .collect();
 
         let opens: Vec<f64> = candles.iter().map(|candle| candle.open).collect();
@@ -54,6 +63,10 @@ pub(crate) async fn candles_to_dataframe(candles: Vec<Candle>) -> Result<DataFra
             .iter()
             .map(|candle| candle.symbol.as_str())
             .collect();
+        let tickers: Vec<&str> = candles
+            .iter()
+            .map(|candle| candle.ticker.as_str())
+            .collect();
 
         Ok(df! {
             "timestamp" => timestamps,
@@ -63,6 +76,7 @@ pub(crate) async fn candles_to_dataframe(candles: Vec<Candle>) -> Result<DataFra
             "close" => closes,
             "volume" => volumes,
             "symbol" => symbols,
+            "ticker" => tickers,
         }?)
     })
     .await?
@@ -97,8 +111,19 @@ pub(crate) fn get_last_timestamp_for_symbol(
         .collect()
         .ok()?;
 
-    let max_ts = filtered.column("timestamp").ok()?.i64().ok()?.get(0)?;
-    DateTime::from_timestamp_millis(max_ts)
+    let ts_col = filtered.column("timestamp").ok()?;
+
+    // Handle both ISO 8601 strings (legacy Python format) and i64 milliseconds
+    if let Ok(str_col) = ts_col.str() {
+        let ts_str = str_col.get(0)?;
+        DateTime::parse_from_rfc3339(ts_str)
+            .ok()
+            .map(|dt| dt.with_timezone(&Utc))
+    } else if let Ok(i64_col) = ts_col.i64() {
+        DateTime::from_timestamp_millis(i64_col.get(0)?)
+    } else {
+        None
+    }
 }
 
 #[cfg(test)]
@@ -121,7 +146,8 @@ mod tests {
                 low: 95.0,
                 close: 105.0,
                 volume: 1000.0,
-                symbol: Symbol::from_raw("BTC"),
+                symbol: "BTC/USDC:USDC".to_string(),
+                ticker: Symbol::from_raw("BTC"),
             },
             Candle {
                 timestamp: Utc.with_ymd_and_hms(2024, 1, 1, 1, 0, 0).unwrap(),
@@ -130,7 +156,8 @@ mod tests {
                 low: 100.0,
                 close: 110.0,
                 volume: 1500.0,
-                symbol: Symbol::from_raw("BTC"),
+                symbol: "BTC/USDC:USDC".to_string(),
+                ticker: Symbol::from_raw("BTC"),
             },
         ]
     }
@@ -164,7 +191,8 @@ mod tests {
                             low: 90.0,
                             close: 105.0,
                             volume: 1000.0,
-                            symbol: Symbol::from_raw("BTC"),
+                            symbol: "BTC/USDC:USDC".to_string(),
+                            ticker: Symbol::from_raw("BTC"),
                         }
                     })
                     .collect();
@@ -190,6 +218,7 @@ mod tests {
         assert!(columns.iter().any(|column| column.as_str() == "close"));
         assert!(columns.iter().any(|column| column.as_str() == "volume"));
         assert!(columns.iter().any(|column| column.as_str() == "symbol"));
+        assert!(columns.iter().any(|column| column.as_str() == "ticker"));
         assert_eq!(df.height(), 2);
         assert!(logs_contain_at(
             Level::DEBUG,

@@ -513,6 +513,24 @@ or integration test.
 - Only cover happy paths in integration/e2e tests; cover edge cases in unit
   tests
 
+**Bug reproduction must exercise real code paths.** When reproducing a bug:
+
+```rust
+// BAD: Manually constructs incompatible DataFrames - proves nothing
+let existing = df! { "a" => [1], "b" => [2], "extra" => [3] }.unwrap();
+let new = df! { "a" => [1], "b" => [2] }.unwrap();
+merge_and_deduplicate(Some(existing), new); // Obviously fails
+
+// GOOD: Uses actual code paths with realistic fixtures
+let existing = read_csv(fixture_path("legacy_ohlcv.csv")).await?; // 8 columns
+let candles = vec![Candle { ... }]; // Real domain objects
+let new = candles_to_dataframe(candles).await?; // 7 columns from real code
+merge_and_deduplicate(existing, new); // Proves the actual bug
+```
+
+The first test shows that incompatible things are incompatible. The second
+proves the system produces incompatible things - that's the bug.
+
 ```rust
 // Bad: tests struct assignment, not our code
 fn test_fields() {

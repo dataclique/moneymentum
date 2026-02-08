@@ -1,4 +1,8 @@
 port = 8000
 data_dir = "data"
-database_url = "sqlite:./moneymentum.db"
+
+# ?mode=rwc standa for read/write/create. by setting this flag,
+# we make sqlite create the .db file if it doesn't exist
+database_url = "sqlite:./moneymentum.db?mode=rwc"
+
 log_level = "debug"

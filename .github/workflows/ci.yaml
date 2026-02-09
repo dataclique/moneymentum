@@ -21,32 +21,11 @@ jobs:
       - uses: DeterminateSystems/nix-installer-action@main
       - uses: DeterminateSystems/magic-nix-cache-action@main
 
-      - name: Build
+      - name: Build and test
         run: nix build .#moneymentum
 
-      - name: Start postgres
-        run: nix develop --impure -c devenv up &
-
-      - name: Wait for postgres
-        run: |
-          for i in {1..30}; do
-            if nix develop --impure -c bash -c 'pg_isready -d "$DATABASE_URL"' 2>/dev/null; then
-              echo "Postgres is ready"
-              exit 0
-            fi
-            sleep 1
-          done
-          echo "Postgres failed to start"
-          exit 1
-
-      - name: Run migrations
-        run: nix develop --impure -c sqlx migrate run
-
-      - name: Test
-        run: nix develop --impure -c cargo test -q
-
       - name: Clippy
-        run: nix develop --impure -c cargo clippy --all-targets -- -D clippy::all
+        run: nix build .#moneymentum-clippy
 
   frontend:
     runs-on: ubuntu-latest

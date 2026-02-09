@@ -192,9 +192,12 @@
         devShells.default = devShell;
         devShells.frontend = frontendShell;
 
-        checks.git-hooks = git-hooks.lib.${system}.run {
-          inherit hooks;
-          src = self;
+        checks = {
+          git-hooks = git-hooks.lib.${system}.run {
+            inherit hooks;
+            src = self;
+          };
+          inherit (rustPkgs) clippy;
         };
         packages = {
           devenv-up = devShell.config.procfileScript;

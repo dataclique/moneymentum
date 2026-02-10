@@ -138,6 +138,7 @@
               # https://devenv.sh/reference/options/
               packages = with pkgs;
                 deps ++ [
+                  git
                   ragenix.packages.${system}.default
                   sqlx-cli
                   infraPkgs.remote
@@ -175,8 +176,10 @@
 
               # DATABASE_URL is read by sqlx for compile-time query verification
               # and by migration tooling. The runtime config uses db_path field.
+              # PATH so git-hooks:install finds git (common macOS paths; profile has git too).
               env = env // {
                 DATABASE_URL = "sqlite:./moneymentum.db?mode=rwc";
+                PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin";
               };
 
               # Use pre-commit instead of git-hooks

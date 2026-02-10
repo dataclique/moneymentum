@@ -1,86 +1,113 @@
 # Roadmap
 
-> **Purpose**: This document describes the **practical path** from where we are today to the north star in [SPEC.md](./SPEC.md). Each milestone adds value without breaking what works. The prototype page (`/prototype`) embodies the target UX; milestones progressively wire it to real data and actions.
+> **Purpose**: Practical path from where we are today to the north star in
+> [SPEC.md](./SPEC.md).
+
+---
 
 ## Starting Point
 
-What we already have:
+**What we have:**
 
-- **Data**: Historical OHLCV and funding rate data accumulated via collection scripts (more than what's available from Hyperliquid API directly)
-- **/portfolio page**: Production tool for managing Hyperliquid perps positions—already useful, already in daily use
-- **Prototype** (`/prototype`): Interactive UI mockup with screener, staged trades, keyboard navigation, inline editing, multi-metric charts. Uses mock data, no real actions—but it's code, not Figma, so wiring it up is straightforward.
+- **Portfolio rebalancer at `/`**: Set positions by weight, adjust cross-account
+  leverage while maintaining proportions. Simple but already useful daily.
+- **Historical data**: OHLCV and funding rates accumulated via collection
+  scripts (more depth than Hyperliquid API provides directly).
+- **Prototype at `/prototype`**: Design reference for target UI/UX. Like Figma
+  but in code.
 
-The prototype is the **design source of truth**, owned by humans. It will continue to evolve through human iteration. AI contributors wire it up to real data and actions but do not change the design without explicit request/approval.
+**What's missing:**
 
-**Core constraint**: The /portfolio page must remain functional throughout. Evolution is gradual—users never lose functionality, only gain it.
+The rebalancer shows market exposure as `net = long notional - short notional`.
+This ignores correlations entirely—a portfolio that's "net neutral" in notional
+terms might still have massive BTC beta. Without beta, hedging is guesswork.
 
-## Milestone 1: Converge to Prototype Layout
+---
 
-Replace /portfolio with the prototype layout. Move it to / (portfolio is the main thing, other data supports portfolio decisions).
+## Phase 1: Backend Foundation + Portfolio Beta
 
-- Adopt prototype layout with all panels
-- Wire up panels that already have real data/actions (positions, execution)
-- Show "Coming soon..." for panels not yet functional
-- No more maintaining two diverging systems
+> See SPEC.md: Technology Stack, Domain Architecture
 
-## Milestone 2: Wire Up Analytics
+**Goal**: Users can see their portfolio's beta exposure, enabling proper
+hedging.
 
-Connect prototype analytics panels to real data:
+### 1.1 Backend Infrastructure
 
-- Sharpe/Beta/Momentum from accumulated historical data
-- Factor exposure summary
-- Multi-metric charts with real OHLCV
+Set up Rust project with Nix:
 
-## Milestone 3: Staged Trades with Real Execution
+- Cargo workspace structure
+- Nix flake for reproducible dev environment
+- Basic HTTP server (rocket) that can serve a health check
 
-Wire up the staged trades workflow:
+### 1.2 Data Ingestion
 
-- Preview changes with real position data
-- Execute trades on Hyperliquid
-- Global leverage with real calculations
+Fetch Hyperliquid market data:
 
-## Milestone 4: Screener with Real Data
+- OHLCV candles for all perp markets
+- Store in Parquet format for polars
+- Scheduled refresh (cron or simple loop)
 
-Wire up the screener panel:
+### 1.3 Beta Calculation
 
-- Rank assets by real factor loadings
-- Click-to-add to staged portfolio
+Compute rolling beta for each asset against BTC:
 
-## Milestone 5: Hyperliquid Spot
+- Read historical returns from ingested data
+- Calculate covariance / variance
+- Expose via API endpoint
 
-Extend to spot positions:
+### 1.4 Portfolio Beta in Frontend
 
-- Combined perp/spot portfolio view
-- Unified notional and weight calculations
+Wire portfolio beta into the rebalancer:
 
-## Milestone 6: Risk Analytics
+- Fetch betas from backend
+- Compute portfolio-weighted beta
+- Display alongside net notional
 
-Wire up risk panels:
+---
 
-- VaR/CVaR calculations
-- Correlation matrix
-- Stress testing
+## Phase 2: Risk Analytics
 
-## Milestone 7: TradFi Integration
+> See SPEC.md: Analytics Capabilities > Risk Engine
 
-Add TradFi factor exposure:
+**Goal**: Users can assess portfolio risk beyond just beta.
 
-- SPY/TLT beta calculations
-- Yahoo Finance data adapter
+- Monte Carlo simulation of portfolio returns
+- VaR/CVaR at configurable confidence levels
+- Historical drawdown analysis
+- Correlation matrix visualization
 
-## Milestone 8: Options (Derive)
+---
 
-Extend to options:
+## Phase 3: Screener + Staged Trade Simulation
 
-- Greeks engine
-- Options pricing
-- Vol surface
-- Aggregated Greeks by underlying
+> See SPEC.md: Core Workflow > Screen, Stage, Simulate
 
-## Milestone 9: Additional Venues
+**Goal**: Users can find assets by factor characteristics and preview portfolio
+changes before executing.
 
-Extend to other DeFi venues:
+- Screener: rank assets by beta, momentum, carry, volatility
+- Staged trades: add/remove positions, see simulated impact on risk metrics
+- Compare staged vs current portfolio
 
-- Solana DEX spot
-- st0x (tokenized equities)
-- Pendle (yield trading)
+---
+
+## Phase 4: Spot Trading
+
+> See SPEC.md: Domain Architecture > Spot Trading
+
+**Goal**: Unified perp + spot portfolio management.
+
+- Hyperliquid spot integration
+- Combined notional and weight calculations
+- Single rebalance across both instrument types
+
+---
+
+## Future
+
+These are directions we know matter but haven't designed:
+
+- Options (Derive) for advanced risk management
+- Tokenized equities (st0x) for TradFi factor exposure
+- Yield products (Pendle)
+- Multi-account support

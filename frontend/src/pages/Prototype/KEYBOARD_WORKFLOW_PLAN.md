@@ -19,18 +19,22 @@ NO MOUSE CLICKS ALLOWED.
 
 ### Gap 1: Leverage shortcuts only work when LeverageControl has focus
 
-- **Problem**: `[` and `]` are handled in `LeverageControl.tsx` via `onKeyDown` which requires focus
-- **Fix**: Add global keyboard listener in `index.tsx` that handles `[` and `]` regardless of focus
+- **Problem**: `[` and `]` are handled in `LeverageControl.tsx` via `onKeyDown`
+  which requires focus
+- **Fix**: Add global keyboard listener in `index.tsx` that handles `[` and `]`
+  regardless of focus
 
 ### Gap 2: No execute shortcut
 
-- **Problem**: There's no way to execute staged trades without clicking the button
+- **Problem**: There's no way to execute staged trades without clicking the
+  button
 - **Fix**: Add `x` key handler in `index.tsx` that calls `executeStagedTrades()`
 
 ### Gap 3: Weight editing may not activate when instrument selected
 
 - **Problem**: EditableCell listens for `editKey` when `isSelected` is true
-- **Verify**: Ensure `isSelected` is properly passed to weight cells for instruments
+- **Verify**: Ensure `isSelected` is properly passed to weight cells for
+  instruments
 
 ### Gap 4: Test environment issues
 
@@ -40,7 +44,8 @@ NO MOUSE CLICKS ALLOWED.
 ## Files to Modify
 
 1. **`index.tsx`** - Add global handlers for `[`, `]`, `x`
-2. **`useKeyboardNavigation.ts`** - May need to expose leverage/execute callbacks
+2. **`useKeyboardNavigation.ts`** - May need to expose leverage/execute
+   callbacks
 3. **`full-keyboard-workflow.test.tsx`** - The TDD test
 
 ## Test File Location

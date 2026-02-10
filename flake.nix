@@ -36,7 +36,17 @@
             entry = "${pkgs.bun}/bin/bun --cwd frontend run lint";
             pass_filenames = false;
           };
-          prettier.enable = true;
+          prettier = {
+            enable = true;
+            excludes = [ "\\.md$" ];
+          };
+          denofmt = {
+            enable = true;
+            name = "denofmt";
+            entry = "${pkgs.deno}/bin/deno fmt";
+            files = "\\.md$";
+            pass_filenames = true;
+          };
         };
 
         deps = with pkgs; [

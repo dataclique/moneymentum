@@ -1,6 +1,7 @@
 # Shadcn UI Component Rules
 
-This project uses [shadcn/ui](https://ui.shadcn.com/) components for the frontend UI.
+This project uses [shadcn/ui](https://ui.shadcn.com/) components for the
+frontend UI.
 
 ## Rules for Using Components
 
@@ -53,15 +54,16 @@ Current shadcn components in use:
 Always import from the ui directory:
 
 ```typescript
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Switch } from "@/components/ui/switch"
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 ```
 
 ### 5. Styling
 
 - Components use Tailwind CSS classes
-- Use `twMerge(clsx(...))` for conditional classes (import from `clsx` and `tailwind-merge`)
+- Use `twMerge(clsx(...))` for conditional classes (import from `clsx` and
+  `tailwind-merge`)
 - Follow the design system defined in `components.json` (style: "new-york")
 - Use CSS variables for theming (defined in `src/index.css`)
 
@@ -105,9 +107,9 @@ import { Label } from "@/components/ui/label"
 ### Using Switch Component
 
 ```typescript
-import { Switch } from "@/components/ui/switch"
+import { Switch } from "@/components/ui/switch";
 
-<Switch checked={enabled} onCheckedChange={setEnabled} />
+<Switch checked={enabled} onCheckedChange={setEnabled} />;
 ```
 
 ### Using Button Component

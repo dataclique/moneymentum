@@ -27,9 +27,7 @@ use thiserror::Error;
 use tracing::{debug, error, info};
 use tracing_subscriber::EnvFilter;
 
-use ingestion::{
-    Ingestion, IngestionId, IngestionJob, IngestionServices, IngestionStatus,
-};
+use ingestion::{Ingestion, IngestionId, IngestionJob, IngestionServices, IngestionStatus};
 use timeframe::Timeframe;
 use wire::{Cons, Nil, UnwiredQuery};
 

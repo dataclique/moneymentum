@@ -28,7 +28,7 @@ use tracing::{debug, error, info};
 use tracing_subscriber::EnvFilter;
 
 use ingestion::{
-    Ingestion, IngestionId, IngestionJob, IngestionServices, IngestionStatus, handle_ingestion,
+    Ingestion, IngestionId, IngestionJob, IngestionServices, IngestionStatus,
 };
 use timeframe::Timeframe;
 use wire::{Cons, Nil, UnwiredQuery};
@@ -220,7 +220,7 @@ pub async fn rocket(
                     .data(cqrs)
                     .data(services)
                     .backend(job_queue)
-                    .build_fn(handle_ingestion),
+                    .build_fn(IngestionJob::run),
             );
             if let Err(err) = monitor.run().await {
                 error!(error = %err, "ingestion monitor crashed");

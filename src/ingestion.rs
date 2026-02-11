@@ -30,6 +30,57 @@ const TIMEFRAMES: &[Timeframe] = &[
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct IngestionJob;
 
+impl IngestionJob {
+    pub(crate) async fn run(
+        self,
+        cqrs: Data<Arc<Cqrs<Ingestion>>>,
+        services: Data<Arc<IngestionServices>>,
+    ) {
+        if let Err(err) = cqrs
+            .execute::<IngestionId>((), IngestionCommand::Start)
+            .await
+        {
+            error!(error = %err, "failed to start ingestion");
+            return;
+        }
+
+        let candle_ingester = CandleIngester::new(
+            Arc::clone(&services.hyperliquid),
+            services.max_concurrent_requests,
+        );
+        let funding_ingester = FundingRateIngester::new(
+            Arc::clone(&services.hyperliquid),
+            services.max_concurrent_requests,
+        );
+
+        match ingest_all(&candle_ingester, &funding_ingester, &services.data_dir).await {
+            Ok(last_record) => {
+                info!("ingestion complete");
+                if let Err(err) = cqrs
+                    .execute::<IngestionId>((), IngestionCommand::Complete { last_record })
+                    .await
+                {
+                    error!(error = %err, "failed to record ingestion completion");
+                }
+            }
+            Err(err) => {
+                error!(error = %err, "ingestion failed");
+                if let Err(err) = cqrs
+                    .execute::<IngestionId>(
+                        (),
+                        IngestionCommand::Fail {
+                            reason: err.to_string(),
+                        },
+                    )
+                    .await
+                {
+                    error!(error = %err, "failed to record ingestion failure");
+                }
+            }
+        }
+    }
+}
+
 async fn ingest_all(
     candle_ingester: &CandleIngester<dyn Hyperliquid>,
     funding_ingester: &FundingRateIngester<dyn Hyperliquid>,
@@ -40,55 +91,6 @@ async fn ingest_all(
     }
     funding_ingester.ingest(data_dir).await?;
     Ok(Utc::now())
-}
-
-pub(crate) async fn handle_ingestion(
-    _job: IngestionJob,
-    cqrs: Data<Arc<Cqrs<Ingestion>>>,
-    services: Data<Arc<IngestionServices>>,
-) {
-    if let Err(err) = cqrs
-        .execute::<IngestionId>((), IngestionCommand::Start)
-        .await
-    {
-        error!(error = %err, "failed to start ingestion");
-        return;
-    }
-
-    let candle_ingester = CandleIngester::new(
-        Arc::clone(&services.hyperliquid),
-        services.max_concurrent_requests,
-    );
-    let funding_ingester = FundingRateIngester::new(
-        Arc::clone(&services.hyperliquid),
-        services.max_concurrent_requests,
-    );
-
-    match ingest_all(&candle_ingester, &funding_ingester, &services.data_dir).await {
-        Ok(last_record) => {
-            info!("ingestion complete");
-            if let Err(err) = cqrs
-                .execute::<IngestionId>((), IngestionCommand::Complete { last_record })
-                .await
-            {
-                error!(error = %err, "failed to record ingestion completion");
-            }
-        }
-        Err(err) => {
-            error!(error = %err, "ingestion failed");
-            if let Err(err) = cqrs
-                .execute::<IngestionId>(
-                    (),
-                    IngestionCommand::Fail {
-                        reason: err.to_string(),
-                    },
-                )
-                .await
-            {
-                error!(error = %err, "failed to record ingestion failure");
-            }
-        }
-    }
 }
 
 /// Type-safe aggregate ID for the singleton ingestion process.

@@ -36,48 +36,48 @@ impl IngestionJob {
         cqrs: Data<Arc<Cqrs<Ingestion>>>,
         services: Data<Arc<IngestionServices>>,
     ) {
-    if let Err(err) = cqrs
-        .execute::<IngestionId>((), IngestionCommand::Start)
-        .await
-    {
-        error!(error = %err, "failed to start ingestion");
-        return;
-    }
+        if let Err(err) = cqrs
+            .execute::<IngestionId>((), IngestionCommand::Start)
+            .await
+        {
+            error!(error = %err, "failed to start ingestion");
+            return;
+        }
 
-    let candle_ingester = CandleIngester::new(
-        Arc::clone(&services.hyperliquid),
-        services.max_concurrent_requests,
-    );
-    let funding_ingester = FundingRateIngester::new(
-        Arc::clone(&services.hyperliquid),
-        services.max_concurrent_requests,
-    );
+        let candle_ingester = CandleIngester::new(
+            Arc::clone(&services.hyperliquid),
+            services.max_concurrent_requests,
+        );
+        let funding_ingester = FundingRateIngester::new(
+            Arc::clone(&services.hyperliquid),
+            services.max_concurrent_requests,
+        );
 
-    match ingest_all(&candle_ingester, &funding_ingester, &services.data_dir).await {
-        Ok(last_record) => {
-            info!("ingestion complete");
-            if let Err(err) = cqrs
-                .execute::<IngestionId>((), IngestionCommand::Complete { last_record })
-                .await
-            {
-                error!(error = %err, "failed to record ingestion completion");
+        match ingest_all(&candle_ingester, &funding_ingester, &services.data_dir).await {
+            Ok(last_record) => {
+                info!("ingestion complete");
+                if let Err(err) = cqrs
+                    .execute::<IngestionId>((), IngestionCommand::Complete { last_record })
+                    .await
+                {
+                    error!(error = %err, "failed to record ingestion completion");
+                }
+            }
+            Err(err) => {
+                error!(error = %err, "ingestion failed");
+                if let Err(err) = cqrs
+                    .execute::<IngestionId>(
+                        (),
+                        IngestionCommand::Fail {
+                            reason: err.to_string(),
+                        },
+                    )
+                    .await
+                {
+                    error!(error = %err, "failed to record ingestion failure");
+                }
             }
         }
-        Err(err) => {
-            error!(error = %err, "ingestion failed");
-            if let Err(err) = cqrs
-                .execute::<IngestionId>(
-                    (),
-                    IngestionCommand::Fail {
-                        reason: err.to_string(),
-                    },
-                )
-                .await
-            {
-                error!(error = %err, "failed to record ingestion failure");
-            }
-        }
-    }
     }
 }
 

@@ -30,23 +30,12 @@ const TIMEFRAMES: &[Timeframe] = &[
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct IngestionJob;
 
-async fn ingest_all(
-    candle_ingester: &CandleIngester<dyn Hyperliquid>,
-    funding_ingester: &FundingRateIngester<dyn Hyperliquid>,
-    data_dir: &Path,
-) -> Result<DateTime<Utc>, HyperliquidError> {
-    for timeframe in TIMEFRAMES {
-        candle_ingester.ingest(*timeframe, data_dir).await?;
-    }
-    funding_ingester.ingest(data_dir).await?;
-    Ok(Utc::now())
-}
-
-pub(crate) async fn handle_ingestion(
-    _job: IngestionJob,
-    cqrs: Data<Arc<Cqrs<Ingestion>>>,
-    services: Data<Arc<IngestionServices>>,
-) {
+impl IngestionJob {
+    pub(crate) async fn run(
+        self,
+        cqrs: Data<Arc<Cqrs<Ingestion>>>,
+        services: Data<Arc<IngestionServices>>,
+    ) {
     if let Err(err) = cqrs
         .execute::<IngestionId>((), IngestionCommand::Start)
         .await
@@ -89,6 +78,19 @@ pub(crate) async fn handle_ingestion(
             }
         }
     }
+    }
+}
+
+async fn ingest_all(
+    candle_ingester: &CandleIngester<dyn Hyperliquid>,
+    funding_ingester: &FundingRateIngester<dyn Hyperliquid>,
+    data_dir: &Path,
+) -> Result<DateTime<Utc>, HyperliquidError> {
+    for timeframe in TIMEFRAMES {
+        candle_ingester.ingest(*timeframe, data_dir).await?;
+    }
+    funding_ingester.ingest(data_dir).await?;
+    Ok(Utc::now())
 }
 
 /// Type-safe aggregate ID for the singleton ingestion process.

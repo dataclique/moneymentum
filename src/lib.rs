@@ -91,7 +91,7 @@ pub enum ConfigError {
 
 type IngestionCqrs = Arc<wire::Cqrs<Ingestion>>;
 type IngestionView = wire::View<Ingestion>;
-type IngestionStorage = SqliteStorage<IngestionJob>;
+type IngestionJobQueue = SqliteStorage<IngestionJob>;
 
 #[get("/health")]
 fn health() -> &'static str {
@@ -114,8 +114,8 @@ async fn get_candles(
 }
 
 #[post("/ingest")]
-async fn start_ingestion(storage: &State<IngestionStorage>) -> Status {
-    if let Err(err) = storage.inner().clone().push(IngestionJob).await {
+async fn start_ingestion(job_queue: &State<IngestionJobQueue>) -> Status {
+    if let Err(err) = job_queue.inner().clone().push(IngestionJob).await {
         error!(error = %err, "failed to queue ingestion job");
         return Status::InternalServerError;
     }
@@ -178,7 +178,7 @@ pub async fn rocket(
     sqlx::migrate!().set_ignore_missing(true).run(&pool).await?;
     debug!("migrations applied");
 
-    let storage = SqliteStorage::<IngestionJob>::new(pool.clone());
+    let job_queue = SqliteStorage::<IngestionJob>::new(pool.clone());
 
     let view: IngestionView = wire::View::new(pool.clone());
     let query = GenericQuery::new(view.repo());
@@ -213,13 +213,13 @@ pub async fn rocket(
     tokio::spawn({
         let cqrs = Arc::clone(&cqrs);
         let services = Arc::clone(&services);
-        let storage = storage.clone();
+        let job_queue = job_queue.clone();
         async move {
             let monitor = Monitor::new().register(
                 WorkerBuilder::new("ingestion")
                     .data(cqrs)
                     .data(services)
-                    .backend(storage)
+                    .backend(job_queue)
                     .build_fn(handle_ingestion),
             );
             if let Err(err) = monitor.run().await {
@@ -234,7 +234,7 @@ pub async fn rocket(
         .manage(config)
         .manage(cqrs)
         .manage(view)
-        .manage(storage)
+        .manage(job_queue)
         .mount(
             "/",
             routes![health, get_candles, start_ingestion, get_ingestion_status],

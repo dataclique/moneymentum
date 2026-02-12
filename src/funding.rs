@@ -5,7 +5,7 @@
 //! [`crate::dataframe`].
 
 use chrono::{DateTime, Utc};
-use polars::prelude::{DataFrame, IntoLazy, PolarsError, col, df, lit};
+use polars::prelude::{DataFrame, PolarsError, df};
 use rust_decimal::Decimal;
 use thiserror::Error;
 use tracing::{debug, instrument};
@@ -60,37 +60,8 @@ pub(crate) async fn funding_rates_to_dataframe(
     .await?
 }
 
-pub(crate) fn get_last_timestamp_for_symbol(
-    df: Option<&DataFrame>,
-    symbol: &str,
-) -> Option<DateTime<Utc>> {
-    let df = df?;
-
-    let filtered = df
-        .clone()
-        .lazy()
-        .filter(col("symbol").eq(lit(symbol)))
-        .select([col("timestamp").max()])
-        .collect()
-        .ok()?;
-
-    let ts_col = filtered.column("timestamp").ok()?;
-
-    // Handle both ISO 8601 strings (legacy Python format) and i64 milliseconds
-    if let Ok(str_col) = ts_col.str() {
-        let ts_str = str_col.get(0)?;
-        DateTime::parse_from_rfc3339(ts_str)
-            .ok()
-            .map(|dt| dt.with_timezone(&Utc))
-    } else if let Ok(i64_col) = ts_col.i64() {
-        DateTime::from_timestamp_millis(i64_col.get(0)?)
-    } else {
-        None
-    }
-}
-
 pub(crate) fn file_name() -> &'static str {
-    "funding_rate_1h.csv"
+    "funding_rate1h.csv"
 }
 
 #[cfg(test)]

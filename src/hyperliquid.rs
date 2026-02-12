@@ -19,7 +19,7 @@ use url::Url;
 use rust_decimal::Decimal;
 use std::str::FromStr;
 
-use crate::candle::{Candle, CandleError, candles_to_dataframe, get_last_timestamp_for_symbol};
+use crate::candle::{Candle, CandleError, candles_to_dataframe};
 use crate::dataframe::{self, DataFrameError};
 use crate::finance::{Market, Symbol};
 use crate::funding::{self, FundingError, FundingRate};
@@ -239,16 +239,23 @@ impl<H: ?Sized + Hyperliquid> CandleIngester<H> {
         let path = data_dir.join(timeframe.file_name());
         let existing = dataframe::read_csv(path.clone()).await?;
 
-        let default_start = Utc::now() - Duration::days(timeframe.lookback_days());
+        info!(
+            markets = markets.len(),
+            timeframe = %timeframe.interval_string(),
+            "starting candle ingestion"
+        );
 
-        // Pre-compute start times to avoid borrowing existing across async boundary
+        // Hyperliquid candleSnapshot returns at most 5000 candles per request
+        // for any interval ([docs](https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/info-endpoint#candle-snapshot)).
+        // To always fetch the maximum available history per symbol, we ignore
+        // existing data for the start time and request a 5000-candle window
+        // ending at "now". Any overlap with existing data is handled by
+        // merge_and_deduplicate.
+        let start_for_all_markets = Utc::now() - timeframe.window_duration();
+
         let market_starts: Vec<(Market, DateTime<Utc>)> = markets
             .iter()
-            .map(|market| {
-                let start = get_last_timestamp_for_symbol(existing.as_ref(), market.as_str())
-                    .unwrap_or(default_start);
-                (market.clone(), start)
-            })
+            .map(|market| (market.clone(), start_for_all_markets))
             .collect();
 
         let candle_batches: Vec<Vec<Candle>> = stream::iter(market_starts)
@@ -280,7 +287,15 @@ impl<H: ?Sized + Hyperliquid> CandleIngester<H> {
 
         let new_df = candles_to_dataframe(all_candles).await?;
         let merged = dataframe::merge_and_deduplicate(existing, new_df).await?;
+        let row_count = merged.height();
+
+        let csv_path = path.clone();
         dataframe::write_csv(path, merged).await?;
+        info!(
+            rows = row_count,
+            path = %csv_path.display(),
+            "candles csv written"
+        );
 
         info!(
             markets = market_count,
@@ -322,17 +337,19 @@ impl<H: ?Sized + Hyperliquid> FundingRateIngester<H> {
     ) -> Result<(), HyperliquidError> {
         let path = data_dir.join(funding::file_name());
         let existing = dataframe::read_csv(path.clone()).await?;
-        let default_start = Utc::now() - Duration::days(30);
 
-        // Pre-compute start times to avoid borrowing existing across async boundary
+        info!(markets = markets.len(), "starting funding rate ingestion");
+        // Funding history endpoint returns a bounded window of historical
+        // funding rates. To always fetch the maximum available history per
+        // market, we ignore existing data for the start time and request a
+        // fixed 5000-hour window ending at "now". Any overlap with existing
+        // data is handled by merge_and_deduplicate.
+        let window = Duration::hours(5000);
+        let start_for_all_markets = Utc::now() - window;
+
         let market_starts: Vec<(Market, DateTime<Utc>)> = markets
             .iter()
-            .map(|market| {
-                let start =
-                    funding::get_last_timestamp_for_symbol(existing.as_ref(), market.as_str())
-                        .unwrap_or(default_start);
-                (market.clone(), start)
-            })
+            .map(|market| (market.clone(), start_for_all_markets))
             .collect();
 
         let rate_batches: Vec<Vec<FundingRate>> = stream::iter(market_starts)
@@ -364,7 +381,15 @@ impl<H: ?Sized + Hyperliquid> FundingRateIngester<H> {
 
         let new_df = funding::funding_rates_to_dataframe(all_rates).await?;
         let merged = dataframe::merge_and_deduplicate(existing, new_df).await?;
+        let row_count = merged.height();
+
+        let csv_path = path.clone();
         dataframe::write_csv(path, merged).await?;
+        info!(
+            rows = row_count,
+            path = %csv_path.display(),
+            "funding rates csv written"
+        );
 
         info!(
             markets = market_count,
@@ -497,7 +522,7 @@ mod tests {
 
         ingester.ingest(data_dir.path()).await.unwrap();
 
-        let csv_path = data_dir.path().join("funding_rate_1h.csv");
+        let csv_path = data_dir.path().join("funding_rate1h.csv");
         assert!(csv_path.exists(), "CSV file should be created");
 
         assert!(logs_contain_at(
@@ -628,8 +653,8 @@ mod tests {
     async fn funding_ingester_merges_with_legacy_python_format() {
         // Copy fixture (legacy format from Python pipeline) to temp dir
         let data_dir = TempDir::new().unwrap();
-        let fixture = std::path::Path::new("fixtures/funding_rate_1h.csv");
-        let target = data_dir.path().join("funding_rate_1h.csv");
+        let fixture = std::path::Path::new("fixtures/funding_rate1h.csv");
+        let target = data_dir.path().join("funding_rate1h.csv");
         std::fs::copy(fixture, &target).unwrap();
 
         // Ingest new funding rates (should merge with existing legacy data)
@@ -655,7 +680,7 @@ mod tests {
         ingester.ingest(data_dir.path()).await.unwrap();
 
         let csv_content =
-            std::fs::read_to_string(data_dir.path().join("funding_rate_1h.csv")).unwrap();
+            std::fs::read_to_string(data_dir.path().join("funding_rate1h.csv")).unwrap();
         let header = csv_content.lines().next().unwrap();
 
         assert_eq!(

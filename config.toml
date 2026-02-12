@@ -12,14 +12,10 @@ data_dir = "data"
 # This matches the default used in the Nix/dev environment.
 database_url = "sqlite:./moneymentum.db"
 
-# Base URL for the Hyperliquid API.
-# Use the production endpoint unless you explicitly need a sandbox.
-hyperliquid_base_url = "https://api.hyperliquid.xyz"
-
 # Log level for the Rust backend.
 # One of: "trace", "debug", "info", "warn", "error".
 log_level = "info"
 
 # Concurrency and retry settings for Hyperliquid requests.
 max_concurrent_requests = 1
-max_retries = 5             # чтобы Rust терпеливо ретраил 429
+max_retries = 5             # so that Rust patiently retries on 429

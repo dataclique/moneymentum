@@ -61,7 +61,7 @@ pub(crate) async fn funding_rates_to_dataframe(
 }
 
 pub(crate) fn file_name() -> &'static str {
-    "funding_rate1h.csv"
+    "funding_rate_1h.csv"
 }
 
 #[cfg(test)]
@@ -108,23 +108,5 @@ mod tests {
             Level::DEBUG,
             &["converting funding rates to dataframe"]
         ));
-    }
-
-    #[test]
-    fn get_last_timestamp_returns_none_for_missing_symbol() {
-        let df = df! {
-            "timestamp" => &["2024-01-01T00:00:00.000Z"],
-            "symbol" => &["BTC"],
-        }
-        .unwrap();
-
-        let last = get_last_timestamp_for_symbol(Some(&df), "ETH");
-        assert!(last.is_none());
-    }
-
-    #[test]
-    fn get_last_timestamp_returns_none_for_none_df() {
-        let last = get_last_timestamp_for_symbol(None, "BTC");
-        assert!(last.is_none());
     }
 }

@@ -25,6 +25,13 @@ use crate::finance::{Market, Symbol};
 use crate::funding::{self, FundingError, FundingRate};
 use crate::timeframe::Timeframe;
 
+/// Maximum number of data points returned by Hyperliquid's historical data endpoints.
+///
+/// Both `candleSnapshot` and `funding_history` endpoints cap results at 5000 entries.
+/// See [candleSnapshot docs](https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/info-endpoint#candle-snapshot)
+/// and [funding_history docs](https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/info-endpoint/perpetuals#retrieve-historical-funding-rates).
+pub(crate) const MAX_HISTORY_ENTRIES: i64 = 5000;
+
 #[derive(Debug, Error)]
 pub(crate) enum HyperliquidError {
     #[error(transparent)]
@@ -289,13 +296,9 @@ impl<H: ?Sized + Hyperliquid> CandleIngester<H> {
         let merged = dataframe::merge_and_deduplicate(existing, new_df).await?;
         let row_count = merged.height();
 
-        let csv_path = path.clone();
+        let csv_path = path.display().to_string();
         dataframe::write_csv(path, merged).await?;
-        info!(
-            rows = row_count,
-            path = %csv_path.display(),
-            "candles csv written"
-        );
+        info!(rows = row_count, path = csv_path, "candles csv written");
 
         info!(
             markets = market_count,
@@ -342,9 +345,9 @@ impl<H: ?Sized + Hyperliquid> FundingRateIngester<H> {
         // Funding history endpoint returns a bounded window of historical
         // funding rates. To always fetch the maximum available history per
         // market, we ignore existing data for the start time and request a
-        // fixed 5000-hour window ending at "now". Any overlap with existing
-        // data is handled by merge_and_deduplicate.
-        let window = Duration::hours(5000);
+        // fixed window ending at "now". Any overlap with existing data is
+        // handled by merge_and_deduplicate.
+        let window = Duration::hours(MAX_HISTORY_ENTRIES);
         let start_for_all_markets = Utc::now() - window;
 
         let market_starts: Vec<(Market, DateTime<Utc>)> = markets
@@ -383,11 +386,11 @@ impl<H: ?Sized + Hyperliquid> FundingRateIngester<H> {
         let merged = dataframe::merge_and_deduplicate(existing, new_df).await?;
         let row_count = merged.height();
 
-        let csv_path = path.clone();
+        let csv_path = path.display().to_string();
         dataframe::write_csv(path, merged).await?;
         info!(
             rows = row_count,
-            path = %csv_path.display(),
+            path = csv_path,
             "funding rates csv written"
         );
 
@@ -522,7 +525,7 @@ mod tests {
 
         ingester.ingest(data_dir.path()).await.unwrap();
 
-        let csv_path = data_dir.path().join("funding_rate1h.csv");
+        let csv_path = data_dir.path().join("funding_rate_1h.csv");
         assert!(csv_path.exists(), "CSV file should be created");
 
         assert!(logs_contain_at(
@@ -653,8 +656,8 @@ mod tests {
     async fn funding_ingester_merges_with_legacy_python_format() {
         // Copy fixture (legacy format from Python pipeline) to temp dir
         let data_dir = TempDir::new().unwrap();
-        let fixture = std::path::Path::new("fixtures/funding_rate1h.csv");
-        let target = data_dir.path().join("funding_rate1h.csv");
+        let fixture = std::path::Path::new("fixtures/funding_rate_1h.csv");
+        let target = data_dir.path().join("funding_rate_1h.csv");
         std::fs::copy(fixture, &target).unwrap();
 
         // Ingest new funding rates (should merge with existing legacy data)
@@ -680,7 +683,7 @@ mod tests {
         ingester.ingest(data_dir.path()).await.unwrap();
 
         let csv_content =
-            std::fs::read_to_string(data_dir.path().join("funding_rate1h.csv")).unwrap();
+            std::fs::read_to_string(data_dir.path().join("funding_rate_1h.csv")).unwrap();
         let header = csv_content.lines().next().unwrap();
 
         assert_eq!(

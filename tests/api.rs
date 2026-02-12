@@ -99,7 +99,7 @@ async fn poll_for_status(
 }
 
 // Temporarily skipped: fails due to OneWeek timeframe overflow (issue #64)
-// https://github.com/stvrd/moneymentum/issues/64
+// https://github.com/data-cartel/moneymentum/issues/64
 #[ignore]
 #[rocket::async_test]
 async fn ingest_and_query_candles() {

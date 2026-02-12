@@ -33,19 +33,25 @@ impl Timeframe {
         }
     }
 
-    pub(crate) fn lookback_days(self) -> i64 {
+    /// Duration covered by a full 5000-candle window for this timeframe.
+    ///
+    /// Hyperliquid's `candleSnapshot` endpoint returns at most 5000 candles per
+    /// request ([docs](https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/info-endpoint#candle-snapshot)).
+    /// We use this to choose the start time so that we always request the
+    /// maximum useful history per market.
+    pub(crate) fn window_duration(self) -> chrono::Duration {
         match self {
-            Self::FifteenMin => 30,
-            Self::OneHour => 90,
-            Self::OneDay => 365,
-            Self::OneWeek => 365 * 3,
+            Self::FifteenMin => chrono::Duration::minutes(15 * 5000),
+            Self::OneHour => chrono::Duration::hours(5000),
+            Self::OneDay => chrono::Duration::days(5000),
+            Self::OneWeek => chrono::Duration::days(7 * 5000),
         }
     }
 
     pub(crate) fn file_name(self) -> &'static str {
         match self {
             Self::FifteenMin => "ohlcv_15m.csv",
-            Self::OneHour => "ohlcv_1h.csv",
+            Self::OneHour => "ohlcv1h.csv",
             Self::OneDay => "ohlcv_1d.csv",
             Self::OneWeek => "ohlcv_1w.csv",
         }

@@ -7,7 +7,7 @@
 use std::path::Path;
 
 use chrono::{DateTime, Utc};
-use polars::prelude::{DataFrame, IntoLazy, JsonWriter, PolarsError, SerWriter, col, df, lit};
+use polars::prelude::{DataFrame, JsonWriter, PolarsError, SerWriter, df};
 use thiserror::Error;
 use tracing::{debug, instrument};
 
@@ -97,35 +97,6 @@ pub(crate) async fn read_candles_json(
     Ok(Some(buffer))
 }
 
-pub(crate) fn get_last_timestamp_for_symbol(
-    df: Option<&DataFrame>,
-    symbol: &str,
-) -> Option<DateTime<Utc>> {
-    let df = df?;
-
-    let filtered = df
-        .clone()
-        .lazy()
-        .filter(col("symbol").eq(lit(symbol)))
-        .select([col("timestamp").max()])
-        .collect()
-        .ok()?;
-
-    let ts_col = filtered.column("timestamp").ok()?;
-
-    // Handle both ISO 8601 strings (legacy Python format) and i64 milliseconds
-    if let Ok(str_col) = ts_col.str() {
-        let ts_str = str_col.get(0)?;
-        DateTime::parse_from_rfc3339(ts_str)
-            .ok()
-            .map(|dt| dt.with_timezone(&Utc))
-    } else if let Ok(i64_col) = ts_col.i64() {
-        DateTime::from_timestamp_millis(i64_col.get(0)?)
-    } else {
-        None
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -170,7 +141,7 @@ mod tests {
         ) {
             let df = df! {
                 "timestamp" => &[ts1, ts2],
-                "symbol" => &["BTC", "BTC"],
+                "ticker" => &["BTC", "BTC"],
             }.unwrap();
 
             let last = get_last_timestamp_for_symbol(Some(&df), "BTC");
@@ -230,7 +201,7 @@ mod tests {
     fn get_last_timestamp_returns_none_for_missing_symbol() {
         let df = df! {
             "timestamp" => &[1_704_067_200_000_i64],
-            "symbol" => &["BTC"],
+            "ticker" => &["BTC"],
         }
         .unwrap();
 

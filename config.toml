@@ -1,0 +1,25 @@
+port = 8000
+
+# Directory where OHLCV and funding CSV files will be stored.
+# Example outputs:
+# - ohlcv_15m.csv
+# - ohlcv_1h.csv
+# - ohlcv_1d.csv
+# - ohlcv_1w.csv
+data_dir = "data"
+
+# SQLite database URL used for ingestion CQRS state and job queue.
+# This matches the default used in the Nix/dev environment.
+database_url = "sqlite:./moneymentum.db"
+
+# Base URL for the Hyperliquid API.
+# Use the production endpoint unless you explicitly need a sandbox.
+hyperliquid_base_url = "https://api.hyperliquid.xyz"
+
+# Log level for the Rust backend.
+# One of: "trace", "debug", "info", "warn", "error".
+log_level = "info"
+
+# Concurrency and retry settings for Hyperliquid requests.
+max_concurrent_requests = 1
+max_retries = 5             # чтобы Rust терпеливо ретраил 429

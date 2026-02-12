@@ -53,7 +53,7 @@ impl Timeframe {
     pub(crate) fn file_name(self) -> &'static str {
         match self {
             Self::FifteenMin => "ohlcv_15m.csv",
-            Self::OneHour => "ohlcv_1h.csv",
+            Self::OneHour => "ohlcv1h.csv",
             Self::OneDay => "ohlcv_1d.csv",
             Self::OneWeek => "ohlcv_1w.csv",
         }

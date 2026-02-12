@@ -525,7 +525,7 @@ mod tests {
 
         ingester.ingest(data_dir.path()).await.unwrap();
 
-        let csv_path = data_dir.path().join("funding_rate_1h.csv");
+        let csv_path = data_dir.path().join("funding_rate1h.csv");
         assert!(csv_path.exists(), "CSV file should be created");
 
         assert!(logs_contain_at(
@@ -656,8 +656,8 @@ mod tests {
     async fn funding_ingester_merges_with_legacy_python_format() {
         // Copy fixture (legacy format from Python pipeline) to temp dir
         let data_dir = TempDir::new().unwrap();
-        let fixture = std::path::Path::new("fixtures/funding_rate_1h.csv");
-        let target = data_dir.path().join("funding_rate_1h.csv");
+        let fixture = std::path::Path::new("fixtures/funding_rate1h.csv");
+        let target = data_dir.path().join("funding_rate1h.csv");
         std::fs::copy(fixture, &target).unwrap();
 
         // Ingest new funding rates (should merge with existing legacy data)
@@ -683,7 +683,7 @@ mod tests {
         ingester.ingest(data_dir.path()).await.unwrap();
 
         let csv_content =
-            std::fs::read_to_string(data_dir.path().join("funding_rate_1h.csv")).unwrap();
+            std::fs::read_to_string(data_dir.path().join("funding_rate1h.csv")).unwrap();
         let header = csv_content.lines().next().unwrap();
 
         assert_eq!(

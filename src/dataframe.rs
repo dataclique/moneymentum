@@ -7,8 +7,8 @@
 use std::path::PathBuf;
 
 use polars::prelude::{
-    CsvReader, CsvWriter, DataFrame, IntoLazy, PlSmallStr, PolarsError, Selector, SerReader,
-    SerWriter, SortMultipleOptions, UniqueKeepStrategy, col,
+    CsvReader, CsvWriter, DataFrame, IntoLazy, NamedFrom, PlSmallStr, PolarsError, Selector,
+    SerReader, SerWriter, SortMultipleOptions, UniqueKeepStrategy, col,
 };
 use thiserror::Error;
 use tracing::{debug, instrument};

@@ -61,7 +61,7 @@ pub(crate) async fn funding_rates_to_dataframe(
 }
 
 pub(crate) fn file_name() -> &'static str {
-    "funding_rate_1h.csv"
+    "funding_rate1h.csv"
 }
 
 #[cfg(test)]

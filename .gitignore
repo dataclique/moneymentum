@@ -15,4 +15,3 @@
 *.db-shm
 *.db-wal
 /.venv
-/yang

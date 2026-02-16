@@ -258,7 +258,7 @@ impl<H: ?Sized + Hyperliquid> CandleIngester<H> {
         // existing data for the start time and request a 5000-candle window
         // ending at "now". Any overlap with existing data is handled by
         // merge_and_deduplicate.
-        let start_for_all_markets = Utc::now() - timeframe.window_duration();
+        let start_for_all_markets = Utc::now() - timeframe.window_duration(MAX_HISTORY_ENTRIES);
 
         let market_starts: Vec<(Market, DateTime<Utc>)> = markets
             .iter()

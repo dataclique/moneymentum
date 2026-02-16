@@ -5,8 +5,6 @@
 //! back (3 years for weekly). This balances storage costs against analytical
 //! utility - higher-frequency data is most relevant for recent periods.
 
-use crate::hyperliquid::MAX_HISTORY_ENTRIES;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Timeframe {
     FifteenMin,
@@ -35,18 +33,16 @@ impl Timeframe {
         }
     }
 
-    /// Duration covered by a full window of historical candles for this timeframe.
+    /// Duration covered by a window of `max_entries` candles for this timeframe.
     ///
-    /// Hyperliquid's `candleSnapshot` endpoint returns at most 5000 candles per
-    /// request ([docs](https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/info-endpoint#candle-snapshot)).
-    /// We use this to choose the start time so that we always request the
-    /// maximum useful history per market.
-    pub(crate) fn window_duration(self) -> chrono::Duration {
+    /// Callers (e.g. exchange adapters) pass their API's maximum history size;
+    /// this keeps the domain independent of any specific data source.
+    pub(crate) fn window_duration(self, max_entries: i64) -> chrono::Duration {
         match self {
-            Self::FifteenMin => chrono::Duration::minutes(15 * MAX_HISTORY_ENTRIES),
-            Self::OneHour => chrono::Duration::hours(MAX_HISTORY_ENTRIES),
-            Self::OneDay => chrono::Duration::days(MAX_HISTORY_ENTRIES),
-            Self::OneWeek => chrono::Duration::days(7 * MAX_HISTORY_ENTRIES),
+            Self::FifteenMin => chrono::Duration::minutes(15 * max_entries),
+            Self::OneHour => chrono::Duration::hours(max_entries),
+            Self::OneDay => chrono::Duration::days(max_entries),
+            Self::OneWeek => chrono::Duration::days(7 * max_entries),
         }
     }
 
@@ -89,8 +85,18 @@ mod tests {
 
     #[test]
     fn window_duration_increases_with_granularity() {
-        assert!(Timeframe::FifteenMin.window_duration() < Timeframe::OneHour.window_duration());
-        assert!(Timeframe::OneHour.window_duration() < Timeframe::OneDay.window_duration());
-        assert!(Timeframe::OneDay.window_duration() < Timeframe::OneWeek.window_duration());
+        let max_entries = 5000_i64;
+        assert!(
+            Timeframe::FifteenMin.window_duration(max_entries)
+                < Timeframe::OneHour.window_duration(max_entries)
+        );
+        assert!(
+            Timeframe::OneHour.window_duration(max_entries)
+                < Timeframe::OneDay.window_duration(max_entries)
+        );
+        assert!(
+            Timeframe::OneDay.window_duration(max_entries)
+                < Timeframe::OneWeek.window_duration(max_entries)
+        );
     }
 }

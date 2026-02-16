@@ -1,3 +1,4 @@
+mod beta;
 mod candle;
 mod dataframe;
 mod finance;
@@ -137,6 +138,37 @@ async fn get_ingestion_status(
     Ok(Json(status))
 }
 
+#[derive(Debug, Deserialize)]
+struct BetaRequest {
+    weights: std::collections::HashMap<String, f64>,
+    benchmark: String,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct BetaResponse {
+    beta: Option<f64>,
+}
+
+#[post("/api/beta", data = "<body>")]
+async fn post_beta(
+    config: &State<Config>,
+    body: Json<BetaRequest>,
+) -> Result<Json<BetaResponse>, Status> {
+    let weights: Vec<(String, f64)> = {
+        let mut w: Vec<_> = body.weights.iter().map(|(k, v)| (k.clone(), *v)).collect();
+        w.sort_by(|a, b| a.0.cmp(&b.0));
+        w
+    };
+    match beta::main(&config.data_dir, &weights, &body.benchmark).await {
+        Ok(Some(b)) => Ok(Json(BetaResponse { beta: Some(b) })),
+        Ok(None) => Ok(Json(BetaResponse { beta: None })),
+        Err(err) => {
+            error!(error = %err, "beta calculation failed");
+            Err(Status::InternalServerError)
+        }
+    }
+}
+
 pub async fn rocket(
     config: Config,
 ) -> Result<Rocket<rocket::Build>, Box<dyn std::error::Error + Send + Sync>> {
@@ -235,7 +267,13 @@ pub async fn rocket(
         .manage(job_queue)
         .mount(
             "/",
-            routes![health, get_candles, start_ingestion, get_ingestion_status],
+            routes![
+                health,
+                get_candles,
+                start_ingestion,
+                get_ingestion_status,
+                post_beta
+            ],
         ))
 }
 

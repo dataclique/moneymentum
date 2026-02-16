@@ -16,6 +16,7 @@ import { useState, useEffect, useCallback } from "react"
 import { useNetwork } from "@/hooks/useNetwork"
 
 import { usePortfolioState } from "./hooks/usePortfolioState"
+import { useBeta } from "./hooks/useBeta"
 import { AllocationBar } from "./components/AllocationBar"
 import { TokenCard } from "./components/TokenCard"
 import { TokenPickerDialog } from "./components/TokenPickerDialog"
@@ -60,7 +61,6 @@ const PortfolioPage = () => {
     remainingPercent,
     blockingReasons,
     leverageLimitsMap,
-    netExposure,
     disableSubmit,
     isRebalancing,
     isBalanceLoading,
@@ -75,6 +75,8 @@ const PortfolioPage = () => {
     handleCrossAccountLeverageChange,
     handleOpenPositions,
   } = usePortfolioState(isPrecise, isWeightRedistribution)
+
+  const { beta, isLoading: isBetaLoading } = useBeta(activeTokens)
 
   const [leverageInput, setLeverageInput] = useState(() =>
     crossAccountLeverage.toFixed(2),
@@ -232,17 +234,23 @@ const PortfolioPage = () => {
         <div className="sticky bottom-0 bg-background/80 py-3 backdrop-blur mt-auto">
           <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-3">
             <div className="text-sm font-semibold text-muted-foreground">
-              <span>Net Exposure: </span>
-              <span
-                className={twMerge(
-                  clsx(
-                    netExposure > 0 && "text-green-500",
-                    netExposure < 0 && "text-red-500",
-                  ),
-                )}
-              >
-                ${netExposure.toFixed(2)}
-              </span>
+              <span>Beta </span>
+              {isBetaLoading ? (
+                <Skeleton className="inline-block h-4 w-16 align-middle" />
+              ) : beta !== null ? (
+                <span
+                  className={twMerge(
+                    clsx(
+                      beta > 0 && "text-green-500",
+                      beta < 0 && "text-red-500",
+                    ),
+                  )}
+                >
+                  {beta.toFixed(2)}
+                </span>
+              ) : (
+                <span className="text-muted-foreground">—</span>
+              )}
             </div>
             <div className="flex items-center gap-4">
               {/* Cross Account Leverage Slider */}

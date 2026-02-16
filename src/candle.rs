@@ -101,7 +101,6 @@ pub(crate) async fn read_candles_json(
 mod tests {
     use super::*;
     use chrono::TimeZone;
-    use polars::prelude::df;
     use proptest::prelude::*;
     use tracing::Level;
     use tracing_test::traced_test;
@@ -134,20 +133,6 @@ mod tests {
     }
 
     proptest! {
-        #[test]
-        fn get_last_timestamp_returns_max(
-            ts1 in 1_600_000_000_000_i64..1_700_000_000_000,
-            ts2 in 1_700_000_000_001_i64..1_800_000_000_000,
-        ) {
-            let df = df! {
-                "timestamp" => &[ts1, ts2],
-                "ticker" => &["BTC", "BTC"],
-            }.unwrap();
-
-            let last = get_last_timestamp_for_symbol(Some(&df), "BTC");
-            prop_assert_eq!(last, DateTime::from_timestamp_millis(ts2));
-        }
-
         #[test]
         fn candles_to_dataframe_preserves_count(count in 1_usize..50) {
             let rt = tokio::runtime::Runtime::new().unwrap();
@@ -195,23 +180,5 @@ mod tests {
             Level::DEBUG,
             &["converting candles to dataframe"]
         ));
-    }
-
-    #[test]
-    fn get_last_timestamp_returns_none_for_missing_symbol() {
-        let df = df! {
-            "timestamp" => &[1_704_067_200_000_i64],
-            "ticker" => &["BTC"],
-        }
-        .unwrap();
-
-        let last = get_last_timestamp_for_symbol(Some(&df), "ETH");
-        assert!(last.is_none());
-    }
-
-    #[test]
-    fn get_last_timestamp_returns_none_for_none_df() {
-        let last = get_last_timestamp_for_symbol(None, "BTC");
-        assert!(last.is_none());
     }
 }

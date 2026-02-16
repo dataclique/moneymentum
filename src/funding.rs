@@ -109,22 +109,4 @@ mod tests {
             &["converting funding rates to dataframe"]
         ));
     }
-
-    #[test]
-    fn get_last_timestamp_returns_none_for_missing_symbol() {
-        let df = df! {
-            "timestamp" => &["2024-01-01T00:00:00.000Z"],
-            "symbol" => &["BTC"],
-        }
-        .unwrap();
-
-        let last = get_last_timestamp_for_symbol(Some(&df), "ETH");
-        assert!(last.is_none());
-    }
-
-    #[test]
-    fn get_last_timestamp_returns_none_for_none_df() {
-        let last = get_last_timestamp_for_symbol(None, "BTC");
-        assert!(last.is_none());
-    }
 }

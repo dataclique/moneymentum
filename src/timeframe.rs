@@ -33,25 +33,23 @@ impl Timeframe {
         }
     }
 
-    /// Duration covered by a full 5000-candle window for this timeframe.
+    /// Duration covered by a window of `max_entries` candles for this timeframe.
     ///
-    /// Hyperliquid's `candleSnapshot` endpoint returns at most 5000 candles per
-    /// request ([docs](https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/info-endpoint#candle-snapshot)).
-    /// We use this to choose the start time so that we always request the
-    /// maximum useful history per market.
-    pub(crate) fn window_duration(self) -> chrono::Duration {
+    /// Callers (e.g. exchange adapters) pass their API's maximum history size;
+    /// this keeps the domain independent of any specific data source.
+    pub(crate) fn window_duration(self, max_entries: i64) -> chrono::Duration {
         match self {
-            Self::FifteenMin => chrono::Duration::minutes(15 * 5000),
-            Self::OneHour => chrono::Duration::hours(5000),
-            Self::OneDay => chrono::Duration::days(5000),
-            Self::OneWeek => chrono::Duration::days(7 * 5000),
+            Self::FifteenMin => chrono::Duration::minutes(15 * max_entries),
+            Self::OneHour => chrono::Duration::hours(max_entries),
+            Self::OneDay => chrono::Duration::days(max_entries),
+            Self::OneWeek => chrono::Duration::days(7 * max_entries),
         }
     }
 
     pub(crate) fn file_name(self) -> &'static str {
         match self {
             Self::FifteenMin => "ohlcv_15m.csv",
-            Self::OneHour => "ohlcv1h.csv",
+            Self::OneHour => "ohlcv_1h.csv",
             Self::OneDay => "ohlcv_1d.csv",
             Self::OneWeek => "ohlcv_1w.csv",
         }
@@ -86,9 +84,19 @@ mod tests {
     }
 
     #[test]
-    fn lookback_increases_with_granularity() {
-        assert!(Timeframe::FifteenMin.lookback_days() < Timeframe::OneHour.lookback_days());
-        assert!(Timeframe::OneHour.lookback_days() < Timeframe::OneDay.lookback_days());
-        assert!(Timeframe::OneDay.lookback_days() < Timeframe::OneWeek.lookback_days());
+    fn window_duration_increases_with_granularity() {
+        let max_entries = 5000_i64;
+        assert!(
+            Timeframe::FifteenMin.window_duration(max_entries)
+                < Timeframe::OneHour.window_duration(max_entries)
+        );
+        assert!(
+            Timeframe::OneHour.window_duration(max_entries)
+                < Timeframe::OneDay.window_duration(max_entries)
+        );
+        assert!(
+            Timeframe::OneDay.window_duration(max_entries)
+                < Timeframe::OneWeek.window_duration(max_entries)
+        );
     }
 }

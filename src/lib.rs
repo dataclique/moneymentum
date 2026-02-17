@@ -149,19 +149,33 @@ struct BetaResponse {
     beta: Option<f64>,
 }
 
-#[post("/api/beta", data = "<body>")]
+#[post("/beta", data = "<body>")]
 async fn post_beta(
     config: &State<Config>,
     body: Json<BetaRequest>,
 ) -> Result<Json<BetaResponse>, Status> {
+    if body.benchmark.trim().is_empty() {
+        return Err(Status::BadRequest);
+    }
+    if body.weights.is_empty() {
+        return Err(Status::BadRequest);
+    }
+    if body.weights.values().any(|weight| !weight.is_finite()) {
+        return Err(Status::BadRequest);
+    }
+
     let weights: Vec<(String, f64)> = {
-        let mut w: Vec<_> = body.weights.iter().map(|(k, v)| (k.clone(), *v)).collect();
-        w.sort_by(|a, b| a.0.cmp(&b.0));
-        w
+        let mut sorted_weights: Vec<_> = body
+            .weights
+            .iter()
+            .map(|(ticker, weight)| (ticker.clone(), *weight))
+            .collect();
+        sorted_weights.sort_by(|(left_ticker, _), (right_ticker, _)| left_ticker.cmp(right_ticker));
+        sorted_weights
     };
-    match beta::main(&config.data_dir, &weights, &body.benchmark).await {
-        Ok(Some(b)) => Ok(Json(BetaResponse { beta: Some(b) })),
-        Ok(None) => Ok(Json(BetaResponse { beta: None })),
+
+    match beta::compute_portfolio_beta(&config.data_dir, &weights, &body.benchmark).await {
+        Ok(beta) => Ok(Json(BetaResponse { beta })),
         Err(err) => {
             error!(error = %err, "beta calculation failed");
             Err(Status::InternalServerError)

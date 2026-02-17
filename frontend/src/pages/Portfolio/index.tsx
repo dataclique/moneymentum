@@ -234,7 +234,7 @@ const PortfolioPage = () => {
         <div className="sticky bottom-0 bg-background/80 py-3 backdrop-blur mt-auto">
           <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-3">
             <div className="text-sm font-semibold text-muted-foreground">
-              <span>Beta </span>
+              <span>Beta (vs BTC) </span>
               {isBetaLoading ? (
                 <Skeleton className="inline-block h-4 w-16 align-middle" />
               ) : beta !== null ? (

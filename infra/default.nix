@@ -105,10 +105,10 @@ in {
     terraform -chdir=infra apply "$@" tfplan
   '';
 
-  tfDestroy = mkTask "tf-destroy" ''
+  tfImport = mkTask "tf-import" ''
     ${preambleWithEncrypt}
     ${decryptState}
-    terraform -chdir=infra destroy "$@"
+    terraform -chdir=infra import "$@"
   '';
 
   tfEditVars = mkTask "tf-edit-vars" ''

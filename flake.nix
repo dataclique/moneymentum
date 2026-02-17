@@ -141,6 +141,7 @@
                   git
                   ragenix.packages.${system}.default
                   sqlx-cli
+                  doctl
                   infraPkgs.remote
                 ];
 
@@ -209,7 +210,7 @@
           moneymentum-clippy = rustPkgs.clippy;
 
           inherit (infraPkgs)
-            tfInit tfPlan tfApply tfDestroy tfEditVars tfCreateVars bootstrap
+            tfInit tfPlan tfApply tfImport tfEditVars tfCreateVars bootstrap
             remote;
         };
       });

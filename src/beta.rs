@@ -135,14 +135,14 @@ fn build_portfolio_and_benchmark_df(
         };
         let mut row_returns: std::collections::HashMap<String, Option<f64>> =
             std::collections::HashMap::new();
-        for r in 0..log_returns_df.height() {
-            let Some(row_ts) = ts_col.get(r).ok() else {
+        for return_row in 0..log_returns_df.height() {
+            let Some(row_ts) = ts_col.get(return_row).ok() else {
                 continue;
             };
             if row_ts != t {
                 continue;
             }
-            let ticker_str = ticker_col.get(r).ok().and_then(|av| match av {
+            let ticker_str = ticker_col.get(return_row).ok().and_then(|av| match av {
                 AnyValue::String(s) => Some(s.to_string()),
                 _ => None,
             });
@@ -150,7 +150,7 @@ fn build_portfolio_and_benchmark_df(
                 continue;
             };
             let lr = log_return_col
-                .get(r)
+                .get(return_row)
                 .ok()
                 .and_then(|v| v.try_extract::<f64>().ok());
             row_returns.insert(ticker_str, lr);
@@ -168,8 +168,8 @@ fn build_portfolio_and_benchmark_df(
         }
         portfolio.push(if any_null { None } else { Some(sum) });
 
-        let b = row_returns.get(benchmark_ticker).and_then(|v| *v);
-        benchmark.push(b);
+        let beta = row_returns.get(benchmark_ticker).and_then(|v| *v);
+        benchmark.push(beta);
     }
 
     let portfolio_series = Series::new("portfolio_log_return".into(), portfolio);
@@ -212,16 +212,16 @@ fn variance(benchmark: &Series) -> Result<f64, ReturnsError> {
                 .alias("_var"),
         ])
         .collect()?;
-    let v = out
+    let variance = out
         .column("_var")?
         .get(0)
         .ok()
         .and_then(|x| x.try_extract::<f64>().ok())
         .ok_or(ReturnsError::BetaUndefined)?;
-    if v.abs() < 1e-20 {
+    if variance.abs() < 1e-20 {
         return Err(ReturnsError::BetaUndefined);
     }
-    Ok(v)
+    Ok(variance)
 }
 
 /// Portfolio beta from precomputed log returns DataFrame (e.g. from `load_log_returns_last_n_candles`).
@@ -274,7 +274,9 @@ pub async fn main(
 mod tests {
     use super::*;
     use polars::prelude::df;
+    use std::fs;
     use tempfile::TempDir;
+    use tracing_test::traced_test;
 
     #[test]
     fn daily_candles_path_uses_ohlcv_1d() {
@@ -339,5 +341,31 @@ mod tests {
         let weights = [("BTC".to_string(), 1.0)];
         let result = main_with_df(&log_returns_df, &weights, "BTC");
         assert!(matches!(result, Err(ReturnsError::BetaUndefined)));
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn main_matches_manual_beta_for_ohlcv_1d_data() {
+        let tmp_dir = TempDir::new().unwrap();
+        let src = Path::new("fixtures/ohlcv_1d_beta.csv");
+        let dst = tmp_dir.path().join("ohlcv_1d.csv");
+        fs::copy(src, &dst).unwrap();
+
+        // 60% long BTC, 40% short ETH, benchmark BTC
+        let weights = [("BTC".to_string(), 0.6_f64), ("ETH".to_string(), -0.4_f64)];
+
+        let beta = main(tmp_dir.path(), &weights, "BTC")
+            .await
+            .unwrap()
+            .expect("beta defined");
+
+        assert!(
+            (beta - 0.5920917223_f64).abs() < 1e-10,
+            "beta mismatch: got {beta}"
+        );
+        assert!(crate::logs_contain_at(
+            tracing::Level::INFO,
+            &["portfolio beta calculated"]
+        ));
     }
 }

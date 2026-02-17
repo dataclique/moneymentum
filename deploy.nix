@@ -8,9 +8,8 @@ let
   moneymentumPackage = self.packages.${system}.moneymentum;
 
   services = import ./services.nix;
-  enabledServices = builtins.attrNames (builtins.removeAttrs services
-    (builtins.filter (n: !services.${n}.enabled)
-      (builtins.attrNames services)));
+  enabledServices =
+    builtins.attrNames (builtins.filterAttrs (_: v: v.enabled) services);
 
   mkServiceProfile = name:
     let markerFile = "/run/moneymentum/${name}.ready";

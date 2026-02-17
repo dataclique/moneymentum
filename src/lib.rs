@@ -74,6 +74,12 @@ pub struct Config {
 }
 
 impl Config {
+    /// Load configuration from a TOML file on disk.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConfigError::Io`] if the file cannot be read, or
+    /// [`ConfigError::Toml`] if the contents are not valid TOML for [`Config`].
     pub fn load<P: AsRef<Path>>(path: P) -> Result<Self, ConfigError> {
         let content = std::fs::read_to_string(path.as_ref())?;
         Ok(toml::from_str(&content)?)
@@ -91,6 +97,7 @@ pub enum ConfigError {
 type IngestionCqrs = Arc<wire::Cqrs<Ingestion>>;
 type IngestionView = wire::View<Ingestion>;
 type IngestionJobQueue = SqliteStorage<IngestionJob>;
+type QueryDeps = Cons<Ingestion, Nil>;
 
 #[get("/health")]
 fn health() -> &'static str {
@@ -183,6 +190,12 @@ async fn post_beta(
     }
 }
 
+/// Build and configure the Rocket HTTP server for the moneymentum backend.
+///
+/// # Errors
+///
+/// Returns an error if the database connection, migrations, Hyperliquid client,
+/// or Rocket initialization fail.
 pub async fn rocket(
     config: Config,
 ) -> Result<Rocket<rocket::Build>, Box<dyn std::error::Error + Send + Sync>> {
@@ -238,7 +251,6 @@ pub async fn rocket(
         max_concurrent_requests: config.max_concurrent_requests,
     });
 
-    type QueryDeps = Cons<Ingestion, Nil>;
     let unwired = UnwiredQuery::<_, QueryDeps>::new(query);
     let (cqrs, (wired, ())) = wire::CqrsBuilder::<Ingestion>::new(pool)
         .wire(unwired)

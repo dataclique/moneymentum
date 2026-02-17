@@ -128,7 +128,7 @@ impl<T, E: Display> Lifecycle<T, E> {
     /// Apply a transition to a live entity.
     ///
     /// - If Live: applies the transition
-    /// - If Uninitialized: returns Failed with last_valid_state = None
+    /// - If Uninitialized: returns Failed with `last_valid_state` = None
     /// - If Failed: returns self unchanged
     pub(crate) fn transition<Ev, F>(self, event: &Ev, f: F) -> Self
     where
@@ -156,8 +156,8 @@ impl<T, E: Display> Lifecycle<T, E> {
     /// Initialize from an uninitialized state.
     ///
     /// - If Uninitialized: applies the initialization
-    /// - If Failed with last_valid_state = None: was never live, try to init
-    /// - If Live or Failed with last_valid_state: returns Failed (already initialized)
+    /// - If Failed with `last_valid_state` = None: was never live, try to init
+    /// - If Live or Failed with `last_valid_state`: returns Failed (already initialized)
     pub(crate) fn initialize<Ev, F>(self, event: &Ev, f: F) -> Self
     where
         F: FnOnce(&Ev) -> Result<T, LifecycleError<E>>,
@@ -192,8 +192,8 @@ impl<T, E: Display> Lifecycle<T, E> {
     /// Try to initialize if transition failed on uninitialized state.
     ///
     /// - If Live: returns self (transition succeeded)
-    /// - If Failed with last_valid_state = Some: returns self (real error)
-    /// - If Failed with last_valid_state = None: was uninitialized, try to init
+    /// - If Failed with `last_valid_state` = Some: returns self (real error)
+    /// - If Failed with `last_valid_state` = None: was uninitialized, try to init
     /// - If Uninitialized: try to init
     pub(crate) fn or_initialize<Ev, F>(self, event: &Ev, f: F) -> Self
     where

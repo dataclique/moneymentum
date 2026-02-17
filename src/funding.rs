@@ -1,7 +1,7 @@
-//! Funding rate types and conversion to DataFrame.
+//! Funding rate types and conversion to `DataFrame`.
 //!
 //! This module defines the [`FundingRate`] domain type and converts it to a
-//! Polars DataFrame for persistence. Generic DataFrame operations live in
+//! Polars `DataFrame` for persistence. Generic `DataFrame` operations live in
 //! [`crate::dataframe`].
 
 use chrono::{DateTime, Utc};

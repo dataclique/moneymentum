@@ -33,7 +33,7 @@ pub enum ReturnsError {
     BetaUndefined,
 }
 
-/// Portfolio beta from precomputed log returns DataFrame (e.g. from `load_log_returns_last_n_candles`).
+/// Portfolio beta from precomputed log returns `DataFrame` (e.g. from `load_log_returns_last_n_candles`).
 ///
 /// Takes long-format log returns (`timestamp`, `ticker`, `log_return`) and weights,
 /// and returns β = Cov(portfolio, benchmark) / Var(benchmark).
@@ -43,14 +43,24 @@ pub fn compute_beta_from_log_returns(
     benchmark_ticker: &str,
 ) -> Result<Option<f64>, ReturnsError> {
     let pair_df = build_portfolio_and_benchmark_df(log_returns_df, weights, benchmark_ticker)?;
-    let portfolio_log_returns = pair_df
+
+    // Filter once to the common non-null set of observations so covariance
+    // and variance use the exact same rows.
+    let clean_pair_df = pair_df
+        .lazy()
+        .drop_nulls(None)
+        .collect()
+        .map_err(ReturnsError::from)?;
+
+    let portfolio_log_returns = clean_pair_df
         .column("portfolio_log_return")?
         .as_materialized_series()
         .clone();
-    let benchmark_series = pair_df
+    let benchmark_series = clean_pair_df
         .column("benchmark_log_return")?
         .as_materialized_series()
         .clone();
+
     let cov = covariance(&portfolio_log_returns, &benchmark_series)?;
     let var_b = variance(&benchmark_series)?;
     let beta = cov / var_b;
@@ -87,7 +97,7 @@ fn daily_candles_path(data_dir: &Path) -> std::path::PathBuf {
 }
 
 /// Filters to tickers in `weights` and `benchmark_ticker`, keeps last `lookback` timestamps,
-/// computes log returns. Returns DataFrame with columns: `timestamp`, `ticker`, `close`, `log_return`.
+/// computes log returns. Returns `DataFrame` with columns: `timestamp`, `ticker`, `close`, `log_return`.
 fn load_log_returns_last_n_candles(
     df: &DataFrame,
     weights: &[(String, f64)],
@@ -130,7 +140,7 @@ fn load_log_returns_last_n_candles(
     compute_log_returns(&windowed).map_err(ReturnsError::from)
 }
 
-/// Synchronous core: sort by ticker and timestamp, then add log_return per group.
+/// Synchronous core: sort by ticker and timestamp, then add `log_return` per group.
 fn compute_log_returns(df: &DataFrame) -> Result<DataFrame, PolarsError> {
     let sorted = df
         .clone()
@@ -158,8 +168,8 @@ fn compute_log_returns(df: &DataFrame) -> Result<DataFrame, PolarsError> {
     Ok(out)
 }
 
-/// Builds a DataFrame with columns `portfolio_log_return` and `benchmark_log_return`
-/// from long-format log returns (timestamp, ticker, log_return) and weighted portfolio.
+/// Builds a `DataFrame` with columns `portfolio_log_return` and `benchmark_log_return`
+/// from long-format log returns (timestamp, ticker, `log_return`) and weighted portfolio.
 /// Rows are aligned by timestamp; null where any required ticker is missing.
 fn build_portfolio_and_benchmark_df(
     log_returns_df: &DataFrame,
@@ -231,13 +241,12 @@ fn build_portfolio_and_benchmark_df(
         .map_err(ReturnsError::from)
 }
 
-/// Covariance of two return series (nulls dropped). Cov(P, B) = E[(P - μ_P)(B - μ_B)].
+/// Covariance of two return series. `Cov(P, B) = E[(P - μ_P)(B - μ_B)]`.
 fn covariance(portfolio: &Series, benchmark: &Series) -> Result<f64, ReturnsError> {
     let df = DataFrame::new(vec![portfolio.clone().into(), benchmark.clone().into()])
         .map_err(ReturnsError::from)?;
     let out = df
         .lazy()
-        .drop_nulls(None)
         .select([
             ((col("portfolio_log_return") - col("portfolio_log_return").mean())
                 * (col("benchmark_log_return") - col("benchmark_log_return").mean()))
@@ -252,12 +261,11 @@ fn covariance(portfolio: &Series, benchmark: &Series) -> Result<f64, ReturnsErro
         .ok_or(ReturnsError::BetaUndefined)
 }
 
-/// Variance of a return series (nulls dropped). Var(B) = E[(B - μ_B)²].
+/// Variance of a return series. `Var(B) = E[(B - μ_B)²]`.
 fn variance(benchmark: &Series) -> Result<f64, ReturnsError> {
     let df = DataFrame::new(vec![benchmark.clone().into()]).map_err(ReturnsError::from)?;
     let out = df
         .lazy()
-        .drop_nulls(None)
         .select([
             (col("benchmark_log_return") - col("benchmark_log_return").mean())
                 .pow(lit(2))
@@ -372,7 +380,7 @@ mod tests {
             .expect("beta defined");
 
         assert!(
-            (beta - 0.5920917223_f64).abs() < 1e-10,
+            (beta - 0.592_091_722_3_f64).abs() < 1e-10,
             "beta mismatch: got {beta}"
         );
         assert!(crate::logs_contain_at(

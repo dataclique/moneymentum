@@ -1,7 +1,7 @@
-//! OHLCV candle types and conversion to DataFrame.
+//! OHLCV candle types and conversion to `DataFrame`.
 //!
 //! This module defines the [`Candle`] domain type and converts it to a Polars
-//! DataFrame for persistence. Generic DataFrame operations (read/write/merge)
+//! `DataFrame` for persistence. Generic `DataFrame` operations (read/write/merge)
 //! live in [`crate::dataframe`].
 
 use std::path::Path;

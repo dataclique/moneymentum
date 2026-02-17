@@ -1,4 +1,4 @@
-//! Generic async DataFrame persistence with Polars.
+//! Generic async `DataFrame` persistence with Polars.
 //!
 //! Polars operations are synchronous and CPU-bound. This module wraps them in
 //! `spawn_blocking` to avoid blocking the async runtime. All functions take
@@ -54,7 +54,7 @@ pub(crate) async fn write_csv(path: PathBuf, mut df: DataFrame) -> Result<(), Da
     .await?
 }
 
-/// Merges DataFrames and deduplicates by (timestamp, symbol).
+/// Merges `DataFrames` and deduplicates by (timestamp, symbol).
 ///
 /// Keeps the last occurrence when duplicates exist, then sorts by timestamp
 /// and symbol ascending. This enables incremental ingestion: new data with

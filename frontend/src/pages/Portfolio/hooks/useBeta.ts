@@ -79,7 +79,6 @@ export const useBeta = (tokens: TokenAllocation[]) => {
   // Log failures to aid debugging in dev without changing UI behavior.
   useEffect(() => {
     if (query.error) {
-      // eslint-disable-next-line no-console
       console.error("Failed to fetch portfolio beta", {
         error: query.error,
         weightsKey,

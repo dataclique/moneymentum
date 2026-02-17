@@ -1,4 +1,4 @@
-{ pkgs, lib, modulesPath, ... }:
+{ pkgs, lib, modulesPath, frontend, ... }:
 
 let
   inherit (import ./keys.nix) roles;
@@ -88,13 +88,29 @@ in {
         PermitRootLogin = "prohibit-password";
       };
     };
+
+    nginx = {
+      enable = true;
+      virtualHosts.default = {
+        default = true;
+        root = "${frontend}";
+
+        locations = {
+          "/".tryFiles = "$uri $uri/ /index.html";
+          "/api/" = { proxyPass = "http://127.0.0.1:8000/"; };
+        };
+      };
+    };
   };
 
   users.users.root.openssh.authorizedKeys.keys = roles.ssh;
 
   networking.firewall = {
     enable = true;
-    allowedTCPPorts = [ 22 ];
+    allowedTCPPorts = [
+      22 # SSH
+      80 # Frontend
+    ];
   };
 
   fileSystems."/mnt/data" = {

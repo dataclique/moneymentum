@@ -27,13 +27,18 @@
     nixos-anywhere.inputs.nixpkgs.follows = "nixpkgs";
 
     deploy-rs.url = "github:serokell/deploy-rs";
+
+    bun2nix.url = "github:nix-community/bun2nix?tag=2.0.7";
+    bun2nix.inputs.nixpkgs.follows = "nixpkgs";
   };
 
   outputs = { self, nixpkgs, flake-utils, git-hooks, devenv, rust-overlay, crane
-    , ragenix, disko, nixos-anywhere, deploy-rs, ... }@inputs:
+    , ragenix, disko, nixos-anywhere, deploy-rs, bun2nix, ... }@inputs:
     {
       nixosConfigurations.moneymentum = nixpkgs.lib.nixosSystem {
         system = "x86_64-linux";
+        specialArgs.frontend = self.packages.x86_64-linux.frontend;
+
         modules =
           [ disko.nixosModules.disko ragenix.nixosModules.default ./os.nix ];
       };
@@ -221,6 +226,10 @@
           default = rustPkgs.package;
           moneymentum = rustPkgs.package;
           moneymentum-clippy = rustPkgs.clippy;
+
+          frontend = pkgs.callPackage ./frontend {
+            bun2nix = bun2nix.packages.${system}.default;
+          };
 
           resolveIp = pkgs.writeShellApplication {
             name = "resolve-ip";

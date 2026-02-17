@@ -2,7 +2,7 @@ name: Deploy
 
 on:
   push:
-    branches: [master]
+    branches: [master, fix/reenable-deployments]
   workflow_dispatch:
 
 concurrency:

@@ -1,6 +1,38 @@
 { pkgs, lib, modulesPath, ... }:
 
-let inherit (import ./keys.nix) roles;
+let
+  inherit (import ./keys.nix) roles;
+
+  services = import ./services.nix;
+  enabledServices = lib.filterAttrs (_: v: v.enabled) services;
+
+  mkService = name: cfg:
+    let
+      path = "/nix/var/nix/profiles/per-service/${name}/bin/${cfg.bin}";
+      configFile = ./config/${name}.toml;
+    in {
+      description = "moneymentum ${cfg.bin} (${name})";
+
+      wantedBy = [ ];
+
+      restartIfChanged = false;
+      stopIfChanged = false;
+
+      unitConfig = {
+        "X-OnlyManualStart" = true;
+        ConditionPathExists = "/run/moneymentum/${name}.ready";
+      };
+
+      serviceConfig = {
+        DynamicUser = true;
+        SupplementaryGroups = [ "moneymentum" ];
+        ExecStart = "${path} --config ${configFile}";
+        Restart = "always";
+        RestartSec = 5;
+        ReadWritePaths = [ "/mnt/data" ];
+      };
+    };
+
 in {
   imports = [
     (modulesPath + "/virtualisation/digital-ocean-config.nix")
@@ -84,7 +116,13 @@ in {
     };
   };
 
+  users.groups.moneymentum = { };
   programs.bash.interactiveShellInit = "set -o vi";
+
+  systemd.services = lib.mapAttrs mkService enabledServices;
+
+  system.activationScripts.per-service-profiles.text =
+    "mkdir -p /nix/var/nix/profiles/per-service";
 
   environment.systemPackages = with pkgs; [
     bat

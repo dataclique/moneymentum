@@ -170,8 +170,8 @@ in {
           | awk '{print $1 " " $2}'
       )
 
-      ${pkgs.gnused}/bin/sed -i \
-        's|host = "ssh-ed25519 [^"]*";|host = "'"$new_key"'";|' \
+      ${pkgs.gnused}/bin/sed -i -z \
+        's|host =\n      "ssh-ed25519 [^"]*";|host =\n      "'"$new_key"'";|' \
         keys.nix
 
       echo "Updated host key in keys.nix, rekeying secrets..."

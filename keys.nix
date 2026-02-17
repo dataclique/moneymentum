@@ -5,7 +5,7 @@ rec {
     ci =
       "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHww2/XOFuvQONtwbJF5SFWtKazncH82P7iUmWw1duc6";
     host =
-      "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILEpgOaoeZ+S6gOOQNF2eBZS9vEUmKDSS0A/cWH7i4HD";
+      "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKt/inM5lJz+CjhIkNEn5p7Ojb1uyshlZ57UfGRSJwIj root@moneymentum-nixos";
   };
 
   roles = {

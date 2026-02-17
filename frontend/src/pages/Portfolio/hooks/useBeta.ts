@@ -54,6 +54,8 @@ const fetchBeta = async (
 ): Promise<BetaResponse> => {
   const res = await fetch("/beta", {
     method: "POST",
+    // Abort the request if the backend is unresponsive for too long.
+    signal: AbortSignal.timeout(10_000),
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ weights, benchmark }),
   })
@@ -63,12 +65,15 @@ const fetchBeta = async (
 
 export const useBeta = (tokens: TokenAllocation[]) => {
   const weights = weightsFromTokens(tokens)
+  const weightsKey = weightsQueryKey(weights)
   const hasTokens = tokens.length > 0 && Object.keys(weights).length > 0
 
   const query = useQuery({
-    queryKey: ["beta", weightsQueryKey(weights), BETA_BENCHMARK] as const,
+    queryKey: ["beta", weightsKey, BETA_BENCHMARK] as const,
     queryFn: () => fetchBeta(weights, BETA_BENCHMARK),
     enabled: hasTokens,
+    // Retry a couple of times on transient failures.
+    retry: 2,
   })
 
   // Log failures to aid debugging in dev without changing UI behavior.
@@ -77,11 +82,11 @@ export const useBeta = (tokens: TokenAllocation[]) => {
       // eslint-disable-next-line no-console
       console.error("Failed to fetch portfolio beta", {
         error: query.error,
-        weights,
+        weightsKey,
         benchmark: BETA_BENCHMARK,
       })
     }
-  }, [query.error, weights])
+  }, [query.error, weightsKey])
 
   return {
     beta: query.data?.beta ?? null,

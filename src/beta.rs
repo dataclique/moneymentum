@@ -67,8 +67,7 @@ pub async fn compute_portfolio_beta(
     benchmark_ticker: &str,
 ) -> Result<Option<f64>, ReturnsError> {
     let path = daily_candles_path(data_dir);
-    let path_buf = path.clone();
-    let df = crate::dataframe::read_csv(path_buf).await?;
+    let df = crate::dataframe::read_csv(path.clone()).await?;
     let Some(df) = df else {
         return Err(ReturnsError::NoData { path: path.clone() });
     };
@@ -201,9 +200,7 @@ fn build_portfolio_and_benchmark_df(
             .ok()
             .and_then(|v| v.try_extract::<f64>().ok());
 
-        let entry = returns_by_timestamp
-            .entry(timestamp)
-            .or_insert_with(HashMap::new);
+        let entry = returns_by_timestamp.entry(timestamp).or_default();
         entry.insert(ticker, log_return);
     }
 

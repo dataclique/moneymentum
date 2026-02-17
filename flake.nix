@@ -222,6 +222,15 @@
           moneymentum = rustPkgs.package;
           moneymentum-clippy = rustPkgs.clippy;
 
+          resolveIp = pkgs.writeShellApplication {
+            name = "resolve-ip";
+            runtimeInputs = infraPkgs.buildInputs;
+            text = ''
+              ${infraPkgs.resolveIp}
+              echo "$host_ip"
+            '';
+          };
+
           inherit (infraPkgs)
             tfInit tfPlan tfApply tfImport tfEditVars tfCreateVars bootstrap
             remote;

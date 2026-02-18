@@ -219,7 +219,6 @@
             inherit hooks;
             src = self;
           };
-          inherit (rustPkgs) clippy;
         };
         packages = {
           devenv-up = devShell.config.procfileScript;

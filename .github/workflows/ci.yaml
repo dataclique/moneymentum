@@ -1,5 +1,8 @@
-name: CI
-on: [push]
+name: CI/CD
+
+on:
+  push:
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.ref }}-ci
@@ -10,12 +13,28 @@ permissions:
   contents: read
 
 jobs:
-  rust:
+  hooks:
     runs-on: ubuntu-latest
     steps:
       - name: Free disk space
         uses: jlumbroso/free-disk-space@v1.3.1
 
+      - uses: actions/checkout@v4
+
+      - uses: DeterminateSystems/nix-installer-action@main
+        with:
+          extra-conf: accept-flake-config = true
+
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+
+      - name: Pre-commit hooks
+        # prek (not pre-commit): git-hooks.nix installs hooks as `prek` to avoid
+        # colliding with the pre-commit binary from the pre-commit package.
+        run: nix develop --impure -c prek run --all-files
+
+  rust:
+    runs-on: ubuntu-latest
+    steps:
       - uses: actions/checkout@v4
 
       - uses: DeterminateSystems/nix-installer-action@main
@@ -30,12 +49,9 @@ jobs:
       - name: Clippy
         run: nix build .#moneymentum-clippy
 
-  frontend:
+  frontend-check:
     runs-on: ubuntu-latest
     steps:
-      - name: Free disk space
-        uses: jlumbroso/free-disk-space@v1.3.1
-
       - uses: actions/checkout@v4
 
       - uses: DeterminateSystems/nix-installer-action@main
@@ -52,7 +68,26 @@ jobs:
         # --impure required: devenv uses impure features for caching and local state
         run: nix develop .#frontend --impure -c bash -c "cd frontend && bun run test --run"
 
-  flake-check:
+  frontend-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: DeterminateSystems/nix-installer-action@main
+        with:
+          extra-conf: accept-flake-config = true
+
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+
+      - name: Build frontend
+        run: nix build .#packages.x86_64-linux.frontend
+
+  deploy:
+    if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/fix/broken-cd'
+    needs: [hooks, rust, frontend-check, frontend-build]
+    concurrency:
+      group: deploy
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     steps:
       - name: Free disk space
@@ -62,10 +97,29 @@ jobs:
 
       - uses: DeterminateSystems/nix-installer-action@main
         with:
-          extra-conf: accept-flake-config = true
+          extra-conf: |
+            accept-flake-config = true
+            fallback = true
 
       - uses: DeterminateSystems/magic-nix-cache-action@main
 
       - name: Flake checks
         # --impure required: devenv devShells use impure features
         run: nix flake check --impure
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+
+      - name: Resolve and mask host IP
+        run: |
+          host_ip=$(nix run .#resolveIp)
+          echo "::add-mask::$host_ip"
+          host_key=$(nix eval --raw --file keys.nix keys.host)
+          echo "$host_ip $host_key" > ~/.ssh/known_hosts
+
+      - name: Deploy
+        # --skip-checks: CI jobs above already validate everything
+        run: nix run .#deployAll -- --skip-checks

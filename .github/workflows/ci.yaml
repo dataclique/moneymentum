@@ -30,7 +30,7 @@ jobs:
         # --impure required: devenv devShells use impure features
         run: nix flake check --impure
 
-  rust:
+  backend:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -49,7 +49,7 @@ jobs:
       - name: Clippy
         run: nix build .#moneymentum-clippy
 
-  frontend-check:
+  frontend:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -62,28 +62,15 @@ jobs:
 
       - uses: DeterminateSystems/magic-nix-cache-action@main
 
-      - name: Lint frontend
+      - name: Lint
         # --impure required: devenv uses impure features for caching and local state
         run: nix develop .#frontend --impure -c bash -c "cd frontend && bun run lint"
 
-      - name: Run frontend tests
+      - name: Test
         # --impure required: devenv uses impure features for caching and local state
         run: nix develop .#frontend --impure -c bash -c "cd frontend && bun run test --run"
 
-  frontend-build:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: DeterminateSystems/nix-installer-action@main
-        with:
-          extra-conf: |
-            accept-flake-config = true
-            fallback = true
-
-      - uses: DeterminateSystems/magic-nix-cache-action@main
-
-      - name: Build frontend
+      - name: Build
         run: nix build .#packages.x86_64-linux.frontend
 
   # Runs in parallel with CI jobs to warm the GH Actions cache with NixOS
@@ -111,7 +98,7 @@ jobs:
 
   deploy:
     if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/fix/broken-cd'
-    needs: [hooks, rust, frontend-check, frontend-build, deploy-prep]
+    needs: [hooks, backend, frontend, deploy-prep]
     concurrency:
       group: deploy
       cancel-in-progress: false

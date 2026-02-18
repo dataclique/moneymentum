@@ -117,6 +117,7 @@ jobs:
       - name: Setup SSH
         run: |
           mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
           echo "${{ secrets.SSH_KEY }}" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
 
@@ -130,3 +131,7 @@ jobs:
       - name: Deploy
         # --skip-checks: CI jobs above already validate everything
         run: nix run .#deployAll -- --skip-checks
+
+      - name: Cleanup SSH
+        if: always()
+        run: rm -rf ~/.ssh/id_ed25519

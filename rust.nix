@@ -11,6 +11,14 @@ let
       || (pkgs.lib.hasPrefix (toString ./migrations) path);
   };
 
+  # Cargo manifests only — deps derivation hash changes only when dependencies change
+  depsSrc = pkgs.lib.cleanSourceWith {
+    src = ./.;
+    filter = path: type:
+      let base = builtins.baseNameOf path;
+      in type == "directory" || base == "Cargo.toml" || base == "Cargo.lock";
+  };
+
   # Vendor cargo deps with git dependency hashes
   baseVendorDir = craneLib.vendorCargoDeps {
     inherit src;
@@ -65,7 +73,7 @@ let
     DATABASE_URL = "sqlite::memory:";
   };
 
-  cargoArtifacts = craneLib.buildDepsOnly commonArgs;
+  cargoArtifacts = craneLib.buildDepsOnly (commonArgs // { src = depsSrc; });
 
 in {
   package = craneLib.buildPackage (commonArgs // {

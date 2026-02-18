@@ -174,6 +174,11 @@ in {
         's|host =\n      "ssh-ed25519 [^"]*";|host =\n      "'"$new_key"'";|' \
         keys.nix
 
+      if ! grep -q "$new_key" keys.nix; then
+        echo "ERROR: host key replacement in keys.nix failed" >&2
+        exit 1
+      fi
+
       echo "Updated host key in keys.nix, rekeying secrets..."
       ragenix --rules ./config/secrets.nix -i "$identity" -r
     '';

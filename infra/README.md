@@ -8,6 +8,7 @@ Terraform + NixOS on DigitalOcean. State is encrypted at rest
 ```bash
 nix run .#tfPlan          # Preview changes
 nix run .#tfApply         # Apply the plan
+nix run .#tfImport        # Import existing resource into state
 nix run .#bootstrap       # Install NixOS on a fresh droplet (nixos-anywhere)
 nix run .#remote          # SSH into the droplet
 nix run .#tfEditVars      # Edit encrypted tfvars

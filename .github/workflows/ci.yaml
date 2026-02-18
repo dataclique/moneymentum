@@ -20,7 +20,9 @@ jobs:
 
       - uses: DeterminateSystems/nix-installer-action@main
         with:
-          extra-conf: accept-flake-config = true
+          extra-conf: |
+            accept-flake-config = true
+            fallback = true
 
       - uses: DeterminateSystems/magic-nix-cache-action@main
 
@@ -36,7 +38,9 @@ jobs:
 
       - uses: DeterminateSystems/nix-installer-action@main
         with:
-          extra-conf: accept-flake-config = true
+          extra-conf: |
+            accept-flake-config = true
+            fallback = true
 
       - uses: DeterminateSystems/magic-nix-cache-action@main
 
@@ -53,7 +57,9 @@ jobs:
 
       - uses: DeterminateSystems/nix-installer-action@main
         with:
-          extra-conf: accept-flake-config = true
+          extra-conf: |
+            accept-flake-config = true
+            fallback = true
 
       - uses: DeterminateSystems/magic-nix-cache-action@main
 
@@ -72,7 +78,9 @@ jobs:
 
       - uses: DeterminateSystems/nix-installer-action@main
         with:
-          extra-conf: accept-flake-config = true
+          extra-conf: |
+            accept-flake-config = true
+            fallback = true
 
       - uses: DeterminateSystems/magic-nix-cache-action@main
 

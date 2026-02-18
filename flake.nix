@@ -241,7 +241,7 @@
           };
 
           inherit (infraPkgs)
-            tfInit tfPlan tfApply tfImport tfEditVars tfCreateVars tfRekey
+            tfInit tfPlan tfApply tfImport tfEditVars tfCreateVars tfRekey rekey
             bootstrap remote;
           inherit (deployPkgs) deployNixos deployService deployAll;
         };

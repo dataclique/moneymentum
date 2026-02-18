@@ -79,6 +79,16 @@ let
 in {
   inherit buildInputs parseIdentity resolveIp;
 
+  rekey = mkTask "rekey" ''
+    ${parseIdentity}
+    ${decryptState}
+    ${encryptState}
+    ${decryptVars}
+    ${encryptVars}
+    ${cleanup}
+    ragenix --rules ./config/secrets.nix -i "$identity" -r
+  '';
+
   tfRekey = mkTask "tf-rekey" ''
     ${parseIdentity}
     ${decryptState}

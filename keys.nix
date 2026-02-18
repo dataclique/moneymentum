@@ -11,8 +11,8 @@ rec {
   };
 
   roles = with keys; {
-    infra = [ gleb lev ];
-    service = [ gleb lev ];
+    infra = [ ci gleb ];
+    service = [ host gleb lev ];
     ssh = [ ci gleb lev ];
   };
 }

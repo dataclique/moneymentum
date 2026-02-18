@@ -84,9 +84,6 @@ jobs:
     if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/fix/broken-cd'
     runs-on: ubuntu-latest
     steps:
-      - name: Free disk space
-        uses: jlumbroso/free-disk-space@v1.3.1
-
       - uses: actions/checkout@v4
 
       - uses: DeterminateSystems/nix-installer-action@main
@@ -112,9 +109,6 @@ jobs:
       cancel-in-progress: false
     runs-on: ubuntu-latest
     steps:
-      - name: Free disk space
-        uses: jlumbroso/free-disk-space@v1.3.1
-
       - uses: actions/checkout@v4
 
       - uses: DeterminateSystems/nix-installer-action@main

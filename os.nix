@@ -137,6 +137,9 @@ in {
 
   systemd.services = lib.mapAttrs mkService enabledServices;
 
+  system.activationScripts.moneymentum-init.text =
+    "mkdir -p /run/moneymentum";
+
   system.activationScripts.per-service-profiles.text =
     "mkdir -p /nix/var/nix/profiles/per-service";
 

@@ -14,7 +14,59 @@ permissions:
   contents: read
 
 jobs:
+  build-frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@v1.3.1
+
+      - uses: actions/checkout@v4
+
+      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+
+      - name: Build frontend
+        run: nix build .#packages.x86_64-linux.frontend
+
+  build-backend:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@v1.3.1
+
+      - uses: actions/checkout@v4
+
+      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+
+      - name: Build backend
+        run: nix build .#packages.x86_64-linux.moneymentum
+
+  resolve-host:
+    runs-on: ubuntu-latest
+    outputs:
+      host_ip: ${{ steps.resolve.outputs.host_ip }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+
+      - name: Resolve host IP
+        id: resolve
+        run: |
+          host_ip=$(nix run .#resolveIp)
+          echo "::add-mask::$host_ip"
+          echo "host_ip=$host_ip" >> "$GITHUB_OUTPUT"
+
   deploy:
+    needs: [build-frontend, build-backend, resolve-host]
     runs-on: ubuntu-latest
     steps:
       - name: Free disk space
@@ -31,16 +83,10 @@ jobs:
           echo "${{ secrets.SSH_KEY }}" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
 
-      - name: Resolve host IP
-        run: |
-          host_ip=$(nix run .#resolveIp)
-          echo "::add-mask::$host_ip"
-          echo "HOST_IP=$host_ip" >> "$GITHUB_ENV"
-
       - name: Trust host key
         run: |
           host_key=$(nix eval --raw --file keys.nix keys.host)
-          echo "$HOST_IP $host_key" > ~/.ssh/known_hosts
+          echo "${{ needs.resolve-host.outputs.host_ip }} $host_key" > ~/.ssh/known_hosts
 
-      - name: Build and deploy
+      - name: Deploy
         run: nix run .#deployAll

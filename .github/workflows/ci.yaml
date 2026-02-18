@@ -82,12 +82,10 @@ jobs:
       - name: Build frontend
         run: nix build .#packages.x86_64-linux.frontend
 
-  deploy:
+  # Runs in parallel with CI jobs to warm the GH Actions cache with NixOS
+  # system closure paths. By the time deploy starts, most paths are cached.
+  warmup:
     if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/fix/broken-cd'
-    needs: [hooks, rust, frontend-check, frontend-build]
-    concurrency:
-      group: deploy
-      cancel-in-progress: false
     runs-on: ubuntu-latest
     steps:
       - name: Free disk space
@@ -106,6 +104,33 @@ jobs:
       - name: Flake checks
         # --impure required: devenv devShells use impure features
         run: nix flake check --impure
+
+      - name: Build NixOS system closure
+        run: nix build .#nixosConfigurations.moneymentum.config.system.build.toplevel
+
+      - name: Build deploy wrappers
+        run: nix build .#deployAll .#deployNixos .#deployService
+
+  deploy:
+    if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/fix/broken-cd'
+    needs: [hooks, rust, frontend-check, frontend-build, deploy-prep]
+    concurrency:
+      group: deploy
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    steps:
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@v1.3.1
+
+      - uses: actions/checkout@v4
+
+      - uses: DeterminateSystems/nix-installer-action@main
+        with:
+          extra-conf: |
+            accept-flake-config = true
+            fallback = true
+
+      - uses: DeterminateSystems/magic-nix-cache-action@main
 
       - name: Setup SSH
         run: |

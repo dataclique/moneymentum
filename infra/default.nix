@@ -69,15 +69,6 @@ let
       | rage -e -R /dev/stdin -o ${tfVars}.age ${tfVars}
   '';
 
-  tfRekey = ''
-    ${parseIdentity}
-    ${decryptState}
-    ${encryptState}
-    ${decryptVars}
-    ${encryptVars}
-    ${cleanup}
-  '';
-
   mkTask = name: body:
     pkgs.writeShellApplication {
       inherit name;
@@ -86,7 +77,16 @@ let
     };
 
 in {
-  inherit buildInputs parseIdentity resolveIp tfRekey;
+  inherit buildInputs parseIdentity resolveIp;
+
+  tfRekey = mkTask "tf-rekey" ''
+    ${parseIdentity}
+    ${decryptState}
+    ${encryptState}
+    ${decryptVars}
+    ${encryptVars}
+    ${cleanup}
+  '';
 
   tfInit = mkTask "tf-init" ''
     ${preamble}

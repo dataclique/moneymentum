@@ -48,34 +48,8 @@ jobs:
       - name: Build backend
         run: nix build .#packages.x86_64-linux.moneymentum
 
-  resolve-host:
-    runs-on: ubuntu-latest
-    outputs:
-      host_ip: ${{ steps.resolve.outputs.host_ip }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: DeterminateSystems/nix-installer-action@main
-        with:
-          extra-conf: accept-flake-config = true
-
-      - uses: DeterminateSystems/magic-nix-cache-action@main
-
-      - name: Setup SSH
-        run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.SSH_KEY }}" > ~/.ssh/id_ed25519
-          chmod 600 ~/.ssh/id_ed25519
-
-      - name: Resolve host IP
-        id: resolve
-        run: |
-          host_ip=$(nix run .#resolveIp)
-          echo "::add-mask::$host_ip"
-          echo "host_ip=$host_ip" >> "$GITHUB_OUTPUT"
-
   deploy:
-    needs: [build-frontend, build-backend, resolve-host]
+    needs: [build-frontend, build-backend]
     runs-on: ubuntu-latest
     steps:
       - name: Free disk space
@@ -91,19 +65,18 @@ jobs:
 
       - uses: DeterminateSystems/magic-nix-cache-action@main
 
-      - name: Mask host IP
-        run: echo "::add-mask::${{ needs.resolve-host.outputs.host_ip }}"
-
       - name: Setup SSH
         run: |
           mkdir -p ~/.ssh
           echo "${{ secrets.SSH_KEY }}" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
 
-      - name: Trust host key
+      - name: Resolve and mask host IP
         run: |
+          host_ip=$(nix run .#resolveIp)
+          echo "::add-mask::$host_ip"
           host_key=$(nix eval --raw --file keys.nix keys.host)
-          echo "${{ needs.resolve-host.outputs.host_ip }} $host_key" > ~/.ssh/known_hosts
+          echo "$host_ip $host_key" > ~/.ssh/known_hosts
 
       - name: Deploy
         run: nix run .#deployAll

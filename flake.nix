@@ -25,16 +25,25 @@
 
     nixos-anywhere.url = "github:nix-community/nixos-anywhere";
     nixos-anywhere.inputs.nixpkgs.follows = "nixpkgs";
+
+    deploy-rs.url = "github:serokell/deploy-rs";
+
+    bun2nix.url = "github:nix-community/bun2nix?tag=2.0.7";
+    bun2nix.inputs.nixpkgs.follows = "nixpkgs";
   };
 
   outputs = { self, nixpkgs, flake-utils, git-hooks, devenv, rust-overlay, crane
-    , ragenix, disko, nixos-anywhere, ... }@inputs:
+    , ragenix, disko, nixos-anywhere, deploy-rs, bun2nix, ... }@inputs:
     {
       nixosConfigurations.moneymentum = nixpkgs.lib.nixosSystem {
         system = "x86_64-linux";
+        specialArgs.frontend = self.packages.x86_64-linux.frontend;
+
         modules =
           [ disko.nixosModules.disko ragenix.nixosModules.default ./os.nix ];
       };
+
+      deploy = (import ./deploy.nix { inherit deploy-rs self; }).config;
     } // flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs {
@@ -50,6 +59,12 @@
 
         infraPkgs =
           import ./infra { inherit pkgs ragenix nixos-anywhere system; };
+
+        deployPkgs =
+          (import ./deploy.nix { inherit deploy-rs self; }).wrappers {
+            inherit pkgs infraPkgs;
+            localSystem = system;
+          };
 
         hooks = {
           # Nix
@@ -141,7 +156,11 @@
                   git
                   ragenix.packages.${system}.default
                   sqlx-cli
+                  doctl
                   infraPkgs.remote
+                  deployPkgs.deployNixos
+                  deployPkgs.deployService
+                  deployPkgs.deployAll
                 ];
 
               languages = {
@@ -208,9 +227,23 @@
           moneymentum = rustPkgs.package;
           moneymentum-clippy = rustPkgs.clippy;
 
+          frontend = pkgs.callPackage ./frontend {
+            bun2nix = bun2nix.packages.${system}.default;
+          };
+
+          resolveIp = pkgs.writeShellApplication {
+            name = "resolve-ip";
+            runtimeInputs = infraPkgs.buildInputs;
+            text = ''
+              ${infraPkgs.resolveIp}
+              echo "$host_ip"
+            '';
+          };
+
           inherit (infraPkgs)
-            tfInit tfPlan tfApply tfDestroy tfEditVars tfCreateVars bootstrap
+            tfInit tfPlan tfApply tfImport tfEditVars tfCreateVars bootstrap
             remote;
+          inherit (deployPkgs) deployNixos deployService deployAll;
         };
       });
 

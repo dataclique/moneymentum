@@ -81,21 +81,29 @@ in {
 
   rekey = mkTask "rekey" ''
     ${parseIdentity}
+    on_exit() {
+      ${encryptState}
+      ${cleanup}
+    }
+    trap on_exit EXIT
     ${decryptState}
     ${encryptState}
     ${decryptVars}
     ${encryptVars}
-    ${cleanup}
     ragenix --rules ./config/secrets.nix -i "$identity" -r
   '';
 
   tfRekey = mkTask "tf-rekey" ''
     ${parseIdentity}
+    on_exit() {
+      ${encryptState}
+      ${cleanup}
+    }
+    trap on_exit EXIT
     ${decryptState}
     ${encryptState}
     ${decryptVars}
     ${encryptVars}
-    ${cleanup}
   '';
 
   tfInit = mkTask "tf-init" ''

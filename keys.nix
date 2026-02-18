@@ -3,7 +3,7 @@ rec {
     gleb =
       "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHepyxN9hvXzbCY/z0amzldy7DXjNdyetnVaQexRgDEX";
     lev =
-      "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICLtz1pwdaRGeiebJ3qaPj+Xs1wtrTVqxRKlL/cRnCFy";
+      "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILODNt5kMDazw/bX0BpfBtktfbGalzqdIdBgAT5IIdbz lev";
     ci =
       "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHww2/XOFuvQONtwbJF5SFWtKazncH82P7iUmWw1duc6";
     host =

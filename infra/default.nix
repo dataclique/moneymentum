@@ -69,15 +69,6 @@ let
       | rage -e -R /dev/stdin -o ${tfVars}.age ${tfVars}
   '';
 
-  tfRekey = ''
-    ${parseIdentity}
-    ${decryptState}
-    ${encryptState}
-    ${decryptVars}
-    ${encryptVars}
-    ${cleanup}
-  '';
-
   mkTask = name: body:
     pkgs.writeShellApplication {
       inherit name;
@@ -86,7 +77,34 @@ let
     };
 
 in {
-  inherit buildInputs parseIdentity resolveIp tfRekey;
+  inherit buildInputs parseIdentity resolveIp;
+
+  rekey = mkTask "rekey" ''
+    ${parseIdentity}
+    on_exit() {
+      ${encryptState}
+      ${cleanup}
+    }
+    trap on_exit EXIT
+    ${decryptState}
+    ${encryptState}
+    ${decryptVars}
+    ${encryptVars}
+    ragenix --rules ./config/secrets.nix -i "$identity" -r
+  '';
+
+  tfRekey = mkTask "tf-rekey" ''
+    ${parseIdentity}
+    on_exit() {
+      ${encryptState}
+      ${cleanup}
+    }
+    trap on_exit EXIT
+    ${decryptState}
+    ${encryptState}
+    ${decryptVars}
+    ${encryptVars}
+  '';
 
   tfInit = mkTask "tf-init" ''
     ${preamble}
@@ -105,10 +123,10 @@ in {
     terraform -chdir=infra apply "$@" tfplan
   '';
 
-  tfDestroy = mkTask "tf-destroy" ''
+  tfImport = mkTask "tf-import" ''
     ${preambleWithEncrypt}
     ${decryptState}
-    terraform -chdir=infra destroy "$@"
+    terraform -chdir=infra import "$@"
   '';
 
   tfEditVars = mkTask "tf-edit-vars" ''
@@ -170,9 +188,14 @@ in {
           | awk '{print $1 " " $2}'
       )
 
-      ${pkgs.gnused}/bin/sed -i \
-        's|host = "ssh-ed25519 [^"]*";|host = "'"$new_key"'";|' \
+      ${pkgs.gnused}/bin/sed -i -z \
+        's|host =\n      "ssh-ed25519 [^"]*";|host =\n      "'"$new_key"'";|' \
         keys.nix
+
+      if ! grep -q "$new_key" keys.nix; then
+        echo "ERROR: host key replacement in keys.nix failed" >&2
+        exit 1
+      fi
 
       echo "Updated host key in keys.nix, rekeying secrets..."
       ragenix --rules ./config/secrets.nix -i "$identity" -r

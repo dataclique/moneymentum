@@ -76,7 +76,7 @@ jobs:
   # Runs in parallel with CI jobs to warm the GH Actions cache with NixOS
   # system closure paths. By the time deploy starts, most paths are cached.
   deploy-prep:
-    if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/fix/broken-cd'
+    if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/deploy/beta-test'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -97,7 +97,7 @@ jobs:
         run: nix build .#nixosConfigurations.moneymentum.config.system.build.toplevel
 
   deploy:
-    if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/fix/broken-cd'
+    if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/deploy/beta-test'
     needs: [hooks, backend, frontend, deploy-prep]
     concurrency:
       group: deploy

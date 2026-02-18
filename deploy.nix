@@ -8,8 +8,8 @@ let
   moneymentumPackage = self.packages.${system}.moneymentum;
 
   services = import ./services.nix;
-  enabledServices =
-    builtins.attrNames (builtins.filterAttrs (_: v: v.enabled) services);
+  enabledServices = builtins.filter (name: services.${name}.enabled)
+    (builtins.attrNames services);
 
   mkServiceProfile = name:
     let markerFile = "/run/moneymentum/${name}.ready";
@@ -60,10 +60,14 @@ in {
         fi
       '';
 
-      deployFlags = if localSystem == "x86_64-linux" then
-        ""
-      else
-        "--skip-checks --remote-build";
+      deployFlags =
+        if localSystem == "x86_64-linux" then "" else "--remote-build";
+
+      serviceCleanup = builtins.concatStringsSep "; " (builtins.concatMap
+        (name: [
+          "systemctl stop ${name} || true"
+          "systemctl reset-failed ${name} || true"
+        ]) enabledServices);
 
     in {
       deployNixos = pkgs.writeShellApplication {
@@ -71,8 +75,8 @@ in {
         runtimeInputs = deployInputs;
         text = ''
           ${deployPreamble}
-          deploy ${deployFlags} ''${ssh_flag:+"$ssh_flag"} .#moneymentum.system \
-            -- --impure "$@"
+          deploy ${deployFlags} ''${ssh_flag:+"$ssh_flag"} "$@" .#moneymentum.system \
+            -- --impure
         '';
       };
 
@@ -83,8 +87,8 @@ in {
           ${deployPreamble}
           profile="''${1:?usage: deploy-service <profile>}"
           shift
-          deploy ${deployFlags} ''${ssh_flag:+"$ssh_flag"} ".#moneymentum.$profile" \
-            -- --impure "$@"
+          deploy ${deployFlags} ''${ssh_flag:+"$ssh_flag"} "$@" ".#moneymentum.$profile" \
+            -- --impure
         '';
       };
 
@@ -93,8 +97,11 @@ in {
         runtimeInputs = deployInputs;
         text = ''
           ${deployPreamble}
-          deploy ${deployFlags} ''${ssh_flag:+"$ssh_flag"} .#moneymentum \
-            -- --impure "$@"
+
+          ssh -i "$identity" "root@$host_ip" '${serviceCleanup}; rm -rf /run/moneymentum'
+
+          deploy ${deployFlags} ''${ssh_flag:+"$ssh_flag"} "$@" .#moneymentum \
+            -- --impure
         '';
       };
     };

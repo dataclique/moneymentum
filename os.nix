@@ -173,7 +173,7 @@ in {
   };
 
   system.activationScripts.moneymentum-init.text =
-    "mkdir -p /run/moneymentum /mnt/data/staging";
+    "mkdir -p /run/moneymentum /mnt/data/prod /mnt/data/staging";
 
   system.activationScripts.per-service-profiles.text =
     "mkdir -p /nix/var/nix/profiles/per-service";

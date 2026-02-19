@@ -29,7 +29,7 @@ let
 in {
   config = {
     nodes.moneymentum = {
-      hostname = builtins.getEnv "DEPLOY_HOST";
+      hostname = ""; # overridden by --hostname at deploy time
       sshUser = "root";
       user = "root";
 
@@ -54,7 +54,6 @@ in {
 
       deployPreamble = ''
         ${infraPkgs.resolveIp}
-        export DEPLOY_HOST="$host_ip"
 
         ssh_flag=""
         if [ "$identity" != "$HOME/.ssh/id_ed25519" ]; then
@@ -78,8 +77,7 @@ in {
         runtimeInputs = deployInputs;
         text = ''
           ${deployPreamble}
-          deploy ${deployFlags} ''${ssh_flag:+"$ssh_flag"} "$@" .#moneymentum.system \
-            -- --impure
+          deploy ${deployFlags} --hostname "$host_ip" ''${ssh_flag:+"$ssh_flag"} "$@" .#moneymentum.system
         '';
       };
 
@@ -90,8 +88,7 @@ in {
           ${deployPreamble}
           profile="''${1:?usage: deploy-service <profile>}"
           shift
-          deploy ${deployFlags} ''${ssh_flag:+"$ssh_flag"} "$@" ".#moneymentum.$profile" \
-            -- --impure
+          deploy ${deployFlags} --hostname "$host_ip" ''${ssh_flag:+"$ssh_flag"} "$@" ".#moneymentum.$profile"
         '';
       };
 
@@ -103,8 +100,7 @@ in {
 
           ssh -i "$identity" "root@$host_ip" '${serviceCleanup}; rm -rf /run/moneymentum'
 
-          deploy ${deployFlags} ''${ssh_flag:+"$ssh_flag"} "$@" .#moneymentum \
-            -- --impure
+          deploy ${deployFlags} --hostname "$host_ip" ''${ssh_flag:+"$ssh_flag"} "$@" .#moneymentum
         '';
       };
     };

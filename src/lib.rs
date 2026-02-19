@@ -29,7 +29,9 @@ use tracing::{debug, error, info};
 use tracing_subscriber::EnvFilter;
 
 use beta::ReturnsError;
-use ingestion::{Ingestion, IngestionId, IngestionJob, IngestionServices, IngestionStatus};
+use ingestion::{
+    Ingestion, IngestionCommand, IngestionId, IngestionJob, IngestionServices, IngestionStatus,
+};
 use timeframe::Timeframe;
 use wire::{Cons, Nil, UnwiredQuery};
 
@@ -292,6 +294,22 @@ pub async fn rocket(
     drop(wired.into_inner());
 
     let cqrs: IngestionCqrs = Arc::new(cqrs);
+
+    // Recover stale Running state from a previous crash. If the aggregate is
+    // stuck in Running, transition it to Failed so new ingestions can start.
+    if let Some(lifecycle) = view.load::<IngestionId>(()).await?
+        && let Ok(state) = lifecycle.live()
+        && state.status == IngestionStatus::Running
+    {
+        info!("recovering stale ingestion from previous crash");
+        cqrs.execute::<IngestionId>(
+            (),
+            IngestionCommand::Fail {
+                reason: "server restarted".into(),
+            },
+        )
+        .await?;
+    }
 
     // Spawn apalis worker
     tokio::spawn({

@@ -3,11 +3,14 @@
 //! Reads `ohlcv_1d.csv` from a data directory and computes per-ticker log returns:
 //! `log_return = ln(close_t / close_{t-1})` within each ticker's time series.
 
-use std::path::Path;
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::iter::once;
+use std::path::{Path, PathBuf};
 
 /// Number of most recent daily candles used to compute log returns for beta.
 pub const LOG_RETURNS_LOOKBACK_CANDLES: usize = 101;
 
+use chrono::{Duration, Utc};
 use polars::datatypes::AnyValue;
 use polars::prelude::{
     ChunkApply, DataFrame, DataFrameJoinOps, IntoLazy, IntoSeries, JoinArgs, JoinType, NamedFrom,
@@ -16,7 +19,10 @@ use polars::prelude::{
 use thiserror::Error;
 use tracing::{info, instrument};
 
+use crate::candle::{CandleError, candles_to_dataframe};
 use crate::dataframe::DataFrameError;
+use crate::finance::Market;
+use crate::hyperliquid::{Hyperliquid, HyperliquidError};
 use crate::timeframe::Timeframe;
 
 #[derive(Debug, Error)]
@@ -27,8 +33,12 @@ pub enum ReturnsError {
     Polars(#[from] PolarsError),
     #[error(transparent)]
     Join(#[from] tokio::task::JoinError),
+    #[error(transparent)]
+    Hyperliquid(#[from] HyperliquidError),
+    #[error(transparent)]
+    Candle(#[from] CandleError),
     #[error("no daily candle data at {path}")]
-    NoData { path: std::path::PathBuf },
+    NoData { path: PathBuf },
     #[error("benchmark variance is zero or insufficient data for beta")]
     BetaUndefined,
 }
@@ -91,8 +101,61 @@ pub async fn compute_portfolio_beta(
     compute_beta_from_log_returns(&log_returns_df, weights, benchmark_ticker)
 }
 
+/// Fetches daily candles from the API for the tickers in `weights` + `benchmark_ticker`,
+/// then computes portfolio beta without needing a local CSV file.
+#[instrument(skip_all)]
+pub(crate) async fn fetch_daily_candles_and_compute_beta(
+    client: &dyn Hyperliquid,
+    weights: &[(String, f64)],
+    benchmark_ticker: &str,
+) -> Result<Option<f64>, ReturnsError> {
+    let tickers: Vec<String> = weights
+        .iter()
+        .map(|(ticker, _)| ticker.clone())
+        .chain(once(benchmark_ticker.to_string()))
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+
+    let lookback_days = i64::try_from(LOG_RETURNS_LOOKBACK_CANDLES).unwrap_or(101);
+    let start = Utc::now() - Duration::days(lookback_days + 10);
+
+    let mut all_candles = Vec::new();
+    for ticker in &tickers {
+        let market = Market::new(ticker.clone());
+        let candles = client
+            .fetch_candles(&market, Timeframe::OneDay, start)
+            .await?;
+        all_candles.extend(candles);
+    }
+
+    info!(
+        tickers = tickers.len(),
+        candles = all_candles.len(),
+        "daily candles fetched from API"
+    );
+
+    if all_candles.is_empty() {
+        return Err(ReturnsError::NoData {
+            path: PathBuf::from("<api>"),
+        });
+    }
+
+    let df = candles_to_dataframe(all_candles).await?;
+    let weights_clone = weights.to_vec();
+    let benchmark_clone = benchmark_ticker.to_string();
+    let lookback = LOG_RETURNS_LOOKBACK_CANDLES;
+
+    let log_returns_df = tokio::task::spawn_blocking(move || {
+        load_log_returns_last_n_candles(&df, &weights_clone, &benchmark_clone, lookback)
+    })
+    .await??;
+
+    compute_beta_from_log_returns(&log_returns_df, weights, benchmark_ticker)
+}
+
 /// Path of the daily candles file relative to the data directory.
-fn daily_candles_path(data_dir: &Path) -> std::path::PathBuf {
+fn daily_candles_path(data_dir: &Path) -> PathBuf {
     data_dir.join(Timeframe::OneDay.file_name())
 }
 
@@ -107,8 +170,8 @@ fn load_log_returns_last_n_candles(
     let tickers: Vec<String> = weights
         .iter()
         .map(|(t, _)| t.clone())
-        .chain(std::iter::once(benchmark_ticker.to_string()))
-        .collect::<std::collections::HashSet<_>>()
+        .chain(once(benchmark_ticker.to_string()))
+        .collect::<HashSet<_>>()
         .into_iter()
         .collect();
     let ticker_df = DataFrame::new(vec![Series::new("ticker".into(), tickers).into()])?;
@@ -176,8 +239,6 @@ fn build_portfolio_and_benchmark_df(
     weights: &[(String, f64)],
     benchmark_ticker: &str,
 ) -> Result<DataFrame, ReturnsError> {
-    use std::collections::{BTreeMap, HashMap};
-
     let ts_col = log_returns_df.column("timestamp")?;
     let ticker_col = log_returns_df.column("ticker")?;
     let log_return_col = log_returns_df.column("log_return")?;
@@ -288,10 +349,81 @@ fn variance(benchmark: &Series) -> Result<f64, ReturnsError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use async_trait::async_trait;
+    use chrono::{TimeZone, Utc};
     use polars::prelude::df;
     use std::fs;
     use tempfile::TempDir;
+    use tracing::Level;
     use tracing_test::traced_test;
+
+    use crate::candle::Candle;
+    use crate::finance::{Market, Symbol};
+    use crate::funding::FundingRate;
+    use crate::hyperliquid::HyperliquidError;
+
+    struct MockHyperliquid {
+        candles_by_market: HashMap<String, Vec<Candle>>,
+    }
+
+    impl MockHyperliquid {
+        fn with_daily_candles(
+            candles_by_ticker: Vec<(&str, Vec<(f64, f64, f64, f64, f64)>)>,
+        ) -> Self {
+            let mut candles_by_market = HashMap::new();
+            for (ticker, prices) in candles_by_ticker {
+                let candles: Vec<Candle> = prices
+                    .into_iter()
+                    .enumerate()
+                    .map(|(day, (open, high, low, close, volume))| Candle {
+                        timestamp: Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap()
+                            + chrono::Duration::days(day as i64),
+                        open,
+                        high,
+                        low,
+                        close,
+                        volume,
+                        symbol: format!("{ticker}/USDC:USDC"),
+                        ticker: Symbol::from_raw(ticker),
+                    })
+                    .collect();
+                candles_by_market.insert(ticker.to_string(), candles);
+            }
+            Self { candles_by_market }
+        }
+    }
+
+    #[async_trait]
+    impl Hyperliquid for MockHyperliquid {
+        async fn list_markets(&self) -> Result<Vec<Market>, HyperliquidError> {
+            Ok(self
+                .candles_by_market
+                .keys()
+                .map(|ticker| Market::new(ticker.clone()))
+                .collect())
+        }
+
+        async fn fetch_candles(
+            &self,
+            market: &Market,
+            _timeframe: Timeframe,
+            _start: chrono::DateTime<Utc>,
+        ) -> Result<Vec<Candle>, HyperliquidError> {
+            Ok(self
+                .candles_by_market
+                .get(market.as_str())
+                .cloned()
+                .unwrap_or_default())
+        }
+
+        async fn fetch_funding_rates(
+            &self,
+            _market: &Market,
+            _start: chrono::DateTime<Utc>,
+        ) -> Result<Vec<FundingRate>, HyperliquidError> {
+            Ok(vec![])
+        }
+    }
 
     #[test]
     fn daily_candles_path_uses_ohlcv_1d() {
@@ -385,6 +517,75 @@ mod tests {
         );
         assert!(crate::logs_contain_at(
             tracing::Level::INFO,
+            &["portfolio beta calculated"]
+        ));
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn fetch_daily_candles_and_compute_beta_self_benchmark_is_one() {
+        let mock = MockHyperliquid::with_daily_candles(vec![(
+            "BTC",
+            vec![
+                (100.0, 105.0, 95.0, 102.0, 1000.0),
+                (102.0, 108.0, 100.0, 105.0, 1100.0),
+                (105.0, 110.0, 103.0, 107.0, 900.0),
+                (107.0, 112.0, 104.0, 103.0, 1200.0),
+            ],
+        )]);
+
+        let weights = [("BTC".to_string(), 1.0)];
+        let beta = fetch_daily_candles_and_compute_beta(&mock, &weights, "BTC")
+            .await
+            .unwrap()
+            .expect("beta should be defined");
+
+        assert!(
+            (beta - 1.0).abs() < 1e-10,
+            "beta of BTC vs self should be 1.0, got {beta}"
+        );
+        assert!(crate::logs_contain_at(
+            Level::INFO,
+            &["portfolio beta calculated"]
+        ));
+        assert!(crate::logs_contain_at(
+            Level::INFO,
+            &["daily candles fetched from API"]
+        ));
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn fetch_daily_candles_and_compute_beta_with_multi_asset_portfolio() {
+        let mock = MockHyperliquid::with_daily_candles(vec![
+            (
+                "BTC",
+                vec![
+                    (100.0, 105.0, 95.0, 100.0, 1000.0),
+                    (100.0, 108.0, 95.0, 110.0, 1100.0),
+                    (110.0, 115.0, 105.0, 108.0, 900.0),
+                    (108.0, 112.0, 104.0, 112.0, 1200.0),
+                ],
+            ),
+            (
+                "ETH",
+                vec![
+                    (50.0, 55.0, 45.0, 50.0, 2000.0),
+                    (50.0, 58.0, 48.0, 55.0, 2100.0),
+                    (55.0, 60.0, 52.0, 53.0, 1800.0),
+                    (53.0, 56.0, 50.0, 56.0, 2200.0),
+                ],
+            ),
+        ]);
+
+        let weights = [("BTC".to_string(), 0.6), ("ETH".to_string(), 0.4)];
+        let result = fetch_daily_candles_and_compute_beta(&mock, &weights, "BTC").await;
+
+        assert!(result.is_ok(), "should compute beta: {:?}", result.err());
+        let beta = result.unwrap().expect("beta should be defined");
+        assert!(beta.is_finite(), "beta should be finite, got {beta}");
+        assert!(crate::logs_contain_at(
+            Level::INFO,
             &["portfolio beta calculated"]
         ));
     }

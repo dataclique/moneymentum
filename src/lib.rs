@@ -28,6 +28,7 @@ use thiserror::Error;
 use tracing::{debug, error, info};
 use tracing_subscriber::EnvFilter;
 
+use beta::ReturnsError;
 use ingestion::{Ingestion, IngestionId, IngestionJob, IngestionServices, IngestionStatus};
 use timeframe::Timeframe;
 use wire::{Cons, Nil, UnwiredQuery};
@@ -159,6 +160,8 @@ struct BetaResponse {
 #[post("/beta", data = "<body>")]
 async fn post_beta(
     config: &State<Config>,
+    services: &State<Arc<IngestionServices>>,
+    job_queue: &State<IngestionJobQueue>,
     body: Json<BetaRequest>,
 ) -> Result<Json<BetaResponse>, Status> {
     if body.benchmark.trim().is_empty() {
@@ -183,6 +186,26 @@ async fn post_beta(
 
     match beta::compute_portfolio_beta(&config.data_dir, &weights, &body.benchmark).await {
         Ok(beta) => Ok(Json(BetaResponse { beta })),
+        Err(ReturnsError::NoData { .. }) => {
+            info!("daily candles CSV missing, fetching from API");
+            let beta = beta::fetch_daily_candles_and_compute_beta(
+                services.hyperliquid.as_ref(),
+                &weights,
+                &body.benchmark,
+            )
+            .await
+            .map_err(|err| {
+                error!(error = %err, "API-based beta calculation failed");
+                Status::InternalServerError
+            })?;
+
+            // Kick off ingestion so CSV exists for future requests
+            if let Err(err) = job_queue.inner().clone().push(IngestionJob).await {
+                error!(error = %err, "failed to queue ingestion after beta fallback");
+            }
+
+            Ok(Json(BetaResponse { beta }))
+        }
         Err(err) => {
             error!(error = %err, "beta calculation failed");
             Err(Status::InternalServerError)
@@ -288,6 +311,7 @@ pub async fn rocket(
     info!(port = config.port, "moneymentum ready");
     Ok(rocket::custom(rocket_config)
         .manage(config)
+        .manage(services)
         .manage(cqrs)
         .manage(view)
         .manage(job_queue)

@@ -57,7 +57,11 @@ else
     inherit version meta;
     src = pkgs.fetchurl { inherit (source) url hash; };
     sourceRoot = ".";
-    nativeBuildInputs = [ pkgs.dpkg ];
+    nativeBuildInputs = [ pkgs.dpkg pkgs.autoPatchelfHook ];
+    buildInputs = [ pkgs.stdenv.cc.cc.lib pkgs.openssl pkgs.zlib pkgs.dbus ];
+    # The `but` binary is gitbutler-tauri which links against GTK/WebKit for
+    # the GUI, but we only use CLI mode. Ignore all missing GUI deps.
+    autoPatchelfIgnoreMissingDeps = true;
     unpackPhase = "dpkg-deb -x $src .";
     installPhase = ''
       mkdir -p $out/bin

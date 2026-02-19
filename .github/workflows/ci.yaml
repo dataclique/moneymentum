@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   rust:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - name: Free disk space
         uses: jlumbroso/free-disk-space@v1.3.1
@@ -28,7 +28,7 @@ jobs:
         run: nix build .#moneymentum-clippy
 
   frontend:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - name: Free disk space
         uses: jlumbroso/free-disk-space@v1.3.1
@@ -47,7 +47,7 @@ jobs:
         run: nix develop .#frontend --impure -c bash -c "cd frontend && bun run test --run"
 
   flake-check:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - name: Free disk space
         uses: jlumbroso/free-disk-space@v1.3.1

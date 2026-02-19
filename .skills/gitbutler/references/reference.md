@@ -309,6 +309,13 @@ but squash <branch> -i       # Squash with AI-generated commit message
 but squash <branch> --status-after  # Squash then show workspace status
 ```
 
+**Note on target selection:** The surviving commit differs by form. The
+space-separated list (`but squash c1 c2 c3`) preserves the **last** argument
+(c3). The range form (`but squash c1..c4`) and branch form preserve the
+**oldest/bottom-most** commit. Order arguments accordingly, or use the range or
+branch form for predictable behavior. Flags like `-d`, `-m`, and `-i` apply
+after target selection.
+
 ### `but amend <file> <commit>`
 
 Amend file into a specific commit. Use when you know exactly which commit the

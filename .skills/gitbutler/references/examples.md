@@ -68,7 +68,7 @@ but branch new add-authentication
 # 3. Implement auth and commit
 # (edit auth/login.js, auth/middleware.js)
 but status
-but stage <file-ids> bu --status-after  # Stage changes to auth branch
+but stage <file-id> bu --status-after  # Stage changes to auth branch
 but commit bu --only -m "Add JWT authentication" --status-after
 
 # 4. Create stacked branch anchored on authentication
@@ -77,7 +77,7 @@ but branch new user-profile -a bu
 # 5. Implement profile page (depends on auth)
 # (edit pages/profile.js)
 but status
-but stage <file-ids> bv --status-after  # Stage changes to profile branch
+but stage <file-id> bv --status-after  # Stage changes to profile branch
 but commit bv --only -m "Add user profile page" --status-after
 
 # 6. Push both branches (maintains stack relationship)
@@ -292,16 +292,16 @@ but branch new user-dashboard
 
 # 4. Check and stage
 but status
-but stage <file-ids> bu --status-after  # Stage changes to dashboard branch
+but stage <file-id> bu --status-after  # Stage changes to dashboard branch
 
 # 5. First commit
 but commit bu --only -m "Add dashboard route and basic layout" --status-after
 
 # 6. Continue iterating
 # (add widgets, styling)
-but stage <file-ids> bu --status-after
+but stage <file-id> bu --status-after
 but commit bu --only -m "Add dashboard widgets" --status-after
-but stage <file-ids> bu --status-after
+but stage <file-id> bu --status-after
 but commit bu --only -m "Style dashboard components" --status-after
 
 # 7. Make small fix
@@ -347,7 +347,7 @@ but unapply bw
 
 # 3. Focus on feature-a
 # (make changes, stage, commit)
-but stage <file-ids> bu --status-after
+but stage <file-id> bu --status-after
 but commit bu --only -m "Complete feature-a" --status-after
 
 # 4. Create PR for feature-a (auto-pushes)
@@ -415,10 +415,10 @@ but branch new fix-auth-bug       # Create branch for today's work
 # Work and commit iteratively
 # (make changes)
 but status                 # Check changes
-but stage <file-ids> bu --status-after    # Stage to branch
+but stage <file-id> bu --status-after    # Stage to branch
 but commit bu --only -m "Identify auth bug source" --status-after
 # (make more changes)
-but stage <file-ids> bu --status-after    # Stage to branch
+but stage <file-id> bu --status-after    # Stage to branch
 but commit bu --only -m "Fix token expiration handling" --status-after
 # (small fix to existing code)
 but absorb a1 --status-after              # Absorb specific fix into appropriate commit
@@ -426,13 +426,13 @@ but absorb a1 --status-after              # Absorb specific fix into appropriate
 # Mid-day: Start urgent fix on different branch
 but branch new hotfix-login       # Parallel branch for urgent work
 # (make fix)
-but stage <file-ids> bv --status-after    # Stage to hotfix branch
+but stage <file-id> bv --status-after    # Stage to hotfix branch
 but commit bv --only -m "Fix login redirect loop" --status-after
 but pr new bv              # Push and create PR immediately
 
 # Back to original work
 # (continue working on bu, auth bug fix)
-but stage <file-ids> bu --status-after    # Stage to auth branch
+but stage <file-id> bu --status-after    # Stage to auth branch
 but commit bu --only -m "Add tests for token handling" --status-after
 
 # End of day: Clean up and create PR
@@ -523,6 +523,6 @@ eval "$(but completions bash)"    # Add to ~/.bashrc
 ### Viewing History
 
 ```bash
-but show bu       # Show all commits in branch
-git log bu               # Traditional git log (read-only, still works)
+but show bu                  # Show all commits in branch (CLI ID works)
+git log feature-x            # Traditional git log (read-only; use actual branch name, not CLI ID)
 ```

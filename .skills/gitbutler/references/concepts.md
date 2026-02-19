@@ -434,15 +434,18 @@ branches with unpushed commits) or push each branch explicitly with
 
 ### Prefer `but commit` over `but amend`
 
-`but commit` runs git hooks by default, but `but amend` (and `but rub` when
-amending) does not. This means formatting fixes, lint checks, and other
-pre-commit validations are silently skipped when amending.
+`but commit` runs git hooks (formatting, linting, validation). `but amend` and
+`but rub` (when amending) skip hooks entirely — no formatting, no lint checks,
+no validation.
 
-**Default behavior:** Always use `but commit` to create new commits. Only use
-`but amend` when you specifically need to fold a change into an existing commit
-(e.g., fixing a locked hunk). After any `but amend`, run `prek run --all-files`
-(or your project's pre-commit runner) and amend the formatting fixes before
-pushing.
+**Default to new commits.** Even for locked hunks (🔒), prefer
+`but commit <branch> -m "message"` over amending into the locked commit. The
+history can be cleaned up later with squash before merging.
+
+**When amend is appropriate:** When the user explicitly asks, or when the change
+clearly belongs in an existing commit (e.g., fixing a typo you just introduced).
+After any amend, run `prek run --all-files` to catch formatting issues the
+skipped hooks would have fixed.
 
 ### Deleting a branch in a stack can corrupt the stack
 

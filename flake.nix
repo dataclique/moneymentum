@@ -27,6 +27,7 @@
     nixos-anywhere.inputs.nixpkgs.follows = "nixpkgs";
 
     deploy-rs.url = "github:serokell/deploy-rs";
+    deploy-rs.inputs.nixpkgs.follows = "nixpkgs";
 
     bun2nix.url = "github:nix-community/bun2nix?tag=2.0.7";
     bun2nix.inputs.nixpkgs.follows = "nixpkgs";

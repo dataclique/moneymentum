@@ -31,7 +31,7 @@ createRoot(rootElement).render(
       <ThemeProvider defaultTheme="dark" storageKey="vite-ui-theme">
         <WalletProvider>
           <NetworkProvider>
-            <BrowserRouter>
+            <BrowserRouter basename={import.meta.env.BASE_URL}>
               <App />
             </BrowserRouter>
           </NetworkProvider>

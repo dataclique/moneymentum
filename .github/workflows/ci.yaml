@@ -2,11 +2,9 @@ name: CI/CD
 
 on:
   push:
+    branches: [master]
+  pull_request:
   workflow_dispatch:
-
-concurrency:
-  group: ${{ github.ref }}-ci
-  cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}
 
 permissions:
   id-token: write
@@ -14,6 +12,7 @@ permissions:
 
 jobs:
   hooks:
+    if: github.event_name != 'push'
     runs-on: ubuntu-latest
     steps:
       - name: Free disk space
@@ -35,6 +34,7 @@ jobs:
         run: nix develop --impure -c prek run --all-files
 
   backend:
+    if: github.event_name != 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -54,6 +54,7 @@ jobs:
         run: nix build .#moneymentum-clippy
 
   frontend:
+    if: github.event_name != 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -80,7 +81,6 @@ jobs:
   # Runs in parallel with CI jobs to warm the GH Actions cache with NixOS
   # system closure paths. By the time deploy starts, most paths are cached.
   warmup:
-    if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/fix/broken-cd'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -104,8 +104,8 @@ jobs:
         run: nix build .#deployAll .#deployNixos .#deployService
 
   deploy:
-    if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/fix/broken-cd'
-    needs: [hooks, backend, frontend, deploy-prep]
+    if: github.ref == 'refs/heads/master'
+    needs: [warmup]
     concurrency:
       group: deploy
       cancel-in-progress: false
@@ -138,6 +138,50 @@ jobs:
       - name: Deploy
         # --skip-checks: CI jobs above already validate everything
         run: nix run .#deployAll -- --skip-checks
+
+      - name: Cleanup SSH
+        if: always()
+        run: rm -rf ~/.ssh/id_ed25519
+
+  staging:
+    if: github.event_name == 'pull_request'
+    needs: [hooks, backend, frontend, warmup]
+    concurrency:
+      group: deploy-staging
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: DeterminateSystems/nix-installer-action@main
+        with:
+          extra-conf: |
+            accept-flake-config = true
+            fallback = true
+
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          echo "${{ secrets.SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+
+      - name: Resolve and mask host IP
+        run: |
+          host_ip=$(nix run .#resolveIp)
+          echo "::add-mask::$host_ip"
+          host_key=$(nix eval --raw --file keys.nix keys.host)
+          echo "$host_ip $host_key" > ~/.ssh/known_hosts
+
+      - name: Reset services before deploy
+        run: |
+          host_ip=$(nix run .#resolveIp)
+          ssh "root@$host_ip" 'systemctl stop staging || true; systemctl reset-failed staging || true; rm -rf /run/moneymentum'
+
+      - name: Deploy staging
+        run: nix run .#deployNixos -- --skip-checks && nix run .#deployService -- staging --skip-checks
 
       - name: Cleanup SSH
         if: always()

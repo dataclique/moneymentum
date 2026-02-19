@@ -1,9 +1,16 @@
-{ pkgs, lib, modulesPath, frontend, ... }:
+{ pkgs, lib, modulesPath, frontend, frontend-staging, ... }:
 
 let
   inherit (import ./keys.nix) roles;
 
   services = import ./services.nix;
+
+  # try_files resolves against root, not alias — nest staging files under
+  # staging/ so root-based resolution finds them at /staging/index.html.
+  stagingWebroot = pkgs.runCommand "staging-webroot" { } ''
+    mkdir -p $out/staging
+    cp -rT ${frontend-staging} $out/staging
+  '';
   enabledServices = lib.filterAttrs (_: v: v.enabled) services;
 
   mkService = name: cfg:
@@ -98,6 +105,13 @@ in {
         locations = {
           "/".tryFiles = "$uri $uri/ /index.html";
           "/api/" = { proxyPass = "http://127.0.0.1:8000/"; };
+
+          "/staging/api/" = { proxyPass = "http://127.0.0.1:8001/"; };
+          "= /staging".return = "301 /staging/";
+          "/staging/" = {
+            root = "${stagingWebroot}";
+            tryFiles = "$uri $uri/ /staging/index.html";
+          };
         };
       };
     };
@@ -138,7 +152,7 @@ in {
   systemd.services = lib.mapAttrs mkService enabledServices;
 
   system.activationScripts.moneymentum-init.text =
-    "mkdir -p /run/moneymentum";
+    "mkdir -p /run/moneymentum /mnt/data/staging";
 
   system.activationScripts.per-service-profiles.text =
     "mkdir -p /nix/var/nix/profiles/per-service";

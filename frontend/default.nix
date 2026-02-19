@@ -1,4 +1,4 @@
-{ pkgs, bun2nix }:
+{ pkgs, bun2nix, basePath ? "/" }:
 
 let bunDeps = bun2nix.fetchBunDeps { bunNix = ./bun.nix; };
 in pkgs.stdenv.mkDerivation {
@@ -14,6 +14,8 @@ in pkgs.stdenv.mkDerivation {
   dontUseBunCheck = true;
   dontUseBunInstall = true;
   dontRunLifecycleScripts = true;
+
+  VITE_BASE_PATH = basePath;
 
   buildPhase = ''
     bun run build

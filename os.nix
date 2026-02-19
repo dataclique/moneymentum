@@ -1,4 +1,4 @@
-{ pkgs, lib, modulesPath, frontend, ... }:
+{ pkgs, lib, modulesPath, frontend, frontend-staging, ... }:
 
 let
   inherit (import ./keys.nix) roles;
@@ -98,6 +98,12 @@ in {
         locations = {
           "/".tryFiles = "$uri $uri/ /index.html";
           "/api/" = { proxyPass = "http://127.0.0.1:8000/"; };
+
+          "/staging/api/" = { proxyPass = "http://127.0.0.1:8001/"; };
+          "/staging/" = {
+            alias = "${frontend-staging}/";
+            tryFiles = "$uri $uri/ /staging/index.html";
+          };
         };
       };
     };
@@ -138,7 +144,7 @@ in {
   systemd.services = lib.mapAttrs mkService enabledServices;
 
   system.activationScripts.moneymentum-cleanup.text =
-    "mkdir -p /run/moneymentum";
+    "mkdir -p /run/moneymentum /mnt/data/staging";
 
   system.activationScripts.per-service-profiles.text =
     "mkdir -p /nix/var/nix/profiles/per-service";

@@ -381,10 +381,10 @@ mod tests {
         candles_by_market: HashMap<String, Vec<Candle>>,
     }
 
+    type OhlcvRow = (f64, f64, f64, f64, f64);
+
     impl MockHyperliquid {
-        fn with_daily_candles(
-            candles_by_ticker: Vec<(&str, Vec<(f64, f64, f64, f64, f64)>)>,
-        ) -> Self {
+        fn with_daily_candles(candles_by_ticker: Vec<(&str, Vec<OhlcvRow>)>) -> Self {
             let mut candles_by_market = HashMap::new();
             for (ticker, prices) in candles_by_ticker {
                 let candles: Vec<Candle> = prices
@@ -392,7 +392,7 @@ mod tests {
                     .enumerate()
                     .map(|(day, (open, high, low, close, volume))| Candle {
                         timestamp: Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap()
-                            + chrono::Duration::days(day as i64),
+                            + chrono::Duration::days(i64::try_from(day).unwrap()),
                         open,
                         high,
                         low,

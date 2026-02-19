@@ -17,7 +17,6 @@ import { useNetwork } from "@/hooks/useNetwork"
 
 import { usePortfolioState } from "./hooks/usePortfolioState"
 import { useBeta } from "./hooks/useBeta"
-import { AllocationBar } from "./components/AllocationBar"
 import { TokenCard } from "./components/TokenCard"
 import { TokenPickerDialog } from "./components/TokenPickerDialog"
 
@@ -367,12 +366,6 @@ const PortfolioPage = () => {
           </div>
         </div>
       </div>
-
-      <AllocationBar
-        tokens={activeTokens}
-        remainingPercent={remainingPercent}
-        totalNotional={displayNotional}
-      />
     </>
   )
 }

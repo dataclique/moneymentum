@@ -17,7 +17,7 @@ use polars::prelude::{
     PolarsError, Series, SortMultipleOptions, SortOptions, col, lit,
 };
 use thiserror::Error;
-use tracing::{info, instrument};
+use tracing::{debug, info, instrument};
 
 use crate::candle::{CandleError, candles_to_dataframe};
 use crate::dataframe::DataFrameError;
@@ -80,17 +80,24 @@ pub fn compute_beta_from_log_returns(
 
 /// Loads last `LOG_RETURNS_LOOKBACK_CANDLES` daily candles for tickers in `weights` and `benchmark_ticker`,
 /// computes log returns, then β = Cov(portfolio, benchmark) / Var(benchmark).
-#[instrument(skip_all, fields(data_dir = %data_dir.display()))]
+#[instrument(skip_all, fields(data_dir = %data_dir.display(), benchmark = benchmark_ticker))]
 pub async fn compute_portfolio_beta(
     data_dir: &Path,
     weights: &[(String, f64)],
     benchmark_ticker: &str,
 ) -> Result<Option<f64>, ReturnsError> {
     let path = daily_candles_path(data_dir);
+    debug!(path = %path.display(), "checking daily candles CSV");
     let df = crate::dataframe::read_csv(path.clone()).await?;
     let Some(df) = df else {
+        info!(path = %path.display(), "daily candles CSV not found");
         return Err(ReturnsError::NoData { path: path.clone() });
     };
+    debug!(
+        path = %path.display(),
+        rows = df.height(),
+        "daily candles CSV loaded"
+    );
     let weights_clone = weights.to_vec();
     let benchmark_ticker_clone = benchmark_ticker.to_string();
     let lookback = LOG_RETURNS_LOOKBACK_CANDLES;
@@ -103,7 +110,7 @@ pub async fn compute_portfolio_beta(
 
 /// Fetches daily candles from the API for the tickers in `weights` + `benchmark_ticker`,
 /// then computes portfolio beta without needing a local CSV file.
-#[instrument(skip_all)]
+#[instrument(skip_all, fields(benchmark = benchmark_ticker))]
 pub(crate) async fn fetch_daily_candles_and_compute_beta(
     client: &dyn Hyperliquid,
     weights: &[(String, f64)],
@@ -120,17 +127,25 @@ pub(crate) async fn fetch_daily_candles_and_compute_beta(
     let lookback_days = i64::try_from(LOG_RETURNS_LOOKBACK_CANDLES).unwrap_or(101);
     let start = Utc::now() - Duration::days(lookback_days + 10);
 
+    debug!(
+        ?tickers,
+        %start,
+        lookback_days,
+        "fetching daily candles from API"
+    );
+
     let mut all_candles = Vec::new();
     for ticker in &tickers {
         let market = Market::new(ticker.clone());
         let candles = client
             .fetch_candles(&market, Timeframe::OneDay, start)
             .await?;
+        debug!(ticker, candles = candles.len(), "fetched daily candles");
         all_candles.extend(candles);
     }
 
     info!(
-        tickers = tickers.len(),
+        ?tickers,
         candles = all_candles.len(),
         "daily candles fetched from API"
     );
@@ -519,6 +534,14 @@ mod tests {
             tracing::Level::INFO,
             &["portfolio beta calculated"]
         ));
+        assert!(crate::logs_contain_at(
+            tracing::Level::DEBUG,
+            &["checking daily candles CSV", "ohlcv_1d.csv"]
+        ));
+        assert!(crate::logs_contain_at(
+            tracing::Level::DEBUG,
+            &["daily candles CSV loaded"]
+        ));
     }
 
     #[traced_test]
@@ -550,7 +573,15 @@ mod tests {
         ));
         assert!(crate::logs_contain_at(
             Level::INFO,
-            &["daily candles fetched from API"]
+            &["daily candles fetched from API", "BTC"]
+        ));
+        assert!(crate::logs_contain_at(
+            Level::DEBUG,
+            &["fetching daily candles from API", "BTC"]
+        ));
+        assert!(crate::logs_contain_at(
+            Level::DEBUG,
+            &["fetched daily candles", "BTC", "4"]
         ));
     }
 
@@ -587,6 +618,14 @@ mod tests {
         assert!(crate::logs_contain_at(
             Level::INFO,
             &["portfolio beta calculated"]
+        ));
+        assert!(crate::logs_contain_at(
+            Level::DEBUG,
+            &["fetched daily candles", "BTC"]
+        ));
+        assert!(crate::logs_contain_at(
+            Level::DEBUG,
+            &["fetched daily candles", "ETH"]
         ));
     }
 }

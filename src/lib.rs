@@ -186,8 +186,8 @@ async fn post_beta(
 
     match beta::compute_portfolio_beta(&config.data_dir, &weights, &body.benchmark).await {
         Ok(beta) => Ok(Json(BetaResponse { beta })),
-        Err(ReturnsError::NoData { .. }) => {
-            info!("daily candles CSV missing, fetching from API");
+        Err(ReturnsError::NoData { path }) => {
+            info!(path = %path.display(), "daily candles CSV missing, fetching from API");
             let beta = beta::fetch_daily_candles_and_compute_beta(
                 services.hyperliquid.as_ref(),
                 &weights,

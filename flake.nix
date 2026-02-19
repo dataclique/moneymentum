@@ -51,12 +51,16 @@
           inherit system;
           overlays = [ rust-overlay.overlays.default ];
           config.allowUnfreePredicate = pkg:
-            builtins.elem (pkgs.lib.getName pkg) [ "terraform" ];
+            builtins.elem (pkgs.lib.getName pkg) [
+              "terraform"
+              "gitbutler-cli"
+            ];
         };
 
         rustToolchain = pkgs.rust-bin.stable.latest.default;
         craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
         rustPkgs = pkgs.callPackage ./rust.nix { inherit craneLib; };
+        gitbutler-cli = pkgs.callPackage ./.skills/gitbutler { };
 
         infraPkgs =
           import ./infra { inherit pkgs ragenix nixos-anywhere system; };
@@ -162,6 +166,7 @@
                   deployPkgs.deployNixos
                   deployPkgs.deployService
                   deployPkgs.deployAll
+                  gitbutler-cli
                 ];
 
               languages = {

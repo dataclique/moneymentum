@@ -432,13 +432,17 @@ you may need to force push multiple branches.
 branches with unpushed commits) or push each branch explicitly with
 `but push <branch-id> --with-force`.
 
-### `but amend` skips pre-commit hooks
+### Prefer `but commit` over `but amend`
 
 `but commit` runs git hooks by default, but `but amend` (and `but rub` when
-amending) does not. Formatting fixes won't be applied automatically.
+amending) does not. This means formatting fixes, lint checks, and other
+pre-commit validations are silently skipped when amending.
 
-**Fix:** After any `but amend`, run `prek run --all-files` (or your project's
-pre-commit runner), then amend the formatting fixes before pushing.
+**Default behavior:** Always use `but commit` to create new commits. Only use
+`but amend` when you specifically need to fold a change into an existing commit
+(e.g., fixing a locked hunk). After any `but amend`, run `prek run --all-files`
+(or your project's pre-commit runner) and amend the formatting fixes before
+pushing.
 
 ### Deleting a branch in a stack can corrupt the stack
 

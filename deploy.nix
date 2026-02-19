@@ -46,8 +46,11 @@ in {
 
   wrappers = { pkgs, infraPkgs, localSystem }:
     let
-      deployInputs = infraPkgs.buildInputs
-        ++ [ deploy-rs.packages.${localSystem}.deploy-rs ];
+      # Only rage (decrypt state) + jq (parse IP) + deploy-rs are needed.
+      # infraPkgs.buildInputs also includes terraform and ragenix which
+      # deploy scripts never use.
+      deployInputs =
+        [ pkgs.rage pkgs.jq deploy-rs.packages.${localSystem}.deploy-rs ];
 
       deployPreamble = ''
         ${infraPkgs.resolveIp}
@@ -94,7 +97,7 @@ in {
 
       deployAll = pkgs.writeShellApplication {
         name = "deploy-all";
-        runtimeInputs = deployInputs;
+        runtimeInputs = deployInputs ++ [ pkgs.openssh ];
         text = ''
           ${deployPreamble}
 

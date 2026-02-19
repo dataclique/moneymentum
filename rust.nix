@@ -20,8 +20,10 @@ let
   };
 
   # Vendor cargo deps with git dependency hashes
+  # Use depsSrc (Cargo manifests only) so the vendor hash is stable across
+  # source-only changes — vendoring only needs Cargo.toml + Cargo.lock.
   baseVendorDir = craneLib.vendorCargoDeps {
-    inherit src;
+    src = depsSrc;
     cargoLock = ./Cargo.lock;
     outputHashes = {
       "sqlite-es-0.1.0" = "sha256-Pf9nBYz2glSuEvBXnH0+5yqs+ZAOhd7xVTByWt6FMm0=";

@@ -240,7 +240,7 @@
 
           resolveIp = pkgs.writeShellApplication {
             name = "resolve-ip";
-            runtimeInputs = infraPkgs.buildInputs;
+            runtimeInputs = [ pkgs.rage pkgs.jq ];
             text = ''
               ${infraPkgs.resolveIp}
               echo "$host_ip"

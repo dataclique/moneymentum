@@ -1,3 +1,4 @@
+mod beta;
 mod candle;
 mod dataframe;
 mod finance;
@@ -73,6 +74,12 @@ pub struct Config {
 }
 
 impl Config {
+    /// Load configuration from a TOML file on disk.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConfigError::Io`] if the file cannot be read, or
+    /// [`ConfigError::Toml`] if the contents are not valid TOML for [`Config`].
     pub fn load<P: AsRef<Path>>(path: P) -> Result<Self, ConfigError> {
         let content = std::fs::read_to_string(path.as_ref())?;
         Ok(toml::from_str(&content)?)
@@ -90,6 +97,7 @@ pub enum ConfigError {
 type IngestionCqrs = Arc<wire::Cqrs<Ingestion>>;
 type IngestionView = wire::View<Ingestion>;
 type IngestionJobQueue = SqliteStorage<IngestionJob>;
+type QueryDeps = Cons<Ingestion, Nil>;
 
 #[get("/health")]
 fn health() -> &'static str {
@@ -137,6 +145,57 @@ async fn get_ingestion_status(
     Ok(Json(status))
 }
 
+#[derive(Debug, Deserialize)]
+struct BetaRequest {
+    weights: std::collections::HashMap<String, f64>,
+    benchmark: String,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct BetaResponse {
+    beta: Option<f64>,
+}
+
+#[post("/beta", data = "<body>")]
+async fn post_beta(
+    config: &State<Config>,
+    body: Json<BetaRequest>,
+) -> Result<Json<BetaResponse>, Status> {
+    if body.benchmark.trim().is_empty() {
+        return Err(Status::BadRequest);
+    }
+    if body.weights.is_empty() {
+        return Err(Status::BadRequest);
+    }
+    if body.weights.values().any(|weight| !weight.is_finite()) {
+        return Err(Status::BadRequest);
+    }
+
+    let weights: Vec<(String, f64)> = {
+        let mut sorted_weights: Vec<_> = body
+            .weights
+            .iter()
+            .map(|(ticker, weight)| (ticker.clone(), *weight))
+            .collect();
+        sorted_weights.sort_by(|(left_ticker, _), (right_ticker, _)| left_ticker.cmp(right_ticker));
+        sorted_weights
+    };
+
+    match beta::compute_portfolio_beta(&config.data_dir, &weights, &body.benchmark).await {
+        Ok(beta) => Ok(Json(BetaResponse { beta })),
+        Err(err) => {
+            error!(error = %err, "beta calculation failed");
+            Err(Status::InternalServerError)
+        }
+    }
+}
+
+/// Build and configure the Rocket HTTP server for the moneymentum backend.
+///
+/// # Errors
+///
+/// Returns an error if the database connection, migrations, Hyperliquid client,
+/// or Rocket initialization fail.
 pub async fn rocket(
     config: Config,
 ) -> Result<Rocket<rocket::Build>, Box<dyn std::error::Error + Send + Sync>> {
@@ -192,7 +251,6 @@ pub async fn rocket(
         max_concurrent_requests: config.max_concurrent_requests,
     });
 
-    type QueryDeps = Cons<Ingestion, Nil>;
     let unwired = UnwiredQuery::<_, QueryDeps>::new(query);
     let (cqrs, (wired, ())) = wire::CqrsBuilder::<Ingestion>::new(pool)
         .wire(unwired)
@@ -235,7 +293,13 @@ pub async fn rocket(
         .manage(job_queue)
         .mount(
             "/",
-            routes![health, get_candles, start_ingestion, get_ingestion_status],
+            routes![
+                health,
+                get_candles,
+                start_ingestion,
+                get_ingestion_status,
+                post_beta
+            ],
         ))
 }
 

@@ -438,12 +438,12 @@ mod tests {
 
     #[tokio::test]
     async fn full_wiring_flow_with_builders() {
-        let pool = SqlitePool::connect(":memory:").await.unwrap();
-        sqlx::migrate!().run(&pool).await.unwrap();
-
         // Create queries with their full dependencies
         type MultiDeps = Cons<AggA, Cons<AggB, Nil>>;
         type SingleDeps = Cons<AggA, Nil>;
+
+        let pool = SqlitePool::connect(":memory:").await.unwrap();
+        sqlx::migrate!().run(&pool).await.unwrap();
 
         let multi: UnwiredQuery<MultiAggregateQuery, MultiDeps> =
             UnwiredQuery::new(MultiAggregateQuery { name: "multi" });

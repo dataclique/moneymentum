@@ -108,6 +108,38 @@ const PortfolioPage = () => {
 
   return (
     <>
+      <header className="flex items-center justify-between px-3 py-1.5 border-b border-border shrink-0 bg-muted/30">
+        <div className="flex items-center gap-4">
+          <span className="font-semibold">Moneymentum</span>
+          <div className="h-4 border-l border-border" />
+          <span className="text-muted-foreground">NAV</span>
+          <span className="font-mono">${accountValue.toFixed(2)}</span>
+          <span className="text-muted-foreground">Notional</span>
+          <span className="font-mono">${targetNotional.toFixed(2)}</span>
+          <span className="text-muted-foreground">
+            TODO: effectiveLeverage.toFixed(2)x
+          </span>
+        </div>
+        <div className="flex items-center gap-4">
+          <span className="text-muted-foreground">Δ</span>
+          <span className="font-mono">TODO</span>
+          <span className="text-muted-foreground">Γ</span>
+          <span className="font-mono">TODO</span>
+          <span className="text-muted-foreground">Θ</span>
+          <span className="font-mono">TODO</span>
+          <div className="h-4 border-l border-border" />
+          <span className="text-muted-foreground">TODO Var</span>
+          <span className="font-mono text-red-400">TODO</span>
+          <kbd
+            className="px-1.5 py-0.5 text-[10px] font-mono bg-muted rounded cursor-pointer hover:bg-muted/80"
+            onClick={() => {
+              alert("TODO: add help")
+            }}
+          >
+            ?
+          </kbd>
+        </div>
+      </header>
       <div
         className={twMerge(
           clsx(

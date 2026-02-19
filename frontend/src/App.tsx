@@ -45,12 +45,12 @@ const App = () => {
     <div
       className={twMerge(
         clsx(
-          "flex min-h-screen flex-col bg-background text-foreground",
+          "flex min-h-screen flex-col bg-background text-foreground text-[11px]",
           isNetworkSwitching && "pointer-events-none opacity-80",
         ),
       )}
     >
-      <header className="flex w-full items-center justify-between border-b border-border px-4 py-2 pl-28 pr-28">
+      {/* <header className="flex w-full items-center justify-between border-b border-border px-4 py-2 pl-28 pr-28">
         <h1 className="text-lg font-semibold">Moneymentum</h1>
         <div className="flex items-center gap-4">
           <WalletHeader autoOpen={isPortfolioPage} />
@@ -61,7 +61,7 @@ const App = () => {
             Switching network... All data will reload automatically
           </div>
         )}
-      </header>
+      </header> */}
       <Routes>
         <Route path="/" element={<PortfolioPage key={networkMode} />} />
         <Route path="/dashboard" element={<MainPage />} />

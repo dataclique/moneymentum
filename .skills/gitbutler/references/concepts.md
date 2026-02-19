@@ -119,11 +119,12 @@ git add file2.js    # Stage to THE staging area
 git commit          # Commit from THE staging area
 ```
 
-GitButler has MULTIPLE staging areas (one per branch):
+GitButler has MULTIPLE staging areas (one per branch). Use CLI IDs from
+`but status` / `but diff` to target specific files:
 
 ```bash
-but stage file1.js api-branch    # Stage to api-branch's staging area
-but stage file2.js ui-branch     # Stage to ui-branch's staging area
+but stage g0 api-branch    # Stage file g0 to api-branch's staging area
+but stage h0 ui-branch     # Stage file h0 to ui-branch's staging area
 but commit api-branch -m "..."   # Commit from api-branch's staging area
 but commit ui-branch -m "..."    # Commit from ui-branch's staging area
 ```
@@ -467,13 +468,13 @@ operation. Use `but oplog` to find a snapshot from before the corruption, then
 **Fix — `but teardown` + `but setup` (nuclear option):** If oplog can't help:
 
 1. `but teardown` — exits GitButler mode, checks out a regular branch
-2. `git checkout <branch-you-want>` — get on the correct branch
-3. `but setup` — re-initializes GitButler with a clean workspace
-4. `but apply <branch>` — re-apply branches from remote
-
-This discards all local GitButler state (virtual branch assignments, staging
-areas) but preserves git history. Make sure the remote is in good shape before
-tearing down.
+2. `git checkout <branch-you-want>` — get on the desired branch (Rule 1 does not
+   apply here: after teardown, GitButler is inactive and normal git commands are
+   required)
+3. Confirm the remote is in good shape before proceeding — teardown discards all
+   local GitButler state (virtual branch assignments, staging areas)
+4. `but setup` — re-initializes GitButler with a clean workspace
+5. `but apply <branch>` — re-apply branches from remote
 
 ### `but push` on a stacked branch pushes the full stack
 

@@ -13,7 +13,7 @@ use chrono::{DateTime, Utc};
 use cqrs_es::{Aggregate, DomainEvent};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use tracing::{error, info};
+use tracing::{debug, error, info};
 
 use crate::hyperliquid::{CandleIngester, FundingRateIngester, Hyperliquid, HyperliquidError};
 use crate::lifecycle::{Lifecycle, LifecycleError, Never};
@@ -60,7 +60,7 @@ impl IngestionJob {
             .execute::<IngestionId>((), IngestionCommand::Start)
             .await
         {
-            error!(error = %err, "failed to start ingestion");
+            debug!(error = %err, "ingestion skipped");
             return;
         }
 

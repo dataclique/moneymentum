@@ -5,7 +5,7 @@
 //! back (3 years for weekly). This balances storage costs against analytical
 //! utility - higher-frequency data is most relevant for recent periods.
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) enum Timeframe {
     FifteenMin,
     OneHour,

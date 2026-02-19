@@ -26,7 +26,7 @@ let
 
       serviceConfig = {
         DynamicUser = true;
-        SupplementaryGroups = [ "moneymentum" ];
+        SupplementaryGroups = [ "mm-data" ];
         ExecStart = "${path} --config ${configFile}";
         Restart = "always";
         RestartSec = 5;
@@ -150,7 +150,7 @@ in {
     };
   };
 
-  users.groups.moneymentum = { };
+  users.groups.mm-data = { };
   programs.bash.interactiveShellInit = "set -o vi";
 
   systemd.services = lib.mapAttrs mkService enabledServices // {

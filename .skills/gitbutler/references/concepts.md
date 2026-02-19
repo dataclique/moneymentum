@@ -439,3 +439,45 @@ amending) does not. Formatting fixes won't be applied automatically.
 
 **Fix:** After any `but amend`, run `prek run --all-files` (or your project's
 pre-commit runner), then amend the formatting fixes before pushing.
+
+### Deleting a branch in a stack can corrupt the stack
+
+Deleting a branch that sits in the middle of a stack (e.g., removing the parent
+in a parent→child stack) can leave the stack in a broken state: unnamed
+branches, orphaned commits, and commands like `but rub`, `but squash`,
+`but unapply` all failing with "stack not found" errors.
+
+**Symptoms:**
+
+- `but status` shows an unnamed branch `[]` with orphaned commits
+- `but branch delete`, `but rub`, `but squash` fail with "stack not found"
+- `but unapply` fails with "stack not found in workspace"
+
+**Fix — `but oplog` + `but undo`:** GitButler snapshots state before every
+operation. Use `but oplog` to find a snapshot from before the corruption, then
+`but undo` to roll back (one step) or restore a specific snapshot.
+
+**Fix — `but teardown` + `but setup` (nuclear option):** If oplog can't help:
+
+1. `but teardown` — exits GitButler mode, checks out a regular branch
+2. `git checkout <branch-you-want>` — get on the correct branch
+3. `but setup` — re-initializes GitButler with a clean workspace
+4. `but apply <branch>` — re-apply branches from remote
+
+This discards all local GitButler state (virtual branch assignments, staging
+areas) but preserves git history. Make sure the remote is in good shape before
+tearing down.
+
+### `but push` on a stacked branch pushes the full stack
+
+When branches are stacked (child sits on parent), `but push <child>` pushes the
+child's commit which includes all parent commits in its history. If the parent
+branch tracks a different remote ref, this overwrites it with the stacked
+version.
+
+**What goes wrong:** You push a child branch and accidentally overwrite the
+parent's remote with commits that belong to the child.
+
+**Fix:** Only push the specific branch you intend to update. After a stack
+collapse (merging branches together), delete the old remote branches that are no
+longer needed: `git push origin --delete <old-branch>`.

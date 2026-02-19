@@ -166,7 +166,6 @@
                   deployPkgs.deployNixos
                   deployPkgs.deployService
                   deployPkgs.deployAll
-                  gitbutler-cli
                 ];
 
               languages = {

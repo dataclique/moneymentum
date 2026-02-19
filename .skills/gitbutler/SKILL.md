@@ -27,6 +27,12 @@ Use GitButler CLI (`but`) as the default version-control interface.
 8. Avoid routine `--help` probes before mutations. Use the command patterns in
    this skill (and `references/reference.md`) first; only use `--help` when
    syntax is genuinely unclear or after a failed attempt.
+9. **Prefer `but commit` over `but amend`.** `but commit` runs pre-commit hooks
+   (formatting, linting, validation); `but amend` skips them. Default to
+   creating new commits, even for locked hunks (🔒) — the history can be cleaned
+   up later with squash. Use `but amend` only when the user requests it or when
+   squashing the change into an existing commit is clearly the right move (e.g.,
+   fixing a typo in a commit you just made).
 
 ## Core Flow
 
@@ -76,12 +82,17 @@ immediately. Do not run `git push`, even if `but push` reports nothing to push.
 3. Do not replace step 1 with `but fetch`, `but status`, or a narrative-only
    summary.
 
-### Amend into existing commit
+### Amend into existing commit (only when appropriate)
+
+Prefer `but commit` to create a new commit. Only amend when the user requests it
+or the change clearly belongs in an existing commit (e.g., fixing a typo you
+just introduced). Remember: `but amend` skips pre-commit hooks.
 
 1. `but status`
 2. Locate file ID and commit ID from `status` (or `but show <branch-id>`)
 3. Run exactly: `but amend <file-id> <commit-id> --status-after`
-4. Never use `git checkout` or `git commit --amend`
+4. Run `prek run --all-files` afterward to catch formatting issues
+5. Never use `git checkout` or `git commit --amend`
 
 ### Reorder commits
 
@@ -129,10 +140,10 @@ immediately. Do not run `git push`, even if `but push` reports nothing to push.
     output shape mismatches), or when the user asks.
   - If update is available, recommend `but skill check --update` (or run it if
     the user asked to update).
-- **`but amend` does not run pre-commit hooks.** After any `but amend`, you MUST
-  run `prek run --all-files` (prek is the project's pre-commit/format runner,
-  installed by git-hooks.nix) and amend any formatting fixes before pushing.
-  `but commit` runs hooks by default; this limitation only affects `amend`.
+- **`but amend` does not run pre-commit hooks.** Prefer `but commit` (which runs
+  hooks) by default. When you do use amend, run `prek run --all-files` (prek is
+  the project's pre-commit/format runner, installed by git-hooks.nix) and amend
+  any formatting fixes before pushing.
 - For deeper command syntax and flags, use `references/reference.md`.
 - For workspace model and dependency behavior, use `references/concepts.md`.
 - For end-to-end workflow patterns, use `references/examples.md`.

@@ -15,9 +15,6 @@ jobs:
     if: github.event_name != 'push'
     runs-on: ubuntu-latest
     steps:
-      - name: Free disk space
-        uses: jlumbroso/free-disk-space@v1.3.1
-
       - uses: actions/checkout@v4
 
       - uses: DeterminateSystems/nix-installer-action@main
@@ -29,9 +26,8 @@ jobs:
       - uses: DeterminateSystems/magic-nix-cache-action@main
 
       - name: Pre-commit hooks
-        # prek (not pre-commit): git-hooks.nix installs hooks as `prek` to avoid
-        # colliding with the pre-commit binary from the pre-commit package.
-        run: nix develop --impure -c prek run --all-files
+        # Pure flake check — runs the same hooks without the heavy devShell
+        run: nix build .#checks.x86_64-linux.git-hooks
 
   backend:
     if: github.event_name != 'push'
@@ -92,10 +88,6 @@ jobs:
             fallback = true
 
       - uses: DeterminateSystems/magic-nix-cache-action@main
-
-      - name: Flake checks
-        # --impure required: devenv devShells use impure features
-        run: nix flake check --impure
 
       - name: Build NixOS system closure
         run: nix build .#nixosConfigurations.moneymentum.config.system.build.toplevel

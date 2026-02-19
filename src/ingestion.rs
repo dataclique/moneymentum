@@ -20,7 +20,7 @@ use crate::lifecycle::{Lifecycle, LifecycleError, Never};
 use crate::timeframe::Timeframe;
 use crate::wire::{AggregateId, Cqrs, ViewTable};
 
-const TIMEFRAMES: &[Timeframe] = &[
+const ALL_TIMEFRAMES: &[Timeframe] = &[
     Timeframe::FifteenMin,
     Timeframe::OneHour,
     Timeframe::OneDay,
@@ -28,9 +28,29 @@ const TIMEFRAMES: &[Timeframe] = &[
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct IngestionJob;
+pub(crate) enum IngestionScope {
+    All,
+    Candles(Timeframe),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct IngestionJob {
+    pub(crate) scope: IngestionScope,
+}
 
 impl IngestionJob {
+    pub(crate) fn all() -> Self {
+        Self {
+            scope: IngestionScope::All,
+        }
+    }
+
+    pub(crate) fn candles(timeframe: Timeframe) -> Self {
+        Self {
+            scope: IngestionScope::Candles(timeframe),
+        }
+    }
+
     pub(crate) async fn run(
         self,
         cqrs: Data<Arc<Cqrs<Ingestion>>>,
@@ -48,14 +68,24 @@ impl IngestionJob {
             Arc::clone(&services.hyperliquid),
             services.max_concurrent_requests,
         );
-        let funding_ingester = FundingRateIngester::new(
-            Arc::clone(&services.hyperliquid),
-            services.max_concurrent_requests,
-        );
 
-        match ingest_all(&candle_ingester, &funding_ingester, &services.data_dir).await {
+        let result = match &self.scope {
+            IngestionScope::All => {
+                let funding_ingester = FundingRateIngester::new(
+                    Arc::clone(&services.hyperliquid),
+                    services.max_concurrent_requests,
+                );
+                ingest_all(&candle_ingester, &funding_ingester, &services.data_dir).await
+            }
+            IngestionScope::Candles(timeframe) => candle_ingester
+                .ingest(*timeframe, &services.data_dir)
+                .await
+                .map(|()| Utc::now()),
+        };
+
+        match result {
             Ok(last_record) => {
-                info!("ingestion complete");
+                info!(?self.scope, "ingestion complete");
                 if let Err(err) = cqrs
                     .execute::<IngestionId>((), IngestionCommand::Complete { last_record })
                     .await
@@ -64,7 +94,7 @@ impl IngestionJob {
                 }
             }
             Err(err) => {
-                error!(error = %err, "ingestion failed");
+                error!(error = %err, ?self.scope, "ingestion failed");
                 if let Err(err) = cqrs
                     .execute::<IngestionId>(
                         (),
@@ -86,7 +116,7 @@ async fn ingest_all(
     funding_ingester: &FundingRateIngester<dyn Hyperliquid>,
     data_dir: &Path,
 ) -> Result<DateTime<Utc>, HyperliquidError> {
-    for timeframe in TIMEFRAMES {
+    for timeframe in ALL_TIMEFRAMES {
         candle_ingester.ingest(*timeframe, data_dir).await?;
     }
     funding_ingester.ingest(data_dir).await?;

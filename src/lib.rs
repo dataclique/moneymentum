@@ -122,7 +122,7 @@ async fn get_candles(
 
 #[post("/ingest")]
 async fn start_ingestion(job_queue: &State<IngestionJobQueue>) -> Status {
-    if let Err(err) = job_queue.inner().clone().push(IngestionJob).await {
+    if let Err(err) = job_queue.inner().clone().push(IngestionJob::all()).await {
         error!(error = %err, "failed to queue ingestion job");
         return Status::InternalServerError;
     }
@@ -200,7 +200,12 @@ async fn post_beta(
             })?;
 
             // Kick off ingestion so CSV exists for future requests
-            if let Err(err) = job_queue.inner().clone().push(IngestionJob).await {
+            if let Err(err) = job_queue
+                .inner()
+                .clone()
+                .push(IngestionJob::candles(Timeframe::OneDay))
+                .await
+            {
                 error!(error = %err, "failed to queue ingestion after beta fallback");
             }
 

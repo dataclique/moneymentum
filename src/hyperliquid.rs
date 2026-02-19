@@ -90,6 +90,13 @@ impl HyperliquidClient {
         );
         Ok(Self { info, max_retries })
     }
+
+    fn retry_backoff(&self) -> ExponentialBuilder {
+        ExponentialBuilder::default()
+            .with_jitter()
+            .with_min_delay(std::time::Duration::from_secs(3))
+            .with_max_times(self.max_retries)
+    }
 }
 
 #[async_trait]
@@ -126,11 +133,7 @@ impl Hyperliquid for HyperliquidClient {
                 )
                 .await
         })
-        .retry(
-            ExponentialBuilder::default()
-                .with_jitter()
-                .with_max_times(self.max_retries),
-        )
+        .retry(self.retry_backoff())
         .notify(|err, dur| {
             debug!(error = %err, delay = ?dur, "retrying candle fetch");
         })
@@ -179,11 +182,7 @@ impl Hyperliquid for HyperliquidClient {
                 .funding_history(market.as_str().to_string(), start_ms, Some(end_ms))
                 .await
         })
-        .retry(
-            ExponentialBuilder::default()
-                .with_jitter()
-                .with_max_times(self.max_retries),
-        )
+        .retry(self.retry_backoff())
         .notify(|err, dur| {
             debug!(error = %err, delay = ?dur, "retrying funding rate fetch");
         })

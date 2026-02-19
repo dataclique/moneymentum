@@ -149,7 +149,28 @@ in {
   users.groups.moneymentum = { };
   programs.bash.interactiveShellInit = "set -o vi";
 
-  systemd.services = lib.mapAttrs mkService enabledServices;
+  systemd.services = lib.mapAttrs mkService enabledServices // {
+    moneymentum-ingest = {
+      description = "Trigger moneymentum data ingestion";
+      after = [ "moneymentum.service" ];
+      requires = [ "moneymentum.service" ];
+      serviceConfig = {
+        Type = "oneshot";
+        DynamicUser = true;
+        ExecStart =
+          "${pkgs.curl}/bin/curl -sSf --max-time 300 -X POST http://127.0.0.1:8000/ingest";
+      };
+    };
+  };
+
+  systemd.timers.moneymentum-ingest = {
+    wantedBy = [ "timers.target" ];
+    timerConfig = {
+      OnBootSec = "5min";
+      OnUnitActiveSec = "6h";
+      Persistent = true;
+    };
+  };
 
   system.activationScripts.moneymentum-init.text =
     "mkdir -p /run/moneymentum /mnt/data/staging";

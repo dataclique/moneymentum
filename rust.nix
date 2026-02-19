@@ -34,14 +34,26 @@ let
   # the vendor dir. Fetch migrations from st0x.issuance at the same commit
   # as Cargo.lock specifies for sqlite-es.
   cargoLock = builtins.fromTOML (builtins.readFile ./Cargo.lock);
-  sqliteEsPackage = builtins.head
-    (builtins.filter (p: p.name or "" == "sqlite-es") cargoLock.package);
-  sqliteEsRev =
-    builtins.head (builtins.match ".*#([a-f0-9]+)" sqliteEsPackage.source);
+  sqliteEsMatches =
+    builtins.filter (p: p.name or "" == "sqlite-es") cargoLock.package;
+  sqliteEsPackage = if sqliteEsMatches == [ ] then
+    builtins.throw
+    "sqlite-es not found in Cargo.lock — is the dependency still present?"
+  else
+    builtins.head sqliteEsMatches;
+  sqliteEsRevMatch =
+    builtins.match ".*#([a-f0-9]+)" (sqliteEsPackage.source or "");
+  sqliteEsRev = if sqliteEsRevMatch == null then
+    builtins.throw "could not parse git rev from sqlite-es source: ${
+      sqliteEsPackage.source or "<missing>"
+    }"
+  else
+    builtins.head sqliteEsRevMatch;
 
   sqliteEsMigrations = builtins.fetchGit {
     url = "https://github.com/ST0x-Technology/st0x.issuance";
     rev = sqliteEsRev;
+    narHash = "sha256-K9HvodswmWgM6GoP7mszA0eiXDcVuvTwiXqQLI4JUMc=";
   } + "/migrations";
 
   cargoVendorDir = pkgs.runCommand "vendor-with-migrations" { } ''

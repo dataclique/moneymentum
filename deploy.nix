@@ -29,7 +29,7 @@ let
 in {
   config = {
     nodes.moneymentum = {
-      hostname = ""; # overridden by --hostname at deploy time
+      hostname = "MUST_OVERRIDE_HOSTNAME";
       sshUser = "root";
       user = "root";
 
@@ -55,6 +55,11 @@ in {
       deployPreamble = ''
         ${infraPkgs.resolveIp}
 
+        if [ -z "$host_ip" ]; then
+          echo "ERROR: host_ip not resolved — check resolveIp or --hostname flag" >&2
+          exit 1
+        fi
+
         ssh_flag=""
         if [ "$identity" != "$HOME/.ssh/id_ed25519" ]; then
           export NIX_SSHOPTS="-i $identity"
@@ -65,11 +70,8 @@ in {
       deployFlags =
         if localSystem == "x86_64-linux" then "" else "--remote-build";
 
-      serviceCleanup = builtins.concatStringsSep "; " (builtins.concatMap
-        (name: [
-          "systemctl stop ${name} || true"
-          "systemctl reset-failed ${name} || true"
-        ]) enabledServices);
+      serviceCleanup = builtins.concatStringsSep "; "
+        (map (name: "systemctl reset-failed ${name} || true") enabledServices);
 
     in {
       deployNixos = pkgs.writeShellApplication {
@@ -98,7 +100,7 @@ in {
         text = ''
           ${deployPreamble}
 
-          ssh -i "$identity" "root@$host_ip" '${serviceCleanup}; rm -rf /run/moneymentum'
+          ssh -i "$identity" "root@$host_ip" '${serviceCleanup}'
 
           deploy ${deployFlags} --hostname "$host_ip" ''${ssh_flag:+"$ssh_flag"} "$@" .#moneymentum
         '';

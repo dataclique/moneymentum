@@ -1,16 +1,10 @@
-{ pkgs, lib, modulesPath, frontend, frontend-staging, ... }:
+{ pkgs, lib, modulesPath, frontend, ... }:
 
 let
   inherit (import ./keys.nix) roles;
 
   services = import ./services.nix;
 
-  # try_files resolves against root, not alias — nest staging files under
-  # staging/ so root-based resolution finds them at /staging/index.html.
-  stagingWebroot = pkgs.runCommand "staging-webroot" { } ''
-    mkdir -p $out/staging
-    cp -rT ${frontend-staging} $out/staging
-  '';
   enabledServices = lib.filterAttrs (_: v: v.enabled) services;
 
   mkService = name: cfg:
@@ -36,7 +30,7 @@ let
         ExecStart = "${path} --config ${configFile}";
         Restart = "always";
         RestartSec = 5;
-        ReadWritePaths = [ "/mnt/data" ];
+        ReadWritePaths = [ cfg.dataDir ];
       };
     };
 
@@ -98,20 +92,29 @@ in {
 
     nginx = {
       enable = true;
+
       virtualHosts.default = {
         default = true;
+        listen = [{
+          addr = "0.0.0.0";
+          port = 80;
+        }];
         root = "${frontend}";
-
         locations = {
           "/".tryFiles = "$uri $uri/ /index.html";
           "/api/" = { proxyPass = "http://127.0.0.1:8000/"; };
+        };
+      };
 
-          "/staging/api/" = { proxyPass = "http://127.0.0.1:8001/"; };
-          "= /staging".return = "301 /staging/";
-          "/staging/" = {
-            root = "${stagingWebroot}";
-            tryFiles = "$uri $uri/ /staging/index.html";
-          };
+      virtualHosts.staging = {
+        listen = [{
+          addr = "0.0.0.0";
+          port = 8080;
+        }];
+        root = "${frontend}";
+        locations = {
+          "/".tryFiles = "$uri $uri/ /index.html";
+          "/api/" = { proxyPass = "http://127.0.0.1:8001/"; };
         };
       };
     };
@@ -123,7 +126,8 @@ in {
     enable = true;
     allowedTCPPorts = [
       22 # SSH
-      80 # Frontend
+      80 # Frontend (prod)
+      8080 # Frontend (staging)
     ];
   };
 
@@ -152,8 +156,7 @@ in {
   systemd.services = lib.mapAttrs mkService enabledServices // {
     moneymentum-ingest = {
       description = "Trigger moneymentum data ingestion";
-      after = [ "moneymentum.service" ];
-      requires = [ "moneymentum.service" ];
+      unitConfig.ConditionPathExists = "/run/moneymentum/moneymentum.ready";
       serviceConfig = {
         Type = "oneshot";
         DynamicUser = true;
@@ -172,8 +175,7 @@ in {
     };
   };
 
-  system.activationScripts.moneymentum-init.text =
-    "mkdir -p /run/moneymentum /mnt/data/prod /mnt/data/staging";
+  system.activationScripts.moneymentum-init.text = "mkdir -p /run/moneymentum";
 
   system.activationScripts.per-service-profiles.text =
     "mkdir -p /nix/var/nix/profiles/per-service";

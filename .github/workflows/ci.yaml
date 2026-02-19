@@ -12,7 +12,6 @@ permissions:
 
 jobs:
   hooks:
-    if: github.event_name != 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -30,7 +29,6 @@ jobs:
         run: nix build .#checks.x86_64-linux.git-hooks
 
   backend:
-    if: github.event_name != 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -50,7 +48,6 @@ jobs:
         run: nix build .#moneymentum-clippy
 
   frontend:
-    if: github.event_name != 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -97,7 +94,7 @@ jobs:
 
   deploy:
     if: github.ref == 'refs/heads/master'
-    needs: [warmup]
+    needs: [hooks, backend, frontend, warmup]
     concurrency:
       group: deploy
       cancel-in-progress: false
@@ -170,7 +167,7 @@ jobs:
       - name: Reset services before deploy
         run: |
           host_ip=$(nix run .#resolveIp)
-          ssh "root@$host_ip" 'systemctl stop staging || true; systemctl reset-failed staging || true; rm -rf /run/moneymentum'
+          ssh "root@$host_ip" 'systemctl stop staging || true; systemctl reset-failed staging || true; rm -f /run/moneymentum/staging.ready'
 
       - name: Deploy staging
         run: nix run .#deployNixos -- --skip-checks && nix run .#deployService -- staging --skip-checks

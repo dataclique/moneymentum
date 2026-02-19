@@ -51,6 +51,19 @@ let
     ${decryptVars}
   '';
 
+  rekeyPreamble = ''
+    ${parseIdentity}
+    on_exit() {
+      ${encryptState}
+      ${cleanup}
+    }
+    trap on_exit EXIT
+    ${decryptState}
+    ${encryptState}
+    ${decryptVars}
+    ${encryptVars}
+  '';
+
   resolveIp = ''
     ${parseIdentity}
     ${decryptState}
@@ -80,30 +93,12 @@ in {
   inherit buildInputs parseIdentity resolveIp;
 
   rekey = mkTask "rekey" ''
-    ${parseIdentity}
-    on_exit() {
-      ${encryptState}
-      ${cleanup}
-    }
-    trap on_exit EXIT
-    ${decryptState}
-    ${encryptState}
-    ${decryptVars}
-    ${encryptVars}
+    ${rekeyPreamble}
     ragenix --rules ./config/secrets.nix -i "$identity" -r
   '';
 
   tfRekey = mkTask "tf-rekey" ''
-    ${parseIdentity}
-    on_exit() {
-      ${encryptState}
-      ${cleanup}
-    }
-    trap on_exit EXIT
-    ${decryptState}
-    ${encryptState}
-    ${decryptVars}
-    ${encryptVars}
+    ${rekeyPreamble}
   '';
 
   tfInit = mkTask "tf-init" ''

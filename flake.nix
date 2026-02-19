@@ -38,10 +38,7 @@
     {
       nixosConfigurations.moneymentum = nixpkgs.lib.nixosSystem {
         system = "x86_64-linux";
-        specialArgs = {
-          frontend = self.packages.x86_64-linux.frontend;
-          frontend-staging = self.packages.x86_64-linux.frontend-staging;
-        };
+        specialArgs = { frontend = self.packages.x86_64-linux.frontend; };
 
         modules =
           [ disko.nixosModules.disko ragenix.nixosModules.default ./os.nix ];
@@ -232,11 +229,6 @@
 
           frontend = pkgs.callPackage ./frontend {
             bun2nix = bun2nix.packages.${system}.default;
-          };
-
-          frontend-staging = pkgs.callPackage ./frontend {
-            bun2nix = bun2nix.packages.${system}.default;
-            basePath = "/staging/";
           };
 
           resolveIp = pkgs.writeShellApplication {

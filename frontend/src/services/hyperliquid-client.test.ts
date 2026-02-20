@@ -36,7 +36,7 @@ vi.mock("ccxt", () => {
   }
 })
 
-import { HyperliquidClient } from "./hyperliquid-client"
+import { HyperliquidClient, fetchPerpTickers } from "./hyperliquid-client"
 import type { WalletCredentials } from "@/contexts/wallet-context"
 import type { Position } from "./hyperliquid-client"
 
@@ -1174,5 +1174,68 @@ describe("HyperliquidClient", () => {
 
       expect(client.getNetworkMode()).toBe("mainnet")
     })
+  })
+})
+
+describe("fetchPerpTickers", () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    localStorage.clear()
+  })
+
+  it("returns perp symbols from loaded markets", async () => {
+    mockExchange.loadMarkets.mockResolvedValue({
+      "BTC/USDC:USDC": { swap: true },
+      "ETH/USDC:USDC": { swap: true },
+      "SOL/USDC:USDC": { swap: true },
+      "BTC/USDC": { spot: true },
+    })
+
+    const tickers = await fetchPerpTickers("testnet")
+
+    expect(tickers).toEqual(["BTC/USDC:USDC", "ETH/USDC:USDC", "SOL/USDC:USDC"])
+  })
+
+  it("filters out spot markets", async () => {
+    mockExchange.loadMarkets.mockResolvedValue({
+      "BTC/USDC:USDC": { swap: true },
+      "BTC/USDC": { spot: true },
+      "ETH/USDC": { spot: true },
+    })
+
+    const tickers = await fetchPerpTickers("testnet")
+
+    expect(tickers).toEqual(["BTC/USDC:USDC"])
+  })
+
+  it("filters out markets where swap is false", async () => {
+    mockExchange.loadMarkets.mockResolvedValue({
+      "BTC/USDC:USDC": { swap: true },
+      "ETH/USDC:USDC": { swap: false },
+    })
+
+    const tickers = await fetchPerpTickers("testnet")
+
+    expect(tickers).toEqual(["BTC/USDC:USDC"])
+  })
+
+  it("returns empty array when preloadMarkets fails", async () => {
+    mockExchange.loadMarkets.mockRejectedValue(new Error("Network error"))
+
+    const tickers = await fetchPerpTickers("testnet")
+
+    expect(tickers).toEqual([])
+  })
+
+  it("returns sorted symbols", async () => {
+    mockExchange.loadMarkets.mockResolvedValue({
+      "SOL/USDC:USDC": { swap: true },
+      "BTC/USDC:USDC": { swap: true },
+      "ETH/USDC:USDC": { swap: true },
+    })
+
+    const tickers = await fetchPerpTickers("testnet")
+
+    expect(tickers).toEqual(["BTC/USDC:USDC", "ETH/USDC:USDC", "SOL/USDC:USDC"])
   })
 })

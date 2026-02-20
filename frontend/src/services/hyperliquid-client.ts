@@ -121,6 +121,23 @@ export const preloadMarkets = async (
   }
 }
 
+const extractPerpSymbols = (markets: Record<string, unknown>): string[] =>
+  Object.entries(markets)
+    .filter(
+      ([symbol, data]) =>
+        symbol.includes(":") && (data as { swap?: boolean }).swap,
+    )
+    .map(([symbol]) => symbol)
+    .sort()
+
+export const fetchPerpTickers = async (
+  networkMode: NetworkMode,
+): Promise<string[]> => {
+  const markets = await preloadMarkets(networkMode)
+  if (!markets) return []
+  return extractPerpSymbols(markets)
+}
+
 export type OrderSide = "buy" | "sell"
 export type PositionStatus =
   | "untouched"
@@ -323,14 +340,7 @@ export class HyperliquidClient {
     // Update cache with fresh markets data
     setCachedMarkets(markets, this.networkMode)
 
-    const perpSymbols = Object.entries(markets)
-      .filter(
-        ([symbol, data]) =>
-          symbol.includes(":") && (data as { swap?: boolean }).swap,
-      )
-      .map(([symbol]) => symbol)
-      .sort()
-    return perpSymbols
+    return extractPerpSymbols(markets)
   }
 
   async getLeverageLimits(): Promise<LeverageLimit[]> {

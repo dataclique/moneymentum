@@ -23,6 +23,7 @@ const mockMethods = {
   rebalancePositions: vi.fn(),
   getNetworkMode: vi.fn(),
   getPublicKey: vi.fn(),
+  fetchPerpTickers: vi.fn(),
 }
 
 // Mock the HyperliquidClient as a class
@@ -36,6 +37,8 @@ vi.mock("@/services/hyperliquid-client", () => ({
     getNetworkMode = mockMethods.getNetworkMode
     getPublicKey = mockMethods.getPublicKey
   },
+  fetchPerpTickers: (...args: unknown[]) =>
+    mockMethods.fetchPerpTickers(...args),
   preloadMarkets: vi.fn().mockResolvedValue(undefined),
 }))
 
@@ -198,6 +201,31 @@ describe("useTrading hooks", () => {
   })
 
   describe("useHyperliquidTickers", () => {
+    it("fetches tickers without wallet connected", async () => {
+      // No wallet in localStorage — simulates staging on a different port
+      // where localStorage doesn't have wallet credentials.
+      // Market data is public, so tickers should load regardless.
+      mockMethods.fetchPerpTickers.mockResolvedValue([
+        "BTC/USDC:USDC",
+        "ETH/USDC:USDC",
+        "SOL/USDC:USDC",
+      ])
+
+      const { result } = renderHook(() => useHyperliquidTickers(), {
+        wrapper: createWrapper(),
+      })
+
+      await waitFor(() => {
+        expect(result.current.isSuccess).toBe(true)
+      })
+
+      expect(result.current.data).toEqual([
+        "BTC/USDC:USDC",
+        "ETH/USDC:USDC",
+        "SOL/USDC:USDC",
+      ])
+    })
+
     it("fetches tickers when connected", async () => {
       localStorage.setItem(
         "hyperliquid-wallet",
@@ -207,7 +235,7 @@ describe("useTrading hooks", () => {
           privateKey: "0xTestSecret",
         }),
       )
-      mockMethods.listPerpTickers.mockResolvedValue([
+      mockMethods.fetchPerpTickers.mockResolvedValue([
         "BTC/USDC:USDC",
         "ETH/USDC:USDC",
         "SOL/USDC:USDC",

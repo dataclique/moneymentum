@@ -111,6 +111,63 @@ just introduced). Remember: `but amend` skips pre-commit hooks.
    `but move <commit-b-new-id> <commit-a-new-id> --status-after`
 4. Never use `git rebase` for this.
 
+## Stacking Branches (PR Stacks)
+
+**CRITICAL: Always use `--anchor` (`-a`) when creating stacked branches.**
+Without `--anchor`, `but branch new` creates an independent parallel branch
+based on master. Parallel branches do NOT share commits — pushing one branch
+does not include commits from other branches, even if the GitHub PRs have base
+branches set correctly.
+
+### Creating a proper stack
+
+```bash
+but status
+but branch new feature-base                          # first branch (anchored on target/master by default)
+but branch new feature-part-2 -a feature-base        # stacked on feature-base
+but branch new feature-part-3 -a feature-part-2      # stacked on feature-part-2
+```
+
+Each branch in the stack includes all commits from the branches below it.
+Pushing `feature-part-3` will include commits from `feature-part-2` and
+`feature-base`.
+
+### The mistake: parallel branches pretending to be a stack
+
+If you create branches without `--anchor`:
+
+```bash
+# WRONG — creates independent parallel branches
+but branch new feature-base
+but branch new feature-part-2    # NOT stacked on feature-base!
+but branch new feature-part-3    # NOT stacked on feature-part-2!
+```
+
+These branches are completely independent. Setting PR base branches on GitHub
+does NOT make the git branches share commits. The result: pushing
+`feature-part-3` only includes its own commits + master, not commits from
+`feature-base` or `feature-part-2`.
+
+### Fixing a broken stack (parallel → stacked)
+
+If branches were created in parallel but need to be a stack:
+
+1. Unapply the branches that need restacking:
+   `but unapply <branch-name> --status-after`
+2. Create new branches with proper anchoring:
+   `but branch new <name>-stacked -a <anchor-branch> --status-after`
+3. Pick commits from unapplied branches:
+   `but pick <commit-id> <target-branch> --status-after`
+4. Redistribute commits with `but rub`:
+   `but rub <commit-id> <correct-branch> --status-after`
+5. Force push to the original remote branch names:
+   `git push origin --force <local-stacked-name>:<original-remote-name>`
+
+Note: `but push` always pushes to a remote ref matching the local branch name.
+When stacked branches have different local names (e.g., `-stacked` suffix), use
+`git push origin --force` with explicit refspecs to push to the correct remote
+branch names. This is the one exception where raw `git push` is necessary.
+
 ## Git-to-But Map
 
 - `git status` -> `but status`

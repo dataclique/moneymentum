@@ -1,11 +1,12 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { useWallet } from "./useWallet"
-import type {
-  Position,
-  OrderResult,
-  CurrentPosition,
-  LeverageLimit,
-  OrderSide,
+import {
+  fetchPerpTickers,
+  type Position,
+  type OrderResult,
+  type CurrentPosition,
+  type LeverageLimit,
+  type OrderSide,
 } from "@/services/hyperliquid-client"
 
 export type { OrderSide, OrderResult, CurrentPosition, LeverageLimit }
@@ -128,15 +129,11 @@ export const useHyperliquidPositions = () => {
 }
 
 export const useHyperliquidTickers = () => {
-  const { client, isConnected } = useHyperliquidClient()
+  const { networkMode } = useWallet()
 
   return useQuery({
     queryKey: QUERY_KEYS.tickers,
-    queryFn: async () => {
-      if (!client) throw new Error("Wallet not connected")
-      return client.listPerpTickers()
-    },
-    enabled: isConnected && client !== null,
+    queryFn: () => fetchPerpTickers(networkMode),
     staleTime: 60000,
   })
 }

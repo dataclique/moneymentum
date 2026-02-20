@@ -4,6 +4,7 @@ let
   inherit (import ./keys.nix) roles;
 
   services = import ./services.nix;
+
   enabledServices = lib.filterAttrs (_: v: v.enabled) services;
 
   mkService = name: cfg:
@@ -25,11 +26,11 @@ let
 
       serviceConfig = {
         DynamicUser = true;
-        SupplementaryGroups = [ "moneymentum" ];
+        SupplementaryGroups = [ "mm-data" ];
         ExecStart = "${path} --config ${configFile}";
         Restart = "always";
         RestartSec = 5;
-        ReadWritePaths = [ "/mnt/data" ];
+        ReadWritePaths = [ cfg.dataDir ];
       };
     };
 
@@ -91,13 +92,57 @@ in {
 
     nginx = {
       enable = true;
+
       virtualHosts.default = {
         default = true;
+        listen = [{
+          addr = "0.0.0.0";
+          port = 80;
+        }];
         root = "${frontend}";
-
         locations = {
           "/".tryFiles = "$uri $uri/ /index.html";
           "/api/" = { proxyPass = "http://127.0.0.1:8000/"; };
+          "/hl/" = {
+            proxyPass = "https://api.hyperliquid.xyz/";
+            extraConfig = ''
+              proxy_ssl_server_name on;
+              proxy_set_header Host api.hyperliquid.xyz;
+            '';
+          };
+          "/hl-testnet/" = {
+            proxyPass = "https://api.hyperliquid-testnet.xyz/";
+            extraConfig = ''
+              proxy_ssl_server_name on;
+              proxy_set_header Host api.hyperliquid-testnet.xyz;
+            '';
+          };
+        };
+      };
+
+      virtualHosts.staging = {
+        listen = [{
+          addr = "0.0.0.0";
+          port = 8080;
+        }];
+        root = "${frontend}";
+        locations = {
+          "/".tryFiles = "$uri $uri/ /index.html";
+          "/api/" = { proxyPass = "http://127.0.0.1:8001/"; };
+          "/hl/" = {
+            proxyPass = "https://api.hyperliquid.xyz/";
+            extraConfig = ''
+              proxy_ssl_server_name on;
+              proxy_set_header Host api.hyperliquid.xyz;
+            '';
+          };
+          "/hl-testnet/" = {
+            proxyPass = "https://api.hyperliquid-testnet.xyz/";
+            extraConfig = ''
+              proxy_ssl_server_name on;
+              proxy_set_header Host api.hyperliquid-testnet.xyz;
+            '';
+          };
         };
       };
     };
@@ -109,7 +154,8 @@ in {
     enable = true;
     allowedTCPPorts = [
       22 # SSH
-      80 # Frontend
+      80 # Frontend (prod)
+      8080 # Frontend (staging)
     ];
   };
 
@@ -132,10 +178,32 @@ in {
     };
   };
 
-  users.groups.moneymentum = { };
+  users.groups.mm-data = { };
   programs.bash.interactiveShellInit = "set -o vi";
 
-  systemd.services = lib.mapAttrs mkService enabledServices;
+  systemd.services = lib.mapAttrs mkService enabledServices // {
+    moneymentum-ingest = {
+      description = "Trigger moneymentum data ingestion";
+      unitConfig.ConditionPathExists = "/run/moneymentum/moneymentum.ready";
+      serviceConfig = {
+        Type = "oneshot";
+        DynamicUser = true;
+        ExecStart =
+          "${pkgs.curl}/bin/curl -sSf --max-time 300 -X POST http://127.0.0.1:8000/ingest";
+      };
+    };
+  };
+
+  systemd.timers.moneymentum-ingest = {
+    wantedBy = [ "timers.target" ];
+    timerConfig = {
+      OnBootSec = "5min";
+      OnUnitActiveSec = "6h";
+      Persistent = true;
+    };
+  };
+
+  system.activationScripts.moneymentum-init.text = "mkdir -p /run/moneymentum";
 
   system.activationScripts.per-service-profiles.text =
     "mkdir -p /nix/var/nix/profiles/per-service";

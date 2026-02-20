@@ -1,24 +1,44 @@
-name: CI
-on: [push]
+name: CI/CD
 
-concurrency:
-  group: ${{ github.ref }}-ci
-  cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
 
 permissions:
   id-token: write
   contents: read
 
 jobs:
-  rust:
+  hooks:
     runs-on: ubuntu-latest
     steps:
-      - name: Free disk space
-        uses: jlumbroso/free-disk-space@v1.3.1
-
       - uses: actions/checkout@v4
 
       - uses: DeterminateSystems/nix-installer-action@main
+        with:
+          extra-conf: |
+            accept-flake-config = true
+            fallback = true
+
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+
+      - name: Pre-commit hooks
+        # Pure flake check — runs the same hooks without the heavy devShell
+        run: nix build .#checks.x86_64-linux.git-hooks
+
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: DeterminateSystems/nix-installer-action@main
+        with:
+          extra-conf: |
+            accept-flake-config = true
+            fallback = true
+
       - uses: DeterminateSystems/magic-nix-cache-action@main
 
       - name: Build and test
@@ -30,33 +50,128 @@ jobs:
   frontend:
     runs-on: ubuntu-latest
     steps:
-      - name: Free disk space
-        uses: jlumbroso/free-disk-space@v1.3.1
-
       - uses: actions/checkout@v4
 
       - uses: DeterminateSystems/nix-installer-action@main
+        with:
+          extra-conf: |
+            accept-flake-config = true
+            fallback = true
+
       - uses: DeterminateSystems/magic-nix-cache-action@main
 
-      - name: Lint frontend
+      - name: Lint
         # --impure required: devenv uses impure features for caching and local state
         run: nix develop .#frontend --impure -c bash -c "cd frontend && bun run lint"
 
-      - name: Run frontend tests
+      - name: Test
         # --impure required: devenv uses impure features for caching and local state
         run: nix develop .#frontend --impure -c bash -c "cd frontend && bun run test --run"
 
-  flake-check:
+      - name: Build
+        run: nix build .#packages.x86_64-linux.frontend
+
+  # Runs in parallel with CI jobs to warm the GH Actions cache with NixOS
+  # system closure paths. By the time deploy starts, most paths are cached.
+  warmup:
     runs-on: ubuntu-latest
     steps:
-      - name: Free disk space
-        uses: jlumbroso/free-disk-space@v1.3.1
-
       - uses: actions/checkout@v4
 
       - uses: DeterminateSystems/nix-installer-action@main
+        with:
+          extra-conf: |
+            accept-flake-config = true
+            fallback = true
+
       - uses: DeterminateSystems/magic-nix-cache-action@main
 
-      - name: Flake checks
-        # --impure required: devenv devShells use impure features
-        run: nix flake check --impure
+      - name: Build NixOS system closure
+        run: nix build .#nixosConfigurations.moneymentum.config.system.build.toplevel
+
+      - name: Build deploy wrappers
+        run: nix build .#deployAll .#deployNixos .#deployService
+
+  deploy:
+    if: github.ref == 'refs/heads/master'
+    needs: [hooks, backend, frontend, warmup]
+    concurrency:
+      group: deploy
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: DeterminateSystems/nix-installer-action@main
+        with:
+          extra-conf: |
+            accept-flake-config = true
+            fallback = true
+
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          echo "${{ secrets.SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+
+      - name: Resolve and mask host IP
+        run: |
+          host_ip=$(nix run .#resolveIp)
+          echo "::add-mask::$host_ip"
+          host_key=$(nix eval --raw --file keys.nix keys.host)
+          echo "$host_ip $host_key" > ~/.ssh/known_hosts
+
+      - name: Deploy
+        # --skip-checks: CI jobs above already validate everything
+        run: nix run .#deployAll -- --skip-checks
+
+      - name: Cleanup SSH
+        if: always()
+        run: rm -rf ~/.ssh/id_ed25519
+
+  staging:
+    if: github.event_name == 'pull_request'
+    needs: [hooks, backend, frontend, warmup]
+    concurrency:
+      group: deploy-staging
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: DeterminateSystems/nix-installer-action@main
+        with:
+          extra-conf: |
+            accept-flake-config = true
+            fallback = true
+
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          echo "${{ secrets.SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+
+      - name: Resolve and mask host IP
+        run: |
+          host_ip=$(nix run .#resolveIp)
+          echo "::add-mask::$host_ip"
+          host_key=$(nix eval --raw --file keys.nix keys.host)
+          echo "$host_ip $host_key" > ~/.ssh/known_hosts
+
+      - name: Reset services before deploy
+        run: |
+          host_ip=$(nix run .#resolveIp)
+          ssh "root@$host_ip" 'systemctl stop staging || true; systemctl reset-failed staging || true; rm -f /run/moneymentum/staging.ready'
+
+      - name: Deploy staging
+        run: nix run .#deployNixos -- --skip-checks && nix run .#deployService -- staging --skip-checks
+
+      - name: Cleanup SSH
+        if: always()
+        run: rm -rf ~/.ssh/id_ed25519

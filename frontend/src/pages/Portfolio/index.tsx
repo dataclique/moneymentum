@@ -12,13 +12,14 @@ import { Switch } from "@/components/ui/switch"
 import { ChevronUp } from "lucide-react"
 import { clsx } from "clsx"
 import { twMerge } from "tailwind-merge"
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useMemo } from "react"
 import { useNetwork } from "@/hooks/useNetwork"
 
 import { usePortfolioState } from "./hooks/usePortfolioState"
 import { useBeta } from "./hooks/useBeta"
+import { useHyperliquidTickers } from "@/hooks/useTrading"
 import { TokenCard } from "./components/TokenCard"
-import { TokenPickerDialog } from "./components/TokenPickerDialog"
+import { ScreenerPanel } from "./components/ScreenerPanel"
 
 const PRECISE_TOGGLE_STORAGE_KEY = "portfolio-precise-toggle"
 const WEIGHT_REDISTRIBUTION_STORAGE_KEY = "portfolio-weight-redistribution"
@@ -76,6 +77,14 @@ const PortfolioPage = () => {
   } = usePortfolioState(isPrecise, isWeightRedistribution)
 
   const { beta, isLoading: isBetaLoading } = useBeta(activeTokens)
+
+  const { data: tickersData, isLoading: isTickersLoading } =
+    useHyperliquidTickers()
+  const screenerSymbols = tickersData ?? []
+  const selectedSymbolsSet = useMemo(
+    () => new Set(selectedTokens.map(t => t.symbol)),
+    [selectedTokens],
+  )
 
   const [leverageInput, setLeverageInput] = useState(() =>
     crossAccountLeverage.toFixed(2),
@@ -142,49 +151,18 @@ const PortfolioPage = () => {
       <div
         className={twMerge(
           clsx(
-            "container mx-auto flex max-w-5xl flex-col gap-4 py-4 pl-28 min-h-screen",
+            "flex flex-1 min-h-0 gap-1 p-1",
             isNetworkSwitching && "pointer-events-none opacity-50",
           ),
         )}
       >
-        <div className="flex flex-col gap-4">
-          {/* Account Summary & Add Position */}
-          <Card>
-            <CardContent className="flex flex-wrap items-center justify-between gap-4">
-              <div className="flex flex-wrap items-center gap-6">
-                {isBalanceLoading ? (
-                  <>
-                    <Skeleton className="h-6 w-40" />
-                    <Skeleton className="h-6 w-40" />
-                  </>
-                ) : (
-                  <>
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-semibold text-muted-foreground">
-                        Account Value:
-                      </span>
-                      <span className="text-sm font-medium">
-                        ${accountValue.toFixed(2)}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-semibold text-muted-foreground">
-                        Total Notional:
-                      </span>
-                      <span className="text-sm font-medium">
-                        ${targetNotional.toFixed(2)}
-                      </span>
-                    </div>
-                  </>
-                )}
-              </div>
-              <TokenPickerDialog
-                selectedTokens={selectedTokens}
-                onAddToken={handleAddToken}
-              />
-            </CardContent>
-          </Card>
-
+        <ScreenerPanel
+          symbols={screenerSymbols}
+          isLoading={isTickersLoading}
+          selectedSymbols={selectedSymbolsSet}
+          onAddSymbol={handleAddToken}
+        />
+        <div className="flex-1 min-w-0 flex flex-col gap-4 py-4 px-4 container mx-auto max-w-5xl">
           {/* Token Allocation Cards */}
           <div className="space-y-2 self-start w-fit">
             {isPositionsLoading ? (
@@ -259,108 +237,111 @@ const PortfolioPage = () => {
               </Card>
             )}
           </div>
-        </div>
 
-        {/* Footer */}
-        <div className="sticky bottom-0 bg-background/80 py-3 backdrop-blur mt-auto">
-          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-3">
-            <div className="text-sm font-semibold text-muted-foreground">
-              <span>Beta (vs BTC) </span>
-              {isBetaLoading ? (
-                <Skeleton className="inline-block h-4 w-16 align-middle" />
-              ) : beta !== null ? (
-                <span
-                  className={twMerge(
-                    clsx(
-                      beta > 0 && "text-green-500",
-                      beta < 0 && "text-red-500",
-                    ),
-                  )}
-                >
-                  {beta.toFixed(2)}
-                </span>
-              ) : (
-                <span className="text-muted-foreground">—</span>
-              )}
-            </div>
-            <div className="flex items-center gap-4">
-              {/* Cross Account Leverage Slider */}
-              <div className="flex items-center gap-3">
-                <span className="text-sm font-semibold text-muted-foreground whitespace-nowrap">
-                  Leverage:
-                </span>
-                {isBalanceLoading ? (
-                  <Skeleton className="h-4 w-32" />
+          {/* Footer */}
+          <div className="sticky bottom-0 bg-background/80 py-3 backdrop-blur mt-auto">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-3">
+              <div className="text-sm font-semibold text-muted-foreground">
+                <span>Beta (vs BTC) </span>
+                {isBetaLoading ? (
+                  <Skeleton className="inline-block h-4 w-16 align-middle" />
+                ) : beta !== null ? (
+                  <span
+                    className={twMerge(
+                      clsx(
+                        beta > 0 && "text-green-500",
+                        beta < 0 && "text-red-500",
+                      ),
+                    )}
+                  >
+                    {beta.toFixed(2)}
+                  </span>
                 ) : (
-                  <>
-                    <Slider
-                      value={[crossAccountLeverage]}
-                      onValueChange={([value]) => {
-                        handleCrossAccountLeverageChange(value)
-                      }}
-                      min={LEVERAGE_MIN}
-                      max={LEVERAGE_MAX}
-                      step={LEVERAGE_STEP}
-                      className="w-32"
-                    />
-                    <input
-                      type="number"
-                      value={leverageInput}
-                      onChange={event => {
-                        applyLeverageInput(event.target.value)
-                      }}
-                      onBlur={() => {
-                        setIsLeverageInputFocused(false)
-                      }}
-                      onFocus={() => {
-                        setIsLeverageInputFocused(true)
-                      }}
-                      min={LEVERAGE_MIN}
-                      max={LEVERAGE_MAX}
-                      step={LEVERAGE_STEP}
-                      className="w-14 rounded-md border border-border bg-transparent px-2 py-1 text-center text-sm font-medium [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
-                    />
-                    <span className="text-sm font-medium">x</span>
-                  </>
+                  <span className="text-muted-foreground">—</span>
                 )}
               </div>
-              <div className="flex gap-4">
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button variant="outline" size="icon">
-                      <ChevronUp className="h-4 w-4" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    <DropdownMenuItem
-                      className="flex items-center justify-between gap-2"
-                      onSelect={e => {
-                        e.preventDefault()
-                      }}
-                    >
-                      <span>Precise</span>
-                      <Switch
-                        checked={isPrecise}
-                        onCheckedChange={setIsPrecise}
+              <div className="flex items-center gap-4">
+                {/* Cross Account Leverage Slider */}
+                <div className="flex items-center gap-3">
+                  <span className="text-sm font-semibold text-muted-foreground whitespace-nowrap">
+                    Leverage:
+                  </span>
+                  {isBalanceLoading ? (
+                    <Skeleton className="h-4 w-32" />
+                  ) : (
+                    <>
+                      <Slider
+                        value={[crossAccountLeverage]}
+                        onValueChange={([value]) => {
+                          handleCrossAccountLeverageChange(value)
+                        }}
+                        min={LEVERAGE_MIN}
+                        max={LEVERAGE_MAX}
+                        step={LEVERAGE_STEP}
+                        className="w-32"
                       />
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      className="flex items-center justify-between gap-2"
-                      onSelect={e => {
-                        e.preventDefault()
-                      }}
-                    >
-                      <span>Redistribution of weights</span>
-                      <Switch
-                        checked={isWeightRedistribution}
-                        onCheckedChange={setIsWeightRedistribution}
+                      <input
+                        type="number"
+                        value={leverageInput}
+                        onChange={event => {
+                          applyLeverageInput(event.target.value)
+                        }}
+                        onBlur={() => {
+                          setIsLeverageInputFocused(false)
+                        }}
+                        onFocus={() => {
+                          setIsLeverageInputFocused(true)
+                        }}
+                        min={LEVERAGE_MIN}
+                        max={LEVERAGE_MAX}
+                        step={LEVERAGE_STEP}
+                        className="w-14 rounded-md border border-border bg-transparent px-2 py-1 text-center text-sm font-medium [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                       />
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-                <Button onClick={handleOpenPositions} disabled={disableSubmit}>
-                  {isRebalancing ? "Sending..." : "Rebalance"}
-                </Button>
+                      <span className="text-sm font-medium">x</span>
+                    </>
+                  )}
+                </div>
+                <div className="flex gap-4">
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button variant="outline" size="icon">
+                        <ChevronUp className="h-4 w-4" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem
+                        className="flex items-center justify-between gap-2"
+                        onSelect={e => {
+                          e.preventDefault()
+                        }}
+                      >
+                        <span>Precise</span>
+                        <Switch
+                          checked={isPrecise}
+                          onCheckedChange={setIsPrecise}
+                        />
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        className="flex items-center justify-between gap-2"
+                        onSelect={e => {
+                          e.preventDefault()
+                        }}
+                      >
+                        <span>Redistribution of weights</span>
+                        <Switch
+                          checked={isWeightRedistribution}
+                          onCheckedChange={setIsWeightRedistribution}
+                        />
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                  <Button
+                    onClick={handleOpenPositions}
+                    disabled={disableSubmit}
+                  >
+                    {isRebalancing ? "Sending..." : "Rebalance"}
+                  </Button>
+                </div>
               </div>
             </div>
           </div>

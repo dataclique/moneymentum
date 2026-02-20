@@ -103,6 +103,20 @@ in {
         locations = {
           "/".tryFiles = "$uri $uri/ /index.html";
           "/api/" = { proxyPass = "http://127.0.0.1:8000/"; };
+          "/hl/" = {
+            proxyPass = "https://api.hyperliquid.xyz/";
+            extraConfig = ''
+              proxy_ssl_server_name on;
+              proxy_set_header Host api.hyperliquid.xyz;
+            '';
+          };
+          "/hl-testnet/" = {
+            proxyPass = "https://api.hyperliquid-testnet.xyz/";
+            extraConfig = ''
+              proxy_ssl_server_name on;
+              proxy_set_header Host api.hyperliquid-testnet.xyz;
+            '';
+          };
         };
       };
 
@@ -115,6 +129,20 @@ in {
         locations = {
           "/".tryFiles = "$uri $uri/ /index.html";
           "/api/" = { proxyPass = "http://127.0.0.1:8001/"; };
+          "/hl/" = {
+            proxyPass = "https://api.hyperliquid.xyz/";
+            extraConfig = ''
+              proxy_ssl_server_name on;
+              proxy_set_header Host api.hyperliquid.xyz;
+            '';
+          };
+          "/hl-testnet/" = {
+            proxyPass = "https://api.hyperliquid-testnet.xyz/";
+            extraConfig = ''
+              proxy_ssl_server_name on;
+              proxy_set_header Host api.hyperliquid-testnet.xyz;
+            '';
+          };
         };
       };
     };

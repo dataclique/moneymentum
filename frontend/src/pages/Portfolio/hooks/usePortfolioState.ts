@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from "react"
+import Decimal from "decimal.js"
 import {
   useHyperliquidAccountSummary,
   useHyperliquidPositions,
@@ -14,6 +15,9 @@ export const MIN_USD = 11
 export const MIN_CHANGE_DELTA = 11.0 // Minimum change in USD to trigger a rebalance
 // Allow sum of weights slightly above 100% due to rounding (e.g. 33.33 + 33.33 + 33.34 = 100.00)
 const MAX_TOTAL_PERCENT_TOLERANCE = 0.1
+
+const roundNotional = (n: number): number =>
+  new Decimal(n).toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber()
 
 export type AllocationStatus =
   | OrderResult["status"]
@@ -61,7 +65,13 @@ const getTokenUsdAllocation = (
 ) => {
   if (token.notional !== undefined && token.notional > 0) return token.notional
   if (token.lockedUsd !== undefined) return token.lockedUsd
-  if (targetNotional > 0) return (token.percentage / 100) * targetNotional
+  if (targetNotional > 0) {
+    return new Decimal(token.percentage)
+      .div(100)
+      .mul(targetNotional)
+      .toDecimalPlaces(2, Decimal.ROUND_HALF_UP)
+      .toNumber()
+  }
   return 0
 }
 
@@ -82,19 +92,26 @@ const getStoredPortfolio = (
 
 // Calculate total notional from active (non-deleted) tokens
 const calcTotalNotional = (tokens: TokenAllocation[]): number =>
-  tokens.reduce((sum, t) => {
-    if (t.status === "deleted") return sum
-    return sum + (t.notional ?? 0)
-  }, 0)
+  tokens
+    .reduce((sum, t) => {
+      if (t.status === "deleted") return sum
+      return sum.plus(t.notional ?? 0)
+    }, new Decimal(0))
+    .toDecimalPlaces(2, Decimal.ROUND_HALF_UP)
+    .toNumber()
 
 // Calculate percentage from notional and total
-const calcPercentage = (notional: number, totalNotional: number): number =>
-  totalNotional > 0
-    ? parseFloat(((notional / totalNotional) * 100).toFixed(2))
-    : 0
+const calcPercentage = (notional: number, totalNotional: number): number => {
+  if (totalNotional <= 0) return 0
+  return new Decimal(notional)
+    .div(totalNotional)
+    .mul(100)
+    .toDecimalPlaces(2, Decimal.ROUND_HALF_UP)
+    .toNumber()
+}
 
 // Recalculate percentages for all tokens based on their notional values
-// Returns updated tokens and the total notional
+// Returns updated tokens and the total notional. Notionals are rounded to 2 decimals.
 const recalculateFromNotionals = (
   tokens: TokenAllocation[],
 ): { tokens: TokenAllocation[]; totalNotional: number } => {
@@ -103,6 +120,7 @@ const recalculateFromNotionals = (
     if (t.status === "deleted" || t.notional === undefined) return t
     return {
       ...t,
+      notional: t.notional,
       percentage: calcPercentage(t.notional, totalNotional),
     }
   })
@@ -110,14 +128,22 @@ const recalculateFromNotionals = (
 }
 
 // Calculate leverage from total notional and account value
-const calcLeverage = (totalNotional: number, accountValue: number): number =>
-  accountValue > 0
-    ? Math.min(MAX_CROSS_ACCOUNT_LEVERAGE, totalNotional / accountValue)
-    : 1
+const calcLeverage = (totalNotional: number, accountValue: number): number => {
+  if (accountValue <= 0) return 1
+  const leverage = new Decimal(totalNotional)
+    .div(accountValue)
+    .toDecimalPlaces(4, Decimal.ROUND_HALF_UP)
+    .toNumber()
+  return Math.min(MAX_CROSS_ACCOUNT_LEVERAGE, leverage)
+}
 
 // Calculate notional from percentage and total notional
 const calcNotional = (percentage: number, totalNotional: number): number =>
-  parseFloat(((percentage / 100) * totalNotional).toFixed(2))
+  new Decimal(percentage)
+    .div(100)
+    .mul(totalNotional)
+    .toDecimalPlaces(2, Decimal.ROUND_HALF_UP)
+    .toNumber()
 
 // Recalculate notionals for all tokens based on their weights and total notional
 // Use when leverage changes: totalNotional = leverage * accountValue
@@ -206,16 +232,21 @@ export const usePortfolioState = (
 
   const [selectedTokens, setSelectedTokens] = useState<TokenAllocation[]>(
     () =>
-      storedDataSnapshot?.tokens.map(token => ({
-        ...token,
-        leverage: token.leverage || 1,
-        lockedUsd:
+      storedDataSnapshot?.tokens.map(token => {
+        const locked =
           token.lockedUsd === undefined || token.lockedUsd < MIN_USD
             ? MIN_USD
-            : token.lockedUsd,
-        status: "untouched" as const,
-        message: null,
-      })) ?? [],
+            : token.lockedUsd
+        const notional = token.notional !== undefined ? token.notional : locked
+        return {
+          ...token,
+          leverage: token.leverage || 1,
+          lockedUsd: locked,
+          notional,
+          status: "untouched" as const,
+          message: null,
+        }
+      }) ?? [],
   )
   const [initialPortfolio, setInitialPortfolio] = useState<TokenAllocation[]>(
     [],
@@ -231,7 +262,11 @@ export const usePortfolioState = (
 
   // Compute targetNotional = accountValue * crossAccountLeverage (used for percentage calculations)
   const targetNotional = useMemo(
-    () => accountValue * crossAccountLeverage,
+    () =>
+      new Decimal(accountValue)
+        .mul(crossAccountLeverage)
+        .toDecimalPlaces(2, Decimal.ROUND_HALF_UP)
+        .toNumber(),
     [accountValue, crossAccountLeverage],
   )
 
@@ -252,10 +287,10 @@ export const usePortfolioState = (
             symbol,
             percentage,
             side,
-            lockedUsd,
+            lockedUsd: lockedUsd !== undefined ? lockedUsd : undefined,
             leverage,
             status,
-            notional,
+            notional: notional !== undefined ? notional : undefined,
           }),
         ),
       }
@@ -291,6 +326,7 @@ export const usePortfolioState = (
       const { tokens: updatedTokens, totalNotional } =
         recalculateFromNotionals(tokens)
       if (accountValue > 0) {
+        console.log(tokens)
         const newLeverage = calcLeverage(totalNotional, accountValue)
         setCrossAccountLeverage(newLeverage)
       }
@@ -376,12 +412,13 @@ export const usePortfolioState = (
             }
           }
           // Token only in localStorage - set notional from stored value or MIN_USD
-          const storedNotional =
+          const rawStored =
             token.notional !== undefined && token.notional > 0
               ? token.notional
               : token.lockedUsd !== undefined && token.lockedUsd >= MIN_USD
                 ? token.lockedUsd
                 : MIN_USD
+          const storedNotional = rawStored
           return {
             ...token,
             leverage: token.leverage || 1,
@@ -551,10 +588,20 @@ export const usePortfolioState = (
 
       // Target notional based on percentage and fixed target total (accountValue * leverage)
       const computedTargetNotional =
-        targetNotional > 0 ? (token.percentage / 100) * targetNotional : 0
+        targetNotional > 0
+          ? new Decimal(token.percentage)
+              .div(100)
+              .mul(targetNotional)
+              .toDecimalPlaces(2, Decimal.ROUND_HALF_UP)
+              .toNumber()
+          : 0
 
       // Check if the delta is too small to execute
-      const delta = Math.abs(computedTargetNotional - currentNotional)
+      const delta = new Decimal(computedTargetNotional)
+        .minus(currentNotional)
+        .abs()
+        .toDecimalPlaces(2, Decimal.ROUND_HALF_UP)
+        .toNumber()
       // Delta is insufficient if:
       // 1. There's a difference (not exactly matching)
       // 2. The difference is below the minimum order size
@@ -664,7 +711,9 @@ export const usePortfolioState = (
             const tokenToRestore = prev.find(t => t.symbol === symbol)
             if (!tokenToRestore) return prev
 
-            const restoredNotional = tokenToRestore.notional ?? MIN_USD
+            const restoredNotional = roundNotional(
+              tokenToRestore.notional ?? MIN_USD,
+            )
             const hasExchangeNotional =
               tokenToRestore.notional !== undefined &&
               tokenToRestore.notional > 0
@@ -690,6 +739,7 @@ export const usePortfolioState = (
       const maxLeverageForSymbol = leverageLimitsMap[symbol] || 1
 
       setSelectedTokensAndPersist(prev => {
+        const initialNotional = MIN_USD
         const tokensWithNew: TokenAllocation[] = [
           ...prev,
           {
@@ -699,8 +749,8 @@ export const usePortfolioState = (
             leverage: maxLeverageForSymbol,
             status: "idle" as const,
             message: null,
-            notional: MIN_USD,
-            lockedUsd: MIN_USD,
+            notional: initialNotional,
+            lockedUsd: initialNotional,
           },
         ]
         return updateByNotionalChange(tokensWithNew)
@@ -1009,7 +1059,10 @@ export const usePortfolioState = (
             : true,
           currentNotional: exchangePosition?.notional,
           currentSide: exchangePosition?.side,
-          percentage: token.percentage / 100,
+          percentage: new Decimal(token.percentage)
+            .div(100)
+            .toDecimalPlaces(6, Decimal.ROUND_HALF_UP)
+            .toNumber(),
           status: mapStatusForApi(token.status),
         }
       }),

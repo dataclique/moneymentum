@@ -1,4 +1,5 @@
 import ccxt from "ccxt"
+import Decimal from "decimal.js"
 import type { NetworkMode, WalletCredentials } from "@/contexts/wallet-context"
 
 const MARKETS_CACHE_KEY = "hyperliquid_markets_cache"
@@ -727,9 +728,14 @@ export class HyperliquidClient {
     const targetNotional: Record<string, number> = {}
     const currentNotional: Record<string, number> = {}
     for (const position of successfulPositions) {
+      const unsignedTarget = new Decimal(position.percentage)
+        .mul(totalNotional)
+        .toDecimalPlaces(2, Decimal.ROUND_HALF_UP)
+        .toNumber()
+
       targetNotional[position.symbol] = this.signedNotional(
         position.side,
-        position.percentage * totalNotional,
+        unsignedTarget,
       )
       // Use passed currentNotional (from cached positions), default to 0 for new positions
       // Sign with currentSide when available (actual exchange side), else position.side

@@ -18,8 +18,8 @@ import { useNetwork } from "@/hooks/useNetwork"
 import { usePortfolioState } from "./hooks/usePortfolioState"
 import { useBeta } from "./hooks/useBeta"
 import { useHyperliquidTickers } from "@/hooks/useTrading"
-import { TokenCard } from "./components/TokenCard"
 import { ScreenerPanel } from "./components/ScreenerPanel"
+import { PositionsPanel } from "./components/PositionsPanel"
 
 const PRECISE_TOGGLE_STORAGE_KEY = "portfolio-precise-toggle"
 const WEIGHT_REDISTRIBUTION_STORAGE_KEY = "portfolio-weight-redistribution"
@@ -162,84 +162,35 @@ const PortfolioPage = () => {
           selectedSymbols={selectedSymbolsSet}
           onAddSymbol={handleAddToken}
         />
-        <div className="flex-1 min-w-0 flex flex-col gap-4 py-4 px-4 container mx-auto max-w-5xl">
-          {/* Token Allocation Cards */}
-          <div className="space-y-2 self-start w-fit">
-            {isPositionsLoading ? (
-              <>
-                {/* Skeleton column headers */}
-                <div className="grid grid-cols-[8rem_7rem_7rem_6rem_4rem] gap-2 px-3 text-xs font-semibold text-muted-foreground">
-                  <div>MARKET</div>
-                  <div className="text-center">WEIGHT</div>
-                  <div className="text-center">NOTIONAL</div>
-                  <div className="text-center">SIDE</div>
-                  <div className="text-right">ACTIONS</div>
-                </div>
-                {/* Skeleton token cards */}
-                <div className="space-y-2">
-                  {[1, 2, 3].map(i => (
-                    <Card key={i} className="gap-3 py-3">
-                      <CardContent className="grid grid-cols-[8rem_7rem_7rem_6rem_4rem] items-center gap-2 px-3">
-                        <Skeleton className="h-8 w-32" />
-                        <Skeleton className="h-6 w-20" />
-                        <Skeleton className="h-6 w-20" />
-                        <Skeleton className="h-8 w-20" />
-                        <Skeleton className="h-8 w-8" />
-                      </CardContent>
-                    </Card>
-                  ))}
-                </div>
-              </>
-            ) : selectedTokens.length === 0 ? (
-              <Card className="gap-3 py-3">
-                <CardContent className="text-center text-sm text-muted-foreground">
-                  Add positions using the button above to configure your
-                  portfolio.
-                </CardContent>
-              </Card>
-            ) : (
-              <>
-                {/* Column Headers */}
-                <div className="grid grid-cols-[8rem_7rem_7rem_6rem_4rem] gap-2 px-3 text-xs font-semibold text-muted-foreground">
-                  <div>MARKET</div>
-                  <div className="text-center">WEIGHT</div>
-                  <div className="text-center">NOTIONAL</div>
-                  <div className="text-center">SIDE</div>
-                  <div className="text-right">ACTIONS</div>
-                </div>
-                <div className="space-y-2">
-                  {selectedTokens.map(token => (
-                    <TokenCard
-                      key={token.symbol}
-                      token={token}
-                      displayNotional={displayNotional}
-                      maxLeverage={leverageLimitsMap[token.symbol]}
-                      isRebalancing={isRebalancing}
-                      isPrecise={isPrecise}
-                      onRemove={handleRemoveToken}
-                      onUndoRemove={handleUndoRemoveToken}
-                      onSideChange={handleSideChange}
-                      onLeverageChange={handleLeverageChange}
-                      onNotionalChange={handleNotionalChange}
-                      onWeightChange={handleWeightChange}
-                    />
-                  ))}
-                </div>
-              </>
-            )}
-            {blockingReasons.length > 0 && (
-              <Card className="gap-3 py-3">
-                <CardContent className="space-y-2 text-sm text-rose-400">
-                  {blockingReasons.map((reason, index) => (
-                    <p key={`${reason}-${index}`}>{reason}</p>
-                  ))}
-                </CardContent>
-              </Card>
-            )}
+        <div className="flex-1 min-w-0 flex flex-col py-4 overflow-hidden">
+          <div className="flex gap-1 min-h-0 min-w-0 flex-1">
+            <PositionsPanel
+              tokens={selectedTokens}
+              isLoading={isPositionsLoading}
+              displayNotional={displayNotional}
+              leverageLimitsMap={leverageLimitsMap}
+              isRebalancing={isRebalancing}
+              isPrecise={isPrecise}
+              onRemove={handleRemoveToken}
+              onUndoRemove={handleUndoRemoveToken}
+              onSideChange={handleSideChange}
+              onLeverageChange={handleLeverageChange}
+              onNotionalChange={handleNotionalChange}
+              onWeightChange={handleWeightChange}
+            />
           </div>
+          {blockingReasons.length > 0 && (
+            <Card className="shrink-0">
+              <CardContent className="space-y-2 text-sm text-rose-400 py-3">
+                {blockingReasons.map((reason, index) => (
+                  <p key={`${reason}-${index}`}>{reason}</p>
+                ))}
+              </CardContent>
+            </Card>
+          )}
 
           {/* Footer */}
-          <div className="sticky bottom-0 bg-background/80 py-3 backdrop-blur mt-auto">
+          <div className="sticky bottom-0 bg-background/80 backdrop-blur mt-auto">
             <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-3">
               <div className="text-sm font-semibold text-muted-foreground">
                 <span>Beta (vs BTC) </span>

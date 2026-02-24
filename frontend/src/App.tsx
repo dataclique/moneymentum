@@ -45,7 +45,7 @@ const App = () => {
     <div
       className={twMerge(
         clsx(
-          "flex min-h-screen flex-col bg-background text-foreground text-[11px]",
+          "flex h-screen flex-col overflow-hidden bg-background text-foreground text-[11px]",
           isNetworkSwitching && "pointer-events-none opacity-80",
         ),
       )}

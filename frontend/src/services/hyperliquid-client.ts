@@ -273,27 +273,45 @@ export class HyperliquidClient {
       throw new Error(`Failed to fetch funding rates: ${response.statusText}`)
     }
 
-    const json = (await response.json()) as [
+    const json = (await response.json()) as unknown
+
+    if (
+      !Array.isArray(json) ||
+      json.length < 2 ||
+      typeof json[0] !== "object" ||
+      json[0] === null ||
+      !Array.isArray((json[0] as { universe?: unknown }).universe) ||
+      !Array.isArray(json[1])
+    ) {
+      console.error(
+        "[HyperliquidClient] Unexpected metaAndAssetCtxs payload shape",
+        { json },
+      )
+      return {}
+    }
+
+    const [meta, assetCtxs] = json as [
       { universe: Array<{ name: string }> },
       Array<{ funding?: string | number } | null | undefined>,
     ]
 
-    const [meta, assetCtxs] = json
-
     const fundingByBaseAsset: Record<string, number> = Object.fromEntries(
       meta.universe
         .map((asset, index) => {
-          const ctx = assetCtxs[index]
-          if (!ctx) return null
+          const assetCtx = assetCtxs[index]
+          if (!assetCtx) return null
 
-          const rawFunding = ctx.funding
+          const rawFunding = assetCtx.funding
           if (rawFunding === undefined) return null
 
-          const numericFunding = this.parseNumericValue(rawFunding, Number.NaN)
+          const parsedFundingRate = this.parseNumericValue(
+            rawFunding,
+            Number.NaN,
+          )
 
-          if (!Number.isFinite(numericFunding)) return null
+          if (!Number.isFinite(parsedFundingRate)) return null
 
-          return [asset.name, numericFunding] as const
+          return [asset.name, parsedFundingRate] as const
         })
         .filter((entry): entry is readonly [string, number] => entry !== null),
     )

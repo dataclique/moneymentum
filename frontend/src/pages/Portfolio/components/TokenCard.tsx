@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react"
+import Decimal from "decimal.js"
 import { Trash2, Undo2, AlertCircle } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
@@ -69,7 +70,11 @@ export const TokenCard = ({
   // When leverage changes, percentage stays fixed and notional is recalculated
   const usdAmount =
     displayNotional > 0
-      ? ((token.percentage / 100) * displayNotional).toFixed(2)
+      ? new Decimal(token.percentage)
+          .div(100)
+          .mul(displayNotional)
+          .toDecimalPlaces(2, Decimal.ROUND_HALF_UP)
+          .toFixed(2)
       : "0.00"
 
   // Local state for notional input to allow empty field while typing

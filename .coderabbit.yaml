@@ -4,7 +4,6 @@ reviews:
     base_branches:
       - ".*"
   profile: assertive
-  request_changes_workflow: true
   review_details: true
   collapse_walkthrough: false
   sequence_diagrams: false

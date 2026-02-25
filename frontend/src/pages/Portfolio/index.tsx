@@ -228,8 +228,8 @@ const PortfolioPage = () => {
                       <>
                         <Slider
                           value={[crossAccountLeverage]}
-                          onValueChange={([value]) => {
-                            handleCrossAccountLeverageChange(value)
+                          onValueChange={([selectedLeverage]) => {
+                            handleCrossAccountLeverageChange(selectedLeverage)
                           }}
                           min={LEVERAGE_MIN}
                           max={LEVERAGE_MAX}
@@ -239,8 +239,10 @@ const PortfolioPage = () => {
                         <input
                           type="number"
                           value={leverageInput}
-                          onChange={event => {
-                            applyLeverageInput(event.target.value)
+                          onChange={leverageInputChangeEvent => {
+                            applyLeverageInput(
+                              leverageInputChangeEvent.target.value,
+                            )
                           }}
                           onBlur={() => {
                             setIsLeverageInputFocused(false)
@@ -260,15 +262,19 @@ const PortfolioPage = () => {
                   <div className="flex gap-4">
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
-                        <Button variant="outline" size="icon">
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          aria-label="Open portfolio settings menu"
+                        >
                           <ChevronUp className="h-4 w-4" />
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
                         <DropdownMenuItem
                           className="flex items-center justify-between gap-2"
-                          onSelect={e => {
-                            e.preventDefault()
+                          onSelect={dropdownSelectEvent => {
+                            dropdownSelectEvent.preventDefault()
                           }}
                         >
                           <span>Precise</span>
@@ -279,8 +285,8 @@ const PortfolioPage = () => {
                         </DropdownMenuItem>
                         <DropdownMenuItem
                           className="flex items-center justify-between gap-2"
-                          onSelect={e => {
-                            e.preventDefault()
+                          onSelect={dropdownSelectEvent => {
+                            dropdownSelectEvent.preventDefault()
                           }}
                         >
                           <span>Redistribution of weights</span>

@@ -237,7 +237,7 @@ export const usePortfolioState = (
           token.lockedUsd === undefined || token.lockedUsd < MIN_USD
             ? MIN_USD
             : token.lockedUsd
-        const notional = token.notional !== undefined ? token.notional : locked
+        const notional = token.notional ?? locked
         return {
           ...token,
           leverage: token.leverage || 1,
@@ -287,10 +287,10 @@ export const usePortfolioState = (
             symbol,
             percentage,
             side,
-            lockedUsd: lockedUsd !== undefined ? lockedUsd : undefined,
+            lockedUsd: lockedUsd ?? undefined,
             leverage,
             status,
-            notional: notional !== undefined ? notional : undefined,
+            notional: notional ?? undefined,
           }),
         ),
       }

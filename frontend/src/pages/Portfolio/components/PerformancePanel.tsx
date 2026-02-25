@@ -1,6 +1,4 @@
 import { useState } from "react"
-import { clsx } from "clsx"
-import { twMerge } from "tailwind-merge"
 import { MetricSelector } from "../../Prototype/components/MetricSelector"
 
 export const PerformancePanel = () => {
@@ -26,8 +24,12 @@ export const PerformancePanel = () => {
             selectedMetricIds={selectedMetricIds}
             selectedWindowId={selectedWindowId}
             onMetricToggle={id => {
-              setSelectedMetricIds(prev =>
-                prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id],
+              setSelectedMetricIds(previousSelectedMetricIds =>
+                previousSelectedMetricIds.includes(id)
+                  ? previousSelectedMetricIds.filter(
+                      removedMetricId => removedMetricId !== id,
+                    )
+                  : [...previousSelectedMetricIds, id],
               )
             }}
             onWindowChange={setSelectedWindowId}

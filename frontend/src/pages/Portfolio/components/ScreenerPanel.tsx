@@ -23,10 +23,12 @@ export const ScreenerPanel = ({
     const filtered =
       searchQuery.trim() === ""
         ? symbols
-        : symbols.filter(s =>
-            s.toLowerCase().includes(searchQuery.toLowerCase()),
+        : symbols.filter(symbol =>
+            symbol.toLowerCase().includes(searchQuery.toLowerCase()),
           )
-    return [...filtered].sort((a, b) => a.localeCompare(b))
+    return [...filtered].sort((firstSymbol, secondSymbol) =>
+      firstSymbol.localeCompare(secondSymbol),
+    )
   }, [symbols, searchQuery])
 
   return (
@@ -41,7 +43,9 @@ export const ScreenerPanel = ({
             type="text"
             placeholder="Search..."
             value={searchQuery}
-            onChange={e => setSearchQuery(e.target.value)}
+            onChange={event => {
+              setSearchQuery(event.target.value)
+            }}
             className="w-full pl-7 pr-2 py-1 bg-muted/50 border border-border rounded focus:outline-none focus:border-primary text-[11px]"
           />
         </div>
@@ -49,8 +53,8 @@ export const ScreenerPanel = ({
       <div className="flex-1 min-h-0 overflow-auto scrollbar-hide">
         {isLoading ? (
           <div className="p-2 space-y-1">
-            {Array.from({ length: 12 }).map((_, i) => (
-              <Skeleton key={i} className="h-5 w-full" />
+            {Array.from({ length: 12 }).map((_placeholder, index) => (
+              <Skeleton key={index} className="h-5 w-full" />
             ))}
           </div>
         ) : (

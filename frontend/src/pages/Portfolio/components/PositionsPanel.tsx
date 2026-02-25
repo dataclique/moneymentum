@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react"
+import type { JSX } from "react"
 import Decimal from "decimal.js"
 import { Trash2, Undo2, AlertCircle } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -32,7 +33,7 @@ interface PositionsPanelProps {
   isLoading: boolean
   displayNotional: number
   leverageLimitsMap: Record<string, number | undefined>
-  isRebalancing: boolean
+  _isRebalancing?: boolean
   isPrecise: boolean
   onRemove: (symbol: string) => void
   onUndoRemove: (symbol: string) => void
@@ -47,7 +48,7 @@ const getSideBadgeClass = (side: OrderSide) =>
     ? "bg-green-500/20 text-green-500"
     : "bg-red-500/20 text-red-500"
 
-function PositionsTableRow({
+const PositionsTableRow = ({
   token,
   displayNotional,
   maxLeverage,
@@ -69,7 +70,7 @@ function PositionsTableRow({
   onLeverageChange: (symbol: string, leverage: number) => void
   onNotionalChange: (symbol: string, notional: number) => void
   onWeightChange: (symbol: string, percentage: number) => void
-}) {
+}): JSX.Element => {
   const usdAmount =
     displayNotional > 0
       ? new Decimal(token.percentage)
@@ -86,14 +87,19 @@ function PositionsTableRow({
   const prevNotionalRef = useRef(externalNotional)
   const prevPercentageRef = useRef(token.percentage)
 
+  // Sync external notional props (externalNotional) into the controlled input state (notionalInput via setNotionalInput).
+  // useEffect is required here instead of computing on render to avoid uncontrolled→controlled input transitions and visual flicker
+  // when upstream props change. prevNotionalRef lets us detect real changes and skip redundant setNotionalInput calls.
   useEffect(() => {
     if (prevNotionalRef.current !== externalNotional) {
-      console.log(token.symbol)
-      console.log(externalNotional)
       prevNotionalRef.current = externalNotional
       setNotionalInput(externalNotional.toFixed(2))
     }
   }, [externalNotional])
+
+  // Sync external percentage props (token.percentage) into the controlled weight input state (weightInput via setWeightInput).
+  // This useEffect keeps the displayed value aligned with upstream changes while prevPercentageRef prevents unnecessary
+  // setWeightInput updates on every render.
   useEffect(() => {
     if (prevPercentageRef.current !== token.percentage) {
       prevPercentageRef.current = token.percentage
@@ -101,7 +107,6 @@ function PositionsTableRow({
     }
   }, [token.percentage])
 
-  const isLong = token.side === "buy"
   const targetValue =
     token.targetNotional ?? token.notional ?? parseFloat(usdAmount)
   const showDeltaWarning =
@@ -116,6 +121,8 @@ function PositionsTableRow({
 
   console.log(token.symbol, targetValue, token.status)
   const showWarning = showDeltaWarning || showSmallPositionWarning
+
+  const sliderMaxLeverage = typeof maxLeverage === "number" ? maxLeverage : 1
 
   return (
     <tr
@@ -143,7 +150,8 @@ function PositionsTableRow({
             <DialogHeader>
               <DialogTitle>Leverage {token.symbol}</DialogTitle>
               <DialogDescription>
-                Max leverage {maxLeverage?.toFixed(1)}x
+                Max leverage{" "}
+                {maxLeverage !== undefined ? maxLeverage.toFixed(1) : "1.0"}x
               </DialogDescription>
             </DialogHeader>
             <div className="grid gap-4 py-4">
@@ -151,11 +159,11 @@ function PositionsTableRow({
                 <span className="text-[11px]">{token.leverage}x</span>
                 <Slider
                   value={[token.leverage]}
-                  onValueChange={([value]: number[]) =>
+                  onValueChange={([value]: number[]) => {
                     onLeverageChange(token.symbol, value)
-                  }
+                  }}
                   min={1}
-                  max={maxLeverage}
+                  max={sliderMaxLeverage}
                   step={1}
                   className="w-[80%]"
                 />
@@ -167,9 +175,9 @@ function PositionsTableRow({
       <td className="px-2 py-1">
         <select
           value={token.side}
-          onChange={e =>
-            onSideChange(token.symbol, e.target.value as OrderSide)
-          }
+          onChange={event => {
+            onSideChange(token.symbol, event.target.value as OrderSide)
+          }}
           disabled={token.status === "deleted"}
           className={twMerge(
             "text-[10px] font-medium px-1.5 py-0.5 rounded border-0 bg-transparent cursor-pointer",
@@ -260,11 +268,13 @@ function PositionsTableRow({
           variant="ghost"
           size="icon"
           className="h-6 w-6"
-          onClick={() =>
-            token.status === "deleted"
-              ? onUndoRemove(token.symbol)
-              : onRemove(token.symbol)
-          }
+          onClick={() => {
+            if (token.status === "deleted") {
+              onUndoRemove(token.symbol)
+            } else {
+              onRemove(token.symbol)
+            }
+          }}
         >
           {token.status === "deleted" ? (
             <Undo2 className="h-3 w-3" />
@@ -282,7 +292,7 @@ export const PositionsPanel = ({
   isLoading,
   displayNotional,
   leverageLimitsMap,
-  isRebalancing,
+  // isRebalancing, TODO: add this back in
   isPrecise,
   onRemove,
   onUndoRemove,
@@ -290,7 +300,7 @@ export const PositionsPanel = ({
   onLeverageChange,
   onNotionalChange,
   onWeightChange,
-}: PositionsPanelProps) => {
+}: PositionsPanelProps): JSX.Element => {
   return (
     <div className="flex flex-col rounded border border-border min-h-0 max-h-[calc(100vh-4rem)] w-full max-w-[540px] shrink-0">
       <div className="px-2 py-1.5 border-b border-border bg-muted/30 flex items-center justify-between shrink-0">
@@ -304,8 +314,8 @@ export const PositionsPanel = ({
       <div className="flex-1 min-h-0 overflow-auto scrollbar-hide">
         {isLoading ? (
           <div className="p-2 space-y-1">
-            {Array.from({ length: 8 }).map((_, i) => (
-              <Skeleton key={i} className="h-5 w-full" />
+            {Array.from({ length: 8 }).map((_placeholder, index) => (
+              <Skeleton key={index} className="h-5 w-full" />
             ))}
           </div>
         ) : tokens.length === 0 ? (

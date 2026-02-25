@@ -67,7 +67,10 @@ export const StagedChangesPanel = () => {
           </kbd>
         </div>
         {hasStaged && (
-          <button className="text-muted-foreground hover:text-destructive text-[10px]">
+          <button
+            type="button"
+            className="text-muted-foreground hover:text-destructive text-[10px]"
+          >
             Clear all
           </button>
         )}
@@ -91,36 +94,37 @@ export const StagedChangesPanel = () => {
         </div>
       ) : (
         <div className="max-h-[180px] overflow-auto scrollbar-hide">
-          {stagedTrades.map(t => {
-            const sourceConfig = SOURCE_BADGE_CONFIG[t.source]
+          {stagedTrades.map(stagedTrade => {
+            const sourceConfig = SOURCE_BADGE_CONFIG[stagedTrade.source]
             return (
               <div
-                key={t.id}
+                key={stagedTrade.id}
                 className="flex items-center px-2 py-1.5 border-b border-border/30"
               >
                 <span
                   className={twMerge(
                     clsx(
                       "text-[10px] font-medium px-1.5 py-0.5 rounded",
-                      t.side === "buy"
+                      stagedTrade.side === "buy"
                         ? "bg-green-500/20 text-green-500"
                         : "bg-red-500/20 text-red-500",
                     ),
                   )}
                 >
-                  {t.side === "buy" ? "BUY" : "SELL"}
+                  {stagedTrade.side === "buy" ? "BUY" : "SELL"}
                 </span>
                 <span className="flex-1 px-2 truncate font-medium text-[11px]">
-                  {t.underlying}
+                  {stagedTrade.underlying}
                 </span>
-                {t.previousWeight !== undefined &&
-                  t.newWeight !== undefined && (
+                {stagedTrade.previousWeight !== undefined &&
+                  stagedTrade.newWeight !== undefined && (
                     <span className="text-[9px] text-muted-foreground font-mono mr-2">
-                      {formatPct(t.previousWeight)} → {formatPct(t.newWeight)}
+                      {formatPct(stagedTrade.previousWeight)} →{" "}
+                      {formatPct(stagedTrade.newWeight)}
                     </span>
                   )}
                 <span className="text-muted-foreground font-mono text-[10px]">
-                  {formatUsd(t.notional)}
+                  {formatUsd(stagedTrade.notional)}
                 </span>
                 <span
                   className={twMerge(

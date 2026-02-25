@@ -41,11 +41,6 @@ const mockConcentration: ConcentrationMetric[] = [
   { metric: "Effective Positions", value: 8.3 },
 ]
 
-const totalAttribution = mockAttribution.reduce(
-  (sum, f) => sum + Math.abs(f.contribution),
-  0,
-)
-
 export const FactorsPanel = () => {
   return (
     <div className="shrink-0 border border-border rounded flex flex-col min-w-0 relative">
@@ -53,6 +48,7 @@ export const FactorsPanel = () => {
         <span>FACTORS</span>
         <div className="flex items-center gap-2">
           <button
+            type="button"
             className="text-muted-foreground hover:text-foreground"
             title="Configure factors (f)"
           >
@@ -69,12 +65,17 @@ export const FactorsPanel = () => {
           <div className="text-[10px] text-muted-foreground font-medium">
             Exposures
           </div>
-          {mockExposures.map(f => (
-            <div key={f.name} className="flex items-center justify-between">
-              <span className="text-muted-foreground truncate">{f.name}</span>
+          {mockExposures.map(exposure => (
+            <div
+              key={exposure.name}
+              className="flex items-center justify-between"
+            >
+              <span className="text-muted-foreground truncate">
+                {exposure.name}
+              </span>
               <span className="font-mono">
-                {f.value >= 0 ? "+" : ""}
-                {f.value.toFixed(2)}
+                {exposure.value >= 0 ? "+" : ""}
+                {exposure.value.toFixed(2)}
               </span>
             </div>
           ))}
@@ -85,22 +86,26 @@ export const FactorsPanel = () => {
           <div className="text-[10px] text-muted-foreground font-medium mb-1.5">
             Attribution
           </div>
-          {mockAttribution.map(f => (
+          {mockAttribution.map(attribution => (
             <div
-              key={f.factor}
+              key={attribution.factor}
               className="flex items-center justify-between mb-1"
             >
-              <span className="text-muted-foreground truncate">{f.factor}</span>
+              <span className="text-muted-foreground truncate">
+                {attribution.factor}
+              </span>
               <span
                 className={twMerge(
                   clsx(
                     "w-14 text-right font-mono",
-                    f.contribution >= 0 ? "text-green-500" : "text-red-500",
+                    attribution.contribution >= 0
+                      ? "text-green-500"
+                      : "text-red-500",
                   ),
                 )}
               >
-                {f.contribution >= 0 ? "+" : ""}
-                {(f.contribution * 100).toFixed(1)}%
+                {attribution.contribution >= 0 ? "+" : ""}
+                {(attribution.contribution * 100).toFixed(1)}%
               </span>
             </div>
           ))}
@@ -112,13 +117,16 @@ export const FactorsPanel = () => {
             Concentration
           </div>
           <div className="space-y-1">
-            {mockConcentration.map(m => (
-              <div key={m.metric} className="flex items-center justify-between">
-                <span className="text-muted-foreground">{m.metric}</span>
+            {mockConcentration.map(metric => (
+              <div
+                key={metric.metric}
+                className="flex items-center justify-between"
+              >
+                <span className="text-muted-foreground">{metric.metric}</span>
                 <span className="font-mono">
-                  {m.value <= 1
-                    ? `${(m.value * 100).toFixed(0)}%`
-                    : m.value.toFixed(1)}
+                  {metric.value <= 1
+                    ? `${(metric.value * 100).toFixed(0)}%`
+                    : metric.value.toFixed(1)}
                 </span>
               </div>
             ))}

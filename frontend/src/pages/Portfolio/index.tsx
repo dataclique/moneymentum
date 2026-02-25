@@ -85,7 +85,7 @@ const PortfolioPage = () => {
     useHyperliquidTickers()
   const screenerSymbols = tickersData ?? []
   const selectedSymbolsSet = useMemo(
-    () => new Set(selectedTokens.map(t => t.symbol)),
+    () => new Set(selectedTokens.map(token => token.symbol)),
     [selectedTokens],
   )
 

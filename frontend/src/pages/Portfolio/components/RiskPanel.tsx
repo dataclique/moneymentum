@@ -20,7 +20,9 @@ const mockMonteCarlo = [
   { bucket: 0.2, frequency: 4 },
 ]
 
-const monteCarloMaxFreq = Math.max(...mockMonteCarlo.map(d => d.frequency))
+const monteCarloMaxFreq = Math.max(
+  ...mockMonteCarlo.map(monteCarloPoint => monteCarloPoint.frequency),
+)
 
 const correlationAssets = ["BTC", "ETH", "SPX", "GLD"]
 
@@ -99,22 +101,22 @@ export const RiskPanel = () => {
             Stress Tests
           </div>
           <div className="space-y-1">
-            {mockStressTests.map(t => (
+            {mockStressTests.map(stressTest => (
               <div
-                key={t.scenario}
+                key={stressTest.scenario}
                 className="flex items-center justify-between"
               >
                 <span className="text-muted-foreground truncate">
-                  {t.scenario}
+                  {stressTest.scenario}
                 </span>
                 <span
                   className={
-                    t.portfolioImpact < 0
+                    stressTest.portfolioImpact < 0
                       ? "text-red-400 font-mono"
                       : "text-green-400 font-mono"
                   }
                 >
-                  {formatPct(t.portfolioImpact)}
+                  {formatPct(stressTest.portfolioImpact)}
                 </span>
               </div>
             ))}
@@ -127,13 +129,16 @@ export const RiskPanel = () => {
             Monte Carlo (1 Year)
           </div>
           <div className="flex items-end gap-px h-12">
-            {mockMonteCarlo.map(d => (
+            {mockMonteCarlo.map(monteCarloPoint => (
               <div
-                key={d.bucket}
+                key={monteCarloPoint.bucket}
                 className="flex-1"
                 style={{
-                  height: `${(d.frequency / monteCarloMaxFreq) * 100}%`,
-                  backgroundColor: d.bucket >= 0 ? "#22c55e" : "#ef4444",
+                  height: `${
+                    (monteCarloPoint.frequency / monteCarloMaxFreq) * 100
+                  }%`,
+                  backgroundColor:
+                    monteCarloPoint.bucket >= 0 ? "#22c55e" : "#ef4444",
                 }}
               />
             ))}
@@ -149,30 +154,30 @@ export const RiskPanel = () => {
             <thead>
               <tr>
                 <th className="p-0.5"></th>
-                {correlationAssets.map(a => (
+                {correlationAssets.map(columnAsset => (
                   <th
-                    key={a}
+                    key={columnAsset}
                     className="p-0.5 text-[10px] text-muted-foreground font-medium text-center"
                   >
-                    {a}
+                    {columnAsset}
                   </th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {correlationAssets.map(a1 => (
-                <tr key={a1}>
+              {correlationAssets.map(rowAsset => (
+                <tr key={rowAsset}>
                   <td className="p-0.5 text-[10px] text-muted-foreground font-medium">
-                    {a1}
+                    {rowAsset}
                   </td>
-                  {correlationAssets.map(a2 => {
-                    const corr = getCorrelation(a1, a2)
+                  {correlationAssets.map(colAsset => {
+                    const corr = getCorrelation(rowAsset, colAsset)
                     return (
-                      <td key={a2} className="p-0.5 text-center">
+                      <td key={colAsset} className="p-0.5 text-center">
                         <div
                           className={`w-full h-4 flex items-center justify-center rounded text-[9px] font-mono ${getCorrelationColor(
                             corr,
-                          )} ${a1 === a2 ? "opacity-40" : ""}`}
+                          )} ${rowAsset === colAsset ? "opacity-40" : ""}`}
                         >
                           {corr.toFixed(1)}
                         </div>

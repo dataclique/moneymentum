@@ -292,6 +292,9 @@ export const useSwitchNetwork = () => {
       void queryClient.invalidateQueries({
         queryKey: QUERY_KEYS.leverageLimits,
       })
+      void queryClient.invalidateQueries({
+        queryKey: QUERY_KEYS.fundingRates,
+      })
     },
   })
 }

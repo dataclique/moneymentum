@@ -261,6 +261,8 @@ export class HyperliquidClient {
 
     const response = await fetch(infoUrl, {
       method: "POST",
+      // Abort if the info endpoint is unresponsive for too long to avoid hanging the UI.
+      signal: AbortSignal.timeout(10_000),
       headers: {
         "Content-Type": "application/json",
       },

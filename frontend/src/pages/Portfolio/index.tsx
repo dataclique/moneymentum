@@ -92,11 +92,7 @@ const PortfolioPage = () => {
     () => new Set(selectedTokens.map(token => token.symbol)),
     [selectedTokens],
   )
-
-  const fundingRatesByBaseSymbol = useMemo(
-    () => fundingRatesData ?? {},
-    [fundingRatesData],
-  )
+  const fundingRatesByBaseSymbol = fundingRatesData ?? {}
 
   const [leverageInput, setLeverageInput] = useState(() =>
     crossAccountLeverage.toFixed(2),

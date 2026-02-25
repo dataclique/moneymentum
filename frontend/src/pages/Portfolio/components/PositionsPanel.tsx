@@ -360,7 +360,10 @@ export const PositionsPanel = ({
                 <th className="px-2 py-1 text-left font-medium">Side</th>
                 <th className="px-2 py-1 text-right font-medium">Weight</th>
                 <th className="px-2 py-1 text-right font-medium">Notional</th>
-                <th className="px-2 py-1 text-right font-medium w-[11ch]">
+                <th
+                  className="px-2 py-1 text-right font-medium w-[11ch]"
+                  title="Annualized funding rate (signed by position direction)"
+                >
                   Rate
                 </th>
                 <th className="px-2 py-1 text-right font-medium">Δ</th>
@@ -372,8 +375,7 @@ export const PositionsPanel = ({
             <tbody>
               {tokens.map(token => {
                 const baseSymbol = token.symbol.split("/")[0] ?? token.symbol
-                const fundingRate =
-                  fundingRatesByBaseSymbol?.[baseSymbol] ?? undefined
+                const fundingRate = fundingRatesByBaseSymbol?.[baseSymbol]
 
                 return (
                   <PositionsTableRow

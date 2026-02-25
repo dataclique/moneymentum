@@ -279,24 +279,24 @@ export class HyperliquidClient {
     ]
 
     const [meta, assetCtxs] = json
-    const fundingByBaseAsset: Record<string, number> = {}
 
-    meta.universe.forEach((asset, index) => {
-      const ctx = assetCtxs[index]
-      if (!ctx) return
+    const fundingByBaseAsset: Record<string, number> = Object.fromEntries(
+      meta.universe
+        .map((asset, index) => {
+          const ctx = assetCtxs[index]
+          if (!ctx) return null
 
-      const rawFunding = ctx.funding
-      if (rawFunding === undefined) return
+          const rawFunding = ctx.funding
+          if (rawFunding === undefined) return null
 
-      const numericFunding =
-        typeof rawFunding === "number"
-          ? rawFunding
-          : Number.parseFloat(rawFunding)
+          const numericFunding = this.parseNumericValue(rawFunding, Number.NaN)
 
-      if (!Number.isFinite(numericFunding)) return
+          if (!Number.isFinite(numericFunding)) return null
 
-      fundingByBaseAsset[asset.name] = numericFunding
-    })
+          return [asset.name, numericFunding] as const
+        })
+        .filter((entry): entry is readonly [string, number] => entry !== null),
+    )
 
     return fundingByBaseAsset
   }

@@ -16,6 +16,7 @@ const QUERY_KEYS = {
   positions: ["hyperliquid", "positions"],
   tickers: ["hyperliquid", "tickers"],
   leverageLimits: ["hyperliquid", "leverage-limits"],
+  fundingRates: ["hyperliquid", "funding-rates"],
 } as const
 
 export const useHyperliquidClient = () => {
@@ -157,6 +158,20 @@ export const useHyperliquidLeverageLimits = () => {
         `[useHyperliquidLeverageLimits] completed in ${(performance.now() - startTime).toFixed(2)}ms`,
       )
       return result
+    },
+    enabled: isConnected && client !== null,
+    staleTime: 60000,
+  })
+}
+
+export const useHyperliquidFundingRates = () => {
+  const { client, isConnected } = useHyperliquidClient()
+
+  return useQuery({
+    queryKey: QUERY_KEYS.fundingRates,
+    queryFn: async () => {
+      if (!client) throw new Error("Wallet not connected")
+      return client.getFundingRates()
     },
     enabled: isConnected && client !== null,
     staleTime: 60000,

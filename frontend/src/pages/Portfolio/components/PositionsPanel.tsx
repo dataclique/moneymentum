@@ -41,6 +41,7 @@ interface PositionsPanelProps {
   onLeverageChange: (symbol: string, leverage: number) => void
   onNotionalChange: (symbol: string, notional: number) => void
   onWeightChange: (symbol: string, percentage: number) => void
+  fundingRatesByBaseSymbol?: Record<string, number>
 }
 
 const getSideBadgeClass = (side: OrderSide) =>
@@ -59,6 +60,7 @@ const PositionsTableRow = ({
   onLeverageChange,
   onNotionalChange,
   onWeightChange,
+  fundingRate,
 }: {
   token: TokenAllocation
   displayNotional: number
@@ -70,6 +72,7 @@ const PositionsTableRow = ({
   onLeverageChange: (symbol: string, leverage: number) => void
   onNotionalChange: (symbol: string, notional: number) => void
   onWeightChange: (symbol: string, percentage: number) => void
+  fundingRate?: number
 }): JSX.Element => {
   const usdAmount =
     displayNotional > 0
@@ -118,6 +121,27 @@ const PositionsTableRow = ({
     token.status !== "deleted" &&
     targetValue > 0 &&
     new Decimal(targetValue).plus(0.01).lt(MIN_USD)
+
+  // fundingRate we got from hyperliquid API is 1 hour rate
+  // to get annualized rate, we multiply by 24 (hours) and 365 (days)
+  const annualizedFundingRate =
+    fundingRate === undefined ? null : fundingRate * 24 * 365
+  const positionAdjustedFundingRate =
+    annualizedFundingRate === null
+      ? null
+      : token.side === "buy"
+        ? -annualizedFundingRate
+        : annualizedFundingRate
+  const fundingDisplay =
+    positionAdjustedFundingRate === null
+      ? "—"
+      : `${(positionAdjustedFundingRate * 100).toFixed(2)}%`
+  const fundingClassName =
+    positionAdjustedFundingRate === null || positionAdjustedFundingRate === 0
+      ? "text-muted-foreground"
+      : positionAdjustedFundingRate > 0
+        ? "text-emerald-500"
+        : "text-rose-500"
 
   console.log(token.symbol, targetValue, token.status)
   const showWarning = showDeltaWarning || showSmallPositionWarning
@@ -251,8 +275,13 @@ const PositionsTableRow = ({
           </Tooltip>
         </TooltipProvider>
       </td>
-      <td className="px-2 py-1 text-right font-mono text-[11px] text-muted-foreground">
-        0%
+      <td
+        className={twMerge(
+          "px-2 py-1 text-right font-mono text-[11px] w-[11ch]",
+          fundingClassName,
+        )}
+      >
+        {fundingDisplay}
       </td>
       <td className="px-2 py-1 text-right font-mono text-[11px] text-muted-foreground">
         0
@@ -300,6 +329,7 @@ export const PositionsPanel = ({
   onLeverageChange,
   onNotionalChange,
   onWeightChange,
+  fundingRatesByBaseSymbol,
 }: PositionsPanelProps): JSX.Element => {
   return (
     <div className="flex flex-col rounded border border-border min-h-0 max-h-[calc(100vh-4rem)] w-full max-w-[540px] shrink-0">
@@ -330,7 +360,9 @@ export const PositionsPanel = ({
                 <th className="px-2 py-1 text-left font-medium">Side</th>
                 <th className="px-2 py-1 text-right font-medium">Weight</th>
                 <th className="px-2 py-1 text-right font-medium">Notional</th>
-                <th className="px-2 py-1 text-right font-medium">Rate</th>
+                <th className="px-2 py-1 text-right font-medium w-[11ch]">
+                  Rate
+                </th>
                 <th className="px-2 py-1 text-right font-medium">Δ</th>
                 <th className="px-2 py-1 text-right font-medium">Γ</th>
                 <th className="px-2 py-1 text-right font-medium">Θ</th>
@@ -338,21 +370,28 @@ export const PositionsPanel = ({
               </tr>
             </thead>
             <tbody>
-              {tokens.map(token => (
-                <PositionsTableRow
-                  key={token.symbol}
-                  token={token}
-                  displayNotional={displayNotional}
-                  maxLeverage={leverageLimitsMap[token.symbol]}
-                  isPrecise={isPrecise}
-                  onRemove={onRemove}
-                  onUndoRemove={onUndoRemove}
-                  onSideChange={onSideChange}
-                  onLeverageChange={onLeverageChange}
-                  onNotionalChange={onNotionalChange}
-                  onWeightChange={onWeightChange}
-                />
-              ))}
+              {tokens.map(token => {
+                const baseSymbol = token.symbol.split("/")[0] ?? token.symbol
+                const fundingRate =
+                  fundingRatesByBaseSymbol?.[baseSymbol] ?? undefined
+
+                return (
+                  <PositionsTableRow
+                    key={token.symbol}
+                    token={token}
+                    displayNotional={displayNotional}
+                    maxLeverage={leverageLimitsMap[token.symbol]}
+                    isPrecise={isPrecise}
+                    onRemove={onRemove}
+                    onUndoRemove={onUndoRemove}
+                    onSideChange={onSideChange}
+                    onLeverageChange={onLeverageChange}
+                    onNotionalChange={onNotionalChange}
+                    onWeightChange={onWeightChange}
+                    fundingRate={fundingRate}
+                  />
+                )
+              })}
             </tbody>
           </table>
         )}

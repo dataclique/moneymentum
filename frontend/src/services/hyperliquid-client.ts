@@ -253,6 +253,52 @@ export class HyperliquidClient {
     this.exchange.options["refSet"] = true
   }
 
+  async getFundingRates(): Promise<Record<string, number>> {
+    const infoUrl =
+      this.networkMode === "testnet"
+        ? "https://api.hyperliquid-testnet.xyz/info"
+        : "https://api.hyperliquid.xyz/info"
+
+    const response = await fetch(infoUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ type: "metaAndAssetCtxs" }),
+    })
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch funding rates: ${response.statusText}`)
+    }
+
+    const json = (await response.json()) as [
+      { universe: Array<{ name: string }> },
+      Array<{ funding?: string | number } | null | undefined>,
+    ]
+
+    const [meta, assetCtxs] = json
+    const fundingByBaseAsset: Record<string, number> = {}
+
+    meta.universe.forEach((asset, index) => {
+      const ctx = assetCtxs[index]
+      if (!ctx) return
+
+      const rawFunding = ctx.funding
+      if (rawFunding === undefined) return
+
+      const numericFunding =
+        typeof rawFunding === "number"
+          ? rawFunding
+          : Number.parseFloat(rawFunding)
+
+      if (!Number.isFinite(numericFunding)) return
+
+      fundingByBaseAsset[asset.name] = numericFunding
+    })
+
+    return fundingByBaseAsset
+  }
+
   async getBalance(): Promise<number> {
     const balance = await this.exchange.fetchBalance()
     const usdc = balance.total["USDC"]

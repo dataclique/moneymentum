@@ -169,6 +169,7 @@ const PortfolioPage = () => {
           isLoading={isTickersLoading}
           selectedSymbols={selectedSymbolsSet}
           onAddSymbol={handleAddToken}
+          fundingRatesByBaseSymbol={fundingRatesByBaseSymbol}
         />
         <div className="flex-1 min-w-0 flex gap-1 overflow-hidden">
           {/* Center: Positions */}

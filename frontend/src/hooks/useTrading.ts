@@ -19,6 +19,8 @@ const QUERY_KEYS = {
   fundingRates: ["hyperliquid", "funding-rates"],
 } as const
 
+const DATA_STALE_TIME_MS = 30_000
+
 export const useHyperliquidClient = () => {
   const { client, networkMode, isConnected } = useWallet()
   return { client, isConnected, networkMode }
@@ -70,7 +72,7 @@ export const useHyperliquidAccountSummary = () => {
       return { ...summary, crossAccountLeverage }
     },
     enabled: isConnected && client !== null,
-    staleTime: 30000,
+    staleTime: DATA_STALE_TIME_MS,
   })
 }
 
@@ -124,7 +126,7 @@ export const useHyperliquidPositions = () => {
       return result
     },
     enabled: isConnected && client !== null,
-    staleTime: 30000,
+    staleTime: DATA_STALE_TIME_MS,
   })
 }
 
@@ -138,7 +140,7 @@ export const useHyperliquidTickers = () => {
       return client.listPerpTickers()
     },
     enabled: isConnected && client !== null,
-    staleTime: 60000,
+    staleTime: DATA_STALE_TIME_MS,
   })
 }
 
@@ -160,7 +162,7 @@ export const useHyperliquidLeverageLimits = () => {
       return result
     },
     enabled: isConnected && client !== null,
-    staleTime: 60000,
+    staleTime: DATA_STALE_TIME_MS,
   })
 }
 
@@ -174,7 +176,7 @@ export const useHyperliquidFundingRates = () => {
       return client.getFundingRates()
     },
     enabled: isConnected && client !== null,
-    staleTime: 60000,
+    staleTime: DATA_STALE_TIME_MS,
   })
 }
 

@@ -5,6 +5,9 @@ import type { NetworkMode, WalletCredentials } from "@/contexts/wallet-context"
 const MARKETS_CACHE_KEY = "hyperliquid_markets_cache"
 const MARKETS_CACHE_TTL_MS = 24 * 60 * 60 * 1000
 
+const HYPERLIQUID_MAINNET_INFO_URL = "https://api.hyperliquid.xyz/info"
+const HYPERLIQUID_TESTNET_INFO_URL = "https://api.hyperliquid-testnet.xyz/info"
+
 interface MarketsCache {
   markets: Record<string, unknown>
   timestamp: number
@@ -256,8 +259,8 @@ export class HyperliquidClient {
   async getFundingRates(): Promise<Record<string, number>> {
     const infoUrl =
       this.networkMode === "testnet"
-        ? "https://api.hyperliquid-testnet.xyz/info"
-        : "https://api.hyperliquid.xyz/info"
+        ? HYPERLIQUID_TESTNET_INFO_URL
+        : HYPERLIQUID_MAINNET_INFO_URL
 
     const response = await fetch(infoUrl, {
       method: "POST",

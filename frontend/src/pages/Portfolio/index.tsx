@@ -61,12 +61,14 @@ const PortfolioPage = () => {
     accountValue,
     crossAccountLeverage,
     initialCrossAccountLeverage,
+    initialTotalNotional,
     targetNotional,
     selectedTokens,
     activeTokens,
     displayNotional,
     blockingReasons,
     leverageLimitsMap,
+    stagedTrades,
     disableSubmit,
     isRebalancing,
     isBalanceLoading,
@@ -80,6 +82,7 @@ const PortfolioPage = () => {
     handleWeightChange,
     handleCrossAccountLeverageChange,
     handleOpenPositions,
+    handleResetToInitial,
   } = usePortfolioState(isPrecise, isWeightRedistribution)
 
   const { beta, isLoading: isBetaLoading } = useBeta(activeTokens)
@@ -173,7 +176,7 @@ const PortfolioPage = () => {
         />
         <div className="flex-1 min-w-0 flex gap-1 overflow-hidden">
           {/* Center: Positions */}
-          <div className="shrink-0 basis-[540px] flex flex-col overflow-hidden">
+          <div className="shrink-0 basis-[600px] flex flex-col overflow-hidden">
             <div className="flex gap-1 min-h-0 min-w-0 flex-1">
               <PositionsPanel
                 tokens={selectedTokens}
@@ -304,12 +307,6 @@ const PortfolioPage = () => {
                         </DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
-                    <Button
-                      onClick={handleOpenPositions}
-                      disabled={disableSubmit}
-                    >
-                      {isRebalancing ? "Sending..." : "Rebalance"}
-                    </Button>
                   </div>
                 </div>
               </div>
@@ -320,7 +317,17 @@ const PortfolioPage = () => {
           <div className="flex flex-col gap-1 min-h-0 w-full">
             <PerformancePanel />
             <div className="flex-1 flex gap-1 min-h-0">
-              <StagedChangesPanel />
+              <StagedChangesPanel
+                stagedTrades={stagedTrades}
+                initialTotalNotional={initialTotalNotional}
+                targetNotional={targetNotional}
+                initialCrossAccountLeverage={initialCrossAccountLeverage}
+                crossAccountLeverage={crossAccountLeverage}
+                onRebalance={handleOpenPositions}
+                isRebalancing={isRebalancing}
+                disableSubmit={disableSubmit}
+                onClearAll={handleResetToInitial}
+              />
               <FactorsPanel />
               <RiskPanel />
             </div>

@@ -212,10 +212,16 @@ export const usePortfolioState = (
   const { networkMode } = useWallet()
 
   // Exchange data queries
-  const { data: accountSummaryData, isLoading: isBalanceLoading } =
-    useHyperliquidAccountSummary()
-  const { data: positionsData, isLoading: isPositionsLoading } =
-    useHyperliquidPositions()
+  const {
+    data: accountSummaryData,
+    isLoading: isBalanceLoading,
+    refetch: refetchAccountSummary,
+  } = useHyperliquidAccountSummary()
+  const {
+    data: positionsData,
+    isLoading: isPositionsLoading,
+    refetch: refetchPositions,
+  } = useHyperliquidPositions()
   const { data: leverageLimitsData, isLoading: isLeverageLimitsLoading } =
     useHyperliquidLeverageLimits()
 
@@ -248,6 +254,7 @@ export const usePortfolioState = (
         }
       }) ?? [],
   )
+  const [isRebalancingUi, setIsRebalancingUi] = useState(false)
   const [initialPortfolio, setInitialPortfolio] = useState<TokenAllocation[]>(
     [],
   )
@@ -294,7 +301,9 @@ export const usePortfolioState = (
           }),
         ),
       }
-      localStorage.setItem(getStorageKey(networkMode), JSON.stringify(payload))
+      const key = getStorageKey(networkMode)
+      const serialized = JSON.stringify(payload)
+      localStorage.setItem(key, serialized)
     },
     [networkMode],
   )
@@ -326,7 +335,6 @@ export const usePortfolioState = (
       const { tokens: updatedTokens, totalNotional } =
         recalculateFromNotionals(tokens)
       if (accountValue > 0) {
-        console.log(tokens)
         const newLeverage = calcLeverage(totalNotional, accountValue)
         setCrossAccountLeverage(newLeverage)
       }
@@ -336,28 +344,17 @@ export const usePortfolioState = (
   )
 
   useEffect(() => {
-    const effectStartTime = performance.now()
-    console.log("[usePortfolioState] positions useEffect triggered")
-
     if (positionsLoadedFromExchange) {
-      console.log("[usePortfolioState] positions already loaded, skipping")
       return
     }
     if (isPositionsLoading || !positionsData?.positions) {
-      console.log("[usePortfolioState] positions still loading or no data")
       return
     }
     // Wait for accountValue to be loaded so we can calculate correct percentages
     if (accountValue <= 0) {
-      console.log("[usePortfolioState] waiting for accountValue")
       return
     }
 
-    console.log(
-      `[usePortfolioState] processing ${positionsData.positions.length} positions from exchange`,
-    )
-
-    const mapStartTime = performance.now()
     // Calculate total notional from all exchange positions first
     const totalExchangeNotional = positionsData.positions.reduce(
       (sum, pos) => sum + pos.notional,
@@ -380,9 +377,6 @@ export const usePortfolioState = (
         notional: pos.notional,
         lockedUsd: pos.notional,
       }),
-    )
-    console.log(
-      `[usePortfolioState] mapping exchangeTokens took ${(performance.now() - mapStartTime).toFixed(2)}ms`,
     )
 
     // Always set initialPortfolio from exchange (source of truth for what exists on exchange)
@@ -466,9 +460,6 @@ export const usePortfolioState = (
     }
 
     setPositionsLoadedFromExchange(true)
-    console.log(
-      `[usePortfolioState] positions useEffect completed in ${(performance.now() - effectStartTime).toFixed(2)}ms`,
-    )
   }, [
     positionsData,
     isPositionsLoading,
@@ -495,9 +486,9 @@ export const usePortfolioState = (
 
       const shouldComputeStatus =
         initialToken &&
-        currentToken.status !== "deleted" &&
-        currentToken.status !== "failed" &&
-        currentToken.status !== "working"
+        (currentToken.status === "idle" ||
+          currentToken.status === "untouched" ||
+          currentToken.status === "modified")
 
       if (!shouldComputeStatus) {
         // Token doesn't exist in initial portfolio - treat as new (idle)
@@ -539,6 +530,12 @@ export const usePortfolioState = (
   const totalNotional = useMemo(
     () => activeTokens.reduce((sum, token) => sum + (token.notional ?? 0), 0),
     [activeTokens],
+  )
+
+  const initialTotalNotional = useMemo(
+    () =>
+      initialPortfolio.reduce((sum, token) => sum + (token.notional ?? 0), 0),
+    [initialPortfolio],
   )
 
   const hasPendingDeletions = useMemo(
@@ -619,6 +616,97 @@ export const usePortfolioState = (
       }
     })
   }, [tokensWithDerivedPercentages, targetNotional, initialPortfolio])
+
+  const stagedTrades = useMemo(() => {
+    const trades = tokensWithDeltaTracking
+      .map(token => {
+        const initialToken = initialPortfolio.find(
+          initial => initial.symbol === token.symbol,
+        )
+        const inInitial = initialToken !== undefined
+
+        // Deleted tokens:
+        // - if they existed on the exchange (inInitial), this is a full close
+        //   of the current position: notional = currentNotional, side = opposite
+        // - if they are purely local (newly added then removed), we skip them
+        if (token.status === "deleted") {
+          if (!initialToken) {
+            return null
+          }
+
+          const previousNotional = token.currentNotional ?? 0
+          const previousWeight = initialToken.percentage / 100
+
+          const closeSide: OrderSide = token.side === "buy" ? "sell" : "buy"
+
+          return {
+            id: token.symbol,
+            underlying: token.symbol,
+            side: closeSide,
+            notional: previousNotional,
+            previousWeight,
+            newWeight: 0,
+            source: "manual" as const,
+            status: token.status,
+            message: token.message ?? null,
+          }
+        }
+
+        const shouldInclude =
+          token.status === "modified" ||
+          token.status === "working" ||
+          token.status === "failed" ||
+          // Newly created positions (no initial snapshot)
+          !inInitial
+
+        if (!shouldInclude) {
+          return null
+        }
+
+        const previousWeight = initialToken
+          ? initialToken.percentage / 100
+          : undefined
+        const newWeight = token.percentage / 100
+
+        const previousNotional = token.currentNotional ?? 0
+        const targetNotionalForToken =
+          token.targetNotional ?? token.notional ?? 0
+        const notionalDelta = Math.abs(
+          targetNotionalForToken - previousNotional,
+        )
+
+        let source: "weight_edit" | "leverage_change" | "manual"
+
+        if (!initialToken) {
+          // Purely local position – created in the UI
+          source = "manual"
+        } else if (
+          previousWeight !== undefined &&
+          previousWeight !== newWeight
+        ) {
+          // Explicit weight (percentage) change
+          source = "weight_edit"
+        } else {
+          // Any other change relative to initial (side/leverage/notional)
+          source = "leverage_change"
+        }
+
+        return {
+          id: token.symbol,
+          underlying: token.symbol,
+          side: token.side,
+          notional: notionalDelta,
+          previousWeight,
+          newWeight,
+          source,
+          status: token.status,
+          message: token.message ?? null,
+        }
+      })
+      .filter(trade => trade !== null)
+
+    return trades
+  }, [tokensWithDeltaTracking, initialPortfolio])
 
   const derivedActiveTokens = useMemo(
     () => tokensWithDeltaTracking.filter(t => t.status !== "deleted"),
@@ -737,7 +825,6 @@ export const usePortfolioState = (
       }
 
       const maxLeverageForSymbol = leverageLimitsMap[symbol] || 1
-
       setSelectedTokensAndPersist(prev => {
         const initialNotional = MIN_USD
         const tokensWithNew: TokenAllocation[] = [
@@ -753,7 +840,8 @@ export const usePortfolioState = (
             lockedUsd: initialNotional,
           },
         ]
-        return updateByNotionalChange(tokensWithNew)
+        const result = updateByNotionalChange(tokensWithNew)
+        return result
       })
     },
     [
@@ -935,11 +1023,6 @@ export const usePortfolioState = (
   )
 
   const handleOpenPositions = useCallback(() => {
-    const rebalanceStartTime = performance.now()
-    console.log("[Rebalance] handleOpenPositions called", {
-      timestamp: new Date().toISOString(),
-    })
-
     if (
       !tokensWithDeltaTracking.length ||
       accountValue <= 0 ||
@@ -947,9 +1030,11 @@ export const usePortfolioState = (
       (derivedTotalPercent <= 0 && !hasPendingDeletions) ||
       rebalancePositionsMutation.isPending
     ) {
-      console.log("[Rebalance] Early return - validation failed")
       return
     }
+
+    // Mark UI as rebalancing for the full lifecycle (including delayed refetch)
+    setIsRebalancingUi(true)
 
     // Check for positions with changes less than $11 (only if precise is off)
     if (!isPrecise) {
@@ -1083,54 +1168,37 @@ export const usePortfolioState = (
       }),
     )
 
-    const mutationCallTime = performance.now()
-    console.log("[Rebalance] Calling mutation.mutate()", {
-      preparationTime: `${(mutationCallTime - rebalanceStartTime).toFixed(2)}ms`,
-      positions: payload.positions.length,
-      accountValue: payload.accountValue,
-      crossAccountLeverage: payload.crossAccountLeverage,
-      precise: payload.precise,
-    })
-
     rebalancePositionsMutation.mutate(payload, {
-      onSuccess: data => {
-        const successTime = performance.now()
-        console.log("[Rebalance] Mutation onSuccess", {
-          totalTime: `${(successTime - rebalanceStartTime).toFixed(2)}ms`,
-          networkTime: `${(successTime - mutationCallTime).toFixed(2)}ms`,
-          ordersCount: data.orders.length,
-          orders: data.orders.map(o => ({
-            symbol: o.symbol,
-            status: o.status,
-          })),
-        })
+      onSuccess: () => {
+        // After we receive final order statuses, treat the exchange as source of truth:
+        // 1. Allow positions effect to re-run by clearing the "loaded" flag
+        // 2. Poll positions for a short window to observe the post-fill portfolio
+        setPositionsLoadedFromExchange(false)
 
-        const updatedTokens = tokensWithDeltaTracking
-          .map(token => {
-            const status = data.orders.find(
-              order => order.symbol === token.symbol,
-            )
-            if (!status) return token
+        // Kick off polling: short interval (1s) up to a max window (~7s).
+        // UI "rebalancing" flag will be cleared by a separate effect once
+        // stagedTrades have been reduced to an empty set.
+        const pollStart = Date.now()
+        const pollIntervalMs = 1_000
+        const pollTimeoutMs = 7_000
 
-            if (token.status === "deleted" && status.status === "filled") {
-              return null
-            }
+        const pollPositions = () => {
+          const elapsed = Date.now() - pollStart
+          if (elapsed > pollTimeoutMs) {
+            return
+          }
 
-            return {
-              ...token,
-              status: status.status,
-              message: status.message ?? null,
-            }
+          void refetchPositions().then(() => {
+            setTimeout(pollPositions, pollIntervalMs)
           })
-          .filter((t): t is TokenAllocation => t !== null)
+        }
 
-        setSelectedTokensAndPersist(updatedTokens)
+        // Prime account summary once, then begin polling positions
+        void refetchAccountSummary()
+        setTimeout(pollPositions, pollIntervalMs)
       },
       onError: error => {
-        const errorTime = performance.now()
         console.error("[Rebalance] Mutation onError", {
-          totalTime: `${(errorTime - rebalanceStartTime).toFixed(2)}ms`,
-          networkTime: `${(errorTime - mutationCallTime).toFixed(2)}ms`,
           error: error.message,
         })
 
@@ -1148,6 +1216,8 @@ export const usePortfolioState = (
             return { ...token, status: "failed", message: error.message }
           }),
         )
+
+        setIsRebalancingUi(false)
       },
     })
   }, [
@@ -1155,14 +1225,16 @@ export const usePortfolioState = (
     tokensWithDerivedPercentages,
     targetNotional,
     accountValue,
-    crossAccountLeverage,
     hasBlockingNotionalIssue,
     derivedTotalPercent,
     hasPendingDeletions,
     initialPortfolio,
     isPrecise,
     rebalancePositionsMutation,
+    crossAccountLeverage,
     setSelectedTokensAndPersist,
+    refetchAccountSummary,
+    refetchPositions,
   ])
 
   const netExposure = derivedActiveTokens.reduce((acc, token) => {
@@ -1170,12 +1242,41 @@ export const usePortfolioState = (
     return acc + (token.side === "buy" ? usdValue : -usdValue)
   }, 0)
 
+  const handleResetToInitial = useCallback(() => {
+    if (initialPortfolio.length === 0) {
+      return
+    }
+
+    const baseLeverage =
+      initialCrossAccountLeverage ?? DEFAULT_CROSS_ACCOUNT_LEVERAGE
+
+    setCrossAccountLeverage(baseLeverage)
+    setSelectedTokensAndPersist(initialPortfolio)
+  }, [
+    initialPortfolio,
+    initialCrossAccountLeverage,
+    setSelectedTokensAndPersist,
+  ])
+
   const disableSubmit =
     !tokensWithDeltaTracking.length ||
     accountValue <= 0 ||
-    rebalancePositionsMutation.isPending ||
+    isRebalancingUi ||
     (derivedTotalPercent <= 0 && !hasPendingDeletions) ||
     hasBlockingNotionalIssue
+
+  // When we're in a "rebalancing" UI state, automatically clear it once
+  // there are no more staged trades to display. This ties the spinner to
+  // actual portfolio convergence rather than just network timing.
+  useEffect(() => {
+    if (!isRebalancingUi) {
+      return
+    }
+
+    if (!stagedTrades.length) {
+      setIsRebalancingUi(false)
+    }
+  }, [isRebalancingUi, stagedTrades])
 
   return {
     // State
@@ -1195,8 +1296,10 @@ export const usePortfolioState = (
     blockingReasons,
     leverageLimitsMap,
     netExposure,
+    initialTotalNotional,
+    stagedTrades,
     disableSubmit,
-    isRebalancing: rebalancePositionsMutation.isPending,
+    isRebalancing: isRebalancingUi,
 
     // Loading states
     isBalanceLoading,
@@ -1213,5 +1316,6 @@ export const usePortfolioState = (
     handleWeightChange,
     handleCrossAccountLeverageChange,
     handleOpenPositions,
+    handleResetToInitial,
   }
 }

@@ -53,22 +53,14 @@ export const useHyperliquidAccountSummary = () => {
   return useQuery({
     queryKey: QUERY_KEYS.accountSummary,
     queryFn: async (): Promise<AccountSummary> => {
-      const startTime = performance.now()
-      console.log("[useHyperliquidAccountSummary] queryFn started")
-
       if (!client) throw new Error("Wallet not connected")
       const summary = await client.getAccountSummary()
-      console.log(
-        `[useHyperliquidAccountSummary] getAccountSummary took ${(performance.now() - startTime).toFixed(2)}ms`,
-      )
 
       const crossAccountLeverage =
         summary.accountValue > 0
           ? summary.totalNotionalPosition / summary.accountValue
           : 0
-      console.log(
-        `[useHyperliquidAccountSummary] completed in ${(performance.now() - startTime).toFixed(2)}ms`,
-      )
+
       return { ...summary, crossAccountLeverage }
     },
     enabled: isConnected && client !== null,
@@ -82,29 +74,13 @@ export const useHyperliquidPositions = () => {
   return useQuery({
     queryKey: QUERY_KEYS.positions,
     queryFn: async () => {
-      const startTime = performance.now()
-      console.log("[useHyperliquidPositions] queryFn started")
-
       if (!client) throw new Error("Wallet not connected")
 
-      const fetchStartTime = performance.now()
       const positions = await client.getCurrentPositions()
-      const fetchEndTime = performance.now()
-      console.log(
-        `[useHyperliquidPositions] client.getCurrentPositions() took ${(fetchEndTime - fetchStartTime).toFixed(2)}ms`,
-      )
-
-      const reduceStartTime = performance.now()
       const totalNotional = positions.reduce(
         (sum, pos) => sum + pos.notional,
         0,
       )
-      const reduceEndTime = performance.now()
-      console.log(
-        `[useHyperliquidPositions] reduce totalNotional took ${(reduceEndTime - reduceStartTime).toFixed(2)}ms`,
-      )
-
-      const mapStartTime = performance.now()
       const result = {
         positions: positions.map(pos => ({
           ...pos,
@@ -113,15 +89,6 @@ export const useHyperliquidPositions = () => {
         })),
         totalNotional,
       }
-      const mapEndTime = performance.now()
-      console.log(
-        `[useHyperliquidPositions] map positions took ${(mapEndTime - mapStartTime).toFixed(2)}ms`,
-      )
-
-      const endTime = performance.now()
-      console.log(
-        `[useHyperliquidPositions] queryFn completed in ${(endTime - startTime).toFixed(2)}ms`,
-      )
 
       return result
     },
@@ -150,15 +117,9 @@ export const useHyperliquidLeverageLimits = () => {
   return useQuery({
     queryKey: QUERY_KEYS.leverageLimits,
     queryFn: async () => {
-      const startTime = performance.now()
-      console.log("[useHyperliquidLeverageLimits] queryFn started")
-
       if (!client) throw new Error("Wallet not connected")
       const result = await client.getLeverageLimits()
 
-      console.log(
-        `[useHyperliquidLeverageLimits] completed in ${(performance.now() - startTime).toFixed(2)}ms`,
-      )
       return result
     },
     enabled: isConnected && client !== null,
@@ -202,11 +163,6 @@ export const useRebalanceHyperliquidPositions = () => {
 
   return useMutation<{ orders: OrderResult[] }, Error, RebalanceParams>({
     mutationFn: async (params: RebalanceParams) => {
-      const mutationStartTime = performance.now()
-      console.log("[Rebalance] mutationFn started", {
-        timestamp: new Date().toISOString(),
-      })
-
       if (!client) throw new Error("Wallet not connected")
 
       const positions: Position[] = params.positions.map(pos => ({
@@ -220,10 +176,6 @@ export const useRebalanceHyperliquidPositions = () => {
         status: pos.status === "working" ? "idle" : pos.status,
       }))
 
-      console.log(
-        "%c[Rebalance] Positions data:",
-        "background: purple; color: white; padding: 2px 6px; border-radius: 3px",
-      )
       console.table(
         positions.map(position => ({
           symbol: position.symbol,
@@ -236,24 +188,12 @@ export const useRebalanceHyperliquidPositions = () => {
         })),
       )
 
-      console.log("[Rebalance] Calling client.rebalancePositions()", {
-        positionCount: positions.length,
-      })
-      const clientCallTime = performance.now()
-
       const results = await client.rebalancePositions(
         positions,
         params.accountValue,
         params.crossAccountLeverage,
         params.precise,
       )
-
-      const endTime = performance.now()
-      console.log("[Rebalance] mutationFn completed", {
-        totalTime: `${(endTime - mutationStartTime).toFixed(2)}ms`,
-        clientTime: `${(endTime - clientCallTime).toFixed(2)}ms`,
-        resultsCount: results.length,
-      })
 
       return { orders: results }
     },

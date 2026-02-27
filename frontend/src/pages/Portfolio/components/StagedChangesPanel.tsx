@@ -3,10 +3,11 @@ import { clsx } from "clsx"
 import { Send } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { formatUsd, formatPct } from "../../Prototype/utils/formatters"
+import type { AllocationStatus } from "../hooks/usePortfolioState"
 
 type Side = "buy" | "sell"
 
-interface MockStagedTrade {
+export interface StagedTrade {
   id: string
   underlying: string
   side: Side
@@ -14,6 +15,8 @@ interface MockStagedTrade {
   previousWeight?: number
   newWeight?: number
   source: "weight_edit" | "leverage_change" | "manual"
+  status: AllocationStatus
+  message: string | null
 }
 
 const SOURCE_BADGE_CONFIG = {
@@ -25,36 +28,30 @@ const SOURCE_BADGE_CONFIG = {
   manual: { label: "manual", className: "bg-gray-500/20 text-gray-400" },
 } as const
 
-const MOCK_TRADES: MockStagedTrade[] = [
-  {
-    id: "1",
-    underlying: "BTC/USDC",
-    side: "buy",
-    notional: 2500,
-    previousWeight: 0.25,
-    newWeight: 0.3,
-    source: "weight_edit",
-  },
-  {
-    id: "2",
-    underlying: "ETH/USDC",
-    side: "sell",
-    notional: 1500,
-    previousWeight: 0.2,
-    newWeight: 0.15,
-    source: "leverage_change",
-  },
-  {
-    id: "3",
-    underlying: "SOL/USDC",
-    side: "buy",
-    notional: 800,
-    source: "manual",
-  },
-]
+interface StagedChangesPanelProps {
+  stagedTrades?: StagedTrade[]
+  initialTotalNotional?: number
+  targetNotional?: number
+  initialCrossAccountLeverage?: number | null
+  crossAccountLeverage?: number
+  onRebalance?: () => void
+  isRebalancing?: boolean
+  disableSubmit?: boolean
+  onClearAll?: () => void
+}
 
-export const StagedChangesPanel = () => {
-  const stagedTrades = MOCK_TRADES
+export const StagedChangesPanel = ({
+  stagedTrades: stagedTradesProp,
+  initialTotalNotional,
+  targetNotional,
+  initialCrossAccountLeverage,
+  crossAccountLeverage,
+  onRebalance,
+  isRebalancing = false,
+  disableSubmit = false,
+  onClearAll,
+}: StagedChangesPanelProps) => {
+  const stagedTrades = stagedTradesProp ?? []
   const hasStaged = stagedTrades.length > 0
 
   return (
@@ -62,44 +59,41 @@ export const StagedChangesPanel = () => {
       <div className="px-2 py-1.5 bg-muted/30 flex items-center justify-between border-b border-border">
         <div className="flex items-center gap-2">
           <span className="font-medium">STAGED CHANGES</span>
-          <kbd className="px-1.5 py-0.5 text-[10px] font-mono bg-muted rounded">
-            4
-          </kbd>
         </div>
         {hasStaged && (
           <button
             type="button"
             className="text-muted-foreground hover:text-destructive text-[10px]"
+            onClick={() => {
+              if (!onClearAll) return
+              onClearAll()
+            }}
           >
             Clear all
           </button>
         )}
       </div>
 
-      {/* Header / leverage summary */}
-      <div className="px-2 py-1.5 border-b border-border flex items-center justify-between text-[10px]">
-        <div className="flex items-center gap-2">
-          <span className="text-muted-foreground">Leverage</span>
-          <span className="font-mono">TODO 1.25x → 1.40x</span>
-        </div>
-        <Button size="sm" className="h-6 px-2 text-[10px] gap-1">
-          <Send className="h-3 w-3" />
-          Rebalance
-        </Button>
-      </div>
-
       {!hasStaged ? (
-        <div className="px-2 py-3 text-muted-foreground text-center text-[10px]">
+        <div className="px-2 py-3 text-muted-foreground text-center text-[10px] h-full">
           No pending trades. Edit weights or adjust leverage to stage trades.
         </div>
       ) : (
-        <div className="max-h-[180px] overflow-auto scrollbar-hide">
+        <div className="overflow-auto scrollbar-hide h-full">
           {stagedTrades.map(stagedTrade => {
             const sourceConfig = SOURCE_BADGE_CONFIG[stagedTrade.source]
             return (
               <div
                 key={stagedTrade.id}
-                className="flex items-center px-2 py-1.5 border-b border-border/30"
+                className={twMerge(
+                  "flex items-center px-2 py-1.5 border-b border-border/30",
+                  (stagedTrade.status === "working" ||
+                    stagedTrade.status === "deleted") &&
+                    isRebalancing &&
+                    "bg-yellow-500/10 border-yellow-500/40",
+                  stagedTrade.status === "failed" &&
+                    "bg-red-500/5 border-red-500/40",
+                )}
               >
                 <span
                   className={twMerge(
@@ -134,31 +128,79 @@ export const StagedChangesPanel = () => {
                 >
                   {sourceConfig.label}
                 </span>
+                {stagedTrade.status === "failed" &&
+                  stagedTrade.message !== null && (
+                    <span className="ml-2 text-[9px] text-red-400 truncate max-w-[140px]">
+                      {stagedTrade.message}
+                    </span>
+                  )}
               </div>
             )
           })}
         </div>
       )}
 
-      {/* Simple impact preview */}
-      <div className="px-2 py-1.5 border-t border-border/30 bg-muted/20">
-        <div className="text-[10px] text-muted-foreground font-medium mb-1">
-          IMPACT PREVIEW
-        </div>
-        <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[10px]">
-          <div className="flex justify-between">
-            <span className="text-muted-foreground">Notional</span>
-            <span className="font-mono">
-              TODO $50,000 → <span className="text-green-500">$52,300</span>
-            </span>
+      {/* Impact preview + primary rebalance action pinned to bottom */}
+      <div className="px-2 py-1.5 border-t border-border/30 bg-muted/20 space-y-2">
+        <div>
+          <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[10px]">
+            <div className="flex justify-between flex-col">
+              <span className="text-muted-foreground">Notional</span>
+              <span className="font-mono">
+                {initialTotalNotional !== undefined &&
+                targetNotional !== undefined ? (
+                  <>
+                    {formatUsd(initialTotalNotional)}{" "}
+                    <span className="text-muted-foreground">→</span>{" "}
+                    <span
+                      className={
+                        targetNotional >= initialTotalNotional
+                          ? "text-green-500"
+                          : "text-red-500"
+                      }
+                    >
+                      {formatUsd(targetNotional)}
+                    </span>
+                  </>
+                ) : (
+                  "TODO"
+                )}
+              </span>
+            </div>
+            <div className="flex justify-between flex-col">
+              <span className="text-muted-foreground">Leverage</span>
+              <span className="font-mono">
+                {crossAccountLeverage !== undefined ? (
+                  <>
+                    {(
+                      initialCrossAccountLeverage ?? crossAccountLeverage
+                    ).toFixed(2)}
+                    x <span className="text-muted-foreground">→</span>{" "}
+                    <span className="text-yellow-500">
+                      {crossAccountLeverage.toFixed(2)}x
+                    </span>
+                  </>
+                ) : (
+                  "TODO"
+                )}
+              </span>
+            </div>
           </div>
-          <div className="flex justify-between">
-            <span className="text-muted-foreground">Leverage</span>
-            <span className="font-mono">
-              TODO 1.25x → <span className="text-yellow-500">1.40x</span>
-            </span>
-          </div>
         </div>
+        <Button
+          size="sm"
+          className="w-full h-8 text-[11px] gap-1"
+          onClick={() => {
+            if (!onRebalance || !hasStaged || disableSubmit || isRebalancing) {
+              return
+            }
+            onRebalance()
+          }}
+          disabled={disableSubmit || isRebalancing || !hasStaged}
+        >
+          <Send className="h-3 w-3" />
+          {isRebalancing ? "Sending..." : "Rebalance"}
+        </Button>
       </div>
     </div>
   )

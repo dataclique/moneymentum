@@ -82,14 +82,8 @@ export const StagedChangesPanel = ({
             const baseSymbol =
               stagedTrade.underlying.split("/")[0] ?? stagedTrade.underlying
 
-            const prevWeight =
-              stagedTrade.previousWeight !== undefined
-                ? stagedTrade.previousWeight
-                : 0
-            const nextWeight =
-              stagedTrade.newWeight !== undefined
-                ? stagedTrade.newWeight
-                : prevWeight
+            const prevWeight = stagedTrade.previousWeight ?? 0
+            const nextWeight = stagedTrade.newWeight ?? prevWeight
             const weightDelta = nextWeight - prevWeight
 
             const arrow = weightDelta > 0 ? "↑" : weightDelta < 0 ? "↓" : "→"

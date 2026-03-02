@@ -2,7 +2,7 @@ import { twMerge } from "tailwind-merge"
 import { clsx } from "clsx"
 import { Send } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { formatUsd, formatPct } from "../../Prototype/utils/formatters"
+import { formatUsd } from "../../Prototype/utils/formatters"
 import type { AllocationStatus } from "../hooks/usePortfolioState"
 
 type Side = "buy" | "sell"
@@ -29,6 +29,14 @@ interface StagedChangesPanelProps {
   disableSubmit?: boolean
   onClearAll?: () => void
 }
+
+// Grid template for staged-change rows:
+// [0] Side badge (6ch) | [1] Symbol (~JELLYJELLY width + padding) | [2] Weight change (auto) | [3] Notional (≈ "$2000.00")
+const STAGED_ROW_GRID_TEMPLATE =
+  "grid grid-cols-[6ch_13ch_auto_8ch] items-center px-2 py-1.5 border-b border-border/30 text-[10px]"
+
+const formatUnsignedPct = (value: number): string =>
+  `${(value * 100).toFixed(2)}%`
 
 export const StagedChangesPanel = ({
   stagedTrades: stagedTradesProp,
@@ -71,11 +79,32 @@ export const StagedChangesPanel = ({
       ) : (
         <div className="overflow-auto scrollbar-hide h-full">
           {stagedTrades.map(stagedTrade => {
+            const baseSymbol =
+              stagedTrade.underlying.split("/")[0] ?? stagedTrade.underlying
+
+            const prevWeight =
+              stagedTrade.previousWeight !== undefined
+                ? stagedTrade.previousWeight
+                : 0
+            const nextWeight =
+              stagedTrade.newWeight !== undefined
+                ? stagedTrade.newWeight
+                : prevWeight
+            const weightDelta = nextWeight - prevWeight
+
+            const arrow = weightDelta > 0 ? "↑" : weightDelta < 0 ? "↓" : "→"
+            const deltaClass =
+              weightDelta > 0
+                ? "text-emerald-500"
+                : weightDelta < 0
+                  ? "text-rose-500"
+                  : "text-muted-foreground"
+
             return (
               <div
                 key={stagedTrade.id}
                 className={twMerge(
-                  "flex items-center px-2 py-1.5 border-b border-border/30",
+                  STAGED_ROW_GRID_TEMPLATE,
                   (stagedTrade.status === "working" ||
                     stagedTrade.status === "deleted") &&
                     isRebalancing &&
@@ -87,7 +116,7 @@ export const StagedChangesPanel = ({
                 <span
                   className={twMerge(
                     clsx(
-                      "text-[10px] font-medium px-1.5 py-0.5 rounded",
+                      "text-[10px] font-medium px-1 py-0.5 rounded w-[5ch] text-center",
                       stagedTrade.side === "buy"
                         ? "bg-green-500/20 text-green-500"
                         : "bg-red-500/20 text-red-500",
@@ -96,18 +125,25 @@ export const StagedChangesPanel = ({
                 >
                   {stagedTrade.side === "buy" ? "BUY" : "SELL"}
                 </span>
-                <span className="flex-1 px-2 truncate font-medium text-[11px]">
-                  {stagedTrade.underlying}
+                <span className="px-1 truncate font-medium text-[11px] text-left">
+                  {baseSymbol}
                 </span>
-                {stagedTrade.previousWeight !== undefined &&
-                  stagedTrade.newWeight !== undefined && (
-                    <span className="text-[9px] text-muted-foreground font-mono mr-2">
-                      {formatPct(stagedTrade.previousWeight)} →{" "}
-                      {formatPct(stagedTrade.newWeight)}
-                    </span>
+                <div
+                  className={twMerge(
+                    "font-mono mr-2 justify-self-center grid grid-cols-[max-content_2ch_max-content] items-baseline gap-x-1",
+                    deltaClass,
                   )}
-                <span className="text-muted-foreground font-mono text-[10px]">
-                  {formatUsd(stagedTrade.notional)}
+                >
+                  <span className="w-[6ch] text-right">
+                    {formatUnsignedPct(prevWeight)}
+                  </span>
+                  <span className="w-[2ch] text-center">{arrow}</span>
+                  <span className="w-[6ch] text-right">
+                    {formatUnsignedPct(nextWeight)}
+                  </span>
+                </div>
+                <span className="font-mono text-muted-foreground justify-self-end w-full text-right">
+                  ${stagedTrade.notional.toFixed(2)}
                 </span>
                 {stagedTrade.status === "failed" &&
                   stagedTrade.message !== null && (

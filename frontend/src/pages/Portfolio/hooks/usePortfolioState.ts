@@ -260,6 +260,7 @@ export const usePortfolioState = (
   )
   const [positionsLoadedFromExchange, setPositionsLoadedFromExchange] =
     useState(false)
+  const [hasHydratedFromStorage, setHasHydratedFromStorage] = useState(false)
 
   // Derive accountValue from account summary
   const accountValue = useMemo(
@@ -382,7 +383,11 @@ export const usePortfolioState = (
     // Always set initialPortfolio from exchange (source of truth for what exists on exchange)
     setInitialPortfolio(exchangeTokens)
 
-    if (storedDataSnapshot && storedDataSnapshot.tokens.length > 0) {
+    if (
+      storedDataSnapshot &&
+      storedDataSnapshot.tokens.length > 0 &&
+      !hasHydratedFromStorage
+    ) {
       // Merge localStorage with exchange positions
       const storedSymbols = new Set(
         storedDataSnapshot.tokens.map(t => t.symbol),
@@ -452,6 +457,7 @@ export const usePortfolioState = (
         return mergedToken ?? exchangeToken
       })
       setInitialPortfolio(initialPortfolioTokens)
+      setHasHydratedFromStorage(true)
     } else if (exchangeTokens.length > 0) {
       // No localStorage data, use exchange positions
       setSelectedTokens(exchangeTokens)
@@ -466,6 +472,7 @@ export const usePortfolioState = (
     storedDataSnapshot,
     positionsLoadedFromExchange,
     accountValue,
+    hasHydratedFromStorage,
   ])
 
   const tokensWithComputedStatus = useMemo(() => {
@@ -617,8 +624,23 @@ export const usePortfolioState = (
     })
   }, [tokensWithDerivedPercentages, targetNotional, initialPortfolio])
 
+  const stagedTradesRef = useRef<
+    Array<{
+      id: string
+      underlying: string
+      side: OrderSide
+      notional: number
+      previousWeight?: number
+      newWeight?: number
+      status: AllocationStatus
+      message: string | null
+    }>
+  >([])
+
   const stagedTrades = useMemo(() => {
-    if (!positionsLoadedFromExchange) {
+    // Before we have any exchange data, don't show staged trades at all.
+    if (!positionsLoadedFromExchange && initialPortfolio.length === 0) {
+      stagedTradesRef.current = []
       return []
     }
 
@@ -692,7 +714,15 @@ export const usePortfolioState = (
       })
       .filter(trade => trade !== null)
 
-    return trades
+    // When exchange positions are fully loaded, update the retained snapshot.
+    if (positionsLoadedFromExchange) {
+      stagedTradesRef.current = trades
+      return trades
+    }
+
+    // While a reload is in progress, keep showing the last known staged trades
+    // instead of clearing the panel.
+    return stagedTradesRef.current
   }, [tokensWithDeltaTracking, initialPortfolio, positionsLoadedFromExchange])
 
   const derivedActiveTokens = useMemo(
@@ -827,8 +857,8 @@ export const usePortfolioState = (
             lockedUsd: initialNotional,
           },
         ]
-        const result = updateByNotionalChange(tokensWithNew)
-        return result
+        const tokensWithUpdatedWeights = updateByNotionalChange(tokensWithNew)
+        return tokensWithUpdatedWeights
       })
     },
     [
@@ -1238,10 +1268,12 @@ export const usePortfolioState = (
       initialCrossAccountLeverage ?? DEFAULT_CROSS_ACCOUNT_LEVERAGE
 
     setCrossAccountLeverage(baseLeverage)
+    latestCrossAccountLeverageRef.current = baseLeverage
     setSelectedTokensAndPersist(initialPortfolio)
   }, [
     initialPortfolio,
     initialCrossAccountLeverage,
+    latestCrossAccountLeverageRef,
     setSelectedTokensAndPersist,
   ])
 
@@ -1256,14 +1288,14 @@ export const usePortfolioState = (
   // there are no more staged trades to display. This ties the spinner to
   // actual portfolio convergence rather than just network timing.
   useEffect(() => {
-    if (!isRebalancingUi) {
+    if (!isRebalancingUi || !positionsLoadedFromExchange) {
       return
     }
 
     if (!stagedTrades.length) {
       setIsRebalancingUi(false)
     }
-  }, [isRebalancingUi, stagedTrades])
+  }, [isRebalancingUi, stagedTrades, positionsLoadedFromExchange])
 
   return {
     // State

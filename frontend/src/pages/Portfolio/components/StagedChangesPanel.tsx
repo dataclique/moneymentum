@@ -2,7 +2,6 @@ import { twMerge } from "tailwind-merge"
 import { clsx } from "clsx"
 import { Send } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { formatUsd } from "../../Prototype/utils/formatters"
 import type { AllocationStatus } from "../hooks/usePortfolioState"
 
 type Side = "buy" | "sell"
@@ -35,8 +34,10 @@ interface StagedChangesPanelProps {
 const STAGED_ROW_GRID_TEMPLATE =
   "grid grid-cols-[6ch_13ch_auto_8ch] items-center px-2 py-1.5 border-b border-border/30 text-[10px]"
 
-const formatUnsignedPct = (value: number): string =>
-  `${(value * 100).toFixed(2)}%`
+const formatUnsignedPct = (weightFraction: number): string =>
+  `${(weightFraction * 100).toFixed(2)}%`
+
+const formatUsdPrecise = (value: number): string => `$${value.toFixed(2)}`
 
 export const StagedChangesPanel = ({
   stagedTrades: stagedTradesProp,
@@ -58,12 +59,11 @@ export const StagedChangesPanel = ({
         <div className="flex items-center gap-2">
           <span className="font-medium">STAGED CHANGES</span>
         </div>
-        {hasStaged && (
+        {hasStaged && onClearAll && (
           <button
             type="button"
             className="text-muted-foreground hover:text-destructive text-[10px]"
             onClick={() => {
-              if (!onClearAll) return
               onClearAll()
             }}
           >
@@ -137,7 +137,7 @@ export const StagedChangesPanel = ({
                   </span>
                 </div>
                 <span className="font-mono text-muted-foreground justify-self-end w-full text-right">
-                  ${stagedTrade.notional.toFixed(2)}
+                  {formatUsdPrecise(stagedTrade.notional)}
                 </span>
                 {stagedTrade.status === "failed" &&
                   stagedTrade.message !== null && (
@@ -161,7 +161,7 @@ export const StagedChangesPanel = ({
                 {initialTotalNotional !== undefined &&
                 targetNotional !== undefined ? (
                   <>
-                    {formatUsd(initialTotalNotional)}{" "}
+                    {formatUsdPrecise(initialTotalNotional)}{" "}
                     <span className="text-muted-foreground">→</span>{" "}
                     <span
                       className={
@@ -170,7 +170,7 @@ export const StagedChangesPanel = ({
                           : "text-red-500"
                       }
                     >
-                      {formatUsd(targetNotional)}
+                      {formatUsdPrecise(targetNotional)}
                     </span>
                   </>
                 ) : (
@@ -207,7 +207,12 @@ export const StagedChangesPanel = ({
             }
             onRebalance()
           }}
-          disabled={disableSubmit || isRebalancing || !hasStaged}
+          disabled={
+            !onRebalance || disableSubmit || isRebalancing || !hasStaged
+          }
+          aria-disabled={
+            !onRebalance || disableSubmit || isRebalancing || !hasStaged
+          }
         >
           <Send className="h-3 w-3" />
           {isRebalancing ? "Sending..." : "Rebalance"}

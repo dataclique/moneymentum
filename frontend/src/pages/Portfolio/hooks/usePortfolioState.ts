@@ -634,10 +634,11 @@ export const usePortfolioState = (
             return null
           }
 
-          const previousNotional = token.currentNotional ?? 0
+          const previousNotional = initialToken.notional ?? 0
           const previousWeight = initialToken.percentage / 100
 
-          const closeSide: OrderSide = token.side === "buy" ? "sell" : "buy"
+          const closeSide: OrderSide =
+            initialToken.side === "buy" ? "sell" : "buy"
 
           return {
             id: token.symbol,
@@ -1015,9 +1016,6 @@ export const usePortfolioState = (
       return
     }
 
-    // Mark UI as rebalancing for the full lifecycle (including delayed refetch)
-    setIsRebalancingUi(true)
-
     // Check for positions with changes less than $11 (only if precise is off)
     if (!isPrecise) {
       const tokensWithSmallChangesOnSubmit =
@@ -1134,6 +1132,9 @@ export const usePortfolioState = (
         }
       }),
     }
+
+    // Mark UI as rebalancing for the full lifecycle (including delayed refetch)
+    setIsRebalancingUi(true)
 
     setSelectedTokensAndPersist(prev =>
       prev.map(token => {

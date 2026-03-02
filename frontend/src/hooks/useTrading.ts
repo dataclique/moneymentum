@@ -229,6 +229,9 @@ export const useSwitchNetwork = () => {
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: QUERY_KEYS.balance })
+      void queryClient.invalidateQueries({
+        queryKey: QUERY_KEYS.accountSummary,
+      })
       void queryClient.invalidateQueries({ queryKey: QUERY_KEYS.positions })
       void queryClient.invalidateQueries({ queryKey: QUERY_KEYS.tickers })
       void queryClient.invalidateQueries({

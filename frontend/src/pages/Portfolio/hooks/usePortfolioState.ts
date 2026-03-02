@@ -618,6 +618,10 @@ export const usePortfolioState = (
   }, [tokensWithDerivedPercentages, targetNotional, initialPortfolio])
 
   const stagedTrades = useMemo(() => {
+    if (!positionsLoadedFromExchange) {
+      return []
+    }
+
     const trades = tokensWithDeltaTracking
       .map(token => {
         const initialToken = initialPortfolio.find(
@@ -689,7 +693,7 @@ export const usePortfolioState = (
       .filter(trade => trade !== null)
 
     return trades
-  }, [tokensWithDeltaTracking, initialPortfolio])
+  }, [tokensWithDeltaTracking, initialPortfolio, positionsLoadedFromExchange])
 
   const derivedActiveTokens = useMemo(
     () => tokensWithDeltaTracking.filter(t => t.status !== "deleted"),

@@ -646,7 +646,6 @@ export const usePortfolioState = (
             notional: previousNotional,
             previousWeight,
             newWeight: 0,
-            source: "manual" as const,
             status: token.status,
             message: token.message ?? null,
           }
@@ -675,22 +674,6 @@ export const usePortfolioState = (
           targetNotionalForToken - previousNotional,
         )
 
-        let source: "weight_edit" | "leverage_change" | "manual"
-
-        if (!initialToken) {
-          // Purely local position – created in the UI
-          source = "manual"
-        } else if (
-          previousWeight !== undefined &&
-          previousWeight !== newWeight
-        ) {
-          // Explicit weight (percentage) change
-          source = "weight_edit"
-        } else {
-          // Any other change relative to initial (side/leverage/notional)
-          source = "leverage_change"
-        }
-
         return {
           id: token.symbol,
           underlying: token.symbol,
@@ -698,7 +681,6 @@ export const usePortfolioState = (
           notional: notionalDelta,
           previousWeight,
           newWeight,
-          source,
           status: token.status,
           message: token.message ?? null,
         }

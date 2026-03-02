@@ -859,7 +859,6 @@ describe("computeStagedTradesFromDiff", () => {
     expect(btcTrade).toBeDefined()
     expect(btcTrade?.side).toBe("buy")
     expect(btcTrade?.notional).toBeCloseTo(10000) // (0.6 - 0.5) × 100000 × 1.0
-    expect(btcTrade?.source).toBe("weight_edit")
   })
 
   it("generates sell trade when weight decreases", () => {
@@ -904,10 +903,9 @@ describe("computeStagedTradesFromDiff", () => {
     const btcTrade = trades.find(t => t.symbol === "BTC/USDC:USDC")
     expect(btcTrade?.side).toBe("buy")
     expect(btcTrade?.notional).toBeCloseTo(25000) // 0.5 × 100000 × (1.5 - 1.0)
-    expect(btcTrade?.source).toBe("leverage_change")
   })
 
-  it("combines weight edit and leverage change sources correctly", () => {
+  it("combines weight and leverage changes correctly", () => {
     const targetWeights = new Map([
       ["BTC/USDC:USDC", 0.6], // weight changed
       ["ETH/USDC:USDC", 0.24], // weight changed

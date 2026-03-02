@@ -14,19 +14,9 @@ export interface StagedTrade {
   notional: number
   previousWeight?: number
   newWeight?: number
-  source: "weight_edit" | "leverage_change" | "manual"
   status: AllocationStatus
   message: string | null
 }
-
-const SOURCE_BADGE_CONFIG = {
-  weight_edit: { label: "weight", className: "bg-blue-500/20 text-blue-400" },
-  leverage_change: {
-    label: "leverage",
-    className: "bg-purple-500/20 text-purple-400",
-  },
-  manual: { label: "manual", className: "bg-gray-500/20 text-gray-400" },
-} as const
 
 interface StagedChangesPanelProps {
   stagedTrades?: StagedTrade[]
@@ -81,7 +71,6 @@ export const StagedChangesPanel = ({
       ) : (
         <div className="overflow-auto scrollbar-hide h-full">
           {stagedTrades.map(stagedTrade => {
-            const sourceConfig = SOURCE_BADGE_CONFIG[stagedTrade.source]
             return (
               <div
                 key={stagedTrade.id}
@@ -119,14 +108,6 @@ export const StagedChangesPanel = ({
                   )}
                 <span className="text-muted-foreground font-mono text-[10px]">
                   {formatUsd(stagedTrade.notional)}
-                </span>
-                <span
-                  className={twMerge(
-                    "text-[9px] font-medium ml-2 px-1.5 py-0.5 rounded",
-                    sourceConfig.className,
-                  )}
-                >
-                  {sourceConfig.label}
                 </span>
                 {stagedTrade.status === "failed" &&
                   stagedTrade.message !== null && (

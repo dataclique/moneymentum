@@ -60,7 +60,31 @@ const createWrapper = () => {
 describe("WalletHeader", () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    localStorage.clear()
+    const globalAny = globalThis as any
+    if (
+      !globalAny.localStorage ||
+      typeof globalAny.localStorage.getItem !== "function"
+    ) {
+      const store = new Map<string, string>()
+      globalAny.localStorage = {
+        getItem: (key: string) => (store.has(key) ? store.get(key)! : null),
+        setItem: (key: string, value: string) => {
+          store.set(key, value)
+        },
+        removeItem: (key: string) => {
+          store.delete(key)
+        },
+        clear: () => {
+          store.clear()
+        },
+        key: (index: number) => Array.from(store.keys())[index] ?? null,
+        get length() {
+          return store.size
+        },
+      }
+    }
+
+    globalAny.localStorage.clear()
     mockUseWalletSettings.mockReturnValue({
       data: null,
       isConnected: false,
@@ -68,7 +92,13 @@ describe("WalletHeader", () => {
   })
 
   afterEach(() => {
-    localStorage.clear()
+    const globalAny = globalThis as any
+    if (
+      globalAny.localStorage &&
+      typeof globalAny.localStorage.clear === "function"
+    ) {
+      globalAny.localStorage.clear()
+    }
   })
 
   describe("display state", () => {
@@ -92,22 +122,8 @@ describe("WalletHeader", () => {
       expect(screen.getByText("0x1234...5678")).toBeInTheDocument()
     })
 
-    it("shows testnet toggle label", () => {
-      render(<WalletHeader />, { wrapper: createWrapper() })
-
-      expect(screen.getByText("Testnet")).toBeInTheDocument()
-    })
-  })
-
-  describe("testnet switch", () => {
-    it("is disabled when wallet is not connected", () => {
-      render(<WalletHeader />, { wrapper: createWrapper() })
-
-      const toggle = screen.getByRole("switch")
-      expect(toggle).toBeDisabled()
-    })
-
-    it("is enabled when wallet is connected", async () => {
+    it("shows testnet toggle label in dropdown when connected", async () => {
+      const user = userEvent.setup()
       mockUseWalletSettings.mockReturnValue({
         data: {
           accountAddress: "0xTestAccountAddress",
@@ -117,6 +133,34 @@ describe("WalletHeader", () => {
       })
 
       render(<WalletHeader />, { wrapper: createWrapper() })
+
+      await user.click(screen.getByText("0xTest...ress"))
+
+      expect(screen.getByText("Testnet")).toBeInTheDocument()
+    })
+  })
+
+  describe("testnet switch", () => {
+    it("is disabled when wallet is not connected", () => {
+      render(<WalletHeader />, { wrapper: createWrapper() })
+
+      // When not connected, the testnet switch is not rendered at all.
+      expect(screen.queryByRole("switch")).not.toBeInTheDocument()
+    })
+
+    it("is enabled when wallet is connected", async () => {
+      const user = userEvent.setup()
+      mockUseWalletSettings.mockReturnValue({
+        data: {
+          accountAddress: "0xTestAccountAddress",
+          isTestnet: true,
+        },
+        isConnected: true,
+      })
+
+      render(<WalletHeader />, { wrapper: createWrapper() })
+
+      await user.click(screen.getByText("0xTest...ress"))
 
       const toggle = screen.getByRole("switch")
       expect(toggle).not.toBeDisabled()
@@ -145,9 +189,15 @@ describe("WalletHeader", () => {
 
       await user.click(screen.getByText("No wallet configured"))
 
-      expect(screen.getByLabelText("Account Address")).toBeInTheDocument()
-      expect(screen.getByLabelText("API Wallet Address")).toBeInTheDocument()
-      expect(screen.getByLabelText("API Private Key")).toBeInTheDocument()
+      expect(
+        screen.getByLabelText("Hyperliquid main wallet address"),
+      ).toBeInTheDocument()
+      expect(
+        screen.getByLabelText("Hyperliquid public API wallet address"),
+      ).toBeInTheDocument()
+      expect(
+        screen.getByLabelText("Hyperliquid private API wallet key"),
+      ).toBeInTheDocument()
       expect(
         screen.getByRole("button", { name: "Connect" }),
       ).toBeInTheDocument()
@@ -184,9 +234,15 @@ describe("WalletHeader", () => {
 
       await user.click(screen.getByText("No wallet configured"))
 
-      const accountAddressInput = screen.getByLabelText("Account Address")
-      const apiWalletAddressInput = screen.getByLabelText("API Wallet Address")
-      const privateKeyInput = screen.getByLabelText("API Private Key")
+      const accountAddressInput = screen.getByLabelText(
+        "Hyperliquid main wallet address",
+      )
+      const apiWalletAddressInput = screen.getByLabelText(
+        "Hyperliquid public API wallet address",
+      )
+      const privateKeyInput = screen.getByLabelText(
+        "Hyperliquid private API wallet key",
+      )
 
       await user.type(accountAddressInput, "0xMyAccountAddress")
       await user.type(apiWalletAddressInput, "0xMyApiWalletAddress")
@@ -210,9 +266,15 @@ describe("WalletHeader", () => {
 
       await user.click(screen.getByText("No wallet configured"))
 
-      const accountAddressInput = screen.getByLabelText("Account Address")
-      const apiWalletAddressInput = screen.getByLabelText("API Wallet Address")
-      const privateKeyInput = screen.getByLabelText("API Private Key")
+      const accountAddressInput = screen.getByLabelText(
+        "Hyperliquid main wallet address",
+      )
+      const apiWalletAddressInput = screen.getByLabelText(
+        "Hyperliquid public API wallet address",
+      )
+      const privateKeyInput = screen.getByLabelText(
+        "Hyperliquid private API wallet key",
+      )
       const vaultAddressInput = screen.getByLabelText(
         "Vault Address (Optional)",
       )
@@ -239,9 +301,15 @@ describe("WalletHeader", () => {
 
       await user.click(screen.getByText("No wallet configured"))
 
-      const accountAddressInput = screen.getByLabelText("Account Address")
-      const apiWalletAddressInput = screen.getByLabelText("API Wallet Address")
-      const privateKeyInput = screen.getByLabelText("API Private Key")
+      const accountAddressInput = screen.getByLabelText(
+        "Hyperliquid main wallet address",
+      )
+      const apiWalletAddressInput = screen.getByLabelText(
+        "Hyperliquid public API wallet address",
+      )
+      const privateKeyInput = screen.getByLabelText(
+        "Hyperliquid private API wallet key",
+      )
 
       await user.type(accountAddressInput, "0xMyAccountAddress")
       await user.type(apiWalletAddressInput, "0xMyApiWalletAddress")
@@ -260,9 +328,15 @@ describe("WalletHeader", () => {
 
       await user.click(screen.getByText("No wallet configured"))
 
-      const accountAddressInput = screen.getByLabelText("Account Address")
-      const apiWalletAddressInput = screen.getByLabelText("API Wallet Address")
-      const privateKeyInput = screen.getByLabelText("API Private Key")
+      const accountAddressInput = screen.getByLabelText(
+        "Hyperliquid main wallet address",
+      )
+      const apiWalletAddressInput = screen.getByLabelText(
+        "Hyperliquid public API wallet address",
+      )
+      const privateKeyInput = screen.getByLabelText(
+        "Hyperliquid private API wallet key",
+      )
 
       await user.type(accountAddressInput, "0xMyAccountAddress")
       await user.type(apiWalletAddressInput, "0xMyApiWalletAddress")
@@ -283,9 +357,15 @@ describe("WalletHeader", () => {
 
       await user.click(screen.getByText("No wallet configured"))
 
-      const accountAddressInput = screen.getByLabelText("Account Address")
-      const apiWalletAddressInput = screen.getByLabelText("API Wallet Address")
-      const privateKeyInput = screen.getByLabelText("API Private Key")
+      const accountAddressInput = screen.getByLabelText(
+        "Hyperliquid main wallet address",
+      )
+      const apiWalletAddressInput = screen.getByLabelText(
+        "Hyperliquid public API wallet address",
+      )
+      const privateKeyInput = screen.getByLabelText(
+        "Hyperliquid private API wallet key",
+      )
 
       await user.type(accountAddressInput, "0xMyAccountAddress")
       await user.type(apiWalletAddressInput, "0xMyApiWalletAddress")
@@ -302,10 +382,15 @@ describe("WalletHeader", () => {
       // Re-open dialog - the inputs should be empty
       await user.click(screen.getByText("No wallet configured"))
 
-      const newAccountAddressInput = screen.getByLabelText("Account Address")
-      const newApiWalletAddressInput =
-        screen.getByLabelText("API Wallet Address")
-      const newPrivateKeyInput = screen.getByLabelText("API Private Key")
+      const newAccountAddressInput = screen.getByLabelText(
+        "Hyperliquid main wallet address",
+      )
+      const newApiWalletAddressInput = screen.getByLabelText(
+        "Hyperliquid public API wallet address",
+      )
+      const newPrivateKeyInput = screen.getByLabelText(
+        "Hyperliquid private API wallet key",
+      )
 
       expect(newAccountAddressInput).toHaveValue("")
       expect(newApiWalletAddressInput).toHaveValue("")
@@ -338,7 +423,7 @@ describe("WalletHeader", () => {
   })
 
   describe("wallet disconnect", () => {
-    it("shows 'Wallet Settings' title when connected", async () => {
+    it("shows account summary dropdown when connected", async () => {
       const user = userEvent.setup()
       mockUseWalletSettings.mockReturnValue({
         data: {
@@ -352,12 +437,8 @@ describe("WalletHeader", () => {
 
       await user.click(screen.getByText("0xConn...ress"))
 
-      expect(screen.getByText("Wallet Settings")).toBeInTheDocument()
-      expect(
-        screen.getByText(
-          "Your wallet is connected. You can disconnect it below.",
-        ),
-      ).toBeInTheDocument()
+      expect(screen.getByText("Account")).toBeInTheDocument()
+      expect(screen.getByText("0xConnectedAccountAddress")).toBeInTheDocument()
     })
 
     it("shows full account address in dialog when connected", async () => {
@@ -392,7 +473,7 @@ describe("WalletHeader", () => {
       await user.click(screen.getByText("0xConn...ress"))
 
       expect(
-        screen.getByRole("button", { name: "Disconnect Wallet" }),
+        screen.getByRole("button", { name: "Disconnect" }),
       ).toBeInTheDocument()
     })
 
@@ -420,9 +501,7 @@ describe("WalletHeader", () => {
       render(<WalletHeader />, { wrapper: createWrapper() })
 
       await user.click(screen.getByText("0xConn...ress"))
-      await user.click(
-        screen.getByRole("button", { name: "Disconnect Wallet" }),
-      )
+      await user.click(screen.getByRole("button", { name: "Disconnect" }))
 
       expect(toast.success).toHaveBeenCalledWith("Wallet disconnected")
       expect(localStorage.getItem("hyperliquid-wallet")).toBeNull()
@@ -450,12 +529,12 @@ describe("WalletHeader", () => {
       render(<WalletHeader />, { wrapper: createWrapper() })
 
       await user.click(screen.getByText("0xConn...ress"))
-      await user.click(
-        screen.getByRole("button", { name: "Disconnect Wallet" }),
-      )
+      await user.click(screen.getByRole("button", { name: "Disconnect" }))
 
       await waitFor(() => {
-        expect(screen.queryByText("Wallet Settings")).not.toBeInTheDocument()
+        expect(
+          screen.queryByText("0xConnectedAccountAddress"),
+        ).not.toBeInTheDocument()
       })
     })
   })

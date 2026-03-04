@@ -209,7 +209,7 @@ export const usePortfolioState = (
   isPrecise: boolean = false,
   isWeightRedistribution: boolean = true,
 ) => {
-  const { networkMode } = useWallet()
+  const { networkMode, isConnected } = useWallet()
 
   // Exchange data queries
   const {
@@ -261,6 +261,26 @@ export const usePortfolioState = (
   const [positionsLoadedFromExchange, setPositionsLoadedFromExchange] =
     useState(false)
   const [hasHydratedFromStorage, setHasHydratedFromStorage] = useState(false)
+  const wasConnectedRef = useRef(isConnected)
+
+  useEffect(() => {
+    const wasConnected = wasConnectedRef.current
+    wasConnectedRef.current = isConnected
+
+    if (!wasConnected || isConnected) {
+      return
+    }
+
+    setSelectedTokens([])
+    setInitialPortfolio([])
+    setCrossAccountLeverage(DEFAULT_CROSS_ACCOUNT_LEVERAGE)
+    setInitialCrossAccountLeverage(null)
+    setPositionsLoadedFromExchange(false)
+    setHasHydratedFromStorage(false)
+
+    const key = getStorageKey(networkMode)
+    localStorage.removeItem(key)
+  }, [isConnected, networkMode])
 
   // Derive accountValue from account summary
   const accountValue = useMemo(
@@ -764,6 +784,7 @@ export const usePortfolioState = (
   const hasTotalPercentExceeded =
     derivedTotalPercent > 100 + MAX_TOTAL_PERCENT_TOLERANCE
   const hasTotalPercentBelow =
+    derivedActiveTokens.length > 0 &&
     derivedTotalPercent < 100 - MAX_TOTAL_PERCENT_TOLERANCE
   const showTargetOfTotal =
     Math.abs(derivedTotalPercent - 100) > MAX_TOTAL_PERCENT_TOLERANCE

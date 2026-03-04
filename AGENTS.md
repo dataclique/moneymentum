@@ -10,6 +10,52 @@ this document is a directive, not a suggestion.
 This project is an institutional-grade quant toolkit. See [SPEC.md](./SPEC.md)
 for the vision and [ROADMAP.md](./ROADMAP.md) for the path.
 
+### Agent Implementations
+
+This section documents concrete AI agents used in this repository. Each agent
+entry includes a short identifier, its purpose, core capabilities and
+limitations, typical usage patterns, and orchestration boundaries so
+contributors know what the agent owns vs. what human workflows or other
+automation must handle.
+
+#### Cursor Coding Agent (`cursor-coding`)
+
+- **Purpose**: Assist with day-to-day development on the Rust backend and
+  frontend, following this document’s rules.
+- **Capabilities**:
+  - Reads and understands existing Rust, TypeScript, Nix, and documentation.
+  - Proposes and implements code changes inside the repo (including tests),
+    respecting project style and TTDD workflow.
+  - Runs local tooling via the provided commands (e.g., `cargo check`,
+    `bun run lint`, `nix flake check`) when explicitly instructed or when needed
+    to validate changes.
+  - Suggests refactors, test cases, and documentation improvements.
+  - **Limitations**:
+    - Does not manage secrets or production infrastructure directly; only edits
+      code and config checked into git.
+    - Does not bypass or relax quality gates (clippy, linters, tests) unless
+      explicitly authorized in a discussion and annotated in code.
+- **Usage patterns**:
+  - **When to invoke**: Implementing new features (e.g., portfolio beta
+    analytics), updating API endpoints, adjusting frontend behavior, or
+    refactoring existing modules (Rust, TS, Nix).
+  - **Expected inputs**: A clear description of the change, relevant file
+    references (e.g., `@tests/api.rs`, `@rust.nix`), and any constraints
+    (performance, backwards compatibility, rollout considerations).
+  - **Expected outputs**: Updated code, tests, and configuration with a short,
+    high-level summary of what changed and how to run checks.
+  - **Integration points**: Works within local dev flows (`cargo check`,
+    `cargo test -q`, `bun run test`, `nix flake check`) and existing CI. Human
+    contributors remain responsible for reviewing diffs, running deployments,
+    and updating external systems (e.g., Terraform, Hyperliquid keys).
+  - **Handoff boundaries**: The agent owns code and test changes inside this
+    repo; humans own orchestration, approvals, production deploys, and any
+    manual secret/config management outside git.
+  - **Runtime requirements / config keys**: Assumes the Nix-based dev
+    environment is active (`direnv allow`, `nix develop`/`devenv shell`) and
+    that project configuration files (e.g., `example.toml`-derived configs) are
+    present when running or testing the binaries.
+
 **Current state:**
 
 - Frontend at `/` is a working portfolio rebalancer (weight-based positions,

@@ -7,17 +7,15 @@ this document is a directive, not a suggestion.
 
 ## Project Direction
 
-This project is transitioning from a Python-based momentum trading bot to an
-institutional-grade quant toolkit. See [SPEC.md](./SPEC.md) for the vision and
-[ROADMAP.md](./ROADMAP.md) for the path.
+This project is an institutional-grade quant toolkit. See [SPEC.md](./SPEC.md)
+for the vision and [ROADMAP.md](./ROADMAP.md) for the path.
 
 **Current state:**
 
 - Frontend at `/` is a working portfolio rebalancer (weight-based positions,
   cross-account leverage). Used daily.
 - Frontend at `/prototype` is a design reference (like Figma in code).
-- Python backend (`yang/`, `pipeline.py`, `server.py`) exists but is being
-  replaced by a Rust backend.
+- Rust backend provides analytics and API.
 
 **What's being built:**
 
@@ -86,16 +84,6 @@ Cargo.toml versions.
 ```bash
 sqlx migrate add <migration_name>  # Creates timestamped migration file
 sqlx migrate run                   # Applies pending migrations
-```
-
-### Legacy Python (still functional, being replaced)
-
-```bash
-python server.py   # FastAPI server on port 8000
-python backtest.py # Generate analysis CSV
-pytest             # Run tests
-ruff check .       # Lint
-ruff format .      # Format
 ```
 
 ### Environment

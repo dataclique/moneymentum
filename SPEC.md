@@ -88,30 +88,40 @@ flowchart LR
         DATA --> ANAL --> PLAN --> ROUTE
     end
 
-    subgraph Privy["Privy (Policy Enforcement)"]
+    subgraph Turnkey["Turnkey (TEE-Secured Signing)"]
         direction TB
         POL[Policy Engine]
-        WALLET[Server Wallets]
-        POL --> WALLET
+        ENCLAVE[Nitro Enclave<br/>Key Management]
+        POL --> ENCLAVE
     end
 
     V[Venues]
 
     T --> PLAN
     ROUTE -->|signing requests| POL
-    WALLET -->|transactions| V
+    ENCLAVE -->|transactions| V
 ```
 
 ## Security Model
 
-**Policy-enforced custody via Privy server wallets.** The backend orchestrates
-execution but never holds raw private keys.
+**TEE-secured signing via Turnkey.** Private keys are generated and used
+exclusively inside AWS Nitro Enclaves running
+[QuorumOS](https://github.com/tkhq/qos)—an open-source, minimal, deterministic
+unikernel. Raw keys never exist outside the enclave boundary. The backend
+orchestrates execution but never holds or sees private keys.
 
-- **Policy engine**: Contract allowlists, calldata restrictions, deny rules.
-  Even if the backend is compromised, it cannot execute transactions outside
-  policy bounds.
+- **Policy engine**: JSON-defined policies enforced inside the enclave before
+  signing—contract allowlists, spending caps, time-scoped sessions, multi-sig
+  quorum for high-value operations. Even if the backend is compromised, the
+  enclave rejects transactions outside policy bounds.
 - **Credential separation**: Trading credentials are scoped to trade-only
-  operations. Withdrawal credentials are held at a higher privilege tier.
+  operations via Turnkey's policy engine. Withdrawal operations require higher
+  privilege (e.g., passkey authentication or quorum approval).
+- **Cryptographic stamping**: Every API request to Turnkey is signed by the
+  caller's credential and verified inside the enclave, ensuring request
+  integrity end-to-end.
+- **Remote attestation**: Anyone can cryptographically verify the exact code
+  running inside the enclave. Deterministic builds prove provenance.
 
 The backend pre-computes global market metrics (betas, correlations, etc.) and
 returns user-specific analytics (portfolio beta, VaR, execution plans). The
@@ -119,12 +129,14 @@ frontend is a monitoring and control dashboard.
 
 ## Custody & Execution
 
-**Privy server wallets** provide the custody layer with policy enforcement at
-the signing layer. The backend routes orders to venues but cannot withdraw funds
-or interact with non-whitelisted contracts.
+**Turnkey wallets** provide the custody layer with policy enforcement at the
+signing layer. Keys live in TEE-secured enclaves; the backend calls Turnkey's
+API (via the `turnkey_client` Rust crate) to request signatures. The backend
+routes orders to venues but cannot withdraw funds or interact with
+non-whitelisted contracts.
 
 **Solana vault program** (Anchor) handles investor deposits/withdrawals, share
-token accounting, and fee deductions. Capital flows from the vault to Privy
+token accounting, and fee deductions. Capital flows from the vault to Turnkey
 wallets for trading across venues.
 
 **NAV oracle**: The backend aggregates positions across all venues, computes
@@ -138,7 +150,7 @@ graph TB
     subgraph Solana["── Solana ──"]
         Investor["Investor"]
         Vault["Vault Program<br/>─────────────<br/>share tokens<br/>fee accounting<br/>NAV attestations"]
-        SOLWallet["Privy SOL Wallet<br/>(vault custody)"]
+        SOLWallet["Turnkey SOL Wallet<br/>(vault custody)"]
         HumidiFi["HumidiFi<br/>spot trading"]
         PMFee["PM Fee Wallet"]
 
@@ -158,7 +170,7 @@ graph TB
     end
 
     subgraph Hyperliquid["── Hyperliquid L1 ──"]
-        EVMWallet["Privy EVM Wallet<br/>(HyperEVM home)"]
+        EVMWallet["Turnkey EVM Wallet<br/>(HyperEVM home)"]
         HyperCore["HyperCore<br/>perps + spot"]
 
         EVMWallet -- "deposit USDC" --> HyperCore
@@ -205,15 +217,15 @@ Revenue comes from PMs managing other people's money.
 
 ## Technology Stack
 
-| Layer         | Technology           | Rationale                                |
-| ------------- | -------------------- | ---------------------------------------- |
-| Backend       | Rust                 | See below.                               |
-| Frontend      | TypeScript + React   | Monitoring dashboard, PM controls.       |
-| Vault Program | Anchor (Rust)        | Deposits, withdrawals, fees, NAV.        |
-| Custody       | Privy server wallets | Policy-enforced signing.                 |
-| Dependencies  | Nix                  | Reproducible builds. Non-negotiable.     |
-| Storage       | SQLite > Postgres    | Start simple, migrate when needed.       |
-| Analytics     | Parquet              | Historical prices for VaR, stress tests. |
+| Layer         | Technology         | Rationale                                |
+| ------------- | ------------------ | ---------------------------------------- |
+| Backend       | Rust               | See below.                               |
+| Frontend      | TypeScript + React | Monitoring dashboard, PM controls.       |
+| Vault Program | Anchor (Rust)      | Deposits, withdrawals, fees, NAV.        |
+| Custody       | Turnkey            | TEE-secured signing, policy enforcement. |
+| Dependencies  | Nix                | Reproducible builds. Non-negotiable.     |
+| Storage       | SQLite > Postgres  | Start simple, migrate when needed.       |
+| Analytics     | Parquet            | Historical prices for VaR, stress tests. |
 
 **Why Rust?**
 
@@ -233,6 +245,7 @@ Revenue comes from PMs managing other people's money.
 | EVM       | alloy                                            |
 | Solana    | solana-sdk, anchor-client                        |
 | Venues    | hyperliquid-rs, cockpit, jupiter-swap-api-client |
+| Signing   | turnkey_client                                   |
 | DB        | sqlx                                             |
 | Types     | ts-rs (TypeScript bindings)                      |
 
@@ -264,7 +277,7 @@ Revenue comes from PMs managing other people's money.
 | perps      | `PerpsVenue`   | `hyperliquid`, `mock`            |
 | options    | `OptionsVenue` | `derive`, `mock`                 |
 | bridging   | `Bridge`       | `debridge`, `mock`               |
-| signing    | `Signer`       | `privy`, `mock`                  |
+| signing    | `Signer`       | `turnkey`, `mock`                |
 | vault      | `VaultClient`  | `anchor`, `mock`                 |
 | rebalancer | —              | —                                |
 | api        | —              | —                                |

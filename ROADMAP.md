@@ -69,8 +69,9 @@ Wire portfolio beta into the rebalancer:
 
 > See SPEC.md: Custody & Execution, Security Model
 
-- Wallet trait + crate architecture
-  ([#97](https://github.com/data-cartel/moneymentum/issues/97))
+- ~~Wallet trait + crate architecture
+  ([#97](https://github.com/data-cartel/moneymentum/issues/97))~~ —
+  [PR #102](https://github.com/data-cartel/moneymentum/pull/102)
 - Turnkey EVM signing
   ([#98](https://github.com/data-cartel/moneymentum/issues/98))
 - Turnkey Solana signing

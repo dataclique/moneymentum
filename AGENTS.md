@@ -518,8 +518,28 @@ into mutually exclusive optional fields.
 - Use `?` operator and proper error types
 - Never create `SomeError(String)` variants that throw away type information
 - Use `#[from]` with thiserror to preserve error chains
-- Don't think ahead about error variants - use `?` wherever needed, then
-  `cargo check` tells you exactly which `#[from]` variants to add
+- **Never use `.map_err`**. If `?` doesn't work, add a `#[from]` variant.
+  `.map_err` is verbose noise that obscures the actual logic. The only exception
+  is when two different operations produce the same error type and you genuinely
+  need to distinguish them — and even then, consider whether the distinction
+  actually matters.
+- **Never add `#[from]` variants ahead of time.** Don't pre-plan which error
+  conversions you'll need. Write the code with `?`, run `cargo check`, and add
+  exactly the `#[from]` variants the compiler demands. Anything else is
+  speculative waste.
+- **No blank lines between error enum variants.** Error enums are compact
+  listings, not prose. Keep variants tight:
+
+```rust
+pub enum MyError {
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+    #[error(transparent)]
+    Toml(#[from] toml::de::Error),
+    #[error("invalid value: {0}")]
+    InvalidValue(u64),
+}
+```
 
 **Never fabricate errors from other crates.** If you need to signal a condition,
 define your own error type. Manually constructing `std::io::Error::new(...)` or

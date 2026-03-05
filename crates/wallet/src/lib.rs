@@ -1,8 +1,12 @@
 #[cfg(feature = "mock")]
 mod mock;
+#[cfg(feature = "turnkey")]
+mod turnkey;
 
 #[cfg(feature = "mock")]
 pub use mock::MockWallet;
+#[cfg(feature = "turnkey")]
+pub use turnkey::{TurnkeyEvmWallet, TurnkeyWalletError};
 
 /// Domain capability for transaction signing and address retrieval.
 ///
@@ -22,9 +26,9 @@ pub trait Wallet: Send + Sync {
     /// serialized tx, etc.) before passing the payload.
     type Payload: AsRef<[u8]> + Send + Sync;
 
-    /// Chain-specific signature type (e.g., `alloy_primitives::PrimitiveSignature`
+    /// Chain-specific signature type (e.g., `alloy_primitives::Signature`
     /// for EVM, `solana_signature::Signature` for Solana).
-    type Signature: AsRef<[u8]> + Send + Sync;
+    type Signature: Send + Sync;
 
     /// Implementation-specific error (e.g., `TurnkeyWalletError`).
     type Error: std::error::Error + Send + Sync;

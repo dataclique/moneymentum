@@ -63,7 +63,8 @@ describe("WalletHeader", () => {
     const globalAny = globalThis as any
     if (
       !globalAny.localStorage ||
-      typeof globalAny.localStorage.getItem !== "function"
+      typeof globalAny.localStorage.getItem !== "function" ||
+      typeof globalAny.localStorage.clear !== "function"
     ) {
       const store = new Map<string, string>()
       globalAny.localStorage = {
@@ -83,8 +84,12 @@ describe("WalletHeader", () => {
         },
       }
     }
-
-    globalAny.localStorage.clear()
+    if (
+      globalAny.localStorage &&
+      typeof globalAny.localStorage.clear === "function"
+    ) {
+      globalAny.localStorage.clear()
+    }
     mockUseWalletSettings.mockReturnValue({
       data: null,
       isConnected: false,

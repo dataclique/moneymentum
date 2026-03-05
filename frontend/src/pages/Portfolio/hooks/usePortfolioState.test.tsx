@@ -97,11 +97,14 @@ describe("usePortfolioState", () => {
       }
     } else if (typeof globalAny.localStorage.clear !== "function") {
       globalAny.localStorage.clear = () => {
-        const keys = Object.keys(globalAny.localStorage)
-        for (const key of keys) {
-          if (typeof key === "string") {
-            globalAny.localStorage.removeItem?.(key)
+        const storage: Storage = globalAny.localStorage
+        // Use the Storage API to ensure we clear actual stored keys.
+        while (storage.length > 0) {
+          const key = storage.key(0)
+          if (key === null) {
+            break
           }
+          storage.removeItem(key)
         }
       }
     }

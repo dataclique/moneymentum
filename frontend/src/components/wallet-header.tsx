@@ -122,6 +122,21 @@ export const WalletHeader = ({ autoOpen = false }: WalletHeaderProps) => {
     !isConnected || switchNetworkMutation.isPending || isNetworkSwitching
   const [menuOpen, setMenuOpen] = useState(false)
 
+  const handleCopyAddress = async () => {
+    if (!currentAccountAddress) {
+      toast.error("No wallet address to copy")
+      return
+    }
+
+    try {
+      await navigator.clipboard.writeText(currentAccountAddress)
+      toast.success("Address copied")
+    } catch (error) {
+      console.error("Failed to copy address to clipboard:", error)
+      toast.error("Failed to copy address. Check clipboard permissions.")
+    }
+  }
+
   return (
     <div className="flex items-center gap-4">
       {isNetworkSwitching && (
@@ -131,7 +146,10 @@ export const WalletHeader = ({ autoOpen = false }: WalletHeaderProps) => {
       {isConnected ? (
         <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
           <DropdownMenuTrigger asChild>
-            <button className="cursor-pointer rounded-md border border-border px-3 py-1.5 font-mono text-[11px] text-muted-foreground transition-colors hover:border-foreground/50 hover:text-foreground">
+            <button
+              type="button"
+              className="cursor-pointer rounded-md border border-border px-3 py-1.5 font-mono text-[11px] text-muted-foreground transition-colors hover:border-foreground/50 hover:text-foreground"
+            >
               {currentAccountAddress
                 ? formatPublicKey(currentAccountAddress)
                 : "No wallet configured"}
@@ -154,10 +172,7 @@ export const WalletHeader = ({ autoOpen = false }: WalletHeaderProps) => {
                   variant="ghost"
                   size="sm"
                   className="h-6 px-2 text-[10px]"
-                  onClick={() => {
-                    void navigator.clipboard.writeText(currentAccountAddress)
-                    toast.success("Address copied")
-                  }}
+                  onClick={handleCopyAddress}
                 >
                   Copy
                 </Button>
@@ -189,7 +204,10 @@ export const WalletHeader = ({ autoOpen = false }: WalletHeaderProps) => {
       ) : (
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
           <DialogTrigger asChild>
-            <button className="cursor-pointer rounded-md border border-border px-3 py-1.5 font-mono text-[11px] text-muted-foreground transition-colors hover:border-foreground/50 hover:text-foreground">
+            <button
+              type="button"
+              className="cursor-pointer rounded-md border border-border px-3 py-1.5 font-mono text-[11px] text-muted-foreground transition-colors hover:border-foreground/50 hover:text-foreground"
+            >
               {currentAccountAddress
                 ? formatPublicKey(currentAccountAddress)
                 : "No wallet configured"}

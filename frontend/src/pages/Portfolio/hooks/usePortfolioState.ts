@@ -228,7 +228,8 @@ export const usePortfolioState = (
   // Mutations
   const rebalancePositionsMutation = useRebalanceHyperliquidPositions()
 
-  const [storedDataSnapshot] = useState(() => getStoredPortfolio(networkMode))
+  const [storedDataSnapshot, setStoredDataSnapshot] =
+    useState<StoredPortfolioState | null>(() => getStoredPortfolio(networkMode))
 
   const [crossAccountLeverage, setCrossAccountLeverage] = useState(
     DEFAULT_CROSS_ACCOUNT_LEVERAGE,
@@ -280,6 +281,7 @@ export const usePortfolioState = (
 
     const key = getStorageKey(networkMode)
     localStorage.removeItem(key)
+    setStoredDataSnapshot(null)
   }, [isConnected, networkMode])
 
   // Derive accountValue from account summary

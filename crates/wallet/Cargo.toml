@@ -1,0 +1,20 @@
+[package]
+name = "wallet"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+mock = []
+
+[dependencies]
+async-trait = "0.1"
+thiserror = "2"
+
+[dev-dependencies]
+wallet = { path = ".", features = ["mock"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+proptest = "1"
+tracing-test = "0.2"
+
+[lints]
+workspace = true

@@ -139,6 +139,30 @@ reordering commits in stacked branches).
 
 ---
 
+## Branch References
+
+**Always use full branch names, never short IDs.** `but status` assigns
+2-character IDs (`wa`, `do`, `es`) for convenience, but these are opaque and
+unreadable. Every `but` command that accepts a branch reference also accepts the
+full branch name:
+
+```bash
+# Bad: opaque, nobody can review what this does
+but push wa
+but commit wa -m "fix typo"
+
+# Good: self-documenting, reviewable
+but push feature/wallet-turnkey
+but commit feature/wallet-turnkey -m "fix typo"
+```
+
+This applies to all commands: `but push`, `but commit`, `but amend`,
+`but apply`, `but unapply`, `but pr new`, `but squash`, and any other command
+that takes a branch argument. The user must be able to see exactly which branch
+is being operated on without cross-referencing `but status` output.
+
+---
+
 ## Common Pitfalls
 
 | Pitfall                                    | Consequence                     | Prevention                          |

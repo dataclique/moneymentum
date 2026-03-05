@@ -264,6 +264,16 @@ export const usePortfolioState = (
   const [hasHydratedFromStorage, setHasHydratedFromStorage] = useState(false)
   const wasConnectedRef = useRef(isConnected)
 
+  // Transition-based disconnect cleanup: detect the falling edge from connected
+  // to disconnected via wasConnectedRef and imperatively clear in-memory state
+  // (selectedTokens, initialPortfolio, crossAccountLeverage,
+  // initialCrossAccountLeverage, positionsLoadedFromExchange,
+  // hasHydratedFromStorage) and persisted snapshots
+  // (localStorage.removeItem(getStorageKey(networkMode)) and
+  // storedDataSnapshot) so no consumer can rehydrate stale portfolio data after
+  // a disconnect. This must run in a useEffect (not via TanStack Query,
+  // useMemo, or localStorage helpers) because it is tied to this specific
+  // connection transition edge.
   useEffect(() => {
     const wasConnected = wasConnectedRef.current
     wasConnectedRef.current = isConnected

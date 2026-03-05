@@ -71,11 +71,11 @@ Wire portfolio beta into the rebalancer:
 
 - ~~Wallet trait + crate architecture
   ([#97](https://github.com/data-cartel/moneymentum/issues/97))~~ —
-  [PR #102](https://github.com/data-cartel/moneymentum/pull/102),
-  [PR #103](https://github.com/data-cartel/moneymentum/pull/103)
+  [PR #107](https://github.com/data-cartel/moneymentum/pull/107),
+  [PR #108](https://github.com/data-cartel/moneymentum/pull/108)
 - ~~Turnkey EVM signing
   ([#98](https://github.com/data-cartel/moneymentum/issues/98))~~ —
-  [PR #104](https://github.com/data-cartel/moneymentum/pull/104)
+  [PR #109](https://github.com/data-cartel/moneymentum/pull/109)
 - Turnkey Solana signing
   ([#99](https://github.com/data-cartel/moneymentum/issues/99))
 - Turnkey Derive signing

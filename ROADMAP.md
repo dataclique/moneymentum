@@ -65,9 +65,19 @@ Wire portfolio beta into the rebalancer:
 
 ---
 
-## Wallet & Custody
+## Phase 1.5: Wallet & Custody
 
 > See SPEC.md: Custody & Execution, Security Model
+
+**Goal**: Non-custodial programmable cross-chain wallet infrastructure—fund
+creation, policy-enforced signing, and investor protection so that portfolio
+managers can operate DeFi funds where depositors' capital is restricted to
+approved operations (trading, venue transfers, fee collection, withdrawals) with
+no possibility of misappropriation by either the platform or the PM.
+
+> Phase 2 (Risk Analytics) does not strictly depend on wallet infrastructure,
+> but Phases 3+ (execution, spot trading) require wallets for on-chain
+> operations.
 
 - ~~Wallet trait + crate architecture
   ([#97](https://github.com/data-cartel/moneymentum/issues/97))~~ —

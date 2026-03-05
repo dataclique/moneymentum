@@ -98,8 +98,9 @@ flowchart LR
     V[Venues]
 
     T --> PLAN
-    ROUTE -->|signing requests| POL
-    ENCLAVE -->|transactions| V
+    ROUTE -->|unsigned payloads| POL
+    ENCLAVE -->|signatures| ROUTE
+    ROUTE -->|signed transactions| V
 ```
 
 ## Security Model
@@ -111,9 +112,24 @@ unikernel. Raw keys never exist outside the enclave boundary. The backend
 orchestrates execution but never holds or sees private keys.
 
 - **Policy engine**: JSON-defined policies enforced inside the enclave before
-  signing—contract allowlists, spending caps, time-scoped sessions, multi-sig
-  quorum for high-value operations. Even if the backend is compromised, the
-  enclave rejects transactions outside policy bounds.
+  signing. Policies parse transaction calldata via uploaded ABIs/IDLs, enabling
+  restrictions at the contract-function level—not just destination allowlists,
+  but which methods can be called and with what arguments. Spending caps,
+  multi-sig quorum for high-value operations, and chain-specific rules (EVM,
+  Solana, Bitcoin, Tron) are all expressed in Turnkey's policy language. Even if
+  the backend is compromised, the enclave rejects transactions outside policy
+  bounds.
+- **Fund isolation via sub-organizations**: Each fund is a Turnkey
+  sub-organization with its own wallets and policies. The platform (parent org)
+  has read-only visibility. Investors are root quorum members of their sub-org;
+  portfolio managers are delegated users with scoped permissions. Neither the
+  platform nor the PM can unilaterally move funds outside policy bounds.
+- **Delegated access for portfolio managers**: PMs receive a business-controlled
+  user in each fund's sub-org, constrained by policies to: trade on approved
+  venues, move inventory between approved addresses, collect fees to designated
+  wallets. Withdrawal to external addresses requires investor approval (root
+  quorum). Policy changes require root quorum consensus—the PM cannot escalate
+  their own permissions.
 - **Credential separation**: Trading credentials are scoped to trade-only
   operations via Turnkey's policy engine. Withdrawal operations require higher
   privilege (e.g., passkey authentication or quorum approval).
@@ -129,11 +145,13 @@ frontend is a monitoring and control dashboard.
 
 ## Custody & Execution
 
-**Turnkey wallets** provide the custody layer with policy enforcement at the
-signing layer. Keys live in TEE-secured enclaves; the backend calls Turnkey's
-API (via the `turnkey_client` Rust crate) to request signatures. The backend
-routes orders to venues but cannot withdraw funds or interact with
-non-whitelisted contracts.
+**Non-custodial fund wallets via Turnkey.** Each fund gets a Turnkey
+sub-organization with HD wallets spanning all required chains (EVM, Solana,
+etc.) from a single seed. Keys live in TEE-secured enclaves; the backend
+constructs unsigned transaction payloads and sends them to Turnkey for signing.
+Turnkey's policy engine evaluates each request against the fund's policies
+before the enclave signs. The backend broadcasts the signed payloads to venues
+but cannot withdraw funds or interact with non-whitelisted contracts.
 
 **Solana vault program** (Anchor) handles investor deposits/withdrawals, share
 token accounting, and fee deductions. Capital flows from the vault to Turnkey
@@ -253,18 +271,18 @@ Revenue comes from PMs managing other people's money.
 
 **Bounded contexts:**
 
-| Domain              | Responsibility                                          |
-| ------------------- | ------------------------------------------------------- |
-| **Portfolio**       | Target weights, current positions, NAV computation      |
-| **Chain**           | Blockchain abstraction—tx formats, RPC, confirmations   |
-| **Analytics**       | Factor exposures, risk metrics, correlations            |
-| **Spot Trading**    | Buy/sell tokens on spot venues                          |
-| **Perps Trading**   | Open/close perpetual futures positions                  |
-| **Options Trading** | Options contracts, Greeks                               |
-| **Bridging**        | Cross-chain asset transfers                             |
-| **Wallet**          | Transaction signing, address management                 |
-| **Vault**           | Investor deposits, share tokens, fee accounting         |
-| **Rebalancing**     | Orchestrate trades across venues/chains to reach target |
+| Domain              | Responsibility                                                                   |
+| ------------------- | -------------------------------------------------------------------------------- |
+| **Portfolio**       | Target weights, current positions, NAV computation                               |
+| **Chain**           | Blockchain abstraction—tx formats, RPC, confirmations                            |
+| **Analytics**       | Factor exposures, risk metrics, correlations                                     |
+| **Spot Trading**    | Buy/sell tokens on spot venues                                                   |
+| **Perps Trading**   | Open/close perpetual futures positions                                           |
+| **Options Trading** | Options contracts, Greeks                                                        |
+| **Bridging**        | Cross-chain asset transfers                                                      |
+| **Wallet**          | Non-custodial cross-chain wallet lifecycle—creation, policy enforcement, signing |
+| **Vault**           | Investor deposits, share tokens, fee accounting                                  |
+| **Rebalancing**     | Orchestrate trades across venues/chains to reach target                          |
 
 **Crate mapping:**
 

@@ -475,9 +475,13 @@ export const usePortfolioState = (
       } = recalculateFromNotionals(mergedTokens)
 
       if (accountValue > 0) {
-        const newLeverage = calcLeverage(fullTotalNotional, accountValue)
-        setCrossAccountLeverage(newLeverage)
-        setInitialCrossAccountLeverage(newLeverage)
+        // crossAccountLeverage reflects the merged (current) portfolio,
+        // but initialCrossAccountLeverage must stay tied to the pure
+        // exchange snapshot (initialLeverage) so that leverage deltas
+        // in the staged panel are measured vs. actual exchange state.
+        const mergedLeverage = calcLeverage(fullTotalNotional, accountValue)
+        setCrossAccountLeverage(mergedLeverage)
+        setInitialCrossAccountLeverage(initialLeverage)
       }
 
       setSelectedTokens(tokensWithPercentages)
@@ -1302,12 +1306,17 @@ export const usePortfolioState = (
 
     setCrossAccountLeverage(baseLeverage)
     latestCrossAccountLeverageRef.current = baseLeverage
-    setSelectedTokensAndPersist(initialPortfolio)
+    setSelectedTokensAndPersist(() => {
+      // Start from the pure exchange snapshot and let updateByNotionalChange
+      // recompute percentages and leverage from notionals so that weights
+      // renormalize to 100% without any local-only tokens.
+      return updateByNotionalChange(initialPortfolio)
+    })
   }, [
     initialPortfolio,
     initialCrossAccountLeverage,
-    latestCrossAccountLeverageRef,
     setSelectedTokensAndPersist,
+    updateByNotionalChange,
   ])
 
   const disableSubmit =

@@ -108,6 +108,12 @@ ruff format .      # Format
 
 ## Workflow & Policies
 
+### Version control
+
+GitButler (`but`) is mandatory for all write operations. See
+[docs/gitbutler.md](./docs/gitbutler.md) for reference on stacked branches,
+locked hunks, push behavior, and recovery from workspace corruption.
+
 ### When issues are pointed out
 
 Fix immediately. The user never sends messages just for the sake of it.

@@ -73,8 +73,9 @@ Wire portfolio beta into the rebalancer:
   ([#97](https://github.com/data-cartel/moneymentum/issues/97))~~ —
   [PR #102](https://github.com/data-cartel/moneymentum/pull/102),
   [PR #103](https://github.com/data-cartel/moneymentum/pull/103)
-- Turnkey EVM signing
-  ([#98](https://github.com/data-cartel/moneymentum/issues/98))
+- ~~Turnkey EVM signing
+  ([#98](https://github.com/data-cartel/moneymentum/issues/98))~~ —
+  [PR #104](https://github.com/data-cartel/moneymentum/pull/104)
 - Turnkey Solana signing
   ([#99](https://github.com/data-cartel/moneymentum/issues/99))
 - Turnkey Derive signing

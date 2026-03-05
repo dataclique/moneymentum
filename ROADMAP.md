@@ -65,6 +65,23 @@ Wire portfolio beta into the rebalancer:
 
 ---
 
+## Wallet & Custody
+
+> See SPEC.md: Custody & Execution, Security Model
+
+- Wallet trait + crate architecture
+  ([#97](https://github.com/data-cartel/moneymentum/issues/97))
+- Turnkey EVM signing
+  ([#98](https://github.com/data-cartel/moneymentum/issues/98))
+- Turnkey Solana signing
+  ([#99](https://github.com/data-cartel/moneymentum/issues/99))
+- Turnkey Derive signing
+  ([#100](https://github.com/data-cartel/moneymentum/issues/100))
+- Turnkey bridge signing
+  ([#101](https://github.com/data-cartel/moneymentum/issues/101))
+
+---
+
 ## Phase 2: Risk Analytics
 
 > See SPEC.md: Analytics Capabilities > Risk Engine

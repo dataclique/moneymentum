@@ -262,7 +262,7 @@ Revenue comes from PMs managing other people's money.
 | **Perps Trading**   | Open/close perpetual futures positions                  |
 | **Options Trading** | Options contracts, Greeks                               |
 | **Bridging**        | Cross-chain asset transfers                             |
-| **Signing**         | Transaction signing, policy enforcement                 |
+| **Wallet**          | Transaction signing, address management                 |
 | **Vault**           | Investor deposits, share tokens, fee accounting         |
 | **Rebalancing**     | Orchestrate trades across venues/chains to reach target |
 
@@ -277,7 +277,7 @@ Revenue comes from PMs managing other people's money.
 | perps      | `PerpsVenue`   | `hyperliquid`, `mock`            |
 | options    | `OptionsVenue` | `derive`, `mock`                 |
 | bridging   | `Bridge`       | `debridge`, `mock`               |
-| signing    | `Signer`       | `turnkey`, `mock`                |
+| wallet     | `Wallet`       | `turnkey`, `mock`                |
 | vault      | `VaultClient`  | `anchor`, `mock`                 |
 | rebalancer | —              | —                                |
 | api        | —              | —                                |

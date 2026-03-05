@@ -321,6 +321,80 @@ market prices.
 
 ## Rust Code Style
 
+### Crate architecture
+
+Each substantial abstraction or integration gets its own crate under `crates/`.
+
+**Structure:**
+
+1. **Trait-first**: The crate defines a trait modeling the domain capability.
+   Dependencies on other domain traits are expressed via type parameters
+   (`T: Wallet`), never concrete implementations.
+2. **Minimal public surface**: The crate publicly exposes only the trait +
+   common types (errors, newtypes). Everything else is `pub(crate)` or private.
+3. **Feature-gated implementations**: Each implementation lives behind a feature
+   flag (`turnkey`, `mock`). Implementation modules are
+   `#[cfg(feature = "...")]`.
+4. **Consumer-driven feature selection**: Dependants enable only the flags they
+   need. Production wiring enables production features (e.g., `turnkey`); tests
+   enable `mock` via `[dev-dependencies]` with the mock feature.
+
+**Cargo.toml layout:**
+
+```toml
+[package]
+name = "wallet"
+edition = "2024"
+
+[features]
+mock = []
+turnkey = ["dep:turnkey_client", "dep:turnkey_api_key_stamper", "dep:alloy-primitives"]
+
+[dependencies]
+async-trait = "0.1"
+thiserror = "2"
+
+# Optional deps gated by features
+turnkey_client = { version = "0.6", optional = true }
+turnkey_api_key_stamper = { version = "0.6", optional = true }
+alloy-primitives = { version = "1", optional = true }
+
+[dev-dependencies]
+wallet = { path = ".", features = ["mock"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+proptest = "1"
+tracing-test = "0.2"
+
+[lints]
+workspace = true
+```
+
+**Module layout:**
+
+```
+crates/wallet/
+├── Cargo.toml
+└── src/
+    ├── lib.rs          # Trait + public types (always compiled)
+    ├── mock.rs         # #[cfg(feature = "mock")]
+    └── turnkey.rs      # #[cfg(feature = "turnkey")]
+```
+
+**Workspace configuration** (root `Cargo.toml`):
+
+```toml
+[workspace]
+members = [".", "crates/*"]
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+# ... shared lint config ...
+```
+
+Each member crate inherits lints via `[lints] workspace = true`.
+
 ### Package by feature, not by layer
 
 Organize code by business domain, not by language primitives or technical

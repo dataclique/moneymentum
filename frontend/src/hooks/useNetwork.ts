@@ -1,4 +1,4 @@
-import { useContext } from "react"
+import { useContext } from "solid-js"
 import { NetworkContext } from "@/contexts/network-context"
 
 export const useNetwork = () => {

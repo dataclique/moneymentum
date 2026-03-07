@@ -1,3 +1,4 @@
+import { createSignal, createEffect, createMemo, Show, For } from "solid-js"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -9,10 +10,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Switch } from "@/components/ui/switch"
-import { ChevronUp } from "lucide-react"
-import { clsx } from "clsx"
-import { twMerge } from "tailwind-merge"
-import { useState, useEffect, useCallback, useMemo } from "react"
+import { ChevronUp } from "lucide-solid"
+import { cn } from "@/lib/cn"
 import { useNetwork } from "@/hooks/useNetwork"
 
 import { usePortfolioState } from "./hooks/usePortfolioState"
@@ -38,116 +37,92 @@ const DEFAULT_LEVERAGE = 1
 
 const PortfolioPage = () => {
   const { isNetworkSwitching } = useNetwork()
-  const [isPrecise, setIsPrecise] = useState(() => {
-    const stored = localStorage.getItem(PRECISE_TOGGLE_STORAGE_KEY)
-    return stored === "true"
-  })
-  const [isWeightRedistribution, setIsWeightRedistribution] = useState(() => {
-    const stored = localStorage.getItem(WEIGHT_REDISTRIBUTION_STORAGE_KEY)
-    return stored !== "false"
-  })
+  const [isPrecise, setIsPrecise] = createSignal(
+    localStorage.getItem(PRECISE_TOGGLE_STORAGE_KEY) === "true",
+  )
+  const [isWeightRedistribution, setIsWeightRedistribution] = createSignal(
+    localStorage.getItem(WEIGHT_REDISTRIBUTION_STORAGE_KEY) !== "false",
+  )
 
-  useEffect(() => {
-    localStorage.setItem(PRECISE_TOGGLE_STORAGE_KEY, String(isPrecise))
-  }, [isPrecise])
-  useEffect(() => {
+  // createEffect: side-effect persisting signal to localStorage
+  createEffect(() => {
+    localStorage.setItem(PRECISE_TOGGLE_STORAGE_KEY, String(isPrecise()))
+  })
+  // createEffect: side-effect persisting signal to localStorage
+  createEffect(() => {
     localStorage.setItem(
       WEIGHT_REDISTRIBUTION_STORAGE_KEY,
-      String(isWeightRedistribution),
+      String(isWeightRedistribution()),
     )
-  }, [isWeightRedistribution])
+  })
 
-  const {
-    accountValue,
-    crossAccountLeverage,
-    initialCrossAccountLeverage,
-    targetNotional,
-    selectedTokens,
-    activeTokens,
-    displayNotional,
-    blockingReasons,
-    leverageLimitsMap,
-    disableSubmit,
-    isRebalancing,
-    isBalanceLoading,
-    isPositionsLoading,
-    handleAddToken,
-    handleRemoveToken,
-    handleUndoRemoveToken,
-    handleSideChange,
-    handleLeverageChange,
-    handleNotionalChange,
-    handleWeightChange,
-    handleCrossAccountLeverageChange,
-    handleOpenPositions,
-  } = usePortfolioState(isPrecise, isWeightRedistribution)
+  const portfolio = usePortfolioState(isPrecise, isWeightRedistribution)
 
-  const { beta, isLoading: isBetaLoading } = useBeta(activeTokens)
+  const betaResult = useBeta(() => portfolio.activeTokens())
 
-  const { data: tickersData, isLoading: isTickersLoading } =
-    useHyperliquidTickers()
-  const { data: fundingRatesData } = useHyperliquidFundingRates()
-  const screenerSymbols = tickersData ?? []
-  const selectedSymbolsSet = useMemo(
-    () => new Set(selectedTokens.map(token => token.symbol)),
-    [selectedTokens],
+  const tickersQuery = useHyperliquidTickers()
+  const fundingRatesQuery = useHyperliquidFundingRates()
+  const screenerSymbols = () => tickersQuery.data ?? []
+  const selectedSymbolsSet = createMemo(
+    () => new Set(portfolio.selectedTokens.map(token => token.symbol)),
   )
-  const fundingRatesByBaseSymbol = fundingRatesData ?? {}
+  const fundingRatesByBaseSymbol = () => fundingRatesQuery.data ?? {}
 
-  const [leverageInput, setLeverageInput] = useState(() =>
-    crossAccountLeverage.toFixed(2),
+  const [leverageInput, setLeverageInput] = createSignal(
+    portfolio.crossAccountLeverage().toFixed(2),
   )
-  const [isLeverageInputFocused, setIsLeverageInputFocused] = useState(false)
+  const [isLeverageInputFocused, setIsLeverageInputFocused] =
+    createSignal(false)
 
-  useEffect(() => {
-    if (!isLeverageInputFocused) {
-      setLeverageInput(crossAccountLeverage.toFixed(2))
+  createEffect(() => {
+    if (!isLeverageInputFocused()) {
+      setLeverageInput(portfolio.crossAccountLeverage().toFixed(2))
     }
-  }, [crossAccountLeverage, isLeverageInputFocused])
+  })
 
-  const applyLeverageInput = useCallback(
-    (raw: string) => {
-      setLeverageInput(raw)
-      if (raw === "") {
-        const emptyValue = initialCrossAccountLeverage ?? DEFAULT_LEVERAGE
-        handleCrossAccountLeverageChange(emptyValue)
-        return
-      }
-      const value = parseFloat(raw)
-      if (!Number.isNaN(value)) {
-        const clamped = Math.max(LEVERAGE_MIN, Math.min(LEVERAGE_MAX, value))
-        handleCrossAccountLeverageChange(clamped)
-      }
-    },
-    [handleCrossAccountLeverageChange, initialCrossAccountLeverage],
-  )
+  const applyLeverageInput = (raw: string) => {
+    setLeverageInput(raw)
+    if (raw === "") {
+      const emptyValue =
+        portfolio.initialCrossAccountLeverage() ?? DEFAULT_LEVERAGE
+      portfolio.handleCrossAccountLeverageChange(emptyValue)
+      return
+    }
+    const value = parseFloat(raw)
+    if (!Number.isNaN(value)) {
+      const clamped = Math.max(LEVERAGE_MIN, Math.min(LEVERAGE_MAX, value))
+      portfolio.handleCrossAccountLeverageChange(clamped)
+    }
+  }
 
   return (
     <>
-      <header className="flex items-center justify-between px-3 py-1.5 border-b border-border shrink-0 bg-muted/30">
-        <div className="flex items-center gap-4">
-          <span className="font-semibold">Moneymentum</span>
-          <div className="h-4 border-l border-border" />
-          <span className="text-muted-foreground">NAV</span>
-          <span className="font-mono">${accountValue.toFixed(2)}</span>
-          <span className="text-muted-foreground">Notional</span>
-          <span className="font-mono">${targetNotional.toFixed(2)}</span>
-          <span className="text-muted-foreground">
+      <header class="flex items-center justify-between px-3 py-1.5 border-b border-border shrink-0 bg-muted/30">
+        <div class="flex items-center gap-4">
+          <span class="font-semibold">Moneymentum</span>
+          <div class="h-4 border-l border-border" />
+          <span class="text-muted-foreground">NAV</span>
+          <span class="font-mono">${portfolio.accountValue().toFixed(2)}</span>
+          <span class="text-muted-foreground">Notional</span>
+          <span class="font-mono">
+            ${portfolio.targetNotional().toFixed(2)}
+          </span>
+          <span class="text-muted-foreground">
             TODO: effectiveLeverage.toFixed(2)x
           </span>
         </div>
-        <div className="flex items-center gap-4">
-          <span className="text-muted-foreground">Δ</span>
-          <span className="font-mono">TODO</span>
-          <span className="text-muted-foreground">Γ</span>
-          <span className="font-mono">TODO</span>
-          <span className="text-muted-foreground">Θ</span>
-          <span className="font-mono">TODO</span>
-          <div className="h-4 border-l border-border" />
-          <span className="text-muted-foreground">TODO Var</span>
-          <span className="font-mono text-red-400">TODO</span>
+        <div class="flex items-center gap-4">
+          <span class="text-muted-foreground">Δ</span>
+          <span class="font-mono">TODO</span>
+          <span class="text-muted-foreground">Γ</span>
+          <span class="font-mono">TODO</span>
+          <span class="text-muted-foreground">Θ</span>
+          <span class="font-mono">TODO</span>
+          <div class="h-4 border-l border-border" />
+          <span class="text-muted-foreground">TODO Var</span>
+          <span class="font-mono text-red-400">TODO</span>
           <kbd
-            className="px-1.5 py-0.5 text-[10px] font-mono bg-muted rounded cursor-pointer hover:bg-muted/80"
+            class="px-1.5 py-0.5 text-[10px] font-mono bg-muted rounded cursor-pointer hover:bg-muted/80"
             onClick={() => {
               alert("TODO: add help")
             }}
@@ -157,158 +132,156 @@ const PortfolioPage = () => {
         </div>
       </header>
       <div
-        className={twMerge(
-          clsx(
-            "flex flex-1 min-h-0 gap-1 p-1",
-            isNetworkSwitching && "pointer-events-none opacity-50",
-          ),
+        class={cn(
+          "flex flex-1 min-h-0 gap-1 p-1",
+          isNetworkSwitching() && "pointer-events-none opacity-50",
         )}
       >
         <ScreenerPanel
-          symbols={screenerSymbols}
-          isLoading={isTickersLoading}
-          selectedSymbols={selectedSymbolsSet}
-          onAddSymbol={handleAddToken}
-          fundingRatesByBaseSymbol={fundingRatesByBaseSymbol}
+          symbols={screenerSymbols()}
+          isLoading={tickersQuery.isLoading}
+          selectedSymbols={selectedSymbolsSet()}
+          onAddSymbol={portfolio.handleAddToken}
+          fundingRatesByBaseSymbol={fundingRatesByBaseSymbol()}
         />
-        <div className="flex-1 min-w-0 flex gap-1 overflow-hidden">
+        <div class="flex-1 min-w-0 flex gap-1 overflow-hidden">
           {/* Center: Positions */}
-          <div className="shrink-0 basis-[540px] flex flex-col overflow-hidden">
-            <div className="flex gap-1 min-h-0 min-w-0 flex-1">
+          <div class="shrink-0 basis-[540px] flex flex-col overflow-hidden">
+            <div class="flex gap-1 min-h-0 min-w-0 flex-1">
               <PositionsPanel
-                tokens={selectedTokens}
-                isLoading={isPositionsLoading}
-                displayNotional={displayNotional}
-                leverageLimitsMap={leverageLimitsMap}
-                _isRebalancing={isRebalancing}
-                isPrecise={isPrecise}
-                onRemove={handleRemoveToken}
-                onUndoRemove={handleUndoRemoveToken}
-                onSideChange={handleSideChange}
-                onLeverageChange={handleLeverageChange}
-                onNotionalChange={handleNotionalChange}
-                onWeightChange={handleWeightChange}
-                fundingRatesByBaseSymbol={fundingRatesByBaseSymbol}
+                tokens={portfolio.selectedTokens}
+                isLoading={portfolio.isPositionsLoading}
+                displayNotional={portfolio.displayNotional()}
+                leverageLimitsMap={portfolio.leverageLimitsMap()}
+                _isRebalancing={portfolio.isRebalancing}
+                isPrecise={isPrecise()}
+                onRemove={portfolio.handleRemoveToken}
+                onUndoRemove={portfolio.handleUndoRemoveToken}
+                onSideChange={portfolio.handleSideChange}
+                onLeverageChange={portfolio.handleLeverageChange}
+                onNotionalChange={portfolio.handleNotionalChange}
+                onWeightChange={portfolio.handleWeightChange}
+                fundingRatesByBaseSymbol={fundingRatesByBaseSymbol()}
               />
             </div>
-            {blockingReasons.length > 0 && (
-              <Card className="shrink-0">
-                <CardContent className="space-y-2 text-sm text-rose-400 py-3">
-                  {blockingReasons.map((reason, index) => (
-                    <p key={`${reason}-${index}`}>{reason}</p>
-                  ))}
+            <Show when={portfolio.blockingReasons().length > 0}>
+              <Card class="shrink-0">
+                <CardContent class="space-y-2 text-sm text-rose-400 py-3">
+                  <For each={portfolio.blockingReasons()}>
+                    {reason => <p>{reason}</p>}
+                  </For>
                 </CardContent>
               </Card>
-            )}
+            </Show>
 
             {/* Footer */}
-            <div className="sticky bottom-0 bg-background/80 backdrop-blur mt-auto">
-              <div className=" text-[12px] flex flex-wrap items-center justify-start gap-3 border-t border-border pt-3">
-                <div className="font-semibold text-muted-foreground">
+            <div class="sticky bottom-0 bg-background/80 backdrop-blur mt-auto">
+              <div class=" text-[12px] flex flex-wrap items-center justify-start gap-3 border-t border-border pt-3">
+                <div class="font-semibold text-muted-foreground">
                   <span>Beta (vs BTC) </span>
-                  {isBetaLoading ? (
-                    <Skeleton className="inline-block h-4 w-16 align-middle" />
-                  ) : beta !== null ? (
-                    <span
-                      className={twMerge(
-                        clsx(
-                          beta > 0 && "text-green-500",
-                          beta < 0 && "text-red-500",
-                        ),
-                      )}
+                  <Show
+                    when={!betaResult.isLoading}
+                    fallback={
+                      <Skeleton class="inline-block h-4 w-16 align-middle" />
+                    }
+                  >
+                    <Show
+                      when={betaResult.beta !== null}
+                      fallback={<span class="text-muted-foreground">—</span>}
                     >
-                      {beta.toFixed(2)}
-                    </span>
-                  ) : (
-                    <span className="text-muted-foreground">—</span>
-                  )}
+                      <span
+                        class={cn(
+                          (betaResult.beta ?? 0) > 0 && "text-green-500",
+                          (betaResult.beta ?? 0) < 0 && "text-red-500",
+                        )}
+                      >
+                        {(betaResult.beta ?? 0).toFixed(2)}
+                      </span>
+                    </Show>
+                  </Show>
                 </div>
-                <div className="flex items-center gap-4">
+                <div class="flex items-center gap-4">
                   {/* Cross Account Leverage Slider */}
-                  <div className="flex items-center gap-3">
-                    <span className="font-semibold text-muted-foreground whitespace-nowrap">
+                  <div class="flex items-center gap-3">
+                    <span class="font-semibold text-muted-foreground whitespace-nowrap">
                       Leverage:
                     </span>
-                    {isBalanceLoading ? (
-                      <Skeleton className="h-4 w-32" />
-                    ) : (
-                      <>
-                        <Slider
-                          value={[crossAccountLeverage]}
-                          onValueChange={([selectedLeverage]) => {
-                            handleCrossAccountLeverageChange(selectedLeverage)
-                          }}
-                          min={LEVERAGE_MIN}
-                          max={LEVERAGE_MAX}
-                          step={LEVERAGE_STEP}
-                          className="w-32"
-                        />
-                        <input
-                          type="number"
-                          value={leverageInput}
-                          onChange={leverageInputChangeEvent => {
-                            applyLeverageInput(
-                              leverageInputChangeEvent.target.value,
-                            )
-                          }}
-                          onBlur={() => {
-                            setIsLeverageInputFocused(false)
-                          }}
-                          onFocus={() => {
-                            setIsLeverageInputFocused(true)
-                          }}
-                          min={LEVERAGE_MIN}
-                          max={LEVERAGE_MAX}
-                          step={LEVERAGE_STEP}
-                          className="w-14 rounded-md border border-border bg-transparent px-2 py-1 text-center font-medium [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
-                        />
-                        <span className="text-sm font-medium">x</span>
-                      </>
-                    )}
+                    <Show
+                      when={!portfolio.isBalanceLoading}
+                      fallback={<Skeleton class="h-4 w-32" />}
+                    >
+                      <Slider
+                        value={[portfolio.crossAccountLeverage()]}
+                        onChange={([selectedLeverage]) => {
+                          portfolio.handleCrossAccountLeverageChange(
+                            selectedLeverage,
+                          )
+                        }}
+                        minValue={LEVERAGE_MIN}
+                        maxValue={LEVERAGE_MAX}
+                        step={LEVERAGE_STEP}
+                        class="w-32"
+                      />
+                      <input
+                        type="number"
+                        value={leverageInput()}
+                        onInput={leverageInputChangeEvent => {
+                          applyLeverageInput(
+                            leverageInputChangeEvent.currentTarget.value,
+                          )
+                        }}
+                        onBlur={() => {
+                          setIsLeverageInputFocused(false)
+                        }}
+                        onFocus={() => {
+                          setIsLeverageInputFocused(true)
+                        }}
+                        min={LEVERAGE_MIN}
+                        max={LEVERAGE_MAX}
+                        step={LEVERAGE_STEP}
+                        class="w-14 rounded-md border border-border bg-transparent px-2 py-1 text-center font-medium [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                      />
+                      <span class="text-sm font-medium">x</span>
+                    </Show>
                   </div>
-                  <div className="flex gap-4">
+                  <div class="flex gap-4">
                     <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button
-                          variant="outline"
-                          size="icon"
-                          aria-label="Open portfolio settings menu"
-                        >
-                          <ChevronUp className="h-4 w-4" />
-                        </Button>
+                      <DropdownMenuTrigger
+                        as={Button}
+                        variant="outline"
+                        size="icon"
+                        aria-label="Open portfolio settings menu"
+                      >
+                        <ChevronUp class="h-4 w-4" />
                       </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
+                      <DropdownMenuContent>
                         <DropdownMenuItem
-                          className="flex items-center justify-between gap-2"
-                          onSelect={dropdownSelectEvent => {
-                            dropdownSelectEvent.preventDefault()
-                          }}
+                          class="flex items-center justify-between gap-2"
+                          closeOnSelect={false}
                         >
                           <span>Precise</span>
                           <Switch
-                            checked={isPrecise}
-                            onCheckedChange={setIsPrecise}
+                            checked={isPrecise()}
+                            onChange={setIsPrecise}
                           />
                         </DropdownMenuItem>
                         <DropdownMenuItem
-                          className="flex items-center justify-between gap-2"
-                          onSelect={dropdownSelectEvent => {
-                            dropdownSelectEvent.preventDefault()
-                          }}
+                          class="flex items-center justify-between gap-2"
+                          closeOnSelect={false}
                         >
                           <span>Redistribution of weights</span>
                           <Switch
-                            checked={isWeightRedistribution}
-                            onCheckedChange={setIsWeightRedistribution}
+                            checked={isWeightRedistribution()}
+                            onChange={setIsWeightRedistribution}
                           />
                         </DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
                     <Button
-                      onClick={handleOpenPositions}
-                      disabled={disableSubmit}
+                      onClick={portfolio.handleOpenPositions}
+                      disabled={portfolio.disableSubmit()}
                     >
-                      {isRebalancing ? "Sending..." : "Rebalance"}
+                      {portfolio.isRebalancing ? "Sending..." : "Rebalance"}
                     </Button>
                   </div>
                 </div>
@@ -317,9 +290,9 @@ const PortfolioPage = () => {
           </div>
 
           {/* Right: Analysis panels (PERFORMANCE, STAGED, FACTORS, RISK) */}
-          <div className="flex flex-col gap-1 min-h-0 w-full">
+          <div class="flex flex-col gap-1 min-h-0 w-full">
             <PerformancePanel />
-            <div className="flex-1 flex gap-1 min-h-0">
+            <div class="flex-1 flex gap-1 min-h-0">
               <StagedChangesPanel />
               <FactorsPanel />
               <RiskPanel />

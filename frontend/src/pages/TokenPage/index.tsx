@@ -1,5 +1,5 @@
-import * as React from "react"
-import { Link, useParams } from "react-router-dom"
+import { createSignal, createMemo, Show, untrack } from "solid-js"
+import { A, useParams } from "@solidjs/router"
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { useNetwork } from "@/hooks/useNetwork"
@@ -16,125 +16,140 @@ import {
   TimeframeSelect,
   type Timeframe,
 } from "@/components/ui/timeframe-select"
-import { Button } from "@/components/ui/button"
+import { buttonVariants } from "@/lib/button-variants"
 import { AVAILABLE_METRICS } from "./constants"
 import ChartComponent, { type MetricSelection } from "./ChartComponent"
 import { useTokenData } from "@/hooks/useApi"
 
-const TokenPage: React.FC<{ timeframe: Timeframe }> = ({
-  timeframe: initialTimeframe,
-}) => {
-  const { ticker } = useParams<{ ticker: string }>()
+const TokenPage = (props: { timeframe: Timeframe }) => {
+  const params = useParams<{ ticker: string }>()
   const [selectedMetric, setSelectedMetric] =
-    React.useState<MetricSelection>("price")
-  const [timeframe, setTimeframe] = React.useState<Timeframe>(initialTimeframe)
+    createSignal<MetricSelection>("price")
+  const [timeframe, setTimeframe] = createSignal<Timeframe>(
+    untrack(() => props.timeframe),
+  )
   const { isNetworkSwitching } = useNetwork()
 
-  const { data: tokenData, error, isLoading } = useTokenData(ticker, timeframe)
+  const tokenQuery = useTokenData(() => params.ticker, timeframe)
 
-  const data = tokenData?.data ?? []
+  const data = () => tokenQuery.data?.data ?? []
 
-  const selectedMetricLabel = React.useMemo(() => {
+  const selectedMetricLabel = createMemo(() => {
     return (
-      AVAILABLE_METRICS.find(m => m.value === selectedMetric)?.label ??
-      selectedMetric
+      AVAILABLE_METRICS.find(m => m.value === selectedMetric())?.label ??
+      selectedMetric()
     )
-  }, [selectedMetric])
-
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center flex-1">
-        <Card className="w-full max-w-sm">
-          <CardHeader>
-            <CardTitle>Loading...</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p>Loading data for {ticker}...</p>
-          </CardContent>
-        </Card>
-      </div>
-    )
-  }
-
-  if (error) {
-    return (
-      <div className="flex items-center justify-center flex-1">
-        <Card className="w-full max-w-sm border-destructive">
-          <CardHeader>
-            <CardTitle className="text-destructive">Error</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p>{error.message}</p>
-            <Button asChild variant="link" className="p-0 mt-4 h-auto">
-              <Link to="/">← Back to Main Page</Link>
-            </Button>
-          </CardContent>
-        </Card>
-      </div>
-    )
-  }
+  })
 
   return (
-    <Card
-      className={twMerge(
-        clsx(
-          "w-screen h-screen rounded-none border-none px-[2%] pt-[10px] flex flex-col",
-          isNetworkSwitching && "pointer-events-none opacity-50",
-        ),
-      )}
-    >
-      <CardHeader>
-        <div className="flex items-center justify-between">
-          <div className="flex items-center space-x-4">
-            <Button asChild variant="ghost">
-              <Link to="/">←&nbsp;Back</Link>
-            </Button>
-            <CardTitle className="text-2xl font-bold">
-              {ticker} - {selectedMetricLabel}
-            </CardTitle>
-          </div>
-          <div className="flex items-center gap-4">
-            <TimeframeSelect
-              value={timeframe}
-              onValueChange={setTimeframe}
-              className="w-48"
-            />
-            <div className="w-48">
-              <Select
-                value={selectedMetric}
-                onValueChange={value => {
-                  setSelectedMetric(value as MetricSelection)
-                }}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select a metric" />
-                </SelectTrigger>
-                <SelectContent>
-                  {AVAILABLE_METRICS.map(metric => (
-                    <SelectItem key={metric.value} value={metric.value}>
-                      {metric.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
+    <>
+      <Show when={tokenQuery.isLoading}>
+        <div class="flex items-center justify-center flex-1">
+          <Card class="w-full max-w-sm">
+            <CardHeader>
+              <CardTitle>Loading...</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p>Loading data for {params.ticker}...</p>
+            </CardContent>
+          </Card>
         </div>
-      </CardHeader>
-      <CardContent className="flex-1 p-1">
-        {data.length === 0 ? (
-          <div className="flex items-center justify-center h-full text-gray-400">
-            No data available for {selectedMetricLabel}
-          </div>
-        ) : (
-          <ChartComponent
-            data={data}
-            selectedMetric={selectedMetric}
-            timeframe={timeframe}
-          />
-        )}
-      </CardContent>
-    </Card>
+      </Show>
+      <Show when={tokenQuery.error}>
+        <div class="flex items-center justify-center flex-1">
+          <Card class="w-full max-w-sm border-destructive">
+            <CardHeader>
+              <CardTitle class="text-destructive">Error</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p>{tokenQuery.error?.message}</p>
+              <A
+                class={buttonVariants({
+                  variant: "link",
+                  className: "p-0 mt-4 h-auto",
+                })}
+                href="/"
+              >
+                ← Back to Main Page
+              </A>
+            </CardContent>
+          </Card>
+        </div>
+      </Show>
+      <Show when={!tokenQuery.isLoading && !tokenQuery.error}>
+        <Card
+          class={twMerge(
+            clsx(
+              "w-screen h-screen rounded-none border-none px-[2%] pt-[10px] flex flex-col",
+              isNetworkSwitching() && "pointer-events-none opacity-50",
+            ),
+          )}
+        >
+          <CardHeader>
+            <div class="flex items-center justify-between">
+              <div class="flex items-center space-x-4">
+                <A class={buttonVariants({ variant: "ghost" })} href="/">
+                  ←&nbsp;Back
+                </A>
+                <CardTitle class="text-2xl font-bold">
+                  {params.ticker} - {selectedMetricLabel()}
+                </CardTitle>
+              </div>
+              <div class="flex items-center gap-4">
+                <TimeframeSelect
+                  value={timeframe()}
+                  onValueChange={setTimeframe}
+                  class="w-48"
+                />
+                <div class="w-48">
+                  <Select<(typeof AVAILABLE_METRICS)[number]>
+                    options={AVAILABLE_METRICS}
+                    optionValue="value"
+                    optionTextValue="label"
+                    value={AVAILABLE_METRICS.find(
+                      m => m.value === selectedMetric(),
+                    )}
+                    onChange={option => {
+                      if (option) {
+                        setSelectedMetric(option.value as MetricSelection)
+                      }
+                    }}
+                    itemComponent={itemProps => (
+                      <SelectItem item={itemProps.item}>
+                        {itemProps.item.rawValue.label}
+                      </SelectItem>
+                    )}
+                  >
+                    <SelectTrigger>
+                      <SelectValue<(typeof AVAILABLE_METRICS)[number]>>
+                        {state => state.selectedOption().label}
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectContent />
+                  </Select>
+                </div>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent class="flex-1 p-1">
+            <Show
+              when={data().length > 0}
+              fallback={
+                <div class="flex items-center justify-center h-full text-gray-400">
+                  No data available for {selectedMetricLabel()}
+                </div>
+              }
+            >
+              <ChartComponent
+                data={data()}
+                selectedMetric={selectedMetric()}
+                timeframe={timeframe()}
+              />
+            </Show>
+          </CardContent>
+        </Card>
+      </Show>
+    </>
   )
 }
 

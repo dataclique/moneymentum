@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react"
+import { createSignal, createMemo, Show } from "solid-js"
 import { columns } from "@/components/ui/columns"
 import { DataTable } from "@/components/ui/data-table"
 import { Calendar22 as DatePicker } from "@/components/ui/date-picker"
@@ -6,8 +6,7 @@ import {
   TimeframeSelect,
   type Timeframe,
 } from "@/components/ui/timeframe-select"
-import { clsx } from "clsx"
-import { twMerge } from "tailwind-merge"
+import { cn } from "@/lib/cn"
 import { Button } from "@/components/ui/button"
 import {
   useDateRange,
@@ -25,48 +24,48 @@ interface ManualDateSelection {
 
 const MainPage = () => {
   const { isNetworkSwitching } = useNetwork()
-  const [timeframe, setTimeframe] = useState<Timeframe>("1h")
+  const [timeframe, setTimeframe] = createSignal<Timeframe>("1h")
   const [manualDateSelection, setManualDateSelection] =
-    useState<ManualDateSelection | null>(null)
+    createSignal<ManualDateSelection | null>(null)
 
-  const {
-    data: dateRangeData,
-    error: dateRangeError,
-    isLoading: isDateRangeLoading,
-  } = useDateRange(timeframe)
+  const dateRangeQuery = useDateRange(timeframe)
 
-  const { maxAvailableDate, minAvailableDate } = useMemo(() => {
-    if (!dateRangeData) {
+  const dateAvailability = createMemo(() => {
+    const rangeData = dateRangeQuery.data
+    if (!rangeData) {
       return { maxAvailableDate: null, minAvailableDate: null }
     }
     return {
       maxAvailableDate: new Date(
-        `${dateRangeData.max_date.split("T")[0]}T00:00:00Z`,
+        `${rangeData.max_date.split("T")[0]}T00:00:00Z`,
       ),
       minAvailableDate: new Date(
-        `${dateRangeData.min_date.split("T")[0]}T00:00:00Z`,
+        `${rangeData.min_date.split("T")[0]}T00:00:00Z`,
       ),
     }
-  }, [dateRangeData])
+  })
 
-  const dateRange = useMemo(() => {
+  const dateRange = createMemo(() => {
+    const manual = manualDateSelection()
+    const { maxAvailableDate } = dateAvailability()
     const isManualSelectionForCurrentTimeframe =
-      manualDateSelection?.timeframe === timeframe
+      manual?.timeframe === timeframe()
     if (isManualSelectionForCurrentTimeframe) {
       return {
-        startDate: manualDateSelection.startDate,
-        endDate: manualDateSelection.endDate,
+        startDate: manual.startDate,
+        endDate: manual.endDate,
       }
     }
     return { startDate: maxAvailableDate, endDate: maxAvailableDate }
-  }, [manualDateSelection, timeframe, maxAvailableDate])
+  })
 
   const handleDateChange = (
     field: "startDate" | "endDate",
     date: Date | null,
   ) => {
+    const { maxAvailableDate } = dateAvailability()
     setManualDateSelection(prev => {
-      const sameTimeframe = prev?.timeframe === timeframe
+      const sameTimeframe = prev?.timeframe === timeframe()
       const newStartDate =
         field === "startDate"
           ? date
@@ -80,19 +79,19 @@ const MainPage = () => {
             ? prev.endDate
             : maxAvailableDate
 
-      return { timeframe, startDate: newStartDate, endDate: newEndDate }
+      return {
+        timeframe: timeframe(),
+        startDate: newStartDate,
+        endDate: newEndDate,
+      }
     })
   }
 
-  const {
-    data: analysisData,
-    error: analysisError,
-    isLoading: isAnalysisLoading,
-  } = useAnalysisData({
-    startDate: dateRange.startDate?.toISOString().split("T")[0] ?? "",
-    endDate: dateRange.endDate?.toISOString().split("T")[0] ?? "",
-    timeframe,
-  })
+  const analysisQuery = useAnalysisData(() => ({
+    startDate: dateRange().startDate?.toISOString().split("T")[0] ?? "",
+    endDate: dateRange().endDate?.toISOString().split("T")[0] ?? "",
+    timeframe: timeframe(),
+  }))
 
   const reloadMutation = useReloadData()
   const stopReloadMutation = useStopReload()
@@ -105,93 +104,112 @@ const MainPage = () => {
     stopReloadMutation.mutate()
   }
 
-  const loading =
-    isDateRangeLoading || isAnalysisLoading || reloadMutation.isPending
-  const error = dateRangeError?.message ?? analysisError?.message ?? null
-  const data = analysisData?.data ?? []
-  const message = analysisData?.message ?? null
-
-  if (loading) {
-    return (
-      <div className="mt-4 max-h-96 overflow-y-auto whitespace-pre-wrap rounded p-4 text-sm">
-        <div className="flex items-center gap-1">
-          <span>Loading data</span>
-          <span className="inline-flex">
-            <span className="animate-bounce [animation-delay:-0.3s]">.</span>
-            <span className="animate-bounce [animation-delay:-0.15s]">.</span>
-            <span className="animate-bounce">.</span>
-          </span>
-        </div>
-        {reloadMutation.isPending && (
-          <button
-            onClick={handleStopReload}
-            className="mt-4 rounded-md border px-3 py-2"
-          >
-            Stop reloading
-          </button>
-        )}
-      </div>
-    )
-  }
-
-  if (error) {
-    return (
-      <div className="container mx-auto py-10 text-center">Error: {error}</div>
-    )
-  }
+  const loading = () =>
+    dateRangeQuery.isLoading ||
+    analysisQuery.isLoading ||
+    reloadMutation.isPending
+  const error = () =>
+    dateRangeQuery.error?.message ?? analysisQuery.error?.message ?? null
+  const data = () => analysisQuery.data?.data ?? []
+  const message = () => analysisQuery.data?.message ?? null
 
   return (
-    <div
-      className={twMerge(
-        clsx(
-          "container mx-auto py-2",
-          isNetworkSwitching && "pointer-events-none opacity-80",
-        ),
-      )}
-    >
-      <div className="mb-4 flex items-end justify-start gap-4">
-        <TimeframeSelect
-          value={timeframe}
-          onValueChange={setTimeframe}
-          className="w-[180px]"
-        />
-        <DatePicker
-          label="Start Date"
-          selected={dateRange.startDate}
-          onChange={date => {
-            handleDateChange("startDate", date)
-          }}
-          minDate={minAvailableDate ?? undefined}
-          maxDate={maxAvailableDate ?? undefined}
-        />
-        <DatePicker
-          label="End Date"
-          selected={dateRange.endDate}
-          onChange={date => {
-            handleDateChange("endDate", date)
-          }}
-          minDate={minAvailableDate ?? undefined}
-          maxDate={maxAvailableDate ?? undefined}
-        />
-        <div>
-          <Button
+    <>
+      <Show when={loading()}>
+        <div class="mt-4 max-h-96 overflow-y-auto whitespace-pre-wrap rounded p-4 text-sm">
+          <div class="flex items-center gap-1">
+            <span>Loading data</span>
+            <span class="inline-flex">
+              <span class="animate-bounce [animation-delay:-0.3s]">.</span>
+              <span class="animate-bounce [animation-delay:-0.15s]">.</span>
+              <span class="animate-bounce">.</span>
+            </span>
+          </div>
+          <Show when={reloadMutation.isPending}>
+            <button
+              type="button"
+              onClick={handleStopReload}
+              class="mt-4 rounded-md border px-3 py-2"
+            >
+              Stop reloading
+            </button>
+          </Show>
+        </div>
+      </Show>
+      <Show when={!loading() && error()}>
+        <div class="container mx-auto py-10 flex flex-col items-center gap-3">
+          <div class="text-destructive text-lg font-medium">
+            Unable to load data
+          </div>
+          <div class="text-sm text-muted-foreground max-w-md text-center">
+            The analytics server is not responding. Start the backend or check
+            the connection.
+          </div>
+          <button
+            type="button"
             onClick={() => {
-              handleReload("analysis_only")
+              void dateRangeQuery.refetch()
             }}
-            disabled={isNetworkSwitching}
+            class="mt-2 rounded-md border px-4 py-2 text-sm hover:bg-muted transition-colors"
           >
-            Reload Data
-          </Button>
+            Retry
+          </button>
         </div>
-      </div>
-      {isNetworkSwitching && (
-        <div className="mb-4 text-center text-sm text-muted-foreground">
-          Switching network... Please wait
+      </Show>
+      <Show when={!loading() && !error()}>
+        <div
+          class={cn(
+            "container mx-auto py-2",
+            isNetworkSwitching() && "pointer-events-none opacity-80",
+          )}
+        >
+          <div class="mb-4 flex items-end justify-start gap-4">
+            <TimeframeSelect
+              value={timeframe()}
+              onValueChange={setTimeframe}
+              class="w-[180px]"
+            />
+            <DatePicker
+              label="Start Date"
+              selected={dateRange().startDate}
+              onChange={date => {
+                handleDateChange("startDate", date)
+              }}
+              minDate={dateAvailability().minAvailableDate ?? undefined}
+              maxDate={dateAvailability().maxAvailableDate ?? undefined}
+            />
+            <DatePicker
+              label="End Date"
+              selected={dateRange().endDate}
+              onChange={date => {
+                handleDateChange("endDate", date)
+              }}
+              minDate={dateAvailability().minAvailableDate ?? undefined}
+              maxDate={dateAvailability().maxAvailableDate ?? undefined}
+            />
+            <div>
+              <Button
+                onClick={() => {
+                  handleReload("analysis_only")
+                }}
+                disabled={isNetworkSwitching()}
+              >
+                Reload Data
+              </Button>
+            </div>
+          </div>
+          <Show when={isNetworkSwitching()}>
+            <div class="mb-4 text-center text-sm text-muted-foreground">
+              Switching network... Please wait
+            </div>
+          </Show>
+          <Show when={message()}>
+            <div class="mb-4 text-center">{message()}</div>
+          </Show>
+          <DataTable columns={columns} data={data()} />
         </div>
-      )}
-      {message && <div className="mb-4 text-center">{message}</div>}
-      <DataTable columns={columns} data={data} />
-    </div>
+      </Show>
+    </>
   )
 }
 

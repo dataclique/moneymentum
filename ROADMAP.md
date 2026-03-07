@@ -8,25 +8,6 @@ are ordered by priority (highest first).
 
 ---
 
-## Frontend rewrite in SolidJS
-
-React is slow, has a runtime, and AI tooling defaults to React patterns when it
-sees `.jsx`. SolidJS compiles away the runtime, has cleaner reactivity, and
-shadcn-solid provides the component library. Clean break — new SolidJS app
-replaces the React frontend, using the old code as reference.
-
-```mermaid
-graph TD
-    A["SolidJS project setup"] --> B["rewrite rebalancer"]
-    B --> C["rewrite prototype page"]
-```
-
-- [ ] SolidJS project setup (Nix, Vite, shadcn-solid, routing)
-- [ ] Rewrite rebalancer page
-- [ ] Rewrite prototype/design reference page
-
----
-
 ## Portfolio beta in frontend
 
 The backend already computes portfolio-weighted beta (`POST /beta` takes weights
@@ -85,6 +66,26 @@ These are directions we know matter but haven't designed:
 - Tokenized equities (st0x) for TradFi factor exposure
 - Yield products (Pendle)
 - Multi-account support
+
+---
+
+## Completed: Frontend rewrite in SolidJS
+
+SolidJS compiles away the runtime, has cleaner reactivity, and shadcn-solid
+provides the component library. Converted page by page — same logic, different
+primitives.
+
+- [x] Project setup: Vite + solid-js, TypeScript config, dev server
+- [x] Routing: migrate from react-router to @solidjs/router
+- [x] State & data fetching: migrate from @tanstack/react-query to
+      @tanstack/solid-query
+- [x] UI components: replace shadcn/ui with Kobalte + shadcn-solid equivalents
+- [x] Layout & shared components: Header, WalletHeader, navigation
+- [x] Portfolio page: PositionsPanel, TokenCard, portfolio table
+- [x] Prototype page: RiskTab and all prototype-only components
+- [x] Rebalancer integration: connect rebalancer logic to SolidJS signals/stores
+- [x] Tests & CI: migrate Vitest tests to SolidJS testing utilities, verify CI
+      passes
 
 ---
 

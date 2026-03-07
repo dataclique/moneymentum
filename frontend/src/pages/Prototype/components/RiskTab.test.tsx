@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
-import { render, screen, within } from "@testing-library/react"
+import { render, screen, within } from "@solidjs/testing-library"
 import userEvent from "@testing-library/user-event"
 import { RiskTab } from "./RiskTab"
 import type {
@@ -82,14 +82,14 @@ describe("RiskTab", () => {
 
   describe("view mode switching", () => {
     it("renders VaR view by default", () => {
-      render(<RiskTab {...defaultProps} />)
+      render(() => <RiskTab {...defaultProps} />)
 
       expect(screen.getByText("Value at Risk (95%)")).toBeInTheDocument()
       expect(screen.getByText("Value at Risk (99%)")).toBeInTheDocument()
     })
 
     it("shows all view mode buttons", () => {
-      render(<RiskTab {...defaultProps} />)
+      render(() => <RiskTab {...defaultProps} />)
 
       expect(screen.getByText("VaR")).toBeInTheDocument()
       expect(screen.getByText("Stress")).toBeInTheDocument()
@@ -100,7 +100,7 @@ describe("RiskTab", () => {
 
     it("switches to VaR view when clicking button", async () => {
       const user = userEvent.setup()
-      render(<RiskTab {...defaultProps} />)
+      render(() => <RiskTab {...defaultProps} />)
 
       await user.click(screen.getByText("Stress"))
       await user.click(screen.getByText("VaR"))
@@ -111,7 +111,7 @@ describe("RiskTab", () => {
 
     it("switches to Stress view when clicking button", async () => {
       const user = userEvent.setup()
-      render(<RiskTab {...defaultProps} />)
+      render(() => <RiskTab {...defaultProps} />)
 
       await user.click(screen.getByText("Stress"))
 
@@ -122,7 +122,7 @@ describe("RiskTab", () => {
 
     it("switches to Concentration view when clicking button", async () => {
       const user = userEvent.setup()
-      render(<RiskTab {...defaultProps} />)
+      render(() => <RiskTab {...defaultProps} />)
 
       await user.click(screen.getByRole("button", { name: "Concentration" }))
 
@@ -133,7 +133,7 @@ describe("RiskTab", () => {
 
     it("switches to Correlation view when clicking button", async () => {
       const user = userEvent.setup()
-      render(<RiskTab {...defaultProps} />)
+      render(() => <RiskTab {...defaultProps} />)
 
       await user.click(screen.getByText("Correlation"))
 
@@ -143,7 +143,7 @@ describe("RiskTab", () => {
 
     it("switches to Monte Carlo view when clicking button", async () => {
       const user = userEvent.setup()
-      render(<RiskTab {...defaultProps} />)
+      render(() => <RiskTab {...defaultProps} />)
 
       await user.click(screen.getByText("Monte Carlo"))
 
@@ -154,33 +154,33 @@ describe("RiskTab", () => {
 
   describe("VaR view", () => {
     it("displays VaR 95% value", () => {
-      render(<RiskTab {...defaultProps} />)
+      render(() => <RiskTab {...defaultProps} />)
 
       expect(screen.getByText("-3.2%")).toBeInTheDocument()
     })
 
     it("displays VaR 99% value", () => {
-      render(<RiskTab {...defaultProps} />)
+      render(() => <RiskTab {...defaultProps} />)
 
       expect(screen.getByText("-5.8%")).toBeInTheDocument()
     })
 
     it("displays diversification ratio", () => {
-      render(<RiskTab {...defaultProps} />)
+      render(() => <RiskTab {...defaultProps} />)
 
       expect(screen.getByText("Diversification Ratio")).toBeInTheDocument()
       expect(screen.getByText("1.45x")).toBeInTheDocument()
     })
 
     it("displays effective bets", () => {
-      render(<RiskTab {...defaultProps} />)
+      render(() => <RiskTab {...defaultProps} />)
 
       expect(screen.getByText("Effective Bets")).toBeInTheDocument()
       expect(screen.getByText("3.2")).toBeInTheDocument()
     })
 
     it("shows description for each metric", () => {
-      render(<RiskTab {...defaultProps} />)
+      render(() => <RiskTab {...defaultProps} />)
 
       expect(
         screen.getByText("95% confidence daily loss limit"),
@@ -194,7 +194,7 @@ describe("RiskTab", () => {
   describe("Stress view", () => {
     it("displays stress test table headers", async () => {
       const user = userEvent.setup()
-      render(<RiskTab {...defaultProps} />)
+      render(() => <RiskTab {...defaultProps} />)
 
       await user.click(screen.getByText("Stress"))
 
@@ -206,7 +206,7 @@ describe("RiskTab", () => {
 
     it("displays stress test scenarios", async () => {
       const user = userEvent.setup()
-      render(<RiskTab {...defaultProps} />)
+      render(() => <RiskTab {...defaultProps} />)
 
       await user.click(screen.getByText("Stress"))
 
@@ -217,7 +217,7 @@ describe("RiskTab", () => {
 
     it("displays portfolio impact in red for negative values", async () => {
       const user = userEvent.setup()
-      render(<RiskTab {...defaultProps} />)
+      render(() => <RiskTab {...defaultProps} />)
 
       await user.click(screen.getByText("Stress"))
 
@@ -229,7 +229,7 @@ describe("RiskTab", () => {
   describe("Concentration view", () => {
     it("displays concentration metrics", async () => {
       const user = userEvent.setup()
-      render(<RiskTab {...defaultProps} />)
+      render(() => <RiskTab {...defaultProps} />)
 
       await user.click(screen.getByText("Concentration"))
 
@@ -240,7 +240,7 @@ describe("RiskTab", () => {
 
     it("displays metric descriptions", async () => {
       const user = userEvent.setup()
-      render(<RiskTab {...defaultProps} />)
+      render(() => <RiskTab {...defaultProps} />)
 
       await user.click(screen.getByText("Concentration"))
 
@@ -250,7 +250,7 @@ describe("RiskTab", () => {
 
     it("formats percentage values correctly", async () => {
       const user = userEvent.setup()
-      render(<RiskTab {...defaultProps} />)
+      render(() => <RiskTab {...defaultProps} />)
 
       await user.click(screen.getByText("Concentration"))
 
@@ -262,7 +262,7 @@ describe("RiskTab", () => {
 
     it("formats non-percentage values correctly", async () => {
       const user = userEvent.setup()
-      render(<RiskTab {...defaultProps} />)
+      render(() => <RiskTab {...defaultProps} />)
 
       await user.click(screen.getByText("Concentration"))
 
@@ -274,7 +274,7 @@ describe("RiskTab", () => {
   describe("Correlation view", () => {
     it("displays correlation matrix headers", async () => {
       const user = userEvent.setup()
-      render(<RiskTab {...defaultProps} />)
+      render(() => <RiskTab {...defaultProps} />)
 
       await user.click(screen.getByText("Correlation"))
 
@@ -289,7 +289,7 @@ describe("RiskTab", () => {
 
     it("displays correlation values", async () => {
       const user = userEvent.setup()
-      render(<RiskTab {...defaultProps} />)
+      render(() => <RiskTab {...defaultProps} />)
 
       await user.click(screen.getByText("Correlation"))
 
@@ -301,7 +301,7 @@ describe("RiskTab", () => {
 
     it("displays diagonal values as 1.00", async () => {
       const user = userEvent.setup()
-      render(<RiskTab {...defaultProps} />)
+      render(() => <RiskTab {...defaultProps} />)
 
       await user.click(screen.getByText("Correlation"))
 
@@ -311,7 +311,7 @@ describe("RiskTab", () => {
 
     it("applies color coding based on correlation strength", async () => {
       const user = userEvent.setup()
-      const { container } = render(<RiskTab {...defaultProps} />)
+      const { container } = render(() => <RiskTab {...defaultProps} />)
 
       await user.click(screen.getByText("Correlation"))
 
@@ -324,7 +324,7 @@ describe("RiskTab", () => {
   describe("Monte Carlo view", () => {
     it("displays simulation controls", async () => {
       const user = userEvent.setup()
-      render(<RiskTab {...defaultProps} />)
+      render(() => <RiskTab {...defaultProps} />)
 
       await user.click(screen.getByText("Monte Carlo"))
 
@@ -334,7 +334,7 @@ describe("RiskTab", () => {
 
     it("shows simulation count dropdown", async () => {
       const user = userEvent.setup()
-      render(<RiskTab {...defaultProps} />)
+      render(() => <RiskTab {...defaultProps} />)
 
       await user.click(screen.getByText("Monte Carlo"))
 
@@ -345,7 +345,7 @@ describe("RiskTab", () => {
 
     it("shows horizon dropdown", async () => {
       const user = userEvent.setup()
-      render(<RiskTab {...defaultProps} />)
+      render(() => <RiskTab {...defaultProps} />)
 
       await user.click(screen.getByText("Monte Carlo"))
 
@@ -354,33 +354,29 @@ describe("RiskTab", () => {
       expect(horizonSelect).toHaveValue("252") // Default (1Y)
     })
 
-    it("can change simulation count", async () => {
+    it("simulation count select is disabled until compute pipeline is wired", async () => {
       const user = userEvent.setup()
-      render(<RiskTab {...defaultProps} />)
+      render(() => <RiskTab {...defaultProps} />)
 
       await user.click(screen.getByText("Monte Carlo"))
 
       const selects = screen.getAllByRole("combobox")
-      await user.selectOptions(selects[0], "10000")
-
-      expect(selects[0]).toHaveValue("10000")
+      expect(selects[0]).toBeDisabled()
     })
 
-    it("can change horizon", async () => {
+    it("horizon select is disabled until compute pipeline is wired", async () => {
       const user = userEvent.setup()
-      render(<RiskTab {...defaultProps} />)
+      render(() => <RiskTab {...defaultProps} />)
 
       await user.click(screen.getByText("Monte Carlo"))
 
       const selects = screen.getAllByRole("combobox")
-      await user.selectOptions(selects[1], "63") // 3M
-
-      expect(selects[1]).toHaveValue("63")
+      expect(selects[1]).toBeDisabled()
     })
 
     it("displays distribution chart", async () => {
       const user = userEvent.setup()
-      const { container } = render(<RiskTab {...defaultProps} />)
+      const { container } = render(() => <RiskTab {...defaultProps} />)
 
       await user.click(screen.getByText("Monte Carlo"))
 
@@ -391,7 +387,7 @@ describe("RiskTab", () => {
 
     it("displays percentile values", async () => {
       const user = userEvent.setup()
-      render(<RiskTab {...defaultProps} />)
+      render(() => <RiskTab {...defaultProps} />)
 
       await user.click(screen.getByText("Monte Carlo"))
 
@@ -402,7 +398,7 @@ describe("RiskTab", () => {
 
     it("displays x-axis labels", async () => {
       const user = userEvent.setup()
-      render(<RiskTab {...defaultProps} />)
+      render(() => <RiskTab {...defaultProps} />)
 
       await user.click(screen.getByText("Monte Carlo"))
 

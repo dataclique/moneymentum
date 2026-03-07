@@ -1,7 +1,13 @@
-import { useState, useEffect, useCallback } from "react"
+import { createSignal, createEffect, Show, For, onCleanup } from "solid-js"
 import { twMerge } from "tailwind-merge"
 import { clsx } from "clsx"
-import { X } from "lucide-react"
+
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 
 interface Instrument {
   symbol: string
@@ -28,92 +34,90 @@ type Step = "instrument" | "configure"
 type Direction = "long" | "short"
 type SizeMode = "weight" | "notional"
 
-export const AddPositionModal = ({
-  isOpen,
-  underlying,
-  instruments,
-  nav,
-  currentLeverage,
-  onClose,
-  onAddPosition,
-}: AddPositionModalProps) => {
-  const [step, setStep] = useState<Step>("instrument")
-  const [selectedIndex, setSelectedIndex] = useState(0)
+export const AddPositionModal = (props: AddPositionModalProps) => {
+  const [step, setStep] = createSignal<Step>("instrument")
+  const [selectedIndex, setSelectedIndex] = createSignal(0)
   const [selectedInstrument, setSelectedInstrument] =
-    useState<Instrument | null>(null)
-  const [direction, setDirection] = useState<Direction>("long")
-  const [sizeMode, setSizeMode] = useState<SizeMode>("notional")
-  const [sizeValue, setSizeValue] = useState("5000")
+    createSignal<Instrument | null>(null)
+  const [direction, setDirection] = createSignal<Direction>("long")
+  const [sizeMode, setSizeMode] = createSignal<SizeMode>("notional")
+  const [sizeValue, setSizeValue] = createSignal("5000")
+  const [validationError, setValidationError] = createSignal<string | null>(
+    null,
+  )
 
-  // Reset state when modal opens
-  useEffect(() => {
-    if (isOpen) {
+  createEffect(() => {
+    if (props.isOpen) {
       setStep("instrument")
       setSelectedIndex(0)
       setSelectedInstrument(null)
       setDirection("long")
       setSizeMode("notional")
       setSizeValue("5000")
+      setValidationError(null)
     }
-  }, [isOpen])
+  })
 
-  const handleSelectInstrument = useCallback(() => {
-    if (instruments[selectedIndex]) {
-      setSelectedInstrument(instruments[selectedIndex])
-      setStep("configure")
-    }
-  }, [instruments, selectedIndex])
+  const handleSelectInstrument = () => {
+    const inst = props.instruments[selectedIndex()]
+    setSelectedInstrument(inst)
+    setStep("configure")
+  }
 
-  const handleBack = useCallback(() => {
+  const handleBack = () => {
     setStep("instrument")
     setSelectedInstrument(null)
-  }, [])
+  }
 
-  const handleConfirm = useCallback(() => {
-    if (!selectedInstrument) return
+  const handleConfirm = () => {
+    const inst = selectedInstrument()
+    if (!inst) return
 
-    const numericValue = parseFloat(sizeValue) || 0
-    const weight =
-      sizeMode === "weight"
-        ? numericValue / 100
-        : numericValue / (nav * currentLeverage)
+    const numericValue = parseFloat(sizeValue())
+    if (!isFinite(numericValue) || numericValue <= 0) {
+      setValidationError("Size must be a positive number.")
+      return
+    }
 
-    onAddPosition({
-      symbol: selectedInstrument.symbol,
-      direction,
-      weight: Math.max(0, Math.min(1, weight)),
+    const denominator =
+      sizeMode() === "notional" ? props.nav * props.currentLeverage : 100
+    if (denominator <= 0) {
+      setValidationError(
+        "Cannot compute weight: portfolio NAV or leverage is zero.",
+      )
+      return
+    }
+
+    props.onAddPosition({
+      symbol: inst.symbol,
+      direction: direction(),
+      weight: computedWeight(),
     })
-    onClose()
-  }, [
-    selectedInstrument,
-    sizeMode,
-    sizeValue,
-    nav,
-    currentLeverage,
-    direction,
-    onAddPosition,
-    onClose,
-  ])
+    props.onClose()
+  }
 
-  // Keyboard navigation
-  useEffect(() => {
-    if (!isOpen) return
+  // Custom j/k/Enter navigation for instrument selection step
+  createEffect(() => {
+    if (!props.isOpen) return
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault()
-        if (step === "configure") {
+        event.stopPropagation()
+        if (step() === "configure") {
           handleBack()
         } else {
-          onClose()
+          props.onClose()
         }
         return
       }
 
-      if (step === "instrument") {
+      if (step() === "instrument") {
         if (event.key === "j" || event.key === "ArrowDown") {
           event.preventDefault()
-          setSelectedIndex(prev => Math.min(prev + 1, instruments.length - 1))
+          setSelectedIndex(prev =>
+            Math.min(prev + 1, props.instruments.length - 1),
+          )
         } else if (event.key === "k" || event.key === "ArrowUp") {
           event.preventDefault()
           setSelectedIndex(prev => Math.max(prev - 1, 0))
@@ -125,311 +129,303 @@ export const AddPositionModal = ({
     }
 
     window.addEventListener("keydown", handleKeyDown)
-    return () => {
+    onCleanup(() => {
       window.removeEventListener("keydown", handleKeyDown)
-    }
-  }, [
-    isOpen,
-    step,
-    instruments.length,
-    handleSelectInstrument,
-    handleBack,
-    handleConfirm,
-    onClose,
-  ])
+    })
+  })
 
-  if (!isOpen) return null
+  const rawWeight = () =>
+    sizeMode() === "weight"
+      ? (parseFloat(sizeValue()) || 0) / 100
+      : (parseFloat(sizeValue()) || 0) / (props.nav * props.currentLeverage)
 
-  const computedWeight =
-    sizeMode === "weight"
-      ? (parseFloat(sizeValue) || 0) / 100
-      : (parseFloat(sizeValue) || 0) / (nav * currentLeverage)
+  const computedWeight = () => Math.max(0, Math.min(1, rawWeight()))
 
-  const computedNotional =
-    sizeMode === "notional"
-      ? parseFloat(sizeValue) || 0
-      : ((parseFloat(sizeValue) || 0) / 100) * nav * currentLeverage
+  const computedNotional = () =>
+    sizeMode() === "notional"
+      ? parseFloat(sizeValue()) || 0
+      : ((parseFloat(sizeValue()) || 0) / 100) *
+        props.nav *
+        props.currentLeverage
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
-      <div
-        className="absolute inset-0 bg-black/60"
-        onClick={onClose}
-        onKeyDown={event => {
-          if (event.key === "Escape") onClose()
-        }}
-        role="button"
-        tabIndex={-1}
-      />
-      <div className="relative bg-background border border-border rounded-lg shadow-xl w-[400px] max-h-[80vh] overflow-hidden">
-        {/* Header */}
-        <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-muted/30">
-          <span className="font-medium">
-            {step === "instrument"
-              ? `Add ${underlying} Position`
-              : `Configure: ${selectedInstrument?.symbol}`}
-          </span>
-          <button
-            onClick={onClose}
-            className="text-muted-foreground hover:text-foreground"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
+    <Dialog
+      open={props.isOpen}
+      onOpenChange={open => {
+        if (!open) props.onClose()
+      }}
+    >
+      <DialogContent class="w-[400px] max-h-[80vh] overflow-hidden p-0">
+        <DialogHeader class="px-4 py-3 border-b border-border bg-muted/30">
+          <DialogTitle>
+            {step() === "instrument"
+              ? `Add ${props.underlying} Position`
+              : `Configure: ${selectedInstrument()?.symbol}`}
+          </DialogTitle>
+        </DialogHeader>
 
-        {/* Content */}
-        <div className="p-4">
-          {step === "instrument" ? (
-            <div className="space-y-2">
-              <div className="text-sm text-muted-foreground mb-3">
-                Select instrument:
-              </div>
-              {instruments.map((inst, index) => (
-                <div
-                  key={inst.symbol}
-                  onClick={() => {
-                    setSelectedIndex(index)
-                    handleSelectInstrument()
-                  }}
-                  onKeyDown={event => {
-                    if (event.key === "Enter") {
-                      setSelectedIndex(index)
-                      handleSelectInstrument()
-                    }
-                  }}
-                  role="button"
-                  tabIndex={0}
-                  className={twMerge(
-                    clsx(
-                      "p-3 rounded border cursor-pointer transition-colors",
-                      selectedIndex === index
-                        ? "border-primary bg-primary/10"
-                        : "border-border hover:border-muted-foreground",
-                    ),
-                  )}
-                >
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <div
-                        className={twMerge(
-                          clsx(
-                            "w-2 h-2 rounded-full",
-                            selectedIndex === index
-                              ? "bg-primary"
-                              : "bg-muted-foreground/30",
-                          ),
-                        )}
-                      />
-                      <span className="font-medium">{inst.symbol}</span>
-                      <span className="text-xs text-muted-foreground uppercase">
-                        ({inst.type})
-                      </span>
-                    </div>
-                    <span
-                      className={twMerge(
+        <div class="p-4">
+          <Show
+            when={step() === "instrument"}
+            fallback={
+              <div class="space-y-4">
+                {/* Direction */}
+                <div>
+                  <div class="text-sm text-muted-foreground mb-2">
+                    Direction
+                  </div>
+                  <div class="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDirection("long")
+                      }}
+                      class={twMerge(
                         clsx(
-                          "font-mono text-sm",
-                          inst.rate > 0
-                            ? "text-green-500"
-                            : inst.rate < 0
-                              ? "text-red-500"
-                              : "text-muted-foreground",
+                          "flex-1 py-2 rounded font-medium transition-colors",
+                          direction() === "long"
+                            ? "bg-green-500/20 text-green-500 border border-green-500"
+                            : "bg-muted text-muted-foreground border border-border hover:border-muted-foreground",
                         ),
                       )}
                     >
-                      {inst.rate > 0 ? "+" : ""}
-                      {(inst.rate * 100).toFixed(1)}%
-                    </span>
-                  </div>
-                  <div className="text-xs text-muted-foreground mt-1 ml-4">
-                    {inst.rateLabel}
+                      LONG
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDirection("short")
+                      }}
+                      class={twMerge(
+                        clsx(
+                          "flex-1 py-2 rounded font-medium transition-colors",
+                          direction() === "short"
+                            ? "bg-red-500/20 text-red-500 border border-red-500"
+                            : "bg-muted text-muted-foreground border border-border hover:border-muted-foreground",
+                        ),
+                      )}
+                    >
+                      SHORT
+                    </button>
                   </div>
                 </div>
-              ))}
-              <div className="text-xs text-muted-foreground mt-4 pt-2 border-t border-border">
-                <kbd className="px-1 py-0.5 bg-muted rounded text-[10px]">
-                  j
-                </kbd>
-                /
-                <kbd className="px-1 py-0.5 bg-muted rounded text-[10px]">
-                  k
-                </kbd>{" "}
-                to navigate,{" "}
-                <kbd className="px-1 py-0.5 bg-muted rounded text-[10px]">
+
+                {/* Size */}
+                <div>
+                  <div class="text-sm text-muted-foreground mb-2">Size</div>
+                  <div class="flex gap-2 mb-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSizeMode("weight")
+                      }}
+                      class={twMerge(
+                        clsx(
+                          "px-3 py-1 rounded text-sm transition-colors",
+                          sizeMode() === "weight"
+                            ? "bg-primary text-primary-foreground"
+                            : "bg-muted text-muted-foreground hover:text-foreground",
+                        ),
+                      )}
+                    >
+                      Weight %
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSizeMode("notional")
+                      }}
+                      class={twMerge(
+                        clsx(
+                          "px-3 py-1 rounded text-sm transition-colors",
+                          sizeMode() === "notional"
+                            ? "bg-primary text-primary-foreground"
+                            : "bg-muted text-muted-foreground hover:text-foreground",
+                        ),
+                      )}
+                    >
+                      Notional $
+                    </button>
+                  </div>
+                  <div class="relative">
+                    <span class="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">
+                      {sizeMode() === "weight" ? "%" : "$"}
+                    </span>
+                    <input
+                      type="text"
+                      value={sizeValue()}
+                      onInput={event => {
+                        setSizeValue(event.currentTarget.value)
+                        setValidationError(null)
+                      }}
+                      class="w-full pl-8 pr-3 py-2 bg-muted border border-border rounded focus:outline-none focus:border-primary font-mono"
+                      placeholder={sizeMode() === "weight" ? "2.0" : "5000"}
+                    />
+                  </div>
+                </div>
+
+                <Show when={validationError()}>
+                  <p class="text-sm text-red-500" role="alert">
+                    {validationError()}
+                  </p>
+                </Show>
+
+                {/* Preview */}
+                <div class="p-3 bg-muted/50 rounded border border-border">
+                  <div class="text-sm text-muted-foreground mb-2">Preview</div>
+                  <div class="space-y-1 text-sm">
+                    <div class="flex justify-between">
+                      <span class="text-muted-foreground">
+                        Portfolio weight
+                      </span>
+                      <span class="font-mono">
+                        0% → {(computedWeight() * 100).toFixed(1)}%
+                      </span>
+                    </div>
+                    <div class="flex justify-between">
+                      <span class="text-muted-foreground">Notional</span>
+                      <span class="font-mono">
+                        ${computedNotional().toLocaleString()}
+                      </span>
+                    </div>
+                    <div class="flex justify-between">
+                      <span class="text-muted-foreground">
+                        Rate ({selectedInstrument()?.rateLabel})
+                      </span>
+                      <span
+                        class={twMerge(
+                          clsx(
+                            "font-mono",
+                            (selectedInstrument()?.rate ?? 0) > 0
+                              ? "text-green-500"
+                              : (selectedInstrument()?.rate ?? 0) < 0
+                                ? "text-red-500"
+                                : "",
+                          ),
+                        )}
+                      >
+                        {(selectedInstrument()?.rate ?? 0) > 0 ? "+" : ""}
+                        {((selectedInstrument()?.rate ?? 0) * 100).toFixed(1)}%
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Actions */}
+                <div class="flex gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={handleBack}
+                    class="flex-1 py-2 bg-muted text-muted-foreground rounded hover:text-foreground transition-colors"
+                  >
+                    Back
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleConfirm}
+                    class="flex-1 py-2 bg-primary text-primary-foreground rounded hover:bg-primary/90 transition-colors font-medium"
+                  >
+                    Add Position
+                  </button>
+                </div>
+
+                <div class="text-xs text-muted-foreground pt-2 border-t border-border">
+                  <kbd class="px-1 py-0.5 bg-muted rounded text-[10px]">
+                    Tab
+                  </kbd>{" "}
+                  to switch fields,{" "}
+                  <kbd class="px-1 py-0.5 bg-muted rounded text-[10px]">
+                    Enter
+                  </kbd>{" "}
+                  to confirm,{" "}
+                  <kbd class="px-1 py-0.5 bg-muted rounded text-[10px]">
+                    Esc
+                  </kbd>{" "}
+                  to go back
+                </div>
+              </div>
+            }
+          >
+            <div class="space-y-2">
+              <div class="text-sm text-muted-foreground mb-3">
+                Select instrument:
+              </div>
+              <For each={props.instruments}>
+                {(inst, index) => (
+                  <div
+                    onClick={() => {
+                      setSelectedIndex(index())
+                      handleSelectInstrument()
+                    }}
+                    onKeyDown={event => {
+                      if (event.key === "Enter") {
+                        setSelectedIndex(index())
+                        handleSelectInstrument()
+                      }
+                    }}
+                    role="button"
+                    tabIndex={0}
+                    class={twMerge(
+                      clsx(
+                        "p-3 rounded border cursor-pointer transition-colors",
+                        selectedIndex() === index()
+                          ? "border-primary bg-primary/10"
+                          : "border-border hover:border-muted-foreground",
+                      ),
+                    )}
+                  >
+                    <div class="flex items-center justify-between">
+                      <div class="flex items-center gap-2">
+                        <div
+                          class={twMerge(
+                            clsx(
+                              "w-2 h-2 rounded-full",
+                              selectedIndex() === index()
+                                ? "bg-primary"
+                                : "bg-muted-foreground/30",
+                            ),
+                          )}
+                        />
+                        <span class="font-medium">{inst.symbol}</span>
+                        <span class="text-xs text-muted-foreground uppercase">
+                          ({inst.type})
+                        </span>
+                      </div>
+                      <span
+                        class={twMerge(
+                          clsx(
+                            "font-mono text-sm",
+                            inst.rate > 0
+                              ? "text-green-500"
+                              : inst.rate < 0
+                                ? "text-red-500"
+                                : "text-muted-foreground",
+                          ),
+                        )}
+                      >
+                        {inst.rate > 0 ? "+" : ""}
+                        {(inst.rate * 100).toFixed(1)}%
+                      </span>
+                    </div>
+                    <div class="text-xs text-muted-foreground mt-1 ml-4">
+                      {inst.rateLabel}
+                    </div>
+                  </div>
+                )}
+              </For>
+              <div class="text-xs text-muted-foreground mt-4 pt-2 border-t border-border">
+                <kbd class="px-1 py-0.5 bg-muted rounded text-[10px]">j</kbd>/
+                <kbd class="px-1 py-0.5 bg-muted rounded text-[10px]">k</kbd> to
+                navigate,{" "}
+                <kbd class="px-1 py-0.5 bg-muted rounded text-[10px]">
                   Enter
                 </kbd>{" "}
                 to select
               </div>
             </div>
-          ) : (
-            <div className="space-y-4">
-              {/* Direction */}
-              <div>
-                <div className="text-sm text-muted-foreground mb-2">
-                  Direction
-                </div>
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => {
-                      setDirection("long")
-                    }}
-                    className={twMerge(
-                      clsx(
-                        "flex-1 py-2 rounded font-medium transition-colors",
-                        direction === "long"
-                          ? "bg-green-500/20 text-green-500 border border-green-500"
-                          : "bg-muted text-muted-foreground border border-border hover:border-muted-foreground",
-                      ),
-                    )}
-                  >
-                    LONG
-                  </button>
-                  <button
-                    onClick={() => {
-                      setDirection("short")
-                    }}
-                    className={twMerge(
-                      clsx(
-                        "flex-1 py-2 rounded font-medium transition-colors",
-                        direction === "short"
-                          ? "bg-red-500/20 text-red-500 border border-red-500"
-                          : "bg-muted text-muted-foreground border border-border hover:border-muted-foreground",
-                      ),
-                    )}
-                  >
-                    SHORT
-                  </button>
-                </div>
-              </div>
-
-              {/* Size */}
-              <div>
-                <div className="text-sm text-muted-foreground mb-2">Size</div>
-                <div className="flex gap-2 mb-2">
-                  <button
-                    onClick={() => {
-                      setSizeMode("weight")
-                    }}
-                    className={twMerge(
-                      clsx(
-                        "px-3 py-1 rounded text-sm transition-colors",
-                        sizeMode === "weight"
-                          ? "bg-primary text-primary-foreground"
-                          : "bg-muted text-muted-foreground hover:text-foreground",
-                      ),
-                    )}
-                  >
-                    Weight %
-                  </button>
-                  <button
-                    onClick={() => {
-                      setSizeMode("notional")
-                    }}
-                    className={twMerge(
-                      clsx(
-                        "px-3 py-1 rounded text-sm transition-colors",
-                        sizeMode === "notional"
-                          ? "bg-primary text-primary-foreground"
-                          : "bg-muted text-muted-foreground hover:text-foreground",
-                      ),
-                    )}
-                  >
-                    Notional $
-                  </button>
-                </div>
-                <div className="relative">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">
-                    {sizeMode === "weight" ? "%" : "$"}
-                  </span>
-                  <input
-                    type="text"
-                    value={sizeValue}
-                    onChange={event => {
-                      setSizeValue(event.target.value)
-                    }}
-                    className="w-full pl-8 pr-3 py-2 bg-muted border border-border rounded focus:outline-none focus:border-primary font-mono"
-                    placeholder={sizeMode === "weight" ? "2.0" : "5000"}
-                  />
-                </div>
-              </div>
-
-              {/* Preview */}
-              <div className="p-3 bg-muted/50 rounded border border-border">
-                <div className="text-sm text-muted-foreground mb-2">
-                  Preview
-                </div>
-                <div className="space-y-1 text-sm">
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">
-                      Portfolio weight
-                    </span>
-                    <span className="font-mono">
-                      0% → {(computedWeight * 100).toFixed(1)}%
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Notional</span>
-                    <span className="font-mono">
-                      ${computedNotional.toLocaleString()}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">
-                      Rate ({selectedInstrument?.rateLabel})
-                    </span>
-                    <span
-                      className={twMerge(
-                        clsx(
-                          "font-mono",
-                          (selectedInstrument?.rate ?? 0) > 0
-                            ? "text-green-500"
-                            : (selectedInstrument?.rate ?? 0) < 0
-                              ? "text-red-500"
-                              : "",
-                        ),
-                      )}
-                    >
-                      {(selectedInstrument?.rate ?? 0) > 0 ? "+" : ""}
-                      {((selectedInstrument?.rate ?? 0) * 100).toFixed(1)}%
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Actions */}
-              <div className="flex gap-2 pt-2">
-                <button
-                  onClick={handleBack}
-                  className="flex-1 py-2 bg-muted text-muted-foreground rounded hover:text-foreground transition-colors"
-                >
-                  Back
-                </button>
-                <button
-                  onClick={handleConfirm}
-                  className="flex-1 py-2 bg-primary text-primary-foreground rounded hover:bg-primary/90 transition-colors font-medium"
-                >
-                  Add Position
-                </button>
-              </div>
-
-              <div className="text-xs text-muted-foreground pt-2 border-t border-border">
-                <kbd className="px-1 py-0.5 bg-muted rounded text-[10px]">
-                  Tab
-                </kbd>{" "}
-                to switch fields,{" "}
-                <kbd className="px-1 py-0.5 bg-muted rounded text-[10px]">
-                  Enter
-                </kbd>{" "}
-                to confirm,{" "}
-                <kbd className="px-1 py-0.5 bg-muted rounded text-[10px]">
-                  Esc
-                </kbd>{" "}
-                to go back
-              </div>
-            </div>
-          )}
+          </Show>
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   )
 }

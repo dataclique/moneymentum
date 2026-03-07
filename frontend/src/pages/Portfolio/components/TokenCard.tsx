@@ -1,6 +1,6 @@
-import { useState, useEffect, useRef } from "react"
+import { createSignal, createEffect, Show, untrack } from "solid-js"
 import Decimal from "decimal.js"
-import { Trash2, Undo2, AlertCircle } from "lucide-react"
+import { Trash2, Undo2, CircleAlert } from "lucide-solid"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import {
@@ -44,85 +44,79 @@ interface TokenCardProps {
   onWeightChange: (symbol: string, percentage: number) => void
 }
 
-export const TokenCard = ({
-  token,
-  displayNotional,
-  maxLeverage,
-  isRebalancing,
-  isPrecise,
-  onRemove,
-  onUndoRemove,
-  onSideChange,
-  onLeverageChange,
-  onNotionalChange,
-  onWeightChange,
-}: TokenCardProps) => {
-  const sideColor = getSideColor(token.side)
-  const borderColor =
-    token.status === "deleted" ? sideColor.replace("0.8", "0.2") : sideColor
-  const showProgressAnimation =
-    token.status === "working" || (token.status === "deleted" && isRebalancing)
-  const cardStyle = {
-    borderLeftColor: borderColor,
-  }
-  const isLong = token.side === "buy"
+export const TokenCard = (props: TokenCardProps) => {
+  const sideColor = () => getSideColor(props.token.side)
+  const borderColor = () =>
+    props.token.status === "deleted"
+      ? sideColor().replace("0.8", "0.2")
+      : sideColor()
+  const showProgressAnimation = () =>
+    props.token.status === "working" ||
+    (props.token.status === "deleted" && props.isRebalancing)
+  const cardStyle = () => ({
+    "border-left-color": borderColor(),
+  })
+  const isLong = () => props.token.side === "buy"
   // Always show target notional based on percentage and displayNotional
-  // When leverage changes, percentage stays fixed and notional is recalculated
-  const usdAmount =
-    displayNotional > 0
-      ? new Decimal(token.percentage)
+  const usdAmount = () =>
+    props.displayNotional > 0
+      ? new Decimal(props.token.percentage)
           .div(100)
-          .mul(displayNotional)
+          .mul(props.displayNotional)
           .toDecimalPlaces(2, Decimal.ROUND_HALF_UP)
           .toFixed(2)
       : "0.00"
 
   // Local state for notional input to allow empty field while typing
-  const [notionalInput, setNotionalInput] = useState(() =>
-    (token.notional ?? parseFloat(usdAmount)).toFixed(2),
+  const [notionalInput, setNotionalInput] = createSignal(
+    untrack(() => (props.token.notional ?? parseFloat(usdAmount())).toFixed(2)),
   )
 
   // Local state for weight input to allow empty field while typing
-  const [weightInput, setWeightInput] = useState(() => String(token.percentage))
+  const [weightInput, setWeightInput] = createSignal(
+    untrack(() => String(props.token.percentage)),
+  )
 
   // Sync local state when token.notional changes from outside
-  const externalNotional = token.notional ?? parseFloat(usdAmount)
-  const prevExternalNotionalRef = useRef(externalNotional)
-  useEffect(() => {
-    if (prevExternalNotionalRef.current !== externalNotional) {
-      prevExternalNotionalRef.current = externalNotional
-      setNotionalInput(externalNotional.toFixed(2))
+  const externalNotional = () => props.token.notional ?? parseFloat(usdAmount())
+  let prevExternalNotional = untrack(externalNotional)
+  createEffect(() => {
+    const current = externalNotional()
+    if (prevExternalNotional !== current) {
+      prevExternalNotional = current
+      setNotionalInput(current.toFixed(2))
     }
-  }, [externalNotional])
+  })
 
   // Sync local weight state when token.percentage changes from outside
-  const prevPercentageRef = useRef(token.percentage)
-  useEffect(() => {
-    if (prevPercentageRef.current !== token.percentage) {
-      prevPercentageRef.current = token.percentage
-      setWeightInput(String(token.percentage))
+  let prevPercentage = untrack(() => props.token.percentage)
+  createEffect(() => {
+    const current = props.token.percentage
+    if (prevPercentage !== current) {
+      prevPercentage = current
+      setWeightInput(String(current))
     }
-  }, [token.percentage])
+  })
 
   return (
     <Card
-      className={twMerge(
+      class={twMerge(
         clsx(
           "card-border relative overflow-hidden",
-          token.status === "idle" && "border-l-4",
-          token.status === "filled" && "border-l-4 border-emerald-500",
-          token.status === "working" && "border-l-4",
-          token.status === "failed" && "border-l-4 border-rose-500",
-          token.status === "untouched" && "border-l-4 border-blue-500/50",
-          token.status === "modified" && "border-l-4 border-transparent",
-          token.status === "deleted" && "border-l-4",
+          props.token.status === "idle" && "border-l-4",
+          props.token.status === "filled" && "border-l-4 border-emerald-500",
+          props.token.status === "working" && "border-l-4",
+          props.token.status === "failed" && "border-l-4 border-rose-500",
+          props.token.status === "untouched" && "border-l-4 border-blue-500/50",
+          props.token.status === "modified" && "border-l-4 border-transparent",
+          props.token.status === "deleted" && "border-l-4",
         ),
       )}
-      style={cardStyle}
+      style={cardStyle()}
     >
-      {showProgressAnimation && (
+      <Show when={showProgressAnimation()}>
         <svg
-          className="card-border-svg"
+          class="card-border-svg"
           height="100%"
           width="100%"
           xmlns="http://www.w3.org/2000/svg"
@@ -131,61 +125,62 @@ export const TokenCard = ({
           <rect
             rx="14"
             ry="14"
-            className="card-border-line"
+            class="card-border-line"
             height="100%"
             width="100%"
             fill="transparent"
-            strokeLinecap="round"
-            strokeLinejoin="round"
+            stroke-linecap="round"
+            stroke-linejoin="round"
           />
         </svg>
-      )}
-      <div className="relative z-[2]">
-        <div className="grid grid-cols-[8rem_7rem_7rem_6rem_4rem] items-center gap-2 px-3">
+      </Show>
+      <div class="relative z-[2]">
+        <div class="grid grid-cols-[8rem_7rem_7rem_6rem_4rem] items-center gap-2 px-3">
           {/* Coin Name and Leverage */}
           <div
-            className={twMerge(
+            class={twMerge(
               clsx(
                 "flex items-center gap-2",
-                token.status === "deleted" && "opacity-50",
+                props.token.status === "deleted" && "opacity-50",
               ),
             )}
           >
-            <span className="font-semibold" style={{ color: sideColor }}>
-              {token.symbol.split("/")[0]}
+            <span class="font-semibold" style={{ color: sideColor() }}>
+              {props.token.symbol.split("/")[0]}
             </span>
             <Dialog>
-              <DialogTrigger asChild disabled={token.status === "deleted"}>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-auto px-2 py-1 text-xs border border-border rounded-md"
-                  style={{ color: sideColor }}
-                  disabled={token.status === "deleted"}
-                >
-                  {token.leverage}x
-                </Button>
+              <DialogTrigger
+                as={Button}
+                variant="ghost"
+                size="sm"
+                class="h-auto px-2 py-1 text-xs border border-border rounded-md"
+                style={{ color: sideColor() }}
+                disabled={props.token.status === "deleted"}
+              >
+                {props.token.leverage}x
               </DialogTrigger>
-              <DialogContent className="sm:max-w-[425px]">
+              <DialogContent class="sm:max-w-[425px]">
                 <DialogHeader>
-                  <DialogTitle>Set Leverage for {token.symbol}</DialogTitle>
+                  <DialogTitle>
+                    Set Leverage for {props.token.symbol}
+                  </DialogTitle>
                   <DialogDescription>
                     Adjust the leverage for this position. Max leverage is{" "}
-                    {maxLeverage?.toFixed(1)}x.
+                    {props.maxLeverage?.toFixed(1)}x.
                   </DialogDescription>
                 </DialogHeader>
-                <div className="grid gap-4 py-4">
-                  <div className="flex items-center justify-between">
-                    <span>{token.leverage}x</span>
+                <div class="grid gap-4 py-4">
+                  <div class="flex items-center justify-between">
+                    <span>{props.token.leverage}x</span>
                     <Slider
-                      value={[token.leverage]}
-                      onValueChange={([value]: number[]) => {
-                        onLeverageChange(token.symbol, value)
+                      value={[props.token.leverage]}
+                      onChange={([leverage]) => {
+                        props.onLeverageChange(props.token.symbol, leverage)
                       }}
-                      min={1}
-                      max={maxLeverage}
+                      minValue={1}
+                      maxValue={props.maxLeverage}
                       step={1}
-                      className="w-[80%]"
+                      class="w-[80%]"
                     />
                   </div>
                 </div>
@@ -195,123 +190,133 @@ export const TokenCard = ({
 
           {/* Weight - percentage of total notional */}
           <div
-            className={twMerge(
+            class={twMerge(
               clsx(
                 "flex items-center justify-center gap-1",
-                token.status === "deleted" && "opacity-50",
+                props.token.status === "deleted" && "opacity-50",
               ),
             )}
           >
             <input
               type="number"
-              value={weightInput}
-              onChange={event => {
-                const rawValue = event.target.value
+              value={weightInput()}
+              onInput={event => {
+                const rawValue = event.currentTarget.value
                 setWeightInput(rawValue)
-                const value = rawValue === "" ? 0 : parseFloat(rawValue)
-                if (!Number.isNaN(value)) {
-                  onWeightChange(token.symbol, value)
+                if (rawValue !== "") {
+                  const value = parseFloat(rawValue)
+                  if (!Number.isNaN(value)) {
+                    props.onWeightChange(props.token.symbol, value)
+                  }
                 }
               }}
-              disabled={token.status === "deleted"}
+              disabled={props.token.status === "deleted"}
               step={0.5}
               min={0}
               max={100}
-              className="w-16 rounded-md border border-border bg-transparent px-2 py-1 text-sm text-center [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+              class="w-16 rounded-md border border-border bg-transparent px-2 py-1 text-sm text-center [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
             />
-            <span className="text-sm text-muted-foreground">%</span>
+            <span class="text-sm text-muted-foreground">%</span>
           </div>
 
           {/* Position Notional */}
           <div
-            className={twMerge(
+            class={twMerge(
               clsx(
                 "flex items-center justify-center gap-1",
-                token.status === "deleted" && "opacity-50",
+                props.token.status === "deleted" && "opacity-50",
               ),
             )}
           >
-            <span className="text-sm text-muted-foreground">$</span>
+            <span class="text-sm text-muted-foreground">$</span>
             <input
               type="number"
-              value={notionalInput}
-              onChange={event => {
-                const rawValue = event.target.value
+              value={notionalInput()}
+              onInput={event => {
+                const rawValue = event.currentTarget.value
                 setNotionalInput(rawValue)
-                const value = rawValue === "" ? 0 : parseFloat(rawValue)
-                if (!Number.isNaN(value)) {
-                  onNotionalChange(token.symbol, value)
+                if (rawValue !== "") {
+                  const value = parseFloat(rawValue)
+                  if (!Number.isNaN(value)) {
+                    props.onNotionalChange(props.token.symbol, value)
+                  }
                 }
               }}
-              disabled={token.status === "deleted"}
+              disabled={props.token.status === "deleted"}
               step={1}
               min={0}
-              className="w-20 rounded-md border border-border bg-transparent px-2 py-1 text-sm text-center [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+              class="w-20 rounded-md border border-border bg-transparent px-2 py-1 text-sm text-center [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
             />
             {(() => {
-              const targetValue =
-                token.targetNotional ?? token.notional ?? parseFloat(usdAmount)
-              const showDeltaWarning =
-                !isPrecise &&
-                token.deltaInsufficient === true &&
-                token.status === "modified"
-              const showSmallPositionWarning =
-                token.status !== "untouched" &&
-                token.status !== "deleted" &&
-                targetValue > 0 &&
-                targetValue < MIN_USD
-              const showWarning = showDeltaWarning || showSmallPositionWarning
+              const tv = () =>
+                props.token.targetNotional ??
+                props.token.notional ??
+                parseFloat(usdAmount())
+              const showDeltaWarning = () =>
+                !props.isPrecise &&
+                props.token.deltaInsufficient === true &&
+                props.token.status === "modified"
+              const showSmallPositionWarning = () =>
+                props.token.status !== "untouched" &&
+                props.token.status !== "deleted" &&
+                tv() > 0 &&
+                tv() < MIN_USD
+              const showWarning = () =>
+                showDeltaWarning() || showSmallPositionWarning()
               return (
-                <TooltipProvider delayDuration={0}>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <AlertCircle
-                        className={twMerge(
-                          "h-3.5 w-3.5 text-amber-500 ml-[2px]",
-                          !showWarning && "pointer-events-none opacity-0",
-                        )}
-                      />
-                    </TooltipTrigger>
-                    <TooltipContent className="space-y-2">
-                      {showDeltaWarning && (
-                        <p className="text-[16px]">
-                          Delta $
-                          {Math.abs(
-                            (token.targetNotional ?? 0) -
-                              (token.currentNotional ?? 0),
-                          ).toFixed(2)}{" "}
-                          is below ${MIN_CHANGE_DELTA} minimum.
-                        </p>
-                      )}
-                      {showSmallPositionWarning && (
-                        <p className="text-[16px] mb-[0px]">
-                          Position value ${targetValue.toFixed(2)} is below $
-                          {MIN_USD} minimum.
-                        </p>
-                      )}
-                    </TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
+                <Show when={showWarning()}>
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger class="ml-[2px]" aria-label="Warning">
+                        <CircleAlert
+                          class="h-3.5 w-3.5 text-amber-500"
+                          aria-hidden="true"
+                        />
+                      </TooltipTrigger>
+                      <TooltipContent class="space-y-2">
+                        <Show when={showDeltaWarning()}>
+                          <p class="text-[16px]">
+                            Delta $
+                            {Math.abs(
+                              (props.token.targetNotional ?? 0) -
+                                (props.token.currentNotional ?? 0),
+                            ).toFixed(2)}{" "}
+                            is below ${MIN_CHANGE_DELTA} minimum.
+                          </p>
+                        </Show>
+                        <Show when={showSmallPositionWarning()}>
+                          <p class="text-[16px] mb-[0px]">
+                            Position value ${tv().toFixed(2)} is below $
+                            {MIN_USD} minimum.
+                          </p>
+                        </Show>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                </Show>
               )
             })()}
           </div>
 
           {/* Long/Short Select */}
           <div
-            className={twMerge(
-              clsx(token.status === "deleted" && "opacity-50"),
+            class={twMerge(
+              clsx(props.token.status === "deleted" && "opacity-50"),
             )}
           >
             <select
-              value={token.side}
+              value={props.token.side}
               onChange={event => {
-                onSideChange(token.symbol, event.target.value as OrderSide)
+                props.onSideChange(
+                  props.token.symbol,
+                  event.currentTarget.value as OrderSide,
+                )
               }}
-              disabled={token.status === "deleted"}
-              className={twMerge(
+              disabled={props.token.status === "deleted"}
+              class={twMerge(
                 clsx(
                   "w-full rounded-md border bg-transparent px-2 py-1 text-sm font-medium",
-                  isLong
+                  isLong()
                     ? "border-green-500/50 bg-green-500/10 text-green-600 dark:text-green-400"
                     : "border-red-500/50 bg-red-500/10 text-red-600 dark:text-red-400",
                 ),
@@ -323,36 +328,46 @@ export const TokenCard = ({
           </div>
 
           {/* Remove Button */}
-          <div className="flex items-center justify-center gap-1">
+          <div class="flex items-center justify-center gap-1">
             <Button
               variant="ghost"
               size="icon"
               onClick={() => {
-                if (token.status === "deleted") {
-                  onUndoRemove(token.symbol)
+                if (props.token.status === "deleted") {
+                  props.onUndoRemove(props.token.symbol)
                 } else {
-                  onRemove(token.symbol)
+                  props.onRemove(props.token.symbol)
                 }
               }}
-              className="h-8 w-8"
+              class="h-8 w-8"
+              aria-label={
+                props.token.status === "deleted"
+                  ? `Undo remove ${props.token.symbol}`
+                  : `Remove ${props.token.symbol}`
+              }
             >
-              {token.status === "deleted" ? (
-                <Undo2 className="h-4 w-4" />
-              ) : (
-                <Trash2 className="h-4 w-4" />
-              )}
+              <Show
+                when={props.token.status === "deleted"}
+                fallback={<Trash2 class="h-4 w-4" />}
+              >
+                <Undo2 class="h-4 w-4" />
+              </Show>
             </Button>
           </div>
         </div>
 
-        {token.message &&
-          (token.status === "failed" ||
-            token.status === "idle" ||
-            token.status === "modified") && (
-            <div className="border-t border-border bg-rose-500/10 px-3 py-2 text-xs text-rose-500">
-              <p>{token.message}</p>
-            </div>
-          )}
+        <Show
+          when={
+            props.token.message &&
+            (props.token.status === "failed" ||
+              props.token.status === "idle" ||
+              props.token.status === "modified")
+          }
+        >
+          <div class="border-t border-border bg-rose-500/10 px-3 py-2 text-xs text-rose-500">
+            <p>{props.token.message}</p>
+          </div>
+        </Show>
       </div>
     </Card>
   )

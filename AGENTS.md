@@ -38,7 +38,7 @@ institutional-grade quant toolkit. See [SPEC.md](./SPEC.md) for the vision and
 
 ## Development Commands
 
-### Frontend (React + Vite)
+### Frontend (SolidJS + Vite)
 
 Run from `frontend/` directory:
 
@@ -219,6 +219,13 @@ setModalState("open");
 const openModal = () => setIsOpen(true);
 ```
 
+### ASCII-only code
+
+All code, comments, identifiers, and documentation must use ASCII characters
+only. Unicode is allowed exclusively in string literals that produce
+user-visible output (UI text, CLI messages). Use ASCII equivalents in comments:
+`*` not `×`, `->` not `→`, `~` not `≈`, `--` not `—`, `beta` not `β`.
+
 ### Self-documenting code
 
 - Documentation comments (docstrings, API docs) are good
@@ -234,12 +241,6 @@ const openModal = () => setIsOpen(true);
 ### Colocate types
 
 Keep types with the code that uses them, not in separate files.
-
-### Avoid useEffect
-
-Before adding `useEffect`, consider: TanStack Query for data fetching,
-`use-local-storage-state` for localStorage, `useMemo` for derived state. When
-useEffect IS right, add a comment explaining why.
 
 ### Logging
 
@@ -633,10 +634,17 @@ fn test_validates_quantity() {
 
 ---
 
-## shadcn/ui
+## shadcn-solid
 
 Never manually create component files. Use the CLI:
 
 ```bash
-cd frontend && bunx shadcn@latest add <component-name>
+cd frontend && bunx shadcn-solid@latest add <component-name>
 ```
+
+### Avoid createEffect
+
+Before adding `createEffect`, consider: `@tanstack/solid-query` for data
+fetching, `createMemo` for derived state. When `createEffect` IS required
+(imperative DOM manipulation, side-effects on signal changes, global event
+listeners), add an inline comment explaining why.

@@ -1,51 +1,24 @@
 /// <reference types="vitest" />
 import path from "path"
 import tailwindcss from "@tailwindcss/vite"
-import react from "@vitejs/plugin-react"
-import { defineConfig, type Plugin } from "vite"
+import solid from "vite-plugin-solid"
+import { defineConfig } from "vite"
 import nodePolyfills from "vite-plugin-node-stdlib-browser"
-
-const suppressUseClientWarning = (): Plugin => {
-  return {
-    name: "suppress-use-client-warning",
-    apply: "build",
-    enforce: "post",
-    configResolved(config) {
-      const originalOnWarn = config.build.rollupOptions.onwarn
-      config.build.rollupOptions.onwarn = (warning, warn) => {
-        if (
-          warning.code === "MODULE_LEVEL_DIRECTIVE" &&
-          warning.id?.includes("node_modules")
-        ) {
-          return
-        }
-        if (originalOnWarn) {
-          originalOnWarn(warning, warn)
-        } else {
-          warn(warning)
-        }
-      }
-    },
-  }
-}
 
 export default defineConfig({
   base: "/",
-  plugins: [
-    react(),
-    tailwindcss(),
-    nodePolyfills(),
-    suppressUseClientWarning(),
-  ],
+  plugins: [solid(), tailwindcss(), nodePolyfills()],
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
       "socks-proxy-agent": path.resolve(__dirname, "./src/stubs/empty.ts"),
+      "http-proxy-agent": path.resolve(__dirname, "./src/stubs/empty.ts"),
+      "https-proxy-agent": path.resolve(__dirname, "./src/stubs/empty.ts"),
     },
   },
   build: {
     chunkSizeWarningLimit: 6000,
-    rollupOptions: {},
+    target: "esnext",
   },
   server: {
     host: "0.0.0.0",
@@ -53,7 +26,7 @@ export default defineConfig({
       "/api/beta": {
         target: "http://127.0.0.1:8000",
         changeOrigin: true,
-        rewrite: (path: string) => path.replace(/^\/api/, ""),
+        rewrite: (proxyPath: string) => proxyPath.replace(/^\/api/, ""),
       },
       "/api": {
         target: "http://127.0.0.1:8000",
@@ -63,8 +36,13 @@ export default defineConfig({
   },
   test: {
     globals: true,
-    environment: "jsdom",
+    environment: "happy-dom",
     setupFiles: "./src/test/setup.ts",
     css: true,
+    server: {
+      deps: {
+        inline: [/solid-js/, /@solidjs/, /@kobalte/, /@tanstack/],
+      },
+    },
   },
 })

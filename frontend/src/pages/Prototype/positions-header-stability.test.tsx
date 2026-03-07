@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeAll } from "vitest"
-import { render, screen } from "@testing-library/react"
+import { render, screen } from "@solidjs/testing-library"
 import userEvent from "@testing-library/user-event"
 import PrototypePage from "./index"
 
@@ -49,7 +49,7 @@ vi.mock("lightweight-charts", () => ({
 describe("Positions panel header stability", () => {
   it("header always shows 'POSITIONS' text regardless of selection", async () => {
     const user = userEvent.setup()
-    render(<PrototypePage />)
+    render(() => <PrototypePage />)
 
     // Focus positions panel
     await user.keyboard("2")
@@ -78,7 +78,7 @@ describe("Positions panel header stability", () => {
 
   it("header never shows 'Press' text when navigating positions", async () => {
     const user = userEvent.setup()
-    render(<PrototypePage />)
+    render(() => <PrototypePage />)
 
     // Focus positions panel
     await user.keyboard("2")
@@ -100,7 +100,7 @@ describe("Positions panel header stability", () => {
 
   it("header count remains stable during navigation", async () => {
     const user = userEvent.setup()
-    render(<PrototypePage />)
+    render(() => <PrototypePage />)
 
     // Focus positions panel
     await user.keyboard("2")
@@ -128,7 +128,7 @@ describe("Positions panel header stability", () => {
 
   it("expanding and collapsing positions does not affect header", async () => {
     const user = userEvent.setup()
-    render(<PrototypePage />)
+    render(() => <PrototypePage />)
 
     // Focus positions panel
     await user.keyboard("2")
@@ -148,7 +148,7 @@ describe("Positions panel header stability", () => {
 
   it("shows visible edit key badge when instrument is selected (no need for title tooltip)", async () => {
     const user = userEvent.setup()
-    render(<PrototypePage />)
+    render(() => <PrototypePage />)
 
     // Focus positions panel and expand BTC to show instruments
     await user.keyboard("2")
@@ -167,7 +167,7 @@ describe("Positions panel header stability", () => {
 
   it("EditableCell should not have title attribute that causes tooltip flicker", async () => {
     const user = userEvent.setup()
-    const { container } = render(<PrototypePage />)
+    const { container } = render(() => <PrototypePage />)
 
     // Focus positions panel and expand BTC
     await user.keyboard("2")

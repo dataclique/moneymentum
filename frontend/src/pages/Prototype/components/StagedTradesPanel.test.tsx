@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest"
-import { render, screen, fireEvent } from "@testing-library/react"
+import { render, screen, fireEvent } from "@solidjs/testing-library"
 import { StagedTradesPanel } from "./StagedTradesPanel"
 import type { ComputedTrade } from "../mockData"
 import type { PositionsByUnderlying } from "../hooks/usePrototypeData"
@@ -88,20 +88,22 @@ describe("StagedTradesPanel", () => {
   }
 
   it("shows empty state when no trades staged", () => {
-    render(<StagedTradesPanel {...defaultProps} />)
+    render(() => <StagedTradesPanel {...defaultProps} />)
 
     expect(screen.getByText(/No pending trades/)).toBeInTheDocument()
   })
 
   it("renders leverage control", () => {
-    render(<StagedTradesPanel {...defaultProps} />)
+    render(() => <StagedTradesPanel {...defaultProps} />)
 
     expect(screen.getByText("Leverage")).toBeInTheDocument()
     expect(screen.getByRole("slider")).toBeInTheDocument()
   })
 
   it("displays staged trades", () => {
-    render(<StagedTradesPanel {...defaultProps} stagedTrades={mockTrades} />)
+    render(() => (
+      <StagedTradesPanel {...defaultProps} stagedTrades={mockTrades} />
+    ))
 
     expect(screen.getAllByText("BTC").length).toBeGreaterThanOrEqual(1)
     expect(screen.getAllByText("ETH").length).toBeGreaterThanOrEqual(1)
@@ -110,20 +112,22 @@ describe("StagedTradesPanel", () => {
   })
 
   it("shows Clear all button when trades exist", () => {
-    render(<StagedTradesPanel {...defaultProps} stagedTrades={mockTrades} />)
+    render(() => (
+      <StagedTradesPanel {...defaultProps} stagedTrades={mockTrades} />
+    ))
 
     expect(screen.getByText("Clear all")).toBeInTheDocument()
   })
 
   it("calls onClearAll when Clear all clicked", () => {
     const onClearAll = vi.fn()
-    render(
+    render(() => (
       <StagedTradesPanel
         {...defaultProps}
         stagedTrades={mockTrades}
         onClearAll={onClearAll}
-      />,
-    )
+      />
+    ))
 
     fireEvent.click(screen.getByText("Clear all"))
     expect(onClearAll).toHaveBeenCalled()
@@ -131,35 +135,39 @@ describe("StagedTradesPanel", () => {
 
   it("calls onExecute when Execute button clicked", () => {
     const onExecute = vi.fn()
-    render(
+    render(() => (
       <StagedTradesPanel
         {...defaultProps}
         stagedTrades={mockTrades}
         onExecute={onExecute}
-      />,
-    )
+      />
+    ))
 
     fireEvent.click(screen.getByText(/Execute 2 trades/))
     expect(onExecute).toHaveBeenCalled()
   })
 
   it("shows singular 'trade' when only one trade staged", () => {
-    render(
-      <StagedTradesPanel {...defaultProps} stagedTrades={[mockTrades[0]]} />,
-    )
+    render(() => (
+      <StagedTradesPanel {...defaultProps} stagedTrades={[mockTrades[0]]} />
+    ))
 
     expect(screen.getByText(/Execute 1 trade$/)).toBeInTheDocument()
   })
 
   it("shows impact preview when trades are staged", () => {
-    render(<StagedTradesPanel {...defaultProps} stagedTrades={mockTrades} />)
+    render(() => (
+      <StagedTradesPanel {...defaultProps} stagedTrades={mockTrades} />
+    ))
 
     expect(screen.getByText("IMPACT PREVIEW")).toBeInTheDocument()
     expect(screen.getByText("Notional")).toBeInTheDocument()
   })
 
   it("displays source badges for each trade", () => {
-    render(<StagedTradesPanel {...defaultProps} stagedTrades={mockTrades} />)
+    render(() => (
+      <StagedTradesPanel {...defaultProps} stagedTrades={mockTrades} />
+    ))
 
     expect(screen.getByText("weight")).toBeInTheDocument()
     expect(screen.getByText("leverage")).toBeInTheDocument()

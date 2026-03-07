@@ -8,34 +8,39 @@ import {
 
 export type Timeframe = "1h" | "15m"
 
-const TIMEFRAME_OPTIONS = [
-  { value: "1h", label: "1 hour" },
-  { value: "15m", label: "15 minutes" },
-] as const satisfies readonly { value: Timeframe; label: string }[]
+const TIMEFRAME_LABELS: Record<Timeframe, string> = {
+  "1h": "1 hour",
+  "15m": "15 minutes",
+}
+
+const TIMEFRAME_OPTIONS: Timeframe[] = ["1h", "15m"]
 
 interface TimeframeSelectProps {
   value: Timeframe
   onValueChange: (value: Timeframe) => void
-  className?: string
+  class?: string
 }
 
-export const TimeframeSelect = ({
-  value,
-  onValueChange,
-  className,
-}: TimeframeSelectProps) => {
+export const TimeframeSelect = (props: TimeframeSelectProps) => {
   return (
-    <Select value={value} onValueChange={onValueChange}>
-      <SelectTrigger className={className}>
-        <SelectValue placeholder="Select timeframe" />
+    <Select<Timeframe>
+      options={TIMEFRAME_OPTIONS}
+      value={props.value}
+      onChange={value => {
+        if (value) props.onValueChange(value)
+      }}
+      itemComponent={itemProps => (
+        <SelectItem item={itemProps.item}>
+          {TIMEFRAME_LABELS[itemProps.item.rawValue]}
+        </SelectItem>
+      )}
+    >
+      <SelectTrigger class={props.class}>
+        <SelectValue<Timeframe>>
+          {state => TIMEFRAME_LABELS[state.selectedOption()]}
+        </SelectValue>
       </SelectTrigger>
-      <SelectContent>
-        {TIMEFRAME_OPTIONS.map(option => (
-          <SelectItem key={option.value} value={option.value}>
-            {option.label}
-          </SelectItem>
-        ))}
-      </SelectContent>
+      <SelectContent />
     </Select>
   )
 }

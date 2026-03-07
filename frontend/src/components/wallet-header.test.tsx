@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
-import { render, screen, waitFor } from "@testing-library/react"
+import { render, screen, waitFor } from "@solidjs/testing-library"
 import userEvent from "@testing-library/user-event"
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import React from "react"
+import { QueryClient, QueryClientProvider } from "@tanstack/solid-query"
+import type { ParentProps } from "solid-js"
 import { WalletHeader } from "./wallet-header"
 import { WalletProvider } from "@/contexts/WalletProvider"
 import { NetworkProvider } from "@/contexts/NetworkContext"
@@ -20,7 +20,7 @@ vi.mock("@/hooks/useTrading", () => ({
   })),
 }))
 
-vi.mock("sonner", () => ({
+vi.mock("solid-sonner", () => ({
   toast: {
     error: vi.fn(),
     success: vi.fn(),
@@ -48,10 +48,10 @@ const createWrapper = () => {
       },
     },
   })
-  return ({ children }: { children: React.ReactNode }) => (
+  return (props: ParentProps) => (
     <QueryClientProvider client={queryClient}>
       <WalletProvider>
-        <NetworkProvider>{children}</NetworkProvider>
+        <NetworkProvider>{props.children}</NetworkProvider>
       </WalletProvider>
     </QueryClientProvider>
   )
@@ -62,8 +62,8 @@ describe("WalletHeader", () => {
     vi.clearAllMocks()
     localStorage.clear()
     mockUseWalletSettings.mockReturnValue({
-      data: null,
-      isConnected: false,
+      data: () => null,
+      isConnected: () => false,
     })
   })
 
@@ -73,27 +73,27 @@ describe("WalletHeader", () => {
 
   describe("display state", () => {
     it("shows 'No wallet configured' when not connected", async () => {
-      render(<WalletHeader />, { wrapper: createWrapper() })
+      render(() => <WalletHeader />, { wrapper: createWrapper() })
 
       expect(screen.getByText("No wallet configured")).toBeInTheDocument()
     })
 
     it("shows formatted account address when connected", async () => {
       mockUseWalletSettings.mockReturnValue({
-        data: {
+        data: () => ({
           accountAddress: "0x1234567890abcdef1234567890abcdef12345678",
           isTestnet: true,
-        },
-        isConnected: true,
+        }),
+        isConnected: () => true,
       })
 
-      render(<WalletHeader />, { wrapper: createWrapper() })
+      render(() => <WalletHeader />, { wrapper: createWrapper() })
 
       expect(screen.getByText("0x1234...5678")).toBeInTheDocument()
     })
 
     it("shows testnet toggle label", () => {
-      render(<WalletHeader />, { wrapper: createWrapper() })
+      render(() => <WalletHeader />, { wrapper: createWrapper() })
 
       expect(screen.getByText("Testnet")).toBeInTheDocument()
     })
@@ -101,7 +101,7 @@ describe("WalletHeader", () => {
 
   describe("testnet switch", () => {
     it("is disabled when wallet is not connected", () => {
-      render(<WalletHeader />, { wrapper: createWrapper() })
+      render(() => <WalletHeader />, { wrapper: createWrapper() })
 
       const toggle = screen.getByRole("switch")
       expect(toggle).toBeDisabled()
@@ -109,14 +109,14 @@ describe("WalletHeader", () => {
 
     it("is enabled when wallet is connected", async () => {
       mockUseWalletSettings.mockReturnValue({
-        data: {
+        data: () => ({
           accountAddress: "0xTestAccountAddress",
           isTestnet: true,
-        },
-        isConnected: true,
+        }),
+        isConnected: () => true,
       })
 
-      render(<WalletHeader />, { wrapper: createWrapper() })
+      render(() => <WalletHeader />, { wrapper: createWrapper() })
 
       const toggle = screen.getByRole("switch")
       expect(toggle).not.toBeDisabled()
@@ -126,7 +126,7 @@ describe("WalletHeader", () => {
   describe("wallet configuration dialog", () => {
     it("opens dialog when clicking 'No wallet configured'", async () => {
       const user = userEvent.setup()
-      render(<WalletHeader />, { wrapper: createWrapper() })
+      render(() => <WalletHeader />, { wrapper: createWrapper() })
 
       const walletButton = screen.getByText("No wallet configured")
       await user.click(walletButton)
@@ -141,7 +141,7 @@ describe("WalletHeader", () => {
 
     it("shows all credential input fields when not connected", async () => {
       const user = userEvent.setup()
-      render(<WalletHeader />, { wrapper: createWrapper() })
+      render(() => <WalletHeader />, { wrapper: createWrapper() })
 
       await user.click(screen.getByText("No wallet configured"))
 
@@ -155,7 +155,7 @@ describe("WalletHeader", () => {
 
     it("shows optional vault address field", async () => {
       const user = userEvent.setup()
-      render(<WalletHeader />, { wrapper: createWrapper() })
+      render(() => <WalletHeader />, { wrapper: createWrapper() })
 
       await user.click(screen.getByText("No wallet configured"))
 
@@ -166,8 +166,8 @@ describe("WalletHeader", () => {
 
     it("shows error toast when trying to connect with empty required fields", async () => {
       const user = userEvent.setup()
-      const { toast } = await import("sonner")
-      render(<WalletHeader />, { wrapper: createWrapper() })
+      const { toast } = await import("solid-sonner")
+      render(() => <WalletHeader />, { wrapper: createWrapper() })
 
       await user.click(screen.getByText("No wallet configured"))
       await user.click(screen.getByRole("button", { name: "Connect" }))
@@ -179,8 +179,8 @@ describe("WalletHeader", () => {
 
     it("connects wallet when valid credentials are provided", async () => {
       const user = userEvent.setup()
-      const { toast } = await import("sonner")
-      render(<WalletHeader />, { wrapper: createWrapper() })
+      const { toast } = await import("solid-sonner")
+      render(() => <WalletHeader />, { wrapper: createWrapper() })
 
       await user.click(screen.getByText("No wallet configured"))
 
@@ -197,16 +197,17 @@ describe("WalletHeader", () => {
 
       const stored = localStorage.getItem("hyperliquid-wallet")
       expect(stored).not.toBeNull()
-      expect(JSON.parse(stored ?? "{}")).toEqual({
+      const parsed = JSON.parse(stored ?? "{}")
+      expect(parsed).toEqual({
         accountAddress: "0xMyAccountAddress",
         apiWalletAddress: "0xMyApiWalletAddress",
-        privateKey: "0xMyPrivateKey",
       })
+      expect(parsed).not.toHaveProperty("privateKey")
     }, 15000)
 
     it("stores vault address when provided", async () => {
       const user = userEvent.setup()
-      render(<WalletHeader />, { wrapper: createWrapper() })
+      render(() => <WalletHeader />, { wrapper: createWrapper() })
 
       await user.click(screen.getByText("No wallet configured"))
 
@@ -225,17 +226,18 @@ describe("WalletHeader", () => {
 
       const stored = localStorage.getItem("hyperliquid-wallet")
       expect(stored).not.toBeNull()
-      expect(JSON.parse(stored ?? "{}")).toEqual({
+      const parsed = JSON.parse(stored ?? "{}")
+      expect(parsed).toEqual({
         accountAddress: "0xMyAccountAddress",
         apiWalletAddress: "0xMyApiWalletAddress",
-        privateKey: "0xMyPrivateKey",
         vaultAddress: "0xMyVaultAddress",
       })
+      expect(parsed).not.toHaveProperty("privateKey")
     }, 15000)
 
     it("connects without vault address when not provided", async () => {
       const user = userEvent.setup()
-      render(<WalletHeader />, { wrapper: createWrapper() })
+      render(() => <WalletHeader />, { wrapper: createWrapper() })
 
       await user.click(screen.getByText("No wallet configured"))
 
@@ -256,7 +258,7 @@ describe("WalletHeader", () => {
 
     it("closes dialog after successful connection", async () => {
       const user = userEvent.setup()
-      render(<WalletHeader />, { wrapper: createWrapper() })
+      render(() => <WalletHeader />, { wrapper: createWrapper() })
 
       await user.click(screen.getByText("No wallet configured"))
 
@@ -279,7 +281,7 @@ describe("WalletHeader", () => {
 
     it("clears input fields after successful connection", async () => {
       const user = userEvent.setup()
-      render(<WalletHeader />, { wrapper: createWrapper() })
+      render(() => <WalletHeader />, { wrapper: createWrapper() })
 
       await user.click(screen.getByText("No wallet configured"))
 
@@ -313,7 +315,7 @@ describe("WalletHeader", () => {
     }, 20000)
 
     it("auto-opens dialog when autoOpen prop is true and not connected", async () => {
-      render(<WalletHeader autoOpen />, { wrapper: createWrapper() })
+      render(() => <WalletHeader autoOpen />, { wrapper: createWrapper() })
 
       await waitFor(() => {
         expect(screen.getByText("Connect Wallet")).toBeInTheDocument()
@@ -322,14 +324,14 @@ describe("WalletHeader", () => {
 
     it("does not auto-open dialog when connected even with autoOpen prop", async () => {
       mockUseWalletSettings.mockReturnValue({
-        data: {
+        data: () => ({
           accountAddress: "0xConnectedAccountAddress",
           isTestnet: true,
-        },
-        isConnected: true,
+        }),
+        isConnected: () => true,
       })
 
-      render(<WalletHeader autoOpen />, { wrapper: createWrapper() })
+      render(() => <WalletHeader autoOpen />, { wrapper: createWrapper() })
 
       await waitFor(() => {
         expect(screen.queryByText("Connect Wallet")).not.toBeInTheDocument()
@@ -341,14 +343,14 @@ describe("WalletHeader", () => {
     it("shows 'Wallet Settings' title when connected", async () => {
       const user = userEvent.setup()
       mockUseWalletSettings.mockReturnValue({
-        data: {
+        data: () => ({
           accountAddress: "0xConnectedAccountAddress",
           isTestnet: true,
-        },
-        isConnected: true,
+        }),
+        isConnected: () => true,
       })
 
-      render(<WalletHeader />, { wrapper: createWrapper() })
+      render(() => <WalletHeader />, { wrapper: createWrapper() })
 
       await user.click(screen.getByText("0xConn...ress"))
 
@@ -363,14 +365,14 @@ describe("WalletHeader", () => {
     it("shows full account address in dialog when connected", async () => {
       const user = userEvent.setup()
       mockUseWalletSettings.mockReturnValue({
-        data: {
+        data: () => ({
           accountAddress: "0xConnectedAccountAddress",
           isTestnet: true,
-        },
-        isConnected: true,
+        }),
+        isConnected: () => true,
       })
 
-      render(<WalletHeader />, { wrapper: createWrapper() })
+      render(() => <WalletHeader />, { wrapper: createWrapper() })
 
       await user.click(screen.getByText("0xConn...ress"))
 
@@ -380,14 +382,14 @@ describe("WalletHeader", () => {
     it("shows disconnect button when connected", async () => {
       const user = userEvent.setup()
       mockUseWalletSettings.mockReturnValue({
-        data: {
+        data: () => ({
           accountAddress: "0xConnectedAccountAddress",
           isTestnet: true,
-        },
-        isConnected: true,
+        }),
+        isConnected: () => true,
       })
 
-      render(<WalletHeader />, { wrapper: createWrapper() })
+      render(() => <WalletHeader />, { wrapper: createWrapper() })
 
       await user.click(screen.getByText("0xConn...ress"))
 
@@ -398,7 +400,7 @@ describe("WalletHeader", () => {
 
     it("disconnects wallet when disconnect button is clicked", async () => {
       const user = userEvent.setup()
-      const { toast } = await import("sonner")
+      const { toast } = await import("solid-sonner")
 
       localStorage.setItem(
         "hyperliquid-wallet",
@@ -410,14 +412,14 @@ describe("WalletHeader", () => {
       )
 
       mockUseWalletSettings.mockReturnValue({
-        data: {
+        data: () => ({
           accountAddress: "0xConnectedAccountAddress",
           isTestnet: true,
-        },
-        isConnected: true,
+        }),
+        isConnected: () => true,
       })
 
-      render(<WalletHeader />, { wrapper: createWrapper() })
+      render(() => <WalletHeader />, { wrapper: createWrapper() })
 
       await user.click(screen.getByText("0xConn...ress"))
       await user.click(
@@ -440,14 +442,14 @@ describe("WalletHeader", () => {
       )
 
       mockUseWalletSettings.mockReturnValue({
-        data: {
+        data: () => ({
           accountAddress: "0xConnectedAccountAddress",
           isTestnet: true,
-        },
-        isConnected: true,
+        }),
+        isConnected: () => true,
       })
 
-      render(<WalletHeader />, { wrapper: createWrapper() })
+      render(() => <WalletHeader />, { wrapper: createWrapper() })
 
       await user.click(screen.getByText("0xConn...ress"))
       await user.click(
@@ -462,7 +464,7 @@ describe("WalletHeader", () => {
 
   describe("wallet button styling", () => {
     it("has hover styling to indicate clickability", () => {
-      render(<WalletHeader />, { wrapper: createWrapper() })
+      render(() => <WalletHeader />, { wrapper: createWrapper() })
 
       const walletButton = screen.getByText("No wallet configured")
       expect(walletButton).toHaveClass("cursor-pointer")

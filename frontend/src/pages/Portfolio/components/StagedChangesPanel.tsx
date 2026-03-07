@@ -1,6 +1,6 @@
-import { twMerge } from "tailwind-merge"
-import { clsx } from "clsx"
-import { Send } from "lucide-react"
+import { For, Show } from "solid-js"
+import { cn } from "@/lib/cn"
+import { Send } from "lucide-solid"
 import { Button } from "@/components/ui/button"
 import { formatUsd, formatPct } from "../../Prototype/utils/formatters"
 
@@ -58,104 +58,114 @@ export const StagedChangesPanel = () => {
   const hasStaged = stagedTrades.length > 0
 
   return (
-    <div className="flex-1 border border-border rounded flex flex-col min-w-0">
-      <div className="px-2 py-1.5 bg-muted/30 flex items-center justify-between border-b border-border">
-        <div className="flex items-center gap-2">
-          <span className="font-medium">STAGED CHANGES</span>
-          <kbd className="px-1.5 py-0.5 text-[10px] font-mono bg-muted rounded">
-            4
+    <div class="flex-1 border border-border rounded flex flex-col min-w-0">
+      <div class="px-2 py-1.5 bg-muted/30 flex items-center justify-between border-b border-border">
+        <div class="flex items-center gap-2">
+          <span class="font-medium">STAGED CHANGES</span>
+          <kbd class="px-1.5 py-0.5 text-[10px] font-mono bg-muted rounded">
+            {stagedTrades.length}
           </kbd>
         </div>
-        {hasStaged && (
+        <Show when={hasStaged}>
           <button
             type="button"
-            className="text-muted-foreground hover:text-destructive text-[10px]"
+            class="text-muted-foreground hover:text-destructive text-[10px]"
+            onClick={() => {}}
           >
             Clear all
           </button>
-        )}
+        </Show>
       </div>
 
       {/* Header / leverage summary */}
-      <div className="px-2 py-1.5 border-b border-border flex items-center justify-between text-[10px]">
-        <div className="flex items-center gap-2">
-          <span className="text-muted-foreground">Leverage</span>
-          <span className="font-mono">TODO 1.25x → 1.40x</span>
+      <div class="px-2 py-1.5 border-b border-border flex items-center justify-between text-[10px]">
+        <div class="flex items-center gap-2">
+          <span class="text-muted-foreground">Leverage</span>
+          <span class="font-mono">TODO 1.25x → 1.40x</span>
         </div>
-        <Button size="sm" className="h-6 px-2 text-[10px] gap-1">
-          <Send className="h-3 w-3" />
+        <Button
+          size="sm"
+          class="h-6 px-2 text-[10px] gap-1"
+          disabled={!hasStaged}
+          onClick={() => {}}
+        >
+          <Send class="h-3 w-3" />
           Rebalance
         </Button>
       </div>
 
-      {!hasStaged ? (
-        <div className="px-2 py-3 text-muted-foreground text-center text-[10px]">
-          No pending trades. Edit weights or adjust leverage to stage trades.
-        </div>
-      ) : (
-        <div className="max-h-[180px] overflow-auto scrollbar-hide">
-          {stagedTrades.map(stagedTrade => {
-            const sourceConfig = SOURCE_BADGE_CONFIG[stagedTrade.source]
-            return (
-              <div
-                key={stagedTrade.id}
-                className="flex items-center px-2 py-1.5 border-b border-border/30"
-              >
-                <span
-                  className={twMerge(
-                    clsx(
+      <Show
+        when={hasStaged}
+        fallback={
+          <div class="px-2 py-3 text-muted-foreground text-center text-[10px]">
+            No pending trades. Edit weights or adjust leverage to stage trades.
+          </div>
+        }
+      >
+        <div class="max-h-[180px] overflow-auto scrollbar-hide">
+          <For each={stagedTrades}>
+            {stagedTrade => {
+              const sourceConfig = SOURCE_BADGE_CONFIG[stagedTrade.source]
+              return (
+                <div class="flex items-center px-2 py-1.5 border-b border-border/30">
+                  <span
+                    class={cn(
                       "text-[10px] font-medium px-1.5 py-0.5 rounded",
                       stagedTrade.side === "buy"
                         ? "bg-green-500/20 text-green-500"
                         : "bg-red-500/20 text-red-500",
-                    ),
-                  )}
-                >
-                  {stagedTrade.side === "buy" ? "BUY" : "SELL"}
-                </span>
-                <span className="flex-1 px-2 truncate font-medium text-[11px]">
-                  {stagedTrade.underlying}
-                </span>
-                {stagedTrade.previousWeight !== undefined &&
-                  stagedTrade.newWeight !== undefined && (
-                    <span className="text-[9px] text-muted-foreground font-mono mr-2">
-                      {formatPct(stagedTrade.previousWeight)} →{" "}
-                      {formatPct(stagedTrade.newWeight)}
+                    )}
+                  >
+                    {stagedTrade.side === "buy" ? "BUY" : "SELL"}
+                  </span>
+                  <span class="flex-1 px-2 truncate font-medium text-[11px]">
+                    {stagedTrade.underlying}
+                  </span>
+                  <Show
+                    when={
+                      stagedTrade.previousWeight !== undefined &&
+                      stagedTrade.newWeight !== undefined
+                    }
+                  >
+                    <span class="text-[9px] text-muted-foreground font-mono mr-2">
+                      {formatPct(stagedTrade.previousWeight ?? 0)} →{" "}
+                      {formatPct(stagedTrade.newWeight ?? 0)}
                     </span>
-                  )}
-                <span className="text-muted-foreground font-mono text-[10px]">
-                  {formatUsd(stagedTrade.notional)}
-                </span>
-                <span
-                  className={twMerge(
-                    "text-[9px] font-medium ml-2 px-1.5 py-0.5 rounded",
-                    sourceConfig.className,
-                  )}
-                >
-                  {sourceConfig.label}
-                </span>
-              </div>
-            )
-          })}
+                  </Show>
+                  <span class="text-muted-foreground font-mono text-[10px]">
+                    {formatUsd(stagedTrade.notional)}
+                  </span>
+                  <span
+                    class={cn(
+                      "text-[9px] font-medium ml-2 px-1.5 py-0.5 rounded",
+                      sourceConfig.className,
+                    )}
+                  >
+                    {sourceConfig.label}
+                  </span>
+                </div>
+              )
+            }}
+          </For>
         </div>
-      )}
+      </Show>
 
       {/* Simple impact preview */}
-      <div className="px-2 py-1.5 border-t border-border/30 bg-muted/20">
-        <div className="text-[10px] text-muted-foreground font-medium mb-1">
+      <div class="px-2 py-1.5 border-t border-border/30 bg-muted/20">
+        <div class="text-[10px] text-muted-foreground font-medium mb-1">
           IMPACT PREVIEW
         </div>
-        <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[10px]">
-          <div className="flex justify-between">
-            <span className="text-muted-foreground">Notional</span>
-            <span className="font-mono">
-              TODO $50,000 → <span className="text-green-500">$52,300</span>
+        <div class="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[10px]">
+          <div class="flex justify-between">
+            <span class="text-muted-foreground">Notional</span>
+            <span class="font-mono">
+              TODO $50,000 → <span class="text-green-500">$52,300</span>
             </span>
           </div>
-          <div className="flex justify-between">
-            <span className="text-muted-foreground">Leverage</span>
-            <span className="font-mono">
-              TODO 1.25x → <span className="text-yellow-500">1.40x</span>
+          <div class="flex justify-between">
+            <span class="text-muted-foreground">Leverage</span>
+            <span class="font-mono">
+              TODO 1.25x → <span class="text-yellow-500">1.40x</span>
             </span>
           </div>
         </div>

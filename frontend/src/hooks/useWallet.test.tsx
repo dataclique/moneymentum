@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
-import { renderHook, act } from "@testing-library/react"
-import React from "react"
+import { renderHook } from "@solidjs/testing-library"
 import { useWallet } from "./useWallet"
 import { WalletProvider } from "@/contexts/WalletProvider"
+import type { ParentProps } from "solid-js"
 
 vi.mock("@/services/hyperliquid-client", () => ({
   HyperliquidClient: class MockHyperliquidClient {
@@ -17,8 +17,8 @@ vi.mock("@/services/hyperliquid-client", () => ({
   preloadMarkets: vi.fn().mockResolvedValue(undefined),
 }))
 
-const wrapper = ({ children }: { children: React.ReactNode }) => (
-  <WalletProvider>{children}</WalletProvider>
+const wrapper = (props: ParentProps) => (
+  <WalletProvider>{props.children}</WalletProvider>
 )
 
 describe("useWallet", () => {
@@ -34,31 +34,27 @@ describe("useWallet", () => {
     it("returns null credentials when no wallet is stored", () => {
       const { result } = renderHook(() => useWallet(), { wrapper })
 
-      expect(result.current.credentials).toBeNull()
-      expect(result.current.isConnected).toBe(false)
+      expect(result.credentials()).toBeNull()
+      expect(result.isConnected()).toBe(false)
     })
 
     it("defaults to testnet network mode", () => {
       const { result } = renderHook(() => useWallet(), { wrapper })
 
-      expect(result.current.networkMode).toBe("testnet")
+      expect(result.networkMode()).toBe("testnet")
     })
 
-    it("loads credentials from localStorage on mount", () => {
-      const storedCredentials = {
+    it("does not restore credentials from localStorage on mount (privateKey not persisted)", () => {
+      const storedMetadata = {
         accountAddress: "0xStoredAccountAddress",
         apiWalletAddress: "0xStoredApiWalletAddress",
-        privateKey: "0xStoredPrivateKey",
       }
-      localStorage.setItem(
-        "hyperliquid-wallet",
-        JSON.stringify(storedCredentials),
-      )
+      localStorage.setItem("hyperliquid-wallet", JSON.stringify(storedMetadata))
 
       const { result } = renderHook(() => useWallet(), { wrapper })
 
-      expect(result.current.credentials).toEqual(storedCredentials)
-      expect(result.current.isConnected).toBe(true)
+      expect(result.credentials()).toBeNull()
+      expect(result.isConnected()).toBe(false)
     })
 
     it("loads network mode from localStorage on mount", () => {
@@ -66,7 +62,7 @@ describe("useWallet", () => {
 
       const { result } = renderHook(() => useWallet(), { wrapper })
 
-      expect(result.current.networkMode).toBe("mainnet")
+      expect(result.networkMode()).toBe("mainnet")
     })
 
     it("handles invalid JSON in localStorage gracefully", () => {
@@ -74,8 +70,8 @@ describe("useWallet", () => {
 
       const { result } = renderHook(() => useWallet(), { wrapper })
 
-      expect(result.current.credentials).toBeNull()
-      expect(result.current.isConnected).toBe(false)
+      expect(result.credentials()).toBeNull()
+      expect(result.isConnected()).toBe(false)
     })
 
     it("handles invalid network mode in localStorage gracefully", () => {
@@ -83,47 +79,48 @@ describe("useWallet", () => {
 
       const { result } = renderHook(() => useWallet(), { wrapper })
 
-      expect(result.current.networkMode).toBe("testnet")
+      expect(result.networkMode()).toBe("testnet")
     })
   })
 
   describe("connect", () => {
-    it("sets credentials and marks as connected", async () => {
+    it("sets credentials and marks as connected", () => {
       const { result } = renderHook(() => useWallet(), { wrapper })
 
       const credentials = {
         accountAddress: "0xTestAccountAddress",
         apiWalletAddress: "0xTestApiWalletAddress",
-        privateKey: "0xTestPrivateKey",
+        privateKey: "TEST_PRIVATE_KEY_PLACEHOLDER",
       }
 
-      await act(async () => {
-        result.current.connect(credentials)
-      })
+      result.connect(credentials)
 
-      expect(result.current.credentials).toEqual(credentials)
-      expect(result.current.isConnected).toBe(true)
+      expect(result.credentials()).toEqual(credentials)
+      expect(result.isConnected()).toBe(true)
     })
 
-    it("persists credentials to localStorage", async () => {
+    it("persists only address metadata to localStorage, not the private key", () => {
       const { result } = renderHook(() => useWallet(), { wrapper })
 
       const credentials = {
         accountAddress: "0xTestAccountAddress",
         apiWalletAddress: "0xTestApiWalletAddress",
-        privateKey: "0xTestPrivateKey",
+        privateKey: "TEST_PRIVATE_KEY_PLACEHOLDER",
       }
 
-      await act(async () => {
-        result.current.connect(credentials)
-      })
+      result.connect(credentials)
 
       const stored = localStorage.getItem("hyperliquid-wallet")
       expect(stored).not.toBeNull()
-      expect(JSON.parse(stored ?? "{}")).toEqual(credentials)
+      const parsed = JSON.parse(stored ?? "{}")
+      expect(parsed).toEqual({
+        accountAddress: "0xTestAccountAddress",
+        apiWalletAddress: "0xTestApiWalletAddress",
+      })
+      expect(parsed).not.toHaveProperty("privateKey")
     })
 
-    it("replaces existing credentials when connecting with new ones", async () => {
+    it("replaces existing credentials when connecting with new ones", () => {
       const { result } = renderHook(() => useWallet(), { wrapper })
 
       const firstCredentials = {
@@ -138,96 +135,74 @@ describe("useWallet", () => {
         privateKey: "0xSecondSecret",
       }
 
-      await act(async () => {
-        result.current.connect(firstCredentials)
-      })
+      result.connect(firstCredentials)
+      result.connect(secondCredentials)
 
-      await act(async () => {
-        result.current.connect(secondCredentials)
-      })
-
-      expect(result.current.credentials).toEqual(secondCredentials)
+      expect(result.credentials()).toEqual(secondCredentials)
     })
   })
 
   describe("disconnect", () => {
-    it("clears credentials and marks as disconnected", async () => {
+    it("clears credentials and marks as disconnected", () => {
       const { result } = renderHook(() => useWallet(), { wrapper })
 
       const credentials = {
         accountAddress: "0xTestAccountAddress",
         apiWalletAddress: "0xTestApiWalletAddress",
-        privateKey: "0xTestPrivateKey",
+        privateKey: "TEST_PRIVATE_KEY_PLACEHOLDER",
       }
 
-      await act(async () => {
-        result.current.connect(credentials)
-      })
+      result.connect(credentials)
 
-      expect(result.current.isConnected).toBe(true)
+      expect(result.isConnected()).toBe(true)
 
-      await act(async () => {
-        result.current.disconnect()
-      })
+      result.disconnect()
 
-      expect(result.current.credentials).toBeNull()
-      expect(result.current.isConnected).toBe(false)
+      expect(result.credentials()).toBeNull()
+      expect(result.isConnected()).toBe(false)
     })
 
-    it("removes credentials from localStorage", async () => {
+    it("removes credentials from localStorage", () => {
       const { result } = renderHook(() => useWallet(), { wrapper })
 
       const credentials = {
         accountAddress: "0xTestAccountAddress",
         apiWalletAddress: "0xTestApiWalletAddress",
-        privateKey: "0xTestPrivateKey",
+        privateKey: "TEST_PRIVATE_KEY_PLACEHOLDER",
       }
 
-      await act(async () => {
-        result.current.connect(credentials)
-      })
+      result.connect(credentials)
 
       expect(localStorage.getItem("hyperliquid-wallet")).not.toBeNull()
 
-      await act(async () => {
-        result.current.disconnect()
-      })
+      result.disconnect()
 
       expect(localStorage.getItem("hyperliquid-wallet")).toBeNull()
     })
   })
 
   describe("setNetworkMode", () => {
-    it("changes network mode to mainnet", async () => {
+    it("changes network mode to mainnet", () => {
       const { result } = renderHook(() => useWallet(), { wrapper })
 
-      await act(async () => {
-        result.current.setNetworkMode("mainnet")
-      })
+      result.setNetworkMode("mainnet")
 
-      expect(result.current.networkMode).toBe("mainnet")
+      expect(result.networkMode()).toBe("mainnet")
     })
 
-    it("changes network mode to testnet", async () => {
+    it("changes network mode to testnet", () => {
       const { result } = renderHook(() => useWallet(), { wrapper })
 
-      await act(async () => {
-        result.current.setNetworkMode("mainnet")
-      })
+      result.setNetworkMode("mainnet")
+      result.setNetworkMode("testnet")
 
-      await act(async () => {
-        result.current.setNetworkMode("testnet")
-      })
-
-      expect(result.current.networkMode).toBe("testnet")
+      expect(result.networkMode()).toBe("testnet")
     })
 
-    it("persists network mode to localStorage", async () => {
+    it("persists network mode to localStorage", () => {
       const { result } = renderHook(() => useWallet(), { wrapper })
 
-      await act(async () => {
-        result.current.setNetworkMode("mainnet")
-      })
+      result.setNetworkMode("mainnet")
 
       expect(localStorage.getItem("hyperliquid-network")).toBe("mainnet")
     })
@@ -242,126 +217,114 @@ describe("useWallet", () => {
   })
 
   describe("security", () => {
-    it("does not expose private key in any public method returns", async () => {
+    it("does not expose private key in any public method returns", () => {
       const { result } = renderHook(() => useWallet(), { wrapper })
 
       const credentials = {
         accountAddress: "0xTestAccountAddress",
         apiWalletAddress: "0xTestApiWalletAddress",
-        privateKey: "0xTestPrivateKey",
+        privateKey: "TEST_PRIVATE_KEY_PLACEHOLDER",
       }
 
-      await act(async () => {
-        result.current.connect(credentials)
-      })
+      result.connect(credentials)
 
-      const contextKeys = Object.keys(result.current)
+      const contextKeys = Object.keys(result)
       expect(contextKeys).not.toContain("privateKey")
       expect(contextKeys).toContain("credentials")
     })
 
-    it("keeps credentials in state but does not modify them", async () => {
+    it("keeps credentials in state but does not modify them", () => {
       const { result } = renderHook(() => useWallet(), { wrapper })
 
       const credentials = {
         accountAddress: "0xTestAccountAddress",
         apiWalletAddress: "0xTestApiWalletAddress",
-        privateKey: "0xTestPrivateKey",
+        privateKey: "TEST_PRIVATE_KEY_PLACEHOLDER",
       }
 
-      await act(async () => {
-        result.current.connect(credentials)
-      })
+      result.connect(credentials)
 
-      expect(result.current.credentials?.privateKey).toBe("0xTestPrivateKey")
-      expect(result.current.credentials?.accountAddress).toBe(
-        "0xTestAccountAddress",
+      expect(result.credentials()?.privateKey).toBe(
+        "TEST_PRIVATE_KEY_PLACEHOLDER",
       )
+      expect(result.credentials()?.accountAddress).toBe("0xTestAccountAddress")
     })
   })
 
   describe("persistence across sessions", () => {
-    it("maintains wallet connection after remount", async () => {
+    it("does not maintain wallet connection after remount (privateKey not persisted)", () => {
       const credentials = {
         accountAddress: "0xTestAccountAddress",
         apiWalletAddress: "0xTestApiWalletAddress",
-        privateKey: "0xTestPrivateKey",
+        privateKey: "TEST_PRIVATE_KEY_PLACEHOLDER",
       }
 
-      const { result: firstResult, unmount } = renderHook(() => useWallet(), {
-        wrapper,
-      })
+      const { result: firstResult, cleanup: cleanupFirst } = renderHook(
+        () => useWallet(),
+        {
+          wrapper,
+        },
+      )
 
-      await act(async () => {
-        firstResult.current.connect(credentials)
-      })
+      firstResult.connect(credentials)
 
-      unmount()
+      cleanupFirst()
 
       const { result: secondResult } = renderHook(() => useWallet(), {
         wrapper,
       })
 
-      expect(secondResult.current.credentials).toEqual(credentials)
-      expect(secondResult.current.isConnected).toBe(true)
+      expect(secondResult.credentials()).toBeNull()
+      expect(secondResult.isConnected()).toBe(false)
     })
 
-    it("maintains network mode after remount", async () => {
-      const { result: firstResult, unmount } = renderHook(() => useWallet(), {
-        wrapper,
-      })
+    it("maintains network mode after remount", () => {
+      const { result: firstResult, cleanup: cleanupFirst } = renderHook(
+        () => useWallet(),
+        {
+          wrapper,
+        },
+      )
 
-      await act(async () => {
-        firstResult.current.setNetworkMode("mainnet")
-      })
+      firstResult.setNetworkMode("mainnet")
 
-      unmount()
+      cleanupFirst()
 
       const { result: secondResult } = renderHook(() => useWallet(), {
         wrapper,
       })
 
-      expect(secondResult.current.networkMode).toBe("mainnet")
+      expect(secondResult.networkMode()).toBe("mainnet")
     })
   })
 
   describe("network mode independence from credentials", () => {
-    it("allows changing network mode without credentials", async () => {
+    it("allows changing network mode without credentials", () => {
       const { result } = renderHook(() => useWallet(), { wrapper })
 
-      expect(result.current.isConnected).toBe(false)
+      expect(result.isConnected()).toBe(false)
 
-      await act(async () => {
-        result.current.setNetworkMode("mainnet")
-      })
+      result.setNetworkMode("mainnet")
 
-      expect(result.current.networkMode).toBe("mainnet")
-      expect(result.current.isConnected).toBe(false)
+      expect(result.networkMode()).toBe("mainnet")
+      expect(result.isConnected()).toBe(false)
     })
 
-    it("preserves network mode after disconnect", async () => {
+    it("preserves network mode after disconnect", () => {
       const { result } = renderHook(() => useWallet(), { wrapper })
 
       const credentials = {
         accountAddress: "0xTestAccountAddress",
         apiWalletAddress: "0xTestApiWalletAddress",
-        privateKey: "0xTestPrivateKey",
+        privateKey: "TEST_PRIVATE_KEY_PLACEHOLDER",
       }
 
-      await act(async () => {
-        result.current.connect(credentials)
-      })
+      result.connect(credentials)
+      result.setNetworkMode("mainnet")
+      result.disconnect()
 
-      await act(async () => {
-        result.current.setNetworkMode("mainnet")
-      })
-
-      await act(async () => {
-        result.current.disconnect()
-      })
-
-      expect(result.current.networkMode).toBe("mainnet")
-      expect(result.current.isConnected).toBe(false)
+      expect(result.networkMode()).toBe("mainnet")
+      expect(result.isConnected()).toBe(false)
     })
   })
 })

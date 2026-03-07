@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from "react"
-import { ChevronDown, Check } from "lucide-react"
+import { createSignal, createEffect, Show, For, onCleanup } from "solid-js"
+import { ChevronDown, Check } from "lucide-solid"
 import { twMerge } from "tailwind-merge"
 import { clsx } from "clsx"
 import { METRIC_OPTIONS, WINDOW_OPTIONS } from "../metrics/registry"
@@ -14,30 +14,21 @@ interface MetricSelectorProps {
   isFocused?: boolean
 }
 
-export const MetricSelector = ({
-  selectedMetricIds,
-  selectedWindowId,
-  onMetricToggle,
-  onWindowChange,
-  isOpen,
-  onOpenChange,
-  isFocused = false,
-}: MetricSelectorProps) => {
-  const [highlightedIndex, setHighlightedIndex] = useState(0)
+export const MetricSelector = (props: MetricSelectorProps) => {
+  const [highlightedIndex, setHighlightedIndex] = createSignal(0)
 
-  // Reset highlighted index when dropdown opens
-  useEffect(() => {
-    if (isOpen) {
+  createEffect(() => {
+    if (props.isOpen) {
       setHighlightedIndex(0)
     }
-  }, [isOpen])
+  })
 
-  const handleKeyDown = useCallback(
-    (event: KeyboardEvent) => {
-      if (!isFocused) return
+  createEffect(() => {
+    const isFocused = props.isFocused ?? false
+    if (!isFocused) return
 
-      // When dropdown is open, handle navigation within it
-      if (isOpen) {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (props.isOpen) {
         if (event.key === "ArrowDown" || event.key === "j") {
           event.preventDefault()
           setHighlightedIndex(prev =>
@@ -52,185 +43,204 @@ export const MetricSelector = ({
         }
         if (event.key === "Enter" || event.key === " ") {
           event.preventDefault()
-          const metric = METRIC_OPTIONS[highlightedIndex]
-          onMetricToggle(metric.id)
+          const metric = METRIC_OPTIONS[highlightedIndex()]
+          props.onMetricToggle(metric.id)
           return
         }
         if (event.key === "Escape") {
           event.preventDefault()
-          onOpenChange?.(false)
+          props.onOpenChange?.(false)
           return
         }
       }
 
-      // m key toggles metric selector
       if (event.key === "m") {
         event.preventDefault()
-        onOpenChange?.(!isOpen)
+        props.onOpenChange?.(!props.isOpen)
         return
       }
 
-      // When dropdown is closed, arrow keys for window selection
-      if (!isOpen) {
+      const windowVisible = props.selectedMetricIds.some(id =>
+        ["sharpe", "sortino", "volatility"].includes(id),
+      )
+
+      if (!props.isOpen && windowVisible) {
         const currentIndex = WINDOW_OPTIONS.findIndex(
-          w => w.id === selectedWindowId,
+          w => w.id === props.selectedWindowId,
         )
         if (event.key === "ArrowLeft" || event.key === "h") {
+          event.preventDefault()
           if (currentIndex > 0) {
-            onWindowChange(WINDOW_OPTIONS[currentIndex - 1].id)
+            props.onWindowChange(WINDOW_OPTIONS[currentIndex - 1].id)
           }
           return
         }
         if (event.key === "ArrowRight" || event.key === "l") {
+          event.preventDefault()
           if (currentIndex < WINDOW_OPTIONS.length - 1) {
-            onWindowChange(WINDOW_OPTIONS[currentIndex + 1].id)
+            props.onWindowChange(WINDOW_OPTIONS[currentIndex + 1].id)
           }
           return
         }
 
-        // Number keys 1-5 for direct window selection
         if (event.key >= "1" && event.key <= String(WINDOW_OPTIONS.length)) {
+          event.preventDefault()
           const index = parseInt(event.key) - 1
           if (index < WINDOW_OPTIONS.length) {
-            onWindowChange(WINDOW_OPTIONS[index].id)
+            props.onWindowChange(WINDOW_OPTIONS[index].id)
           }
           return
         }
       }
-    },
-    [
-      isFocused,
-      isOpen,
-      onOpenChange,
-      selectedWindowId,
-      onWindowChange,
-      highlightedIndex,
-      onMetricToggle,
-    ],
-  )
-
-  // useEffect justified: Global keyboard listener needed for keyboard navigation
-  // when this component is focused. Cannot use onKeyDown since focus may be elsewhere.
-  useEffect(() => {
-    if (!isFocused) return
-    window.addEventListener("keydown", handleKeyDown)
-    return () => {
-      window.removeEventListener("keydown", handleKeyDown)
     }
-  }, [isFocused, handleKeyDown])
-  const needsWindow = selectedMetricIds.some(id =>
-    ["sharpe", "sortino", "volatility"].includes(id),
-  )
 
-  const selectedNames = selectedMetricIds
-    .map(id => METRIC_OPTIONS.find(m => m.id === id)?.name)
-    .filter(Boolean)
+    window.addEventListener("keydown", handleKeyDown)
+    onCleanup(() => {
+      window.removeEventListener("keydown", handleKeyDown)
+    })
+  })
 
-  const displayText =
-    selectedNames.length === 0
+  const needsWindow = () =>
+    props.selectedMetricIds.some(id =>
+      ["sharpe", "sortino", "volatility"].includes(id),
+    )
+
+  const selectedNames = () =>
+    props.selectedMetricIds
+      .map(id => METRIC_OPTIONS.find(m => m.id === id)?.name)
+      .filter(Boolean)
+
+  const displayText = () => {
+    const names = selectedNames()
+    return names.length === 0
       ? "Select metrics"
-      : selectedNames.length === 1
-        ? selectedNames[0]
-        : `${selectedNames.length} metrics`
+      : names.length === 1
+        ? names[0]
+        : `${names.length} metrics`
+  }
+
+  const isFocused = () => props.isFocused ?? false
 
   return (
     <div
-      className={twMerge(
+      class={twMerge(
         clsx(
           "flex items-center gap-2 relative",
-          isFocused && "ring-1 ring-primary/50 rounded px-1 -mx-1",
+          isFocused() && "ring-1 ring-primary/50 rounded px-1 -mx-1",
         ),
       )}
       data-testid="metric-selector"
     >
-      <div className="relative">
+      <div class="relative">
         <button
-          className="flex items-center gap-1 bg-muted/50 border border-border rounded px-2 py-0.5 text-[10px] hover:bg-muted/70"
-          onClick={() => onOpenChange?.(!isOpen)}
+          type="button"
+          class="flex items-center gap-1 bg-muted/50 border border-border rounded px-2 py-0.5 text-[10px] hover:bg-muted/70"
+          onClick={() => props.onOpenChange?.(!props.isOpen)}
+          aria-expanded={props.isOpen}
+          aria-controls="metric-selector-popup"
         >
-          {isFocused && <span className="text-[8px] opacity-60">m</span>}
-          <span className="truncate max-w-[100px]">{displayText}</span>
+          <Show when={isFocused()}>
+            <span class="text-[8px] opacity-60">m</span>
+          </Show>
+          <span class="truncate max-w-[100px]">{displayText()}</span>
           <ChevronDown
-            className={twMerge(
-              clsx("h-3 w-3 transition-transform", isOpen && "rotate-180"),
+            class={twMerge(
+              clsx(
+                "h-3 w-3 transition-transform",
+                props.isOpen && "rotate-180",
+              ),
             )}
           />
         </button>
-        {isOpen && (
-          <div className="absolute top-full left-0 mt-1 z-50 bg-popover border border-border rounded-md shadow-md min-w-[140px] py-1">
-            {METRIC_OPTIONS.map((metric, index) => {
-              const isSelected = selectedMetricIds.includes(metric.id)
-              const isHighlighted = highlightedIndex === index
-              return (
-                <button
-                  key={metric.id}
-                  onClick={() => {
-                    onMetricToggle(metric.id)
-                  }}
-                  className={twMerge(
-                    clsx(
-                      "w-full flex items-center gap-2 px-2 py-1 text-[10px] text-left hover:bg-muted/50",
-                      isHighlighted && "bg-muted/70",
-                    ),
-                  )}
-                >
-                  <span
-                    className={twMerge(
+        <Show when={props.isOpen}>
+          <div
+            id="metric-selector-popup"
+            role="listbox"
+            aria-label="Select metrics"
+            class="absolute top-full left-0 mt-1 z-50 bg-popover border border-border rounded-md shadow-md min-w-[140px] py-1"
+          >
+            <For each={METRIC_OPTIONS}>
+              {(metric, index) => {
+                const isSelected = () =>
+                  props.selectedMetricIds.includes(metric.id)
+                const isHighlighted = () => highlightedIndex() === index()
+                return (
+                  <button
+                    type="button"
+                    role="option"
+                    aria-selected={props.selectedMetricIds.includes(metric.id)}
+                    onClick={() => {
+                      props.onMetricToggle(metric.id)
+                    }}
+                    class={twMerge(
                       clsx(
-                        "w-3.5 h-3.5 rounded-sm border border-border flex items-center justify-center",
-                        isSelected && "bg-primary border-primary",
+                        "w-full flex items-center gap-2 px-2 py-1 text-[10px] text-left hover:bg-muted/50",
+                        isHighlighted() && "bg-muted/70",
                       ),
                     )}
                   >
-                    {isSelected && (
-                      <Check className="h-2.5 w-2.5 text-primary-foreground" />
-                    )}
-                  </span>
-                  {metric.name}
-                </button>
-              )
-            })}
-            {isFocused && (
-              <div className="border-t border-border mt-1 pt-1 px-2 text-[8px] text-muted-foreground">
-                <kbd className="px-0.5 bg-muted rounded">j</kbd>/
-                <kbd className="px-0.5 bg-muted rounded">k</kbd> navigate,{" "}
-                <kbd className="px-0.5 bg-muted rounded">Enter</kbd> toggle
+                    <span
+                      class={twMerge(
+                        clsx(
+                          "w-3.5 h-3.5 rounded-sm border border-border flex items-center justify-center",
+                          isSelected() && "bg-primary border-primary",
+                        ),
+                      )}
+                    >
+                      <Show when={isSelected()}>
+                        <Check class="h-2.5 w-2.5 text-primary-foreground" />
+                      </Show>
+                    </span>
+                    {metric.name}
+                  </button>
+                )
+              }}
+            </For>
+            <Show when={isFocused()}>
+              <div class="border-t border-border mt-1 pt-1 px-2 text-[8px] text-muted-foreground">
+                <kbd class="px-0.5 bg-muted rounded">j</kbd>/
+                <kbd class="px-0.5 bg-muted rounded">k</kbd> navigate,{" "}
+                <kbd class="px-0.5 bg-muted rounded">Enter</kbd> toggle
               </div>
-            )}
+            </Show>
           </div>
-        )}
+        </Show>
       </div>
 
-      {needsWindow && (
-        <div className="flex items-center gap-0.5">
-          {isFocused && (
-            <span className="text-[8px] text-muted-foreground mr-0.5">←→</span>
-          )}
-          {WINDOW_OPTIONS.map((window, index) => (
-            <button
-              key={window.id}
-              onClick={() => {
-                onWindowChange(window.id)
-              }}
-              className={twMerge(
-                clsx(
-                  "px-1 py-0.5 text-[9px] rounded transition-colors",
-                  selectedWindowId === window.id
-                    ? "bg-muted text-foreground"
-                    : "text-muted-foreground hover:bg-muted/50",
-                ),
-              )}
-            >
-              {isFocused && (
-                <span className="text-[8px] opacity-60 mr-0.5">
-                  {index + 1}
-                </span>
-              )}
-              {window.label}
-            </button>
-          ))}
+      <Show when={needsWindow()}>
+        <div class="flex items-center gap-0.5">
+          <Show when={isFocused()}>
+            <span class="text-[8px] text-muted-foreground mr-0.5">
+              &#8592;&#8594;
+            </span>
+          </Show>
+          <For each={WINDOW_OPTIONS}>
+            {(windowOpt, index) => (
+              <button
+                type="button"
+                onClick={() => {
+                  props.onWindowChange(windowOpt.id)
+                }}
+                class={twMerge(
+                  clsx(
+                    "px-1 py-0.5 text-[9px] rounded transition-colors",
+                    props.selectedWindowId === windowOpt.id
+                      ? "bg-muted text-foreground"
+                      : "text-muted-foreground hover:bg-muted/50",
+                  ),
+                )}
+              >
+                <Show when={isFocused()}>
+                  <span class="text-[8px] opacity-60 mr-0.5">
+                    {index() + 1}
+                  </span>
+                </Show>
+                {windowOpt.label}
+              </button>
+            )}
+          </For>
         </div>
-      )}
+      </Show>
     </div>
   )
 }

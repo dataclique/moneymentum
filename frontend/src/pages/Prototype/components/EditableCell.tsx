@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from "react"
+import { createSignal, createEffect, Show, onCleanup } from "solid-js"
 import { twMerge } from "tailwind-merge"
 import { clsx } from "clsx"
 
@@ -11,8 +11,8 @@ interface EditableCellProps {
   onCommit: (newValue: number) => void
   isSelected?: boolean
   editKey?: string
-  directEdit?: boolean // When true, typing numbers directly starts editing
-  className?: string
+  directEdit?: boolean
+  class?: string
 }
 
 const formatValue = (value: number, format: CellFormat): string => {
@@ -43,63 +43,57 @@ const parseInput = (input: string, format: CellFormat): number | null => {
   }
 }
 
-export const EditableCell = ({
-  value,
-  format,
-  onCommit,
-  isSelected = false,
-  editKey,
-  directEdit = false,
-  className,
-}: EditableCellProps) => {
-  const [editState, setEditState] = useState<EditState>("viewing")
-  const [inputValue, setInputValue] = useState("")
-  const inputRef = useRef<HTMLInputElement>(null)
+export const EditableCell = (props: EditableCellProps) => {
+  const [editState, setEditState] = createSignal<EditState>("viewing")
+  const [inputValue, setInputValue] = createSignal("")
+  const [seeded, setSeeded] = createSignal(false)
+  let inputRef: HTMLInputElement | undefined
 
-  const startEditing = useCallback(
-    (initialValue?: string) => {
-      if (initialValue !== undefined) {
-        setInputValue(initialValue)
+  const startEditing = (initialValue?: string) => {
+    if (initialValue !== undefined) {
+      setInputValue(initialValue)
+      setSeeded(true)
+    } else {
+      setInputValue(
+        props.format === "percent"
+          ? (props.value * 100).toFixed(1)
+          : props.format === "currency"
+            ? props.value.toFixed(0)
+            : props.value.toFixed(2),
+      )
+      setSeeded(false)
+    }
+    setEditState("editing")
+  }
+
+  const commitEdit = () => {
+    const parsed = parseInput(inputValue(), props.format)
+    if (parsed !== null && parsed !== props.value) {
+      props.onCommit(parsed)
+    }
+    setEditState("viewing")
+  }
+
+  const cancelEdit = () => {
+    setEditState("viewing")
+  }
+
+  createEffect(() => {
+    if (editState() === "editing" && inputRef) {
+      inputRef.focus()
+      if (seeded()) {
+        const length = inputRef.value.length
+        inputRef.setSelectionRange(length, length)
       } else {
-        setInputValue(
-          format === "percent"
-            ? (value * 100).toFixed(1)
-            : format === "currency"
-              ? value.toFixed(0)
-              : value.toFixed(2),
-        )
+        inputRef.select()
       }
-      setEditState("editing")
-    },
-    [value, format],
-  )
-
-  const commitEdit = useCallback(() => {
-    const parsed = parseInput(inputValue, format)
-    if (parsed !== null && parsed !== value) {
-      onCommit(parsed)
     }
-    setEditState("viewing")
-  }, [inputValue, format, value, onCommit])
+  })
 
-  const cancelEdit = useCallback(() => {
-    setEditState("viewing")
-  }, [])
-
-  // useEffect justified: Focus management requires DOM manipulation.
-  // React does not provide declarative focus control.
-  useEffect(() => {
-    if (editState === "editing" && inputRef.current) {
-      inputRef.current.focus()
-      inputRef.current.select()
-    }
-  }, [editState])
-
-  // useEffect justified: Global keyboard shortcut to start editing when cell is selected.
-  // Must listen at document level to capture keys regardless of current focus.
-  useEffect(() => {
-    if (!isSelected || editState === "editing") return
-    if (!editKey && !directEdit) return
+  createEffect(() => {
+    const isSelected = props.isSelected ?? false
+    if (!isSelected || editState() === "editing") return
+    if (!props.editKey && !props.directEdit) return
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (
@@ -109,17 +103,14 @@ export const EditableCell = ({
         return
       }
 
-      // editKey triggers editing with current value
-      if (editKey && event.key.toLowerCase() === editKey.toLowerCase()) {
+      if (event.key.toLowerCase() === props.editKey?.toLowerCase()) {
         event.preventDefault()
         startEditing()
         return
       }
 
-      // directEdit: typing a number starts editing with that number
-      // Exclude 1, 2, 3, 4 which are used for panel focus shortcuts
       if (
-        directEdit &&
+        props.directEdit &&
         /^[0-9.]$/.test(event.key) &&
         !["1", "2", "3", "4"].includes(event.key)
       ) {
@@ -130,12 +121,12 @@ export const EditableCell = ({
     }
 
     document.addEventListener("keydown", handleKeyDown)
-    return () => {
+    onCleanup(() => {
       document.removeEventListener("keydown", handleKeyDown)
-    }
-  }, [isSelected, editKey, directEdit, editState, startEditing])
+    })
+  })
 
-  const handleKeyDown = (event: React.KeyboardEvent) => {
+  const handleKeyDown = (event: KeyboardEvent) => {
     if (event.key === "Enter") {
       event.preventDefault()
       commitEdit()
@@ -145,49 +136,52 @@ export const EditableCell = ({
     }
   }
 
-  if (editState === "editing") {
-    return (
+  return (
+    <Show
+      when={editState() === "editing"}
+      fallback={
+        <button
+          type="button"
+          onClick={event => {
+            event.stopPropagation()
+            startEditing()
+          }}
+          class={twMerge(
+            clsx(
+              "cursor-pointer hover:bg-muted/50 px-1 py-0.5 rounded inline-flex items-center gap-1",
+              "border-b border-dashed border-muted-foreground/40 hover:border-primary/60",
+              "bg-transparent text-inherit font-inherit text-left",
+              (props.isSelected ?? false) && "bg-primary/20 border-primary/60",
+            ),
+            props.class,
+          )}
+        >
+          {formatValue(props.value, props.format)}
+          <Show when={(props.isSelected ?? false) && props.editKey}>
+            <kbd class="text-[8px] px-1 py-0.5 bg-muted/60 rounded font-mono text-muted-foreground">
+              {props.editKey}
+            </kbd>
+          </Show>
+        </button>
+      }
+    >
       <input
         ref={inputRef}
         type="text"
-        value={inputValue}
-        onChange={event => {
-          setInputValue(event.target.value)
+        value={inputValue()}
+        onInput={event => {
+          setInputValue(event.currentTarget.value)
         }}
         onKeyDown={handleKeyDown}
         onBlur={commitEdit}
-        className={twMerge(
+        class={twMerge(
           clsx(
             "w-full bg-muted border border-primary rounded px-1 py-0.5 text-right font-mono",
             "focus:outline-none focus:ring-1 focus:ring-primary",
           ),
-          className,
+          props.class,
         )}
       />
-    )
-  }
-
-  return (
-    <span
-      onClick={event => {
-        event.stopPropagation()
-        startEditing()
-      }}
-      className={twMerge(
-        clsx(
-          "cursor-pointer hover:bg-muted/50 px-1 py-0.5 rounded inline-flex items-center gap-1",
-          "border-b border-dashed border-muted-foreground/40 hover:border-primary/60",
-          isSelected && "bg-primary/20 border-primary/60",
-        ),
-        className,
-      )}
-    >
-      {formatValue(value, format)}
-      {isSelected && editKey && (
-        <kbd className="text-[8px] px-1 py-0.5 bg-muted/60 rounded font-mono text-muted-foreground">
-          {editKey}
-        </kbd>
-      )}
-    </span>
+    </Show>
   )
 }

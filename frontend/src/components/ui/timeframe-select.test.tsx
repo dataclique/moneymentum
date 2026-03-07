@@ -1,72 +1,65 @@
 import { describe, it, expect, vi } from "vitest"
-import { render, screen } from "@testing-library/react"
+import { createSignal } from "solid-js"
+import { render, screen } from "@solidjs/testing-library"
 import { TimeframeSelect, type Timeframe } from "./timeframe-select"
 
 describe("TimeframeSelect", () => {
   it("renders with the provided value", () => {
     const mockOnChange = vi.fn()
-    render(<TimeframeSelect value="1h" onValueChange={mockOnChange} />)
+    render(() => <TimeframeSelect value="1h" onValueChange={mockOnChange} />)
 
-    expect(screen.getByRole("combobox")).toBeInTheDocument()
+    expect(screen.getByRole("button")).toBeInTheDocument()
   })
 
   it("displays the correct value for 1h", () => {
     const mockOnChange = vi.fn()
-    render(<TimeframeSelect value="1h" onValueChange={mockOnChange} />)
+    render(() => <TimeframeSelect value="1h" onValueChange={mockOnChange} />)
 
     expect(screen.getByText("1 hour")).toBeInTheDocument()
   })
 
   it("displays the correct value for 15m", () => {
     const mockOnChange = vi.fn()
-    render(<TimeframeSelect value="15m" onValueChange={mockOnChange} />)
+    render(() => <TimeframeSelect value="15m" onValueChange={mockOnChange} />)
 
     expect(screen.getByText("15 minutes")).toBeInTheDocument()
   })
 
-  it("accepts only valid Timeframe values", () => {
-    const mockOnChange = vi.fn<(value: Timeframe) => void>()
+  it("renders trigger with correct role", () => {
+    const mockOnChange = vi.fn()
+    render(() => <TimeframeSelect value="1h" onValueChange={mockOnChange} />)
 
-    render(<TimeframeSelect value="1h" onValueChange={mockOnChange} />)
-
-    const validValues: Timeframe[] = ["1h", "15m"]
-    validValues.forEach(value => {
-      expect(value).toMatch(/^(1h|15m)$/)
-    })
+    const trigger = screen.getByRole("button")
+    expect(trigger).toBeInTheDocument()
+    expect(screen.getByText("1 hour")).toBeInTheDocument()
   })
 
   it("applies custom className", () => {
     const mockOnChange = vi.fn()
     const customClass = "custom-test-class"
 
-    render(
+    render(() => (
       <TimeframeSelect
         value="1h"
         onValueChange={mockOnChange}
-        className={customClass}
-      />,
-    )
+        class={customClass}
+      />
+    ))
 
-    const trigger = screen.getByRole("combobox")
+    const trigger = screen.getByRole("button")
     expect(trigger.className).toContain(customClass)
   })
 
-  it("enforces type safety with Timeframe union type", () => {
+  it("updates displayed value when value prop changes", () => {
     const mockOnChange = vi.fn<(value: Timeframe) => void>()
+    const [value, setValue] = createSignal<Timeframe>("1h")
 
-    render(<TimeframeSelect value="1h" onValueChange={mockOnChange} />)
+    render(() => (
+      <TimeframeSelect value={value()} onValueChange={mockOnChange} />
+    ))
+    expect(screen.getByText("1 hour")).toBeInTheDocument()
 
-    const validTimeframe: Timeframe = "15m"
-    expect(validTimeframe).toBe("15m")
-  })
-
-  it("callback receives Timeframe type", () => {
-    const mockOnChange = vi.fn<(value: Timeframe) => void>()
-
-    render(<TimeframeSelect value="1h" onValueChange={mockOnChange} />)
-
-    mockOnChange("15m")
-
-    expect(mockOnChange).toHaveBeenCalledWith("15m")
+    setValue("15m")
+    expect(screen.getByText("15 minutes")).toBeInTheDocument()
   })
 })

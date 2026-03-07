@@ -1,3 +1,4 @@
+import { For } from "solid-js"
 import { clsx } from "clsx"
 import { twMerge } from "tailwind-merge"
 
@@ -43,93 +44,90 @@ const mockConcentration: ConcentrationMetric[] = [
 
 export const FactorsPanel = () => {
   return (
-    <div className="shrink-0 border border-border rounded flex flex-col min-w-0 relative">
-      <div className="px-2 py-1 border-b border-border bg-muted/30 font-medium flex items-center justify-between">
+    <div class="shrink-0 border border-border rounded flex flex-col min-w-0 relative">
+      <div class="px-2 py-1 border-b border-border bg-muted/30 font-medium flex items-center justify-between">
         <span>FACTORS</span>
-        <div className="flex items-center gap-2">
+        <div class="flex items-center gap-2">
           <button
             type="button"
-            className="text-muted-foreground hover:text-foreground"
+            class="text-muted-foreground hover:text-foreground"
             title="Configure factors (f)"
           >
             {/* TODO: factor config button */}
           </button>
-          <kbd className="px-1.5 py-0.5 text-[10px] font-mono bg-muted rounded">
+          <kbd class="px-1.5 py-0.5 text-[10px] font-mono bg-muted rounded">
             f
           </kbd>
         </div>
       </div>
-      <div className="flex-1 flex flex-col p-2 gap-3 overflow-auto scrollbar-hide">
+      <div class="flex-1 flex flex-col p-2 gap-3 overflow-auto scrollbar-hide">
         {/* Exposures */}
-        <div className="space-y-1.5">
-          <div className="text-[10px] text-muted-foreground font-medium">
+        <div class="space-y-1.5">
+          <div class="text-[10px] text-muted-foreground font-medium">
             Exposures
           </div>
-          {mockExposures.map(exposure => (
-            <div
-              key={exposure.name}
-              className="flex items-center justify-between"
-            >
-              <span className="text-muted-foreground truncate">
-                {exposure.name}
-              </span>
-              <span className="font-mono">
-                {exposure.value >= 0 ? "+" : ""}
-                {exposure.value.toFixed(2)}
-              </span>
-            </div>
-          ))}
+          <For each={mockExposures}>
+            {exposure => (
+              <div class="flex items-center justify-between">
+                <span class="text-muted-foreground truncate">
+                  {exposure.name}
+                </span>
+                <span class="font-mono">
+                  {exposure.value >= 0 ? "+" : ""}
+                  {exposure.value.toFixed(2)}
+                </span>
+              </div>
+            )}
+          </For>
         </div>
 
         {/* Attribution */}
-        <div className="border-t border-border/50 pt-2">
-          <div className="text-[10px] text-muted-foreground font-medium mb-1.5">
+        <div class="border-t border-border/50 pt-2">
+          <div class="text-[10px] text-muted-foreground font-medium mb-1.5">
             Attribution
           </div>
-          {mockAttribution.map(attribution => (
-            <div
-              key={attribution.factor}
-              className="flex items-center justify-between mb-1"
-            >
-              <span className="text-muted-foreground truncate">
-                {attribution.factor}
-              </span>
-              <span
-                className={twMerge(
-                  clsx(
-                    "w-14 text-right font-mono",
-                    attribution.contribution >= 0
-                      ? "text-green-500"
-                      : "text-red-500",
-                  ),
-                )}
-              >
-                {attribution.contribution >= 0 ? "+" : ""}
-                {(attribution.contribution * 100).toFixed(1)}%
-              </span>
-            </div>
-          ))}
+          <For each={mockAttribution}>
+            {attribution => (
+              <div class="flex items-center justify-between mb-1">
+                <span class="text-muted-foreground truncate">
+                  {attribution.factor}
+                </span>
+                <span
+                  class={twMerge(
+                    clsx(
+                      "w-14 text-right font-mono",
+                      attribution.contribution >= 0
+                        ? "text-green-500"
+                        : "text-red-500",
+                    ),
+                  )}
+                >
+                  {attribution.contribution >= 0 ? "+" : ""}
+                  {(attribution.contribution * 100).toFixed(1)}%
+                </span>
+              </div>
+            )}
+          </For>
         </div>
 
         {/* Concentration */}
-        <div className="border-t border-border/50 pt-2">
-          <div className="text-[10px] text-muted-foreground font-medium mb-1.5">
+        <div class="border-t border-border/50 pt-2">
+          <div class="text-[10px] text-muted-foreground font-medium mb-1.5">
             Concentration
           </div>
-          <div className="space-y-1">
-            {mockConcentration.map(metric => (
-              <div
-                key={metric.metric}
-                className="flex items-center justify-between"
-              >
-                <span className="text-muted-foreground">{metric.metric}</span>
-                <span className="font-mono">
-                  {metric.value <= 1
-                    ? `${(metric.value * 100).toFixed(0)}%`
-                    : metric.value.toFixed(1)}
-                </span>
-              </div>
-            ))}
+          <div class="space-y-1">
+            <For each={mockConcentration}>
+              {metric => (
+                <div class="flex items-center justify-between">
+                  <span class="text-muted-foreground">{metric.metric}</span>
+                  <span class="font-mono">
+                    {metric.value <= 1
+                      ? `${(metric.value * 100).toFixed(0)}%`
+                      : metric.value.toFixed(1)}
+                  </span>
+                </div>
+              )}
+            </For>
           </div>
         </div>
       </div>

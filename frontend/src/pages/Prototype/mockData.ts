@@ -110,7 +110,7 @@ export interface MockPosition {
   symbol: string
   underlying: string
   side: "long" | "short"
-  weight: number // Portfolio weight (0-1), notional derived from NAV × weight × leverage
+  weight: number // Portfolio weight (0-1), notional derived from NAV * weight * leverage
 }
 
 // Realistic portfolio with multiple instruments per underlying

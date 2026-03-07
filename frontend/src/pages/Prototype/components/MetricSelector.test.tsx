@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
-import { render, screen } from "@testing-library/react"
+import { render, screen } from "@solidjs/testing-library"
 import userEvent from "@testing-library/user-event"
+import { createSignal } from "solid-js"
 import { MetricSelector } from "./MetricSelector"
 import { METRIC_OPTIONS, WINDOW_OPTIONS } from "../metrics/registry"
 
@@ -21,24 +22,24 @@ describe("MetricSelector", () => {
 
   describe("display", () => {
     it("renders with single selected metric name", () => {
-      render(
-        <MetricSelector {...defaultProps} selectedMetricIds={["equity"]} />,
-      )
+      render(() => (
+        <MetricSelector {...defaultProps} selectedMetricIds={["equity"]} />
+      ))
       expect(screen.getByText("Equity Curve")).toBeInTheDocument()
     })
 
     it("renders count for multiple selected metrics", () => {
-      render(
+      render(() => (
         <MetricSelector
           {...defaultProps}
           selectedMetricIds={["equity", "drawdown", "sharpe"]}
-        />,
-      )
+        />
+      ))
       expect(screen.getByText("3 metrics")).toBeInTheDocument()
     })
 
     it("renders 'Select metrics' when none selected", () => {
-      render(<MetricSelector {...defaultProps} selectedMetricIds={[]} />)
+      render(() => <MetricSelector {...defaultProps} selectedMetricIds={[]} />)
       expect(screen.getByText("Select metrics")).toBeInTheDocument()
     })
   })
@@ -47,20 +48,20 @@ describe("MetricSelector", () => {
     it("calls onOpenChange when clicking the button", async () => {
       const user = userEvent.setup()
       const onOpenChange = vi.fn()
-      render(
+      render(() => (
         <MetricSelector
           {...defaultProps}
           onOpenChange={onOpenChange}
           isOpen={false}
-        />,
-      )
+        />
+      ))
 
       await user.click(screen.getByRole("button", { name: /equity curve/i }))
       expect(onOpenChange).toHaveBeenCalledWith(true)
     })
 
     it("shows dropdown content when open", () => {
-      render(<MetricSelector {...defaultProps} isOpen={true} />)
+      render(() => <MetricSelector {...defaultProps} isOpen={true} />)
 
       // Check that dropdown options are visible (getAllByText since name may appear in button too)
       for (const metric of METRIC_OPTIONS) {
@@ -72,26 +73,26 @@ describe("MetricSelector", () => {
     it("toggles metric when clicking option in dropdown", async () => {
       const user = userEvent.setup()
       const onMetricToggle = vi.fn()
-      render(
+      render(() => (
         <MetricSelector
           {...defaultProps}
           isOpen={true}
           onMetricToggle={onMetricToggle}
-        />,
-      )
+        />
+      ))
 
       await user.click(screen.getByText("Drawdown"))
       expect(onMetricToggle).toHaveBeenCalledWith("drawdown")
     })
 
     it("shows checkmark for selected metrics", () => {
-      render(
+      render(() => (
         <MetricSelector
           {...defaultProps}
           isOpen={true}
           selectedMetricIds={["equity", "drawdown"]}
-        />,
-      )
+        />
+      ))
 
       // The checkmarks are rendered as SVG icons within checked options
       const checkmarks = document.querySelectorAll(
@@ -105,13 +106,13 @@ describe("MetricSelector", () => {
     it("opens dropdown when m is pressed", async () => {
       const user = userEvent.setup()
       const onOpenChange = vi.fn()
-      render(
+      render(() => (
         <MetricSelector
           {...defaultProps}
           isFocused={true}
           onOpenChange={onOpenChange}
-        />,
-      )
+        />
+      ))
 
       await user.keyboard("m")
       expect(onOpenChange).toHaveBeenCalledWith(true)
@@ -120,14 +121,14 @@ describe("MetricSelector", () => {
     it("closes dropdown when m is pressed while open", async () => {
       const user = userEvent.setup()
       const onOpenChange = vi.fn()
-      render(
+      render(() => (
         <MetricSelector
           {...defaultProps}
           isFocused={true}
           isOpen={true}
           onOpenChange={onOpenChange}
-        />,
-      )
+        />
+      ))
 
       await user.keyboard("m")
       expect(onOpenChange).toHaveBeenCalledWith(false)
@@ -135,9 +136,9 @@ describe("MetricSelector", () => {
 
     it("moves highlight down with j key", async () => {
       const user = userEvent.setup()
-      const { container } = render(
-        <MetricSelector {...defaultProps} isFocused={true} isOpen={true} />,
-      )
+      const { container } = render(() => (
+        <MetricSelector {...defaultProps} isFocused={true} isOpen={true} />
+      ))
 
       await user.keyboard("j")
 
@@ -148,9 +149,9 @@ describe("MetricSelector", () => {
 
     it("moves highlight up with k key", async () => {
       const user = userEvent.setup()
-      render(
-        <MetricSelector {...defaultProps} isFocused={true} isOpen={true} />,
-      )
+      render(() => (
+        <MetricSelector {...defaultProps} isFocused={true} isOpen={true} />
+      ))
 
       // Move down first, then back up
       await user.keyboard("j")
@@ -164,9 +165,9 @@ describe("MetricSelector", () => {
 
     it("moves highlight down with ArrowDown", async () => {
       const user = userEvent.setup()
-      render(
-        <MetricSelector {...defaultProps} isFocused={true} isOpen={true} />,
-      )
+      render(() => (
+        <MetricSelector {...defaultProps} isFocused={true} isOpen={true} />
+      ))
 
       await user.keyboard("{ArrowDown}")
 
@@ -176,9 +177,9 @@ describe("MetricSelector", () => {
 
     it("moves highlight up with ArrowUp", async () => {
       const user = userEvent.setup()
-      render(
-        <MetricSelector {...defaultProps} isFocused={true} isOpen={true} />,
-      )
+      render(() => (
+        <MetricSelector {...defaultProps} isFocused={true} isOpen={true} />
+      ))
 
       await user.keyboard("{ArrowDown}")
       await user.keyboard("{ArrowUp}")
@@ -190,14 +191,14 @@ describe("MetricSelector", () => {
     it("toggles highlighted metric with Enter", async () => {
       const user = userEvent.setup()
       const onMetricToggle = vi.fn()
-      render(
+      render(() => (
         <MetricSelector
           {...defaultProps}
           isFocused={true}
           isOpen={true}
           onMetricToggle={onMetricToggle}
-        />,
-      )
+        />
+      ))
 
       // Highlight is on first item by default (equity)
       await user.keyboard("{Enter}")
@@ -207,14 +208,14 @@ describe("MetricSelector", () => {
     it("toggles highlighted metric with Space", async () => {
       const user = userEvent.setup()
       const onMetricToggle = vi.fn()
-      render(
+      render(() => (
         <MetricSelector
           {...defaultProps}
           isFocused={true}
           isOpen={true}
           onMetricToggle={onMetricToggle}
-        />,
-      )
+        />
+      ))
 
       await user.keyboard(" ")
       expect(onMetricToggle).toHaveBeenCalledWith(METRIC_OPTIONS[0].id)
@@ -223,14 +224,14 @@ describe("MetricSelector", () => {
     it("closes dropdown with Escape", async () => {
       const user = userEvent.setup()
       const onOpenChange = vi.fn()
-      render(
+      render(() => (
         <MetricSelector
           {...defaultProps}
           isFocused={true}
           isOpen={true}
           onOpenChange={onOpenChange}
-        />,
-      )
+        />
+      ))
 
       await user.keyboard("{Escape}")
       expect(onOpenChange).toHaveBeenCalledWith(false)
@@ -239,14 +240,14 @@ describe("MetricSelector", () => {
     it("does not exceed bounds when moving down", async () => {
       const user = userEvent.setup()
       const onMetricToggle = vi.fn()
-      render(
+      render(() => (
         <MetricSelector
           {...defaultProps}
           isFocused={true}
           isOpen={true}
           onMetricToggle={onMetricToggle}
-        />,
-      )
+        />
+      ))
 
       // Press j many times (more than options)
       for (let i = 0; i < METRIC_OPTIONS.length + 5; i++) {
@@ -263,14 +264,14 @@ describe("MetricSelector", () => {
     it("does not go below 0 when moving up", async () => {
       const user = userEvent.setup()
       const onMetricToggle = vi.fn()
-      render(
+      render(() => (
         <MetricSelector
           {...defaultProps}
           isFocused={true}
           isOpen={true}
           onMetricToggle={onMetricToggle}
-        />,
-      )
+        />
+      ))
 
       // Try to go up from the start
       await user.keyboard("k")
@@ -284,13 +285,13 @@ describe("MetricSelector", () => {
 
   describe("window selection when dropdown closed", () => {
     it("shows window buttons when a metric needing window is selected", () => {
-      render(
+      render(() => (
         <MetricSelector
           {...defaultProps}
           selectedMetricIds={["sharpe"]}
           isOpen={false}
-        />,
-      )
+        />
+      ))
 
       for (const window of WINDOW_OPTIONS) {
         expect(screen.getByText(window.label)).toBeInTheDocument()
@@ -298,13 +299,13 @@ describe("MetricSelector", () => {
     })
 
     it("does not show window buttons for non-windowed metrics", () => {
-      render(
+      render(() => (
         <MetricSelector
           {...defaultProps}
           selectedMetricIds={["equity"]}
           isOpen={false}
-        />,
-      )
+        />
+      ))
 
       for (const window of WINDOW_OPTIONS) {
         expect(screen.queryByText(window.label)).not.toBeInTheDocument()
@@ -314,15 +315,15 @@ describe("MetricSelector", () => {
     it("changes window with number keys when focused and closed", async () => {
       const user = userEvent.setup()
       const onWindowChange = vi.fn()
-      render(
+      render(() => (
         <MetricSelector
           {...defaultProps}
           selectedMetricIds={["sharpe"]}
           isFocused={true}
           isOpen={false}
           onWindowChange={onWindowChange}
-        />,
-      )
+        />
+      ))
 
       await user.keyboard("1")
       expect(onWindowChange).toHaveBeenCalledWith(WINDOW_OPTIONS[0].id)
@@ -331,7 +332,7 @@ describe("MetricSelector", () => {
     it("changes window with arrow keys when focused and closed", async () => {
       const user = userEvent.setup()
       const onWindowChange = vi.fn()
-      render(
+      render(() => (
         <MetricSelector
           {...defaultProps}
           selectedMetricIds={["sharpe"]}
@@ -339,8 +340,8 @@ describe("MetricSelector", () => {
           isFocused={true}
           isOpen={false}
           onWindowChange={onWindowChange}
-        />,
-      )
+        />
+      ))
 
       await user.keyboard("{ArrowRight}")
       expect(onWindowChange).toHaveBeenCalled()
@@ -349,7 +350,7 @@ describe("MetricSelector", () => {
     it("changes window with h/l vim keys when focused and closed", async () => {
       const user = userEvent.setup()
       const onWindowChange = vi.fn()
-      render(
+      render(() => (
         <MetricSelector
           {...defaultProps}
           selectedMetricIds={["sharpe"]}
@@ -357,8 +358,8 @@ describe("MetricSelector", () => {
           isFocused={true}
           isOpen={false}
           onWindowChange={onWindowChange}
-        />,
-      )
+        />
+      ))
 
       await user.keyboard("l")
       expect(onWindowChange).toHaveBeenCalled()
@@ -367,13 +368,13 @@ describe("MetricSelector", () => {
     it("clicks window button to change window", async () => {
       const user = userEvent.setup()
       const onWindowChange = vi.fn()
-      render(
+      render(() => (
         <MetricSelector
           {...defaultProps}
           selectedMetricIds={["sharpe"]}
           onWindowChange={onWindowChange}
-        />,
-      )
+        />
+      ))
 
       const windowButton = screen.getByText("7d")
       await user.click(windowButton)
@@ -386,14 +387,14 @@ describe("MetricSelector", () => {
       const user = userEvent.setup()
       const onOpenChange = vi.fn()
       const onMetricToggle = vi.fn()
-      render(
+      render(() => (
         <MetricSelector
           {...defaultProps}
           isFocused={false}
           onOpenChange={onOpenChange}
           onMetricToggle={onMetricToggle}
-        />,
-      )
+        />
+      ))
 
       await user.keyboard("m")
       await user.keyboard("j")
@@ -406,18 +407,18 @@ describe("MetricSelector", () => {
 
   describe("focus indicator", () => {
     it("shows m key hint when focused", () => {
-      const { container } = render(
-        <MetricSelector {...defaultProps} isFocused={true} />,
-      )
+      const { container } = render(() => (
+        <MetricSelector {...defaultProps} isFocused={true} />
+      ))
 
       // The 'm' hint should be visible in a span
       expect(container.textContent).toContain("m")
     })
 
     it("shows keyboard hints in dropdown when focused", () => {
-      render(
-        <MetricSelector {...defaultProps} isFocused={true} isOpen={true} />,
-      )
+      render(() => (
+        <MetricSelector {...defaultProps} isFocused={true} isOpen={true} />
+      ))
 
       expect(screen.getByText(/navigate/)).toBeInTheDocument()
     })
@@ -427,36 +428,23 @@ describe("MetricSelector", () => {
     it("resets highlight to 0 when dropdown opens", async () => {
       const user = userEvent.setup()
       const onMetricToggle = vi.fn()
-      const { rerender } = render(
+      const [isOpen, setIsOpen] = createSignal(true)
+      render(() => (
         <MetricSelector
           {...defaultProps}
           isFocused={true}
-          isOpen={true}
+          isOpen={isOpen()}
           onMetricToggle={onMetricToggle}
-        />,
-      )
+        />
+      ))
 
       // Move highlight down
       await user.keyboard("j")
       await user.keyboard("j")
 
       // Close and reopen dropdown
-      rerender(
-        <MetricSelector
-          {...defaultProps}
-          isFocused={true}
-          isOpen={false}
-          onMetricToggle={onMetricToggle}
-        />,
-      )
-      rerender(
-        <MetricSelector
-          {...defaultProps}
-          isFocused={true}
-          isOpen={true}
-          onMetricToggle={onMetricToggle}
-        />,
-      )
+      setIsOpen(false)
+      setIsOpen(true)
 
       // Press Enter - should be on first item again
       await user.keyboard("{Enter}")

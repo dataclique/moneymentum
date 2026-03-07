@@ -1,4 +1,4 @@
-import { useMemo, useState, useCallback } from "react"
+import { createMemo, createSignal } from "solid-js"
 import {
   MOCK_GREEKS,
   MOCK_FACTOR_EXPOSURES,
@@ -56,87 +56,60 @@ const mergeWeights = (
 }
 
 export const usePrototypeData = () => {
-  // Committed state: what's currently "in the market"
   const [committedPositions, setCommittedPositions] =
-    useState<MockPosition[]>(MOCK_POSITIONS)
-  const [committedLeverage, setCommittedLeverage] = useState(1.0)
+    createSignal<MockPosition[]>(MOCK_POSITIONS)
+  const [committedLeverage, setCommittedLeverage] = createSignal(1.0)
 
-  // Target state: user's pending changes
-  const [targetWeightOverrides, setTargetWeightOverrides] = useState<
+  const [targetWeightOverrides, setTargetWeightOverrides] = createSignal<
     Map<string, number>
   >(new Map())
-  const [targetLeverage, setTargetLeverage] = useState(1.0)
+  const [targetLeverage, setTargetLeverage] = createSignal(1.0)
 
   const nav = 250000
 
-  // Compute current weights from committed positions + overrides
-  const currentWeights = useMemo(
-    () => mergeWeights(committedPositions, targetWeightOverrides),
-    [committedPositions, targetWeightOverrides],
+  const currentWeights = createMemo(() =>
+    mergeWeights(committedPositions(), targetWeightOverrides()),
   )
 
-  // Computed staged trades from diff between committed and target
-  const stagedTrades = useMemo(
-    (): ComputedTrade[] =>
-      computeStagedTradesFromDiff({
-        committedPositions,
-        targetWeights: currentWeights,
-        committedLeverage,
-        targetLeverage,
-        nav,
-      }),
-    [
-      committedPositions,
-      currentWeights,
-      committedLeverage,
-      targetLeverage,
+  const stagedTrades = createMemo((): ComputedTrade[] =>
+    computeStagedTradesFromDiff({
+      committedPositions: committedPositions(),
+      targetWeights: currentWeights(),
+      committedLeverage: committedLeverage(),
+      targetLeverage: targetLeverage(),
       nav,
-    ],
+    }),
   )
 
-  // Weight adjustment (delta-based, for keyboard shortcuts)
-  const adjustPositionWeight = useCallback(
-    (symbol: string, delta: number) => {
-      const current = currentWeights.get(symbol) ?? 0
-      const newWeight = Math.max(0, Math.min(1, current + delta))
-      const rebalanced = rebalanceWeights(currentWeights, symbol, newWeight)
-      setTargetWeightOverrides(rebalanced)
-    },
-    [currentWeights],
-  )
+  const adjustPositionWeight = (symbol: string, delta: number) => {
+    const weights = currentWeights()
+    const current = weights.get(symbol) ?? 0
+    const newWeight = Math.max(0, Math.min(1, current + delta))
+    const rebalanced = rebalanceWeights(weights, symbol, newWeight)
+    setTargetWeightOverrides(rebalanced)
+  }
 
-  // Direct weight update (for editable cells)
-  const updateInstrumentWeight = useCallback(
-    (symbol: string, newWeight: number) => {
-      const clampedWeight = Math.max(0, Math.min(1, newWeight))
-      const rebalanced = rebalanceWeights(currentWeights, symbol, clampedWeight)
-      setTargetWeightOverrides(rebalanced)
-    },
-    [currentWeights],
-  )
+  const updateInstrumentWeight = (symbol: string, newWeight: number) => {
+    const clampedWeight = Math.max(0, Math.min(1, newWeight))
+    const rebalanced = rebalanceWeights(currentWeights(), symbol, clampedWeight)
+    setTargetWeightOverrides(rebalanced)
+  }
 
-  // Update notional by converting to weight
-  const updateInstrumentNotional = useCallback(
-    (symbol: string, newNotional: number) => {
-      // Convert notional back to weight: weight = notional / (nav × leverage)
-      const effectiveLeverage = targetLeverage || 1
-      const newWeight = newNotional / (nav * effectiveLeverage)
-      const clampedWeight = Math.max(0, Math.min(1, newWeight))
-      const rebalanced = rebalanceWeights(currentWeights, symbol, clampedWeight)
-      setTargetWeightOverrides(rebalanced)
-    },
-    [nav, targetLeverage, currentWeights],
-  )
+  const updateInstrumentNotional = (symbol: string, newNotional: number) => {
+    const effectiveLev = targetLeverage() || 1
+    const newWeight = newNotional / (nav * effectiveLev)
+    const clampedWeight = Math.max(0, Math.min(1, newWeight))
+    const rebalanced = rebalanceWeights(currentWeights(), symbol, clampedWeight)
+    setTargetWeightOverrides(rebalanced)
+  }
 
-  // Leverage setter that updates target leverage (supports both value and callback)
-  const setLeverage = useCallback(
-    (newLeverageOrCallback: number | ((prev: number) => number)) => {
-      setTargetLeverage(newLeverageOrCallback)
-    },
-    [],
-  )
+  const setLeverage = (
+    newLeverageOrCallback: number | ((prev: number) => number),
+  ) => {
+    setTargetLeverage(newLeverageOrCallback)
+  }
 
-  const instrumentCostsMap = useMemo(() => {
+  const instrumentCostsMap = createMemo(() => {
     const map = new Map<
       string,
       { fundingRate?: number; carryRate?: number; theta?: number }
@@ -149,27 +122,29 @@ export const usePrototypeData = () => {
       })
     }
     return map
-  }, [])
+  })
 
-  // Derive positions with target weights applied
-  const positionsByUnderlying = useMemo((): PositionsByUnderlying[] => {
+  const positionsByUnderlying = createMemo((): PositionsByUnderlying[] => {
     const grouped = new Map<string, PositionsByUnderlying["positions"]>()
+    const positions = committedPositions()
+    const weights = currentWeights()
+    const lev = targetLeverage()
+    const costsMap = instrumentCostsMap()
 
-    // Calculate total weight for percentage calculation
-    const totalWeight = committedPositions.reduce((sum, p) => {
-      const weight = currentWeights.get(p.symbol) ?? p.weight
+    const totalWeight = positions.reduce((sum, p) => {
+      const weight = weights.get(p.symbol) ?? p.weight
       return sum + weight
     }, 0)
 
-    for (const position of committedPositions) {
+    for (const position of positions) {
       if (!grouped.has(position.underlying)) {
         grouped.set(position.underlying, [])
       }
 
-      const weight = currentWeights.get(position.symbol) ?? position.weight
-      const notional = nav * weight * targetLeverage
+      const weight = weights.get(position.symbol) ?? position.weight
+      const notional = nav * weight * lev
       const percentage = totalWeight > 0 ? (weight / totalWeight) * 100 : 0
-      const costs = instrumentCostsMap.get(position.symbol)
+      const costs = costsMap.get(position.symbol)
 
       grouped.get(position.underlying)?.push({
         symbol: position.symbol,
@@ -193,60 +168,47 @@ export const usePrototypeData = () => {
         const bTotal = b.positions.reduce((sum, p) => sum + p.notional, 0)
         return bTotal - aTotal
       })
-  }, [
-    committedPositions,
-    currentWeights,
-    nav,
-    targetLeverage,
-    instrumentCostsMap,
-  ])
+  })
 
-  const totalNotional = useMemo(() => {
-    const totalWeight = committedPositions.reduce((sum, p) => {
-      const weight = currentWeights.get(p.symbol) ?? p.weight
+  const totalNotional = createMemo(() => {
+    const positions = committedPositions()
+    const weights = currentWeights()
+    const lev = targetLeverage()
+    const totalWeight = positions.reduce((sum, p) => {
+      const weight = weights.get(p.symbol) ?? p.weight
       return sum + weight
     }, 0)
-    return nav * totalWeight * targetLeverage
-  }, [committedPositions, currentWeights, nav, targetLeverage])
+    return nav * totalWeight * lev
+  })
 
-  // Effective leverage = total notional / NAV
-  const effectiveLeverage = useMemo(
-    () => totalNotional / nav,
-    [totalNotional, nav],
-  )
+  const effectiveLeverage = createMemo(() => totalNotional() / nav)
 
-  // Execute staged trades: commit target → committed
-  const executeStagedTrades = useCallback(() => {
-    if (stagedTrades.length === 0) return
+  const executeStagedTrades = () => {
+    if (stagedTrades().length === 0) return
 
-    // Apply target weights to positions
-    const updatedPositions = committedPositions.map(p => ({
+    const weights = currentWeights()
+    const updatedPositions = committedPositions().map(p => ({
       ...p,
-      weight: currentWeights.get(p.symbol) ?? p.weight,
+      weight: weights.get(p.symbol) ?? p.weight,
     }))
 
     setCommittedPositions(updatedPositions)
-    setCommittedLeverage(targetLeverage)
+    setCommittedLeverage(targetLeverage())
     setTargetWeightOverrides(new Map())
-  }, [stagedTrades, committedPositions, currentWeights, targetLeverage])
+  }
 
-  // Clear staged trades: revert target to committed
-  const clearStagedTrades = useCallback(() => {
+  const clearStagedTrades = () => {
     setTargetWeightOverrides(new Map())
-    setTargetLeverage(committedLeverage)
-  }, [committedLeverage])
+    setTargetLeverage(committedLeverage())
+  }
 
-  // Legacy methods for compatibility (no longer used but keeping for API stability)
-  const addStagedTrade = useCallback(
-    (_symbol: string, _side: "buy" | "sell") => {
-      // Manual trade staging is deprecated in favor of computed trades
-    },
-    [],
-  )
+  const addStagedTrade = (_symbol: string, _side: "buy" | "sell") => {
+    // Manual trade staging is deprecated in favor of computed trades
+  }
 
-  const removeStagedTrade = useCallback((_id: string) => {
+  const removeStagedTrade = (_id: string) => {
     // Manual trade removal is deprecated
-  }, [])
+  }
 
   return {
     nav,
@@ -270,11 +232,10 @@ export const usePrototypeData = () => {
     clearStagedTrades,
     executeStagedTrades,
 
-    // New properties for committed vs target state
     committedPositions,
     committedLeverage,
     targetLeverage,
-    hasUnsavedChanges: stagedTrades.length > 0,
+    hasUnsavedChanges: () => stagedTrades().length > 0,
 
     correlationMatrix: MOCK_CORRELATION_MATRIX,
     correlationAssets: CORRELATION_ASSETS_LIST,

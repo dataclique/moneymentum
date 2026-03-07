@@ -17,7 +17,10 @@ import { useNetwork } from "@/hooks/useNetwork"
 
 import { usePortfolioState } from "./hooks/usePortfolioState"
 import { useBeta } from "./hooks/useBeta"
-import { useHyperliquidTickers } from "@/hooks/useTrading"
+import {
+  useHyperliquidTickers,
+  useHyperliquidFundingRates,
+} from "@/hooks/useTrading"
 import { ScreenerPanel } from "@/pages/Portfolio/components/ScreenerPanel"
 import { PositionsPanel } from "@/pages/Portfolio/components/PositionsPanel"
 import { PerformancePanel } from "@/pages/Portfolio/components/PerformancePanel"
@@ -83,11 +86,13 @@ const PortfolioPage = () => {
 
   const { data: tickersData, isLoading: isTickersLoading } =
     useHyperliquidTickers()
+  const { data: fundingRatesData } = useHyperliquidFundingRates()
   const screenerSymbols = tickersData ?? []
   const selectedSymbolsSet = useMemo(
     () => new Set(selectedTokens.map(token => token.symbol)),
     [selectedTokens],
   )
+  const fundingRatesByBaseSymbol = fundingRatesData ?? {}
 
   const [leverageInput, setLeverageInput] = useState(() =>
     crossAccountLeverage.toFixed(2),
@@ -164,6 +169,7 @@ const PortfolioPage = () => {
           isLoading={isTickersLoading}
           selectedSymbols={selectedSymbolsSet}
           onAddSymbol={handleAddToken}
+          fundingRatesByBaseSymbol={fundingRatesByBaseSymbol}
         />
         <div className="flex-1 min-w-0 flex gap-1 overflow-hidden">
           {/* Center: Positions */}
@@ -174,7 +180,7 @@ const PortfolioPage = () => {
                 isLoading={isPositionsLoading}
                 displayNotional={displayNotional}
                 leverageLimitsMap={leverageLimitsMap}
-                isRebalancing={isRebalancing}
+                _isRebalancing={isRebalancing}
                 isPrecise={isPrecise}
                 onRemove={handleRemoveToken}
                 onUndoRemove={handleUndoRemoveToken}
@@ -182,6 +188,7 @@ const PortfolioPage = () => {
                 onLeverageChange={handleLeverageChange}
                 onNotionalChange={handleNotionalChange}
                 onWeightChange={handleWeightChange}
+                fundingRatesByBaseSymbol={fundingRatesByBaseSymbol}
               />
             </div>
             {blockingReasons.length > 0 && (

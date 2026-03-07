@@ -5,6 +5,9 @@ import type { NetworkMode, WalletCredentials } from "@/contexts/wallet-context"
 const MARKETS_CACHE_KEY = "hyperliquid_markets_cache"
 const MARKETS_CACHE_TTL_MS = 24 * 60 * 60 * 1000
 
+const HYPERLIQUID_MAINNET_INFO_URL = "https://api.hyperliquid.xyz/info"
+const HYPERLIQUID_TESTNET_INFO_URL = "https://api.hyperliquid-testnet.xyz/info"
+
 interface MarketsCache {
   markets: Record<string, unknown>
   timestamp: number
@@ -268,6 +271,72 @@ export class HyperliquidClient {
     this.exchange.options["defaultSlippage"] = SLIPPAGE
     // Skip the setRef() call that wastes ~2.4 seconds trying to set a referral code
     this.exchange.options["refSet"] = true
+  }
+
+  async getFundingRates(): Promise<Record<string, number>> {
+    const infoUrl =
+      this.networkMode === "testnet"
+        ? HYPERLIQUID_TESTNET_INFO_URL
+        : HYPERLIQUID_MAINNET_INFO_URL
+
+    const response = await fetch(infoUrl, {
+      method: "POST",
+      // Abort if the info endpoint is unresponsive for too long to avoid hanging the UI.
+      signal: AbortSignal.timeout(10_000),
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ type: "metaAndAssetCtxs" }),
+    })
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch funding rates: ${response.statusText}`)
+    }
+
+    const json = (await response.json()) as unknown
+
+    if (
+      !Array.isArray(json) ||
+      json.length < 2 ||
+      typeof json[0] !== "object" ||
+      json[0] === null ||
+      !Array.isArray((json[0] as { universe?: unknown }).universe) ||
+      !Array.isArray(json[1])
+    ) {
+      console.error(
+        "[HyperliquidClient] Unexpected metaAndAssetCtxs payload shape",
+        { json },
+      )
+      return {}
+    }
+
+    const [meta, assetCtxs] = json as [
+      { universe: Array<{ name: string }> },
+      Array<{ funding?: string | number } | null | undefined>,
+    ]
+
+    const fundingByBaseAsset: Record<string, number> = Object.fromEntries(
+      meta.universe
+        .map((asset, index) => {
+          const assetCtx = assetCtxs[index]
+          if (!assetCtx) return null
+
+          const rawFunding = assetCtx.funding
+          if (rawFunding === undefined) return null
+
+          const parsedFundingRate = this.parseNumericValue(
+            rawFunding,
+            Number.NaN,
+          )
+
+          if (!Number.isFinite(parsedFundingRate)) return null
+
+          return [asset.name, parsedFundingRate] as const
+        })
+        .filter((entry): entry is readonly [string, number] => entry !== null),
+    )
+
+    return fundingByBaseAsset
   }
 
   async getBalance(): Promise<number> {

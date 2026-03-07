@@ -16,7 +16,10 @@ const QUERY_KEYS = {
   positions: ["hyperliquid", "positions"],
   tickers: ["hyperliquid", "tickers"],
   leverageLimits: ["hyperliquid", "leverage-limits"],
+  fundingRates: ["hyperliquid", "funding-rates"],
 } as const
+
+const DATA_STALE_TIME_MS = 30_000
 
 export const useHyperliquidClient = () => {
   const { client, networkMode, isConnected } = useWallet()
@@ -69,7 +72,7 @@ export const useHyperliquidAccountSummary = () => {
       return { ...summary, crossAccountLeverage }
     },
     enabled: isConnected && client !== null,
-    staleTime: 30000,
+    staleTime: DATA_STALE_TIME_MS,
   })
 }
 
@@ -123,7 +126,7 @@ export const useHyperliquidPositions = () => {
       return result
     },
     enabled: isConnected && client !== null,
-    staleTime: 30000,
+    staleTime: DATA_STALE_TIME_MS,
   })
 }
 
@@ -137,7 +140,7 @@ export const useHyperliquidTickers = () => {
       return client.listPerpTickers()
     },
     enabled: isConnected && client !== null,
-    staleTime: 60000,
+    staleTime: DATA_STALE_TIME_MS,
   })
 }
 
@@ -159,7 +162,21 @@ export const useHyperliquidLeverageLimits = () => {
       return result
     },
     enabled: isConnected && client !== null,
-    staleTime: 60000,
+    staleTime: DATA_STALE_TIME_MS,
+  })
+}
+
+export const useHyperliquidFundingRates = () => {
+  const { client, isConnected } = useHyperliquidClient()
+
+  return useQuery({
+    queryKey: QUERY_KEYS.fundingRates,
+    queryFn: async () => {
+      if (!client) throw new Error("Wallet not connected")
+      return client.getFundingRates()
+    },
+    enabled: isConnected && client !== null,
+    staleTime: DATA_STALE_TIME_MS,
   })
 }
 
@@ -276,6 +293,9 @@ export const useSwitchNetwork = () => {
       void queryClient.invalidateQueries({ queryKey: QUERY_KEYS.tickers })
       void queryClient.invalidateQueries({
         queryKey: QUERY_KEYS.leverageLimits,
+      })
+      void queryClient.invalidateQueries({
+        queryKey: QUERY_KEYS.fundingRates,
       })
     },
   })

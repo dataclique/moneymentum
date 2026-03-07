@@ -9,6 +9,7 @@ interface ScreenerPanelProps {
   isLoading: boolean
   selectedSymbols: Set<string>
   onAddSymbol: (symbol: string) => void
+  fundingRatesByBaseSymbol?: Record<string, number>
 }
 
 export const ScreenerPanel = ({
@@ -16,6 +17,7 @@ export const ScreenerPanel = ({
   isLoading,
   selectedSymbols,
   onAddSymbol,
+  fundingRatesByBaseSymbol,
 }: ScreenerPanelProps) => {
   const [searchQuery, setSearchQuery] = useState("")
 
@@ -61,12 +63,26 @@ export const ScreenerPanel = ({
           <table className="w-full">
             <thead className="sticky top-0 bg-muted/90 z-10">
               <tr className="text-muted-foreground text-[10px]">
-                <th className="px-2 py-1 text-left font-medium">Symbol</th>
+                <th className="px-2 py-1 text-left font-medium">Perp</th>
+                <th className="px-2 py-1 text-right font-medium w-[80px]">
+                  Rate (ann.)
+                </th>
               </tr>
             </thead>
             <tbody>
               {sortedSymbols.map(symbol => {
+                const baseSymbol = symbol.includes("/")
+                  ? (symbol.split("/")[0] ?? symbol)
+                  : symbol
                 const isSelected = selectedSymbols.has(symbol)
+                const fundingRate = fundingRatesByBaseSymbol?.[baseSymbol]
+                const annualizedFundingRate =
+                  fundingRate === undefined ? null : fundingRate * 24 * 365
+                const fundingDisplay =
+                  annualizedFundingRate === null
+                    ? "—"
+                    : `${(annualizedFundingRate * 100).toFixed(2)}%`
+
                 return (
                   <tr
                     key={symbol}
@@ -82,7 +98,10 @@ export const ScreenerPanel = ({
                       if (!isSelected) onAddSymbol(symbol)
                     }}
                   >
-                    <td className="px-2 py-1 font-medium">{symbol}</td>
+                    <td className="px-2 py-1 font-medium">{baseSymbol}</td>
+                    <td className="px-2 py-1 text-right font-mono text-[11px] text-muted-foreground w-[80px]">
+                      {fundingDisplay}
+                    </td>
                   </tr>
                 )
               })}

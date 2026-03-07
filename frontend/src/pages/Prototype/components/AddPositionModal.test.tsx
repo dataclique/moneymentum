@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest"
-import { render, screen, fireEvent } from "@testing-library/react"
+import { render, screen, fireEvent } from "@solidjs/testing-library"
 import userEvent from "@testing-library/user-event"
 import { AddPositionModal } from "./AddPositionModal"
 
@@ -26,7 +26,7 @@ const defaultProps = {
 describe("AddPositionModal", () => {
   describe("instrument selection step", () => {
     it("renders instrument options", () => {
-      render(<AddPositionModal {...defaultProps} />)
+      render(() => <AddPositionModal {...defaultProps} />)
 
       expect(screen.getByText("Add SOL Position")).toBeInTheDocument()
       expect(screen.getByText("SOL/USDC:USDC")).toBeInTheDocument()
@@ -34,14 +34,14 @@ describe("AddPositionModal", () => {
     })
 
     it("shows rate for each instrument", () => {
-      render(<AddPositionModal {...defaultProps} />)
+      render(() => <AddPositionModal {...defaultProps} />)
 
       expect(screen.getByText("+18.0%")).toBeInTheDocument()
       expect(screen.getByText("0.0%")).toBeInTheDocument()
     })
 
     it("navigates with j/k keys", () => {
-      render(<AddPositionModal {...defaultProps} />)
+      render(() => <AddPositionModal {...defaultProps} />)
 
       const firstOption = screen
         .getByText("SOL/USDC:USDC")
@@ -57,7 +57,7 @@ describe("AddPositionModal", () => {
     })
 
     it("selects instrument on Enter", () => {
-      render(<AddPositionModal {...defaultProps} />)
+      render(() => <AddPositionModal {...defaultProps} />)
 
       fireEvent.keyDown(window, { key: "Enter" })
 
@@ -66,7 +66,7 @@ describe("AddPositionModal", () => {
 
     it("closes on Escape", () => {
       const onClose = vi.fn()
-      render(<AddPositionModal {...defaultProps} onClose={onClose} />)
+      render(() => <AddPositionModal {...defaultProps} onClose={onClose} />)
 
       fireEvent.keyDown(window, { key: "Escape" })
 
@@ -76,7 +76,7 @@ describe("AddPositionModal", () => {
 
   describe("configuration step", () => {
     it("shows direction buttons", async () => {
-      render(<AddPositionModal {...defaultProps} />)
+      render(() => <AddPositionModal {...defaultProps} />)
 
       fireEvent.keyDown(window, { key: "Enter" })
 
@@ -85,7 +85,7 @@ describe("AddPositionModal", () => {
     })
 
     it("toggles direction on button click", async () => {
-      render(<AddPositionModal {...defaultProps} />)
+      render(() => <AddPositionModal {...defaultProps} />)
 
       fireEvent.keyDown(window, { key: "Enter" })
 
@@ -96,7 +96,7 @@ describe("AddPositionModal", () => {
     })
 
     it("switches between weight and notional modes", async () => {
-      render(<AddPositionModal {...defaultProps} />)
+      render(() => <AddPositionModal {...defaultProps} />)
 
       fireEvent.keyDown(window, { key: "Enter" })
 
@@ -107,7 +107,7 @@ describe("AddPositionModal", () => {
     })
 
     it("updates preview when size changes", async () => {
-      render(<AddPositionModal {...defaultProps} />)
+      render(() => <AddPositionModal {...defaultProps} />)
 
       fireEvent.keyDown(window, { key: "Enter" })
 
@@ -121,7 +121,7 @@ describe("AddPositionModal", () => {
     })
 
     it("goes back on Escape", () => {
-      render(<AddPositionModal {...defaultProps} />)
+      render(() => <AddPositionModal {...defaultProps} />)
 
       fireEvent.keyDown(window, { key: "Enter" })
       expect(screen.getByText(/Configure:/)).toBeInTheDocument()
@@ -132,9 +132,9 @@ describe("AddPositionModal", () => {
 
     it("calls onAddPosition with correct params", async () => {
       const onAddPosition = vi.fn()
-      render(
-        <AddPositionModal {...defaultProps} onAddPosition={onAddPosition} />,
-      )
+      render(() => (
+        <AddPositionModal {...defaultProps} onAddPosition={onAddPosition} />
+      ))
 
       fireEvent.keyDown(window, { key: "Enter" })
 
@@ -155,9 +155,9 @@ describe("AddPositionModal", () => {
 
   describe("when closed", () => {
     it("renders nothing", () => {
-      const { container } = render(
-        <AddPositionModal {...defaultProps} isOpen={false} />,
-      )
+      const { container } = render(() => (
+        <AddPositionModal {...defaultProps} isOpen={false} />
+      ))
 
       expect(container.firstChild).toBeNull()
     })
@@ -166,14 +166,14 @@ describe("AddPositionModal", () => {
   describe("weight calculation", () => {
     it("calculates weight from notional correctly", async () => {
       const onAddPosition = vi.fn()
-      render(
+      render(() => (
         <AddPositionModal
           {...defaultProps}
           nav={100000}
           currentLeverage={2}
           onAddPosition={onAddPosition}
-        />,
-      )
+        />
+      ))
 
       fireEvent.keyDown(window, { key: "Enter" })
 
@@ -191,9 +191,9 @@ describe("AddPositionModal", () => {
 
     it("calculates weight from percentage correctly", async () => {
       const onAddPosition = vi.fn()
-      render(
-        <AddPositionModal {...defaultProps} onAddPosition={onAddPosition} />,
-      )
+      render(() => (
+        <AddPositionModal {...defaultProps} onAddPosition={onAddPosition} />
+      ))
 
       fireEvent.keyDown(window, { key: "Enter" })
 

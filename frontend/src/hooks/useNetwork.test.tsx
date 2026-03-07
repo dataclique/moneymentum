@@ -1,12 +1,12 @@
 import { describe, it, expect } from "vitest"
-import { renderHook, act } from "@testing-library/react"
+import { renderHook } from "@solidjs/testing-library"
 import { useNetwork } from "./useNetwork"
 import { NetworkProvider } from "@/contexts/NetworkContext"
-import type { ReactNode } from "react"
+import type { ParentProps } from "solid-js"
 
 const createWrapper = () => {
-  return ({ children }: { children: ReactNode }) => (
-    <NetworkProvider>{children}</NetworkProvider>
+  return (props: ParentProps) => (
+    <NetworkProvider>{props.children}</NetworkProvider>
   )
 }
 
@@ -22,7 +22,7 @@ describe("useNetwork", () => {
       wrapper: createWrapper(),
     })
 
-    expect(result.current.isNetworkSwitching).toBe(false)
+    expect(result.isNetworkSwitching()).toBe(false)
   })
 
   it("provides setIsNetworkSwitching function", () => {
@@ -30,7 +30,7 @@ describe("useNetwork", () => {
       wrapper: createWrapper(),
     })
 
-    expect(typeof result.current.setIsNetworkSwitching).toBe("function")
+    expect(typeof result.setIsNetworkSwitching).toBe("function")
   })
 
   it("updates isNetworkSwitching when setIsNetworkSwitching is called", () => {
@@ -38,18 +38,14 @@ describe("useNetwork", () => {
       wrapper: createWrapper(),
     })
 
-    expect(result.current.isNetworkSwitching).toBe(false)
+    expect(result.isNetworkSwitching()).toBe(false)
 
-    act(() => {
-      result.current.setIsNetworkSwitching(true)
-    })
+    result.setIsNetworkSwitching(true)
 
-    expect(result.current.isNetworkSwitching).toBe(true)
+    expect(result.isNetworkSwitching()).toBe(true)
 
-    act(() => {
-      result.current.setIsNetworkSwitching(false)
-    })
+    result.setIsNetworkSwitching(false)
 
-    expect(result.current.isNetworkSwitching).toBe(false)
+    expect(result.isNetworkSwitching()).toBe(false)
   })
 })

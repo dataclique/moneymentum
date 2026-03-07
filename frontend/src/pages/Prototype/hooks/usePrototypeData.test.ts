@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { renderHook, act } from "@testing-library/react"
+import { renderHook } from "@solidjs/testing-library"
 import { usePrototypeData } from "./usePrototypeData"
 
 describe("usePrototypeData", () => {
@@ -7,10 +7,9 @@ describe("usePrototypeData", () => {
     it("groups positions correctly by underlying", () => {
       const { result } = renderHook(() => usePrototypeData())
 
-      // BTC should have multiple positions grouped together
-      const btcGroup = result.current.positionsByUnderlying.find(
-        g => g.underlying === "BTC",
-      )
+      const btcGroup = result
+        .positionsByUnderlying()
+        .find(g => g.underlying === "BTC")
       expect(btcGroup).toBeDefined()
       if (btcGroup) {
         expect(btcGroup.positions.length).toBeGreaterThan(1)
@@ -23,7 +22,7 @@ describe("usePrototypeData", () => {
     it("sorts by total notional descending", () => {
       const { result } = renderHook(() => usePrototypeData())
 
-      const groups = result.current.positionsByUnderlying
+      const groups = result.positionsByUnderlying()
       for (let i = 0; i < groups.length - 1; i++) {
         const currentTotal = groups[i].positions.reduce(
           (sum, p) => sum + p.notional,
@@ -40,7 +39,7 @@ describe("usePrototypeData", () => {
     it("includes weight field in positions", () => {
       const { result } = renderHook(() => usePrototypeData())
 
-      const firstGroup = result.current.positionsByUnderlying[0]
+      const firstGroup = result.positionsByUnderlying()[0]
       expect(firstGroup.positions[0]).toHaveProperty("weight")
       expect(typeof firstGroup.positions[0].weight).toBe("number")
     })
@@ -48,12 +47,11 @@ describe("usePrototypeData", () => {
     it("derives notional from weight, nav, and leverage", () => {
       const { result } = renderHook(() => usePrototypeData())
 
-      const nav = result.current.nav
-      const leverage = result.current.leverage
-      const firstGroup = result.current.positionsByUnderlying[0]
+      const nav = result.nav
+      const leverage = result.leverage()
+      const firstGroup = result.positionsByUnderlying()[0]
       const firstPos = firstGroup.positions[0]
 
-      // notional = nav × weight × leverage
       const expectedNotional = nav * firstPos.weight * leverage
       expect(firstPos.notional).toBeCloseTo(expectedNotional)
     })
@@ -62,64 +60,56 @@ describe("usePrototypeData", () => {
   describe("leverage", () => {
     it("starts with leverage of 1.0", () => {
       const { result } = renderHook(() => usePrototypeData())
-      expect(result.current.leverage).toBe(1.0)
+      expect(result.leverage()).toBe(1.0)
     })
 
     it("setLeverage updates leverage value", () => {
       const { result } = renderHook(() => usePrototypeData())
 
-      act(() => {
-        result.current.setLeverage(2.0)
-      })
+      result.setLeverage(2.0)
 
-      expect(result.current.leverage).toBe(2.0)
+      expect(result.leverage()).toBe(2.0)
     })
 
     it("changing leverage scales all notionals proportionally", () => {
       const { result } = renderHook(() => usePrototypeData())
 
-      const initialNotional = result.current.totalNotional
+      const initialNotional = result.totalNotional()
 
-      act(() => {
-        result.current.setLeverage(2.0)
-      })
+      result.setLeverage(2.0)
 
-      expect(result.current.totalNotional).toBeCloseTo(initialNotional * 2)
+      expect(result.totalNotional()).toBeCloseTo(initialNotional * 2)
     })
 
     it("effectiveLeverage equals totalNotional / nav", () => {
       const { result } = renderHook(() => usePrototypeData())
 
-      const expected = result.current.totalNotional / result.current.nav
-      expect(result.current.effectiveLeverage).toBeCloseTo(expected)
+      const expected = result.totalNotional() / result.nav
+      expect(result.effectiveLeverage()).toBeCloseTo(expected)
     })
 
     it("effectiveLeverage scales with leverage setting", () => {
       const { result } = renderHook(() => usePrototypeData())
 
-      const initialEffective = result.current.effectiveLeverage
+      const initialEffective = result.effectiveLeverage()
 
-      act(() => {
-        result.current.setLeverage(3.0)
-      })
+      result.setLeverage(3.0)
 
-      expect(result.current.effectiveLeverage).toBeCloseTo(initialEffective * 3)
+      expect(result.effectiveLeverage()).toBeCloseTo(initialEffective * 3)
     })
 
     it("weights remain constant when leverage changes", () => {
       const { result } = renderHook(() => usePrototypeData())
 
-      const initialWeights = result.current.positionsByUnderlying.flatMap(g =>
-        g.positions.map(p => p.weight),
-      )
+      const initialWeights = result
+        .positionsByUnderlying()
+        .flatMap(g => g.positions.map(p => p.weight))
 
-      act(() => {
-        result.current.setLeverage(2.5)
-      })
+      result.setLeverage(2.5)
 
-      const newWeights = result.current.positionsByUnderlying.flatMap(g =>
-        g.positions.map(p => p.weight),
-      )
+      const newWeights = result
+        .positionsByUnderlying()
+        .flatMap(g => g.positions.map(p => p.weight))
 
       expect(newWeights).toEqual(initialWeights)
     })
@@ -128,87 +118,71 @@ describe("usePrototypeData", () => {
   describe("stagedTrades", () => {
     it("starts with empty staged trades", () => {
       const { result } = renderHook(() => usePrototypeData())
-      expect(result.current.stagedTrades).toEqual([])
+      expect(result.stagedTrades()).toEqual([])
     })
 
     it("generates staged trades when weight changes", () => {
       const { result } = renderHook(() => usePrototypeData())
 
-      const btcGroup = result.current.positionsByUnderlying.find(
-        g => g.underlying === "BTC",
-      )
+      const btcGroup = result
+        .positionsByUnderlying()
+        .find(g => g.underlying === "BTC")
       const btcPerp = btcGroup?.positions.find(p =>
         p.symbol.includes("/USDC:USDC"),
       )
       expect(btcPerp).toBeDefined()
 
-      act(() => {
-        result.current.updateInstrumentWeight(btcPerp!.symbol, 0.3)
-      })
+      result.updateInstrumentWeight(btcPerp!.symbol, 0.3)
 
       // Should have staged trades generated from the weight change
-      expect(result.current.stagedTrades.length).toBeGreaterThan(0)
+      expect(result.stagedTrades().length).toBeGreaterThan(0)
     })
 
     it("generates staged trades when leverage changes", () => {
       const { result } = renderHook(() => usePrototypeData())
 
-      act(() => {
-        result.current.setLeverage(1.5)
-      })
+      result.setLeverage(1.5)
 
       // All positions should have leverage-driven trades
-      expect(result.current.stagedTrades.length).toBeGreaterThan(0)
+      expect(result.stagedTrades().length).toBeGreaterThan(0)
     })
 
     it("clearStagedTrades reverts to committed state", () => {
       const { result } = renderHook(() => usePrototypeData())
 
-      // Make changes
-      act(() => {
-        result.current.setLeverage(2.0)
-      })
+      result.setLeverage(2.0)
 
-      expect(result.current.stagedTrades.length).toBeGreaterThan(0)
+      expect(result.stagedTrades().length).toBeGreaterThan(0)
 
-      // Clear
-      act(() => {
-        result.current.clearStagedTrades()
-      })
+      result.clearStagedTrades()
 
-      expect(result.current.stagedTrades).toEqual([])
-      expect(result.current.leverage).toBe(1.0) // Reverted to committed
+      expect(result.stagedTrades()).toEqual([])
+      expect(result.leverage()).toBe(1.0)
     })
 
     it("executeStagedTrades commits changes", () => {
       const { result } = renderHook(() => usePrototypeData())
 
-      const btcGroup = result.current.positionsByUnderlying.find(
-        g => g.underlying === "BTC",
-      )
+      const btcGroup = result
+        .positionsByUnderlying()
+        .find(g => g.underlying === "BTC")
       const btcPerp = btcGroup?.positions.find(p =>
         p.symbol.includes("/USDC:USDC"),
       )
       expect(btcPerp).toBeDefined()
 
       const newWeight = 0.3
-      act(() => {
-        result.current.updateInstrumentWeight(btcPerp!.symbol, newWeight)
-      })
+      result.updateInstrumentWeight(btcPerp!.symbol, newWeight)
 
-      expect(result.current.stagedTrades.length).toBeGreaterThan(0)
+      expect(result.stagedTrades().length).toBeGreaterThan(0)
 
-      act(() => {
-        result.current.executeStagedTrades()
-      })
+      result.executeStagedTrades()
 
-      // Staged trades should be cleared
-      expect(result.current.stagedTrades).toEqual([])
+      expect(result.stagedTrades()).toEqual([])
 
-      // Weight should remain at the new value (now committed)
-      const updatedGroup = result.current.positionsByUnderlying.find(
-        g => g.underlying === "BTC",
-      )
+      const updatedGroup = result
+        .positionsByUnderlying()
+        .find(g => g.underlying === "BTC")
       const updatedPerp = updatedGroup?.positions.find(p =>
         p.symbol.includes("/USDC:USDC"),
       )
@@ -220,9 +194,9 @@ describe("usePrototypeData", () => {
     it("increases weight by positive delta", () => {
       const { result } = renderHook(() => usePrototypeData())
 
-      const btcGroup = result.current.positionsByUnderlying.find(
-        g => g.underlying === "BTC",
-      )
+      const btcGroup = result
+        .positionsByUnderlying()
+        .find(g => g.underlying === "BTC")
       const btcPerp = btcGroup?.positions.find(p =>
         p.symbol.includes("/USDC:USDC"),
       )
@@ -230,13 +204,11 @@ describe("usePrototypeData", () => {
 
       const initialWeight = btcPerp!.weight
 
-      act(() => {
-        result.current.adjustPositionWeight(btcPerp!.symbol, 0.01)
-      })
+      result.adjustPositionWeight(btcPerp!.symbol, 0.01)
 
-      const updatedGroup = result.current.positionsByUnderlying.find(
-        g => g.underlying === "BTC",
-      )
+      const updatedGroup = result
+        .positionsByUnderlying()
+        .find(g => g.underlying === "BTC")
       const updatedPerp = updatedGroup?.positions.find(p =>
         p.symbol.includes("/USDC:USDC"),
       )
@@ -246,9 +218,9 @@ describe("usePrototypeData", () => {
     it("decreases weight by negative delta", () => {
       const { result } = renderHook(() => usePrototypeData())
 
-      const btcGroup = result.current.positionsByUnderlying.find(
-        g => g.underlying === "BTC",
-      )
+      const btcGroup = result
+        .positionsByUnderlying()
+        .find(g => g.underlying === "BTC")
       const btcPerp = btcGroup?.positions.find(p =>
         p.symbol.includes("/USDC:USDC"),
       )
@@ -256,13 +228,11 @@ describe("usePrototypeData", () => {
 
       const initialWeight = btcPerp!.weight
 
-      act(() => {
-        result.current.adjustPositionWeight(btcPerp!.symbol, -0.01)
-      })
+      result.adjustPositionWeight(btcPerp!.symbol, -0.01)
 
-      const updatedGroup = result.current.positionsByUnderlying.find(
-        g => g.underlying === "BTC",
-      )
+      const updatedGroup = result
+        .positionsByUnderlying()
+        .find(g => g.underlying === "BTC")
       const updatedPerp = updatedGroup?.positions.find(p =>
         p.symbol.includes("/USDC:USDC"),
       )
@@ -272,22 +242,19 @@ describe("usePrototypeData", () => {
     it("clamps weight to minimum of 0", () => {
       const { result } = renderHook(() => usePrototypeData())
 
-      // Find a position with small weight
-      const apeGroup = result.current.positionsByUnderlying.find(
-        g => g.underlying === "APE",
-      )
+      const apeGroup = result
+        .positionsByUnderlying()
+        .find(g => g.underlying === "APE")
       const apePerp = apeGroup?.positions.find(p =>
         p.symbol.includes("/USDC:USDC"),
       )
       expect(apePerp).toBeDefined()
 
-      act(() => {
-        result.current.adjustPositionWeight(apePerp!.symbol, -1.0) // Try to go negative
-      })
+      result.adjustPositionWeight(apePerp!.symbol, -1.0)
 
-      const updatedGroup = result.current.positionsByUnderlying.find(
-        g => g.underlying === "APE",
-      )
+      const updatedGroup = result
+        .positionsByUnderlying()
+        .find(g => g.underlying === "APE")
       const updatedPerp = updatedGroup?.positions.find(p =>
         p.symbol.includes("/USDC:USDC"),
       )
@@ -297,21 +264,19 @@ describe("usePrototypeData", () => {
     it("clamps weight to maximum of 1", () => {
       const { result } = renderHook(() => usePrototypeData())
 
-      const btcGroup = result.current.positionsByUnderlying.find(
-        g => g.underlying === "BTC",
-      )
+      const btcGroup = result
+        .positionsByUnderlying()
+        .find(g => g.underlying === "BTC")
       const btcPerp = btcGroup?.positions.find(p =>
         p.symbol.includes("/USDC:USDC"),
       )
       expect(btcPerp).toBeDefined()
 
-      act(() => {
-        result.current.adjustPositionWeight(btcPerp!.symbol, 10.0) // Try to exceed 1
-      })
+      result.adjustPositionWeight(btcPerp!.symbol, 10.0)
 
-      const updatedGroup = result.current.positionsByUnderlying.find(
-        g => g.underlying === "BTC",
-      )
+      const updatedGroup = result
+        .positionsByUnderlying()
+        .find(g => g.underlying === "BTC")
       const updatedPerp = updatedGroup?.positions.find(p =>
         p.symbol.includes("/USDC:USDC"),
       )
@@ -321,25 +286,23 @@ describe("usePrototypeData", () => {
     it("rebalances other weights proportionally when one weight increases", () => {
       const { result } = renderHook(() => usePrototypeData())
 
-      // Get total weight before change
-      const totalWeightBefore = result.current.positionsByUnderlying
+      const totalWeightBefore = result
+        .positionsByUnderlying()
         .flatMap(g => g.positions)
         .reduce((sum, p) => sum + p.weight, 0)
 
-      const btcGroup = result.current.positionsByUnderlying.find(
-        g => g.underlying === "BTC",
-      )
+      const btcGroup = result
+        .positionsByUnderlying()
+        .find(g => g.underlying === "BTC")
       const btcPerp = btcGroup?.positions.find(p =>
         p.symbol.includes("/USDC:USDC"),
       )
       expect(btcPerp).toBeDefined()
 
-      act(() => {
-        result.current.updateInstrumentWeight(btcPerp!.symbol, 0.5)
-      })
+      result.updateInstrumentWeight(btcPerp!.symbol, 0.5)
 
-      // Total weight should remain approximately the same (rebalanced)
-      const totalWeightAfter = result.current.positionsByUnderlying
+      const totalWeightAfter = result
+        .positionsByUnderlying()
         .flatMap(g => g.positions)
         .reduce((sum, p) => sum + p.weight, 0)
 
@@ -349,28 +312,25 @@ describe("usePrototypeData", () => {
     it("updates notional after weight change", () => {
       const { result } = renderHook(() => usePrototypeData())
 
-      const btcGroup = result.current.positionsByUnderlying.find(
-        g => g.underlying === "BTC",
-      )
+      const btcGroup = result
+        .positionsByUnderlying()
+        .find(g => g.underlying === "BTC")
       const btcPerp = btcGroup?.positions.find(p =>
         p.symbol.includes("/USDC:USDC"),
       )
       expect(btcPerp).toBeDefined()
 
-      act(() => {
-        result.current.adjustPositionWeight(btcPerp!.symbol, 0.05)
-      })
+      result.adjustPositionWeight(btcPerp!.symbol, 0.05)
 
-      const updatedGroup = result.current.positionsByUnderlying.find(
-        g => g.underlying === "BTC",
-      )
+      const updatedGroup = result
+        .positionsByUnderlying()
+        .find(g => g.underlying === "BTC")
       const updatedPerp = updatedGroup?.positions.find(p =>
         p.symbol.includes("/USDC:USDC"),
       )
 
-      // notional = nav × weight × leverage
       const expectedNotional =
-        result.current.nav * updatedPerp!.weight * result.current.leverage
+        result.nav * updatedPerp!.weight * result.leverage()
       expect(updatedPerp!.notional).toBeCloseTo(expectedNotional)
     })
   })
@@ -379,9 +339,9 @@ describe("usePrototypeData", () => {
     it("includes funding rate for perp positions", () => {
       const { result } = renderHook(() => usePrototypeData())
 
-      const btcGroup = result.current.positionsByUnderlying.find(
-        g => g.underlying === "BTC",
-      )
+      const btcGroup = result
+        .positionsByUnderlying()
+        .find(g => g.underlying === "BTC")
       const btcPerp = btcGroup?.positions.find(p =>
         p.symbol.includes("/USDC:USDC"),
       )
@@ -394,9 +354,9 @@ describe("usePrototypeData", () => {
     it("includes carry rate for spot positions", () => {
       const { result } = renderHook(() => usePrototypeData())
 
-      const btcGroup = result.current.positionsByUnderlying.find(
-        g => g.underlying === "BTC",
-      )
+      const btcGroup = result
+        .positionsByUnderlying()
+        .find(g => g.underlying === "BTC")
       const btcSpot = btcGroup?.positions.find(p => p.symbol.includes("-SPOT"))
 
       expect(btcSpot).toBeDefined()
@@ -407,9 +367,9 @@ describe("usePrototypeData", () => {
     it("includes theta for option positions", () => {
       const { result } = renderHook(() => usePrototypeData())
 
-      const ethGroup = result.current.positionsByUnderlying.find(
-        g => g.underlying === "ETH",
-      )
+      const ethGroup = result
+        .positionsByUnderlying()
+        .find(g => g.underlying === "ETH")
       const ethPut = ethGroup?.positions.find(p => p.symbol.includes("-PUT"))
 
       expect(ethPut).toBeDefined()
@@ -421,42 +381,42 @@ describe("usePrototypeData", () => {
   describe("static data", () => {
     it("exposes NAV", () => {
       const { result } = renderHook(() => usePrototypeData())
-      expect(result.current.nav).toBe(250000)
+      expect(result.nav).toBe(250000)
     })
 
     it("exposes greeks data", () => {
       const { result } = renderHook(() => usePrototypeData())
-      expect(result.current.greeks).toBeDefined()
-      expect(result.current.greeks.length).toBeGreaterThan(0)
-      expect(result.current.greeks[0]).toHaveProperty("delta")
-      expect(result.current.greeks[0]).toHaveProperty("gamma")
-      expect(result.current.greeks[0]).toHaveProperty("theta")
+      expect(result.greeks).toBeDefined()
+      expect(result.greeks.length).toBeGreaterThan(0)
+      expect(result.greeks[0]).toHaveProperty("delta")
+      expect(result.greeks[0]).toHaveProperty("gamma")
+      expect(result.greeks[0]).toHaveProperty("theta")
     })
 
     it("exposes factor exposures", () => {
       const { result } = renderHook(() => usePrototypeData())
-      expect(result.current.factorExposures).toBeDefined()
-      expect(result.current.factorExposures.length).toBeGreaterThan(0)
+      expect(result.factorExposures).toBeDefined()
+      expect(result.factorExposures.length).toBeGreaterThan(0)
     })
 
     it("exposes correlation matrix", () => {
       const { result } = renderHook(() => usePrototypeData())
-      expect(result.current.correlationMatrix).toBeDefined()
-      expect(result.current.correlationAssets).toBeDefined()
+      expect(result.correlationMatrix).toBeDefined()
+      expect(result.correlationAssets).toBeDefined()
     })
 
     it("exposes risk metrics", () => {
       const { result } = renderHook(() => usePrototypeData())
-      expect(result.current.riskMetrics).toBeDefined()
-      expect(result.current.riskMetrics).toHaveProperty("var95")
-      expect(result.current.riskMetrics).toHaveProperty("var99")
+      expect(result.riskMetrics).toBeDefined()
+      expect(result.riskMetrics).toHaveProperty("var95")
+      expect(result.riskMetrics).toHaveProperty("var99")
     })
 
     it("exposes performance data", () => {
       const { result } = renderHook(() => usePrototypeData())
-      expect(result.current.backtestData).toBeDefined()
-      expect(result.current.performanceStats).toBeDefined()
-      expect(result.current.monteCarloData).toBeDefined()
+      expect(result.backtestData).toBeDefined()
+      expect(result.performanceStats).toBeDefined()
+      expect(result.monteCarloData).toBeDefined()
     })
   })
 
@@ -464,40 +424,32 @@ describe("usePrototypeData", () => {
     it("exposes hasUnsavedChanges flag", () => {
       const { result } = renderHook(() => usePrototypeData())
 
-      expect(result.current.hasUnsavedChanges).toBe(false)
+      expect(result.hasUnsavedChanges()).toBe(false)
 
-      act(() => {
-        result.current.setLeverage(2.0)
-      })
+      result.setLeverage(2.0)
 
-      expect(result.current.hasUnsavedChanges).toBe(true)
+      expect(result.hasUnsavedChanges()).toBe(true)
 
-      act(() => {
-        result.current.clearStagedTrades()
-      })
+      result.clearStagedTrades()
 
-      expect(result.current.hasUnsavedChanges).toBe(false)
+      expect(result.hasUnsavedChanges()).toBe(false)
     })
 
     it("exposes committedLeverage and targetLeverage", () => {
       const { result } = renderHook(() => usePrototypeData())
 
-      expect(result.current.committedLeverage).toBe(1.0)
-      expect(result.current.targetLeverage).toBe(1.0)
+      expect(result.committedLeverage()).toBe(1.0)
+      expect(result.targetLeverage()).toBe(1.0)
 
-      act(() => {
-        result.current.setLeverage(2.0)
-      })
+      result.setLeverage(2.0)
 
-      expect(result.current.committedLeverage).toBe(1.0) // Unchanged
-      expect(result.current.targetLeverage).toBe(2.0) // Changed
+      expect(result.committedLeverage()).toBe(1.0)
+      expect(result.targetLeverage()).toBe(2.0)
 
-      act(() => {
-        result.current.executeStagedTrades()
-      })
+      result.executeStagedTrades()
 
-      expect(result.current.committedLeverage).toBe(2.0) // Now committed
-      expect(result.current.targetLeverage).toBe(2.0)
+      expect(result.committedLeverage()).toBe(2.0)
+      expect(result.targetLeverage()).toBe(2.0)
     })
   })
 })

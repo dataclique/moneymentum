@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useCallback, useRef } from "react"
+import { createEffect, onCleanup } from "solid-js"
 import { createShortcutRegistry, createEscapeStack } from "../keyboard"
 import type { ShortcutRegistry, EscapeStack, EscapeHandler } from "../keyboard"
 import { getDirection } from "../utils/keys"
@@ -42,9 +42,9 @@ interface KeyboardManagerDeps {
 }
 
 interface UseKeyboardManagerProps {
-  config: KeyboardManagerConfig
+  config: () => KeyboardManagerConfig
   actions: KeyboardManagerActions
-  deps: KeyboardManagerDeps
+  deps: () => KeyboardManagerDeps
 }
 
 export interface KeyboardManager {
@@ -58,36 +58,30 @@ export const useKeyboardManager = ({
   actions,
   deps,
 }: UseKeyboardManagerProps): KeyboardManager => {
-  const registryRef = useRef<ShortcutRegistry>(createShortcutRegistry())
-  const escapeStackRef = useRef<EscapeStack>(createEscapeStack())
+  const registry = createShortcutRegistry()
+  const escapeStack = createEscapeStack()
 
-  const registry = registryRef.current
-  const escapeStack = escapeStackRef.current
+  const registerEscapeHandler = (handler: EscapeHandler): (() => void) => {
+    return escapeStack.push(handler)
+  }
 
-  const registerEscapeHandler = useCallback(
-    (handler: EscapeHandler): (() => void) => {
-      return escapeStack.push(handler)
-    },
-    [escapeStack],
-  )
-
-  const blurLeverageControl = useCallback(() => {
+  const blurLeverageControl = () => {
     document
       .querySelector<HTMLElement>('[data-testid="leverage-control"]')
       ?.blur()
-  }, [])
+  }
 
-  const focusLeverageControl = useCallback(() => {
+  const focusLeverageControl = () => {
     document
       .querySelector<HTMLElement>('[data-testid="leverage-control"]')
       ?.focus()
-  }, [])
+  }
 
-  // useEffect justified: Global keyboard shortcuts must listen on window/document
-  // since they work regardless of which element has focus. Cannot use component-level onKeyDown.
-  useEffect(() => {
+  createEffect(() => {
+    const currentConfig = config()
+    const currentDeps = deps()
     const { focusedPanel, secondaryFocus, showHelp, columnConfigVisible } =
-      config
+      currentConfig
     const {
       focusPanel,
       setSecondaryFocus,
@@ -109,7 +103,7 @@ export const useKeyboardManager = ({
       setLeverage,
       executeStagedTrades,
     } = actions
-    const { sortedAssets } = deps
+    const { sortedAssets } = currentDeps
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (
@@ -121,14 +115,12 @@ export const useKeyboardManager = ({
 
       const key = event.key.toLowerCase()
 
-      // Help toggle
       if (key === "?" || (event.key === "F1" && !event.ctrlKey)) {
         event.preventDefault()
         toggleHelp()
         return
       }
 
-      // Escape handling via stack
       if (key === "escape") {
         event.preventDefault()
         if (showHelp) {
@@ -143,7 +135,6 @@ export const useKeyboardManager = ({
         return
       }
 
-      // Number keys for direct panel access
       if (event.key === "1") {
         event.preventDefault()
         event.stopImmediatePropagation()
@@ -177,10 +168,8 @@ export const useKeyboardManager = ({
         return
       }
 
-      // Navigation using vim keys (h/j/k/l) or arrow keys
       const direction = getDirection(event.key)
 
-      // Horizontal: switch between panels (h/l or left/right arrows)
       if (focusedPanel && direction === "left") {
         event.preventDefault()
         focusPanel("screener")
@@ -192,7 +181,6 @@ export const useKeyboardManager = ({
         return
       }
 
-      // Vertical: navigate within lists (j/k or up/down arrows)
       if (focusedPanel && direction === "down") {
         event.preventDefault()
         const result = moveSelection("down")
@@ -209,7 +197,6 @@ export const useKeyboardManager = ({
         return
       }
 
-      // Navigate from staged changes back to positions with up
       if (secondaryFocus === "staged" && direction === "up") {
         event.preventDefault()
         blurLeverageControl()
@@ -218,7 +205,6 @@ export const useKeyboardManager = ({
         return
       }
 
-      // o, Space, or Enter to toggle expand/collapse in positions panel
       if (
         focusedPanel === "positions" &&
         (key === "o" || key === " " || key === "enter")
@@ -245,7 +231,6 @@ export const useKeyboardManager = ({
         return
       }
 
-      // Enter to open add position modal from screener
       if (focusedPanel === "screener" && event.key === "Enter") {
         event.preventDefault()
         const selectedIdx = getSelectedIndex("screener")
@@ -260,7 +245,6 @@ export const useKeyboardManager = ({
         return
       }
 
-      // +/- to stage trades (without shift) or adjust weight (with shift)
       if (focusedPanel && (key === "+" || key === "=")) {
         event.preventDefault()
         if (event.shiftKey) {
@@ -280,28 +264,24 @@ export const useKeyboardManager = ({
         return
       }
 
-      // m to open metric selector
       if (key === "m") {
         event.preventDefault()
         setIsMetricSelectorOpen(prev => !prev)
         return
       }
 
-      // f to toggle factor config panel
       if (key === "f") {
         event.preventDefault()
         setShowFactorConfig(prev => !prev)
         return
       }
 
-      // c to toggle screener column config
       if (key === "c") {
         event.preventDefault()
         toggleColumnConfig()
         return
       }
 
-      // [ and ] for global leverage adjustment
       if (event.key === "[") {
         event.preventDefault()
         setLeverage(prev => Math.max(0.1, Math.round((prev - 0.1) * 10) / 10))
@@ -313,14 +293,12 @@ export const useKeyboardManager = ({
         return
       }
 
-      // x to execute staged trades
       if (key === "x") {
         event.preventDefault()
         executeStagedTrades()
         return
       }
 
-      // Start navigation from screener if nothing focused
       if (!focusedPanel && ["h", "j", "k", "l"].includes(key)) {
         event.preventDefault()
         focusPanel("screener")
@@ -328,13 +306,10 @@ export const useKeyboardManager = ({
     }
 
     window.addEventListener("keydown", handleKeyDown)
-    return () => {
+    onCleanup(() => {
       window.removeEventListener("keydown", handleKeyDown)
-    }
-  }, [config, actions, deps, blurLeverageControl, focusLeverageControl])
+    })
+  })
 
-  return useMemo(
-    () => ({ registry, escapeStack, registerEscapeHandler }),
-    [registry, escapeStack, registerEscapeHandler],
-  )
+  return { registry, escapeStack, registerEscapeHandler }
 }

@@ -1,54 +1,68 @@
-import { useEffect, useState } from "react"
+import {
+  createSignal,
+  createEffect,
+  onCleanup,
+  untrack,
+  type JSX,
+} from "solid-js"
 import { ThemeProviderContext } from "@/contexts/theme-context"
 
 type Theme = "dark" | "light" | "system"
 
-type ThemeProviderProps = {
-  children: React.ReactNode
+interface ThemeProviderProps {
+  children: JSX.Element
   defaultTheme?: Theme
   storageKey?: string
 }
 
-export const ThemeProvider = ({
-  children,
-  defaultTheme = "system",
-  storageKey = "vite-ui-theme",
-  ...props
-}: ThemeProviderProps) => {
-  const [theme, setTheme] = useState<Theme>(() => {
-    const stored = localStorage.getItem(storageKey)
-    return (stored as Theme | null) ?? defaultTheme
-  })
+export const ThemeProvider = (props: ThemeProviderProps) => {
+  const storageKey = untrack(() => props.storageKey) ?? "vite-ui-theme"
+  const defaultTheme = props.defaultTheme ?? "system"
 
-  useEffect(() => {
+  const [theme, setTheme] = createSignal<Theme>(
+    (localStorage.getItem(storageKey) as Theme | null) ?? defaultTheme,
+  )
+
+  // Apply the active theme class to <html> whenever the theme signal changes.
+  // This must be an effect (not a memo) because it performs a DOM side-effect.
+  createEffect(() => {
+    const currentTheme = theme()
     const root = window.document.documentElement
 
     root.classList.remove("light", "dark")
 
-    if (theme === "system") {
-      const systemTheme = window.matchMedia("(prefers-color-scheme: dark)")
-        .matches
-        ? "dark"
-        : "light"
+    if (currentTheme === "system") {
+      const mq = window.matchMedia("(prefers-color-scheme: dark)")
 
-      root.classList.add(systemTheme)
+      const applySystemTheme = () => {
+        root.classList.remove("light", "dark")
+        root.classList.add(mq.matches ? "dark" : "light")
+      }
+
+      applySystemTheme()
+
+      mq.addEventListener("change", applySystemTheme)
+      onCleanup(() => {
+        mq.removeEventListener("change", applySystemTheme)
+      })
+
       return
     }
 
-    root.classList.add(theme)
-  }, [theme])
+    root.classList.add(currentTheme)
+  })
 
   const value = {
     theme,
-    setTheme: (theme: Theme) => {
-      localStorage.setItem(storageKey, theme)
-      setTheme(theme)
+    setTheme: (newTheme: Theme) => {
+      localStorage.setItem(storageKey, newTheme)
+      setTheme(newTheme)
     },
   }
 
   return (
-    <ThemeProviderContext.Provider {...props} value={value}>
-      {children}
+    <ThemeProviderContext.Provider value={value}>
+      {props.children}
     </ThemeProviderContext.Provider>
   )
 }

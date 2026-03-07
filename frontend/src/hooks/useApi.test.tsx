@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
-import { renderHook, waitFor } from "@testing-library/react"
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
+import { renderHook, waitFor } from "@solidjs/testing-library"
+import { QueryClient, QueryClientProvider } from "@tanstack/solid-query"
 import { useDateRange, useAnalysisData, useTokenData } from "./useApi"
 import type { Timeframe } from "@/components/ui/timeframe-select"
-import React from "react"
+import type { ParentProps } from "solid-js"
 
 vi.mock("./useTrading", () => ({
   refreshClientData: vi.fn(),
@@ -17,8 +17,10 @@ const createWrapper = () => {
       },
     },
   })
-  return ({ children }: { children: React.ReactNode }) => (
-    <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+  return (props: ParentProps) => (
+    <QueryClientProvider client={queryClient}>
+      {props.children}
+    </QueryClientProvider>
   )
 }
 
@@ -45,16 +47,16 @@ describe("useApi hooks with Timeframe type", () => {
       })
 
       const timeframe: Timeframe = "1h"
-      const { result } = renderHook(() => useDateRange(timeframe), {
+      const { result } = renderHook(() => useDateRange(() => timeframe), {
         wrapper: createWrapper(),
       })
 
       await waitFor(() => {
-        expect(result.current.isSuccess).toBe(true)
+        expect(result.isSuccess).toBe(true)
       })
 
       expect(global.fetch).toHaveBeenCalledWith("/api/date-range?timeframe=1h")
-      expect(result.current.data).toEqual(mockResponse)
+      expect(result.data).toEqual(mockResponse)
     })
 
     it("accepts valid Timeframe type '15m'", async () => {
@@ -70,12 +72,12 @@ describe("useApi hooks with Timeframe type", () => {
       })
 
       const timeframe: Timeframe = "15m"
-      const { result } = renderHook(() => useDateRange(timeframe), {
+      const { result } = renderHook(() => useDateRange(() => timeframe), {
         wrapper: createWrapper(),
       })
 
       await waitFor(() => {
-        expect(result.current.isSuccess).toBe(true)
+        expect(result.isSuccess).toBe(true)
       })
 
       expect(global.fetch).toHaveBeenCalledWith("/api/date-range?timeframe=15m")
@@ -108,12 +110,12 @@ describe("useApi hooks with Timeframe type", () => {
         timeframe: "1h" as Timeframe,
       }
 
-      const { result } = renderHook(() => useAnalysisData(params), {
+      const { result } = renderHook(() => useAnalysisData(() => params), {
         wrapper: createWrapper(),
       })
 
       await waitFor(() => {
-        expect(result.current.isSuccess).toBe(true)
+        expect(result.isSuccess).toBe(true)
       })
 
       expect(global.fetch).toHaveBeenCalledWith(
@@ -141,12 +143,12 @@ describe("useApi hooks with Timeframe type", () => {
         timeframe: "15m" as Timeframe,
       }
 
-      const { result } = renderHook(() => useAnalysisData(params), {
+      const { result } = renderHook(() => useAnalysisData(() => params), {
         wrapper: createWrapper(),
       })
 
       await waitFor(() => {
-        expect(result.current.isSuccess).toBe(true)
+        expect(result.isSuccess).toBe(true)
       })
 
       expect(global.fetch).toHaveBeenCalledWith(
@@ -171,12 +173,19 @@ describe("useApi hooks with Timeframe type", () => {
       const ticker = "BTC"
       const timeframe: Timeframe = "1h"
 
-      const { result } = renderHook(() => useTokenData(ticker, timeframe), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(
+        () =>
+          useTokenData(
+            () => ticker,
+            () => timeframe,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
       await waitFor(() => {
-        expect(result.current.isSuccess).toBe(true)
+        expect(result.isSuccess).toBe(true)
       })
 
       expect(global.fetch).toHaveBeenCalledWith("/api/token/BTC?timeframe=1h")
@@ -196,12 +205,19 @@ describe("useApi hooks with Timeframe type", () => {
       const ticker = "ETH"
       const timeframe: Timeframe = "15m"
 
-      const { result } = renderHook(() => useTokenData(ticker, timeframe), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(
+        () =>
+          useTokenData(
+            () => ticker,
+            () => timeframe,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
       await waitFor(() => {
-        expect(result.current.isSuccess).toBe(true)
+        expect(result.isSuccess).toBe(true)
       })
 
       expect(global.fetch).toHaveBeenCalledWith("/api/token/ETH?timeframe=15m")
@@ -210,11 +226,18 @@ describe("useApi hooks with Timeframe type", () => {
     it("does not query when ticker is undefined", () => {
       const timeframe: Timeframe = "1h"
 
-      const { result } = renderHook(() => useTokenData(undefined, timeframe), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(
+        () =>
+          useTokenData(
+            () => undefined,
+            () => timeframe,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
-      expect(result.current.isFetching).toBe(false)
+      expect(result.isFetching).toBe(false)
       expect(global.fetch).not.toHaveBeenCalled()
     })
   })

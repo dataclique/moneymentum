@@ -308,7 +308,7 @@ describe("calculateNetSide", () => {
         percentage: 10,
       },
     ]
-    // net = 100, gross = 2100, ratio ≈ 4.8% < 10%, still neutral
+    // net = 100, gross = 2100, ratio ~ 4.8% < 10%, still neutral
     expect(calculateNetSide(positions)).toBe("neutral")
   })
 
@@ -329,7 +329,7 @@ describe("calculateNetSide", () => {
         percentage: 10,
       },
     ]
-    // net = 200, gross = 2200, ratio ≈ 9.1% < 10%, still neutral
+    // net = 200, gross = 2200, ratio ~ 9.1% < 10%, still neutral
     expect(calculateNetSide(positions)).toBe("neutral")
   })
 
@@ -350,7 +350,7 @@ describe("calculateNetSide", () => {
         percentage: 10,
       },
     ]
-    // net = 300, gross = 2300, ratio ≈ 13% > 10%
+    // net = 300, gross = 2300, ratio ~ 13% > 10%
     expect(calculateNetSide(positions)).toBe("long")
   })
 })
@@ -705,9 +705,9 @@ describe("rebalanceWeights", () => {
     const result = rebalanceWeights(current, "BTC/USDC:USDC", 0.6)
 
     expect(result.get("BTC/USDC:USDC")).toBeCloseTo(0.6)
-    // ETH absorbs: 30/50 × 10% = 6% → 24%
+    // ETH absorbs: 30/50 * 10% = 6% -> 24%
     expect(result.get("ETH/USDC:USDC")).toBeCloseTo(0.24)
-    // SOL absorbs: 20/50 × 10% = 4% → 16%
+    // SOL absorbs: 20/50 * 10% = 4% -> 16%
     expect(result.get("SOL/USDC:USDC")).toBeCloseTo(0.16)
 
     // Total still sums to 1
@@ -725,9 +725,9 @@ describe("rebalanceWeights", () => {
     const result = rebalanceWeights(current, "BTC/USDC:USDC", 0.3)
 
     expect(result.get("BTC/USDC:USDC")).toBeCloseTo(0.3)
-    // Released 0.2, ETH gets 30/50 × 20% = 12% → 42%
+    // Released 0.2, ETH gets 30/50 * 20% = 12% -> 42%
     expect(result.get("ETH/USDC:USDC")).toBeCloseTo(0.42)
-    // SOL gets 20/50 × 20% = 8% → 28%
+    // SOL gets 20/50 * 20% = 8% -> 28%
     expect(result.get("SOL/USDC:USDC")).toBeCloseTo(0.28)
 
     const total = Array.from(result.values()).reduce((sum, w) => sum + w, 0)
@@ -771,9 +771,9 @@ describe("rebalanceWeights", () => {
     const result = rebalanceWeights(current, "BTC/USDC:USDC", 0)
 
     expect(result.get("BTC/USDC:USDC")).toBe(0)
-    // ETH gets: 30/50 × 50% = 30% → 60%
+    // ETH gets: 30/50 * 50% = 30% -> 60%
     expect(result.get("ETH/USDC:USDC")).toBeCloseTo(0.6)
-    // SOL gets: 20/50 × 50% = 20% → 40%
+    // SOL gets: 20/50 * 50% = 20% -> 40%
     expect(result.get("SOL/USDC:USDC")).toBeCloseTo(0.4)
 
     const total = Array.from(result.values()).reduce((sum, w) => sum + w, 0)
@@ -858,7 +858,7 @@ describe("computeStagedTradesFromDiff", () => {
     const btcTrade = trades.find(t => t.symbol === "BTC/USDC:USDC")
     expect(btcTrade).toBeDefined()
     expect(btcTrade?.side).toBe("buy")
-    expect(btcTrade?.notional).toBeCloseTo(10000) // (0.6 - 0.5) × 100000 × 1.0
+    expect(btcTrade?.notional).toBeCloseTo(10000) // (0.6 - 0.5) * 100000 * 1.0
   })
 
   it("generates sell trade when weight decreases", () => {
@@ -879,7 +879,7 @@ describe("computeStagedTradesFromDiff", () => {
     const btcTrade = trades.find(t => t.symbol === "BTC/USDC:USDC")
     expect(btcTrade).toBeDefined()
     expect(btcTrade?.side).toBe("sell")
-    expect(btcTrade?.notional).toBeCloseTo(20000) // (0.5 - 0.3) × 100000 × 1.0
+    expect(btcTrade?.notional).toBeCloseTo(20000) // (0.5 - 0.3) * 100000 * 1.0
   })
 
   it("generates trades for all positions when leverage changes", () => {
@@ -902,7 +902,7 @@ describe("computeStagedTradesFromDiff", () => {
 
     const btcTrade = trades.find(t => t.symbol === "BTC/USDC:USDC")
     expect(btcTrade?.side).toBe("buy")
-    expect(btcTrade?.notional).toBeCloseTo(25000) // 0.5 × 100000 × (1.5 - 1.0)
+    expect(btcTrade?.notional).toBeCloseTo(25000) // 0.5 * 100000 * (1.5 - 1.0)
   })
 
   it("combines weight and leverage changes correctly", () => {
@@ -920,7 +920,7 @@ describe("computeStagedTradesFromDiff", () => {
       nav: baseNav,
     })
 
-    // BTC: was 50k (0.5 × 100k × 1.0), now 120k (0.6 × 100k × 2.0), diff = +70k
+    // BTC: was 50k (0.5 * 100k * 1.0), now 120k (0.6 * 100k * 2.0), diff = +70k
     const btcTrade = trades.find(t => t.symbol === "BTC/USDC:USDC")
     expect(btcTrade?.side).toBe("buy")
     expect(btcTrade?.notional).toBeCloseTo(70000)
@@ -928,8 +928,8 @@ describe("computeStagedTradesFromDiff", () => {
 
   it("ignores trades below minimum threshold", () => {
     const targetWeights = new Map([
-      ["BTC/USDC:USDC", 0.50005], // tiny change: 0.00005 × 100000 = $5
-      ["ETH/USDC:USDC", 0.29995], // tiny change: 0.00005 × 100000 = $5
+      ["BTC/USDC:USDC", 0.50005], // tiny change: 0.00005 * 100000 = $5
+      ["ETH/USDC:USDC", 0.29995], // tiny change: 0.00005 * 100000 = $5
       ["SOL/USDC:USDC", 0.2], // no change
     ])
 

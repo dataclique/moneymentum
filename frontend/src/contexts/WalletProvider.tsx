@@ -1,92 +1,79 @@
 import {
-  useState,
-  useCallback,
-  useEffect,
-  useMemo,
-  type ReactNode,
-} from "react"
+  createSignal,
+  createEffect,
+  createMemo,
+  onMount,
+  onCleanup,
+  type ParentProps,
+} from "solid-js"
 import {
   WalletContext,
   WALLET_STORAGE_KEY,
   NETWORK_STORAGE_KEY,
-  getStoredWallet,
   getStoredNetworkMode,
   type NetworkMode,
   type WalletCredentials,
-  type StoredWallet,
 } from "./wallet-context"
 import {
   HyperliquidClient,
   preloadMarkets,
 } from "@/services/hyperliquid-client"
 
-export const WalletProvider = ({ children }: { children: ReactNode }) => {
-  const [credentials, setCredentials] = useState<WalletCredentials | null>(() =>
-    getStoredWallet(),
+export const WalletProvider = (props: ParentProps) => {
+  const [credentials, setCredentials] = createSignal<WalletCredentials | null>(
+    null,
   )
-  const [networkMode, setNetworkModeState] = useState<NetworkMode>(() =>
+  const [networkMode, setNetworkModeState] = createSignal<NetworkMode>(
     getStoredNetworkMode(),
   )
 
-  // Preload markets on mount and when network mode changes (cached for 24h)
-  useEffect(() => {
-    void preloadMarkets(networkMode)
-  }, [networkMode])
+  // createEffect: eagerly preload market metadata whenever networkMode changes
+  createEffect(() => {
+    void preloadMarkets(networkMode())
+  })
 
-  const isConnected = credentials !== null
+  const isConnected = createMemo(() => credentials() !== null)
 
-  const client = useMemo(() => {
-    if (!credentials) return null
-    return new HyperliquidClient(credentials, networkMode)
-  }, [credentials, networkMode])
+  const client = createMemo(() => {
+    const creds = credentials()
+    if (!creds) return null
+    return new HyperliquidClient(creds, networkMode())
+  })
 
-  const connect = useCallback((newCredentials: WalletCredentials) => {
+  const connect = (newCredentials: WalletCredentials) => {
     setCredentials(newCredentials)
-    localStorage.setItem(WALLET_STORAGE_KEY, JSON.stringify(newCredentials))
-  }, [])
+    const { accountAddress, apiWalletAddress, vaultAddress } = newCredentials
+    localStorage.setItem(
+      WALLET_STORAGE_KEY,
+      JSON.stringify({ accountAddress, apiWalletAddress, vaultAddress }),
+    )
+  }
 
-  const disconnect = useCallback(() => {
+  const disconnect = () => {
     setCredentials(null)
     localStorage.removeItem(WALLET_STORAGE_KEY)
-  }, [])
+  }
 
-  const setNetworkMode = useCallback((mode: NetworkMode) => {
+  const setNetworkMode = (mode: NetworkMode) => {
     setNetworkModeState(mode)
     localStorage.setItem(NETWORK_STORAGE_KEY, mode)
-  }, [])
+  }
 
-  useEffect(() => {
-    const handleStorageChange = (event: StorageEvent) => {
-      if (event.key === WALLET_STORAGE_KEY) {
-        if (event.newValue === null) {
-          setCredentials(null)
-        } else {
-          try {
-            const parsed = JSON.parse(event.newValue) as StoredWallet
-            if (
-              parsed.accountAddress &&
-              parsed.apiWalletAddress &&
-              parsed.privateKey
-            ) {
-              setCredentials(parsed)
-            }
-          } catch {
-            setCredentials(null)
-          }
-        }
-      }
-      if (event.key === NETWORK_STORAGE_KEY) {
-        if (event.newValue === "mainnet" || event.newValue === "testnet") {
-          setNetworkModeState(event.newValue)
-        }
-      }
+  const handleStorageChange = (event: StorageEvent) => {
+    if (event.key === WALLET_STORAGE_KEY) {
+      setCredentials(null)
     }
+    if (event.key === NETWORK_STORAGE_KEY) {
+      setNetworkModeState(getStoredNetworkMode())
+    }
+  }
 
+  onMount(() => {
     window.addEventListener("storage", handleStorageChange)
-    return () => {
-      window.removeEventListener("storage", handleStorageChange)
-    }
-  }, [])
+  })
+  onCleanup(() => {
+    window.removeEventListener("storage", handleStorageChange)
+  })
 
   return (
     <WalletContext.Provider
@@ -100,7 +87,7 @@ export const WalletProvider = ({ children }: { children: ReactNode }) => {
         setNetworkMode,
       }}
     >
-      {children}
+      {props.children}
     </WalletContext.Provider>
   )
 }

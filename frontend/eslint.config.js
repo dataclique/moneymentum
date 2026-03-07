@@ -1,11 +1,14 @@
 import js from "@eslint/js"
 import globals from "globals"
-import reactHooks from "eslint-plugin-react-hooks"
-import reactRefresh from "eslint-plugin-react-refresh"
+import solid from "eslint-plugin-solid/configs/typescript"
 import tseslint from "typescript-eslint"
 
 export default tseslint.config(
   { ignores: ["dist", "node_modules", "coverage"] },
+  {
+    files: ["**/*.{ts,tsx}"],
+    ...solid,
+  },
   {
     extends: [js.configs.recommended, ...tseslint.configs.strictTypeChecked],
     files: ["**/*.{ts,tsx}"],
@@ -17,20 +20,7 @@ export default tseslint.config(
         tsconfigRootDir: import.meta.dirname,
       },
     },
-    plugins: {
-      "react-hooks": reactHooks,
-      "react-refresh": reactRefresh,
-    },
     rules: {
-      // React Hooks
-      ...reactHooks.configs.recommended.rules,
-
-      // React Refresh
-      "react-refresh/only-export-components": [
-        "warn",
-        { allowConstantExport: true },
-      ],
-
       // TypeScript strict rules
       "@typescript-eslint/no-unused-vars": [
         "error",

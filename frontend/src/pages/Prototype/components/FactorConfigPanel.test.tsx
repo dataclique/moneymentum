@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest"
-import { render, screen, fireEvent } from "@testing-library/react"
+import { render, screen, fireEvent } from "@solidjs/testing-library"
 import { FactorConfigPanel } from "./FactorConfigPanel"
 import type { FactorExposure } from "../mockData"
 
@@ -17,7 +17,7 @@ describe("FactorConfigPanel", () => {
   }
 
   it("displays existing factors", () => {
-    render(<FactorConfigPanel {...defaultProps} />)
+    render(() => <FactorConfigPanel {...defaultProps} />)
 
     expect(screen.getByText("β to BTC")).toBeInTheDocument()
     expect(screen.getByText("β to SPY")).toBeInTheDocument()
@@ -25,7 +25,7 @@ describe("FactorConfigPanel", () => {
   })
 
   it("shows all benchmarks as toggles with active state", () => {
-    render(<FactorConfigPanel {...defaultProps} />)
+    render(() => <FactorConfigPanel {...defaultProps} />)
 
     // All benchmarks should be visible as toggles
     expect(screen.getByRole("button", { name: /BTC/ })).toBeInTheDocument()
@@ -37,9 +37,9 @@ describe("FactorConfigPanel", () => {
   it("calls onSave and onClose when Done clicked", () => {
     const onSave = vi.fn()
     const onClose = vi.fn()
-    render(
-      <FactorConfigPanel {...defaultProps} onSave={onSave} onClose={onClose} />,
-    )
+    render(() => (
+      <FactorConfigPanel {...defaultProps} onSave={onSave} onClose={onClose} />
+    ))
 
     fireEvent.click(screen.getByText("Done"))
     expect(onSave).toHaveBeenCalledWith(mockFactors)
@@ -47,7 +47,7 @@ describe("FactorConfigPanel", () => {
   })
 
   it("removes factor when X clicked", () => {
-    render(<FactorConfigPanel {...defaultProps} />)
+    render(() => <FactorConfigPanel {...defaultProps} />)
 
     // Find the remove buttons (X icons) in the factor list
     const factorRow = screen.getByText("β to BTC").closest("div")
@@ -61,12 +61,12 @@ describe("FactorConfigPanel", () => {
   })
 
   it("toggles benchmark when quick toggle button clicked", () => {
-    render(<FactorConfigPanel {...defaultProps} />)
+    render(() => <FactorConfigPanel {...defaultProps} />)
 
     // ETH is not in the initial factors, click to add
     fireEvent.click(screen.getByRole("button", { name: /ETH/ }))
 
-    // Now β to ETH should be in the factors list
+    // Now beta to ETH should be in the factors list
     expect(screen.getByText("β to ETH")).toBeInTheDocument()
 
     // Click again to remove

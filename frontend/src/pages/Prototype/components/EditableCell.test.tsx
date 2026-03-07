@@ -1,34 +1,44 @@
 import { describe, it, expect, vi } from "vitest"
-import { render, screen, fireEvent } from "@testing-library/react"
+import { render, screen, fireEvent } from "@solidjs/testing-library"
 import userEvent from "@testing-library/user-event"
 import { EditableCell } from "./EditableCell"
 
 describe("EditableCell", () => {
   describe("display formatting", () => {
     it("formats percent values", () => {
-      render(<EditableCell value={0.125} format="percent" onCommit={vi.fn()} />)
+      render(() => (
+        <EditableCell value={0.125} format="percent" onCommit={vi.fn()} />
+      ))
       expect(screen.getByText("12.5%")).toBeInTheDocument()
     })
 
     it("formats currency values in thousands", () => {
-      render(<EditableCell value={5000} format="currency" onCommit={vi.fn()} />)
+      render(() => (
+        <EditableCell value={5000} format="currency" onCommit={vi.fn()} />
+      ))
       expect(screen.getByText("$5.0k")).toBeInTheDocument()
     })
 
     it("formats small currency values without k suffix", () => {
-      render(<EditableCell value={500} format="currency" onCommit={vi.fn()} />)
+      render(() => (
+        <EditableCell value={500} format="currency" onCommit={vi.fn()} />
+      ))
       expect(screen.getByText("$500")).toBeInTheDocument()
     })
 
     it("formats number values", () => {
-      render(<EditableCell value={1.234} format="number" onCommit={vi.fn()} />)
+      render(() => (
+        <EditableCell value={1.234} format="number" onCommit={vi.fn()} />
+      ))
       expect(screen.getByText("1.23")).toBeInTheDocument()
     })
   })
 
   describe("click to edit", () => {
     it("enters edit mode on click", async () => {
-      render(<EditableCell value={0.1} format="percent" onCommit={vi.fn()} />)
+      render(() => (
+        <EditableCell value={0.1} format="percent" onCommit={vi.fn()} />
+      ))
 
       await userEvent.click(screen.getByText("10.0%"))
 
@@ -36,7 +46,9 @@ describe("EditableCell", () => {
     })
 
     it("pre-fills input with current value", async () => {
-      render(<EditableCell value={0.1} format="percent" onCommit={vi.fn()} />)
+      render(() => (
+        <EditableCell value={0.1} format="percent" onCommit={vi.fn()} />
+      ))
 
       await userEvent.click(screen.getByText("10.0%"))
 
@@ -45,7 +57,9 @@ describe("EditableCell", () => {
 
     it("commits on Enter", async () => {
       const onCommit = vi.fn()
-      render(<EditableCell value={0.1} format="percent" onCommit={onCommit} />)
+      render(() => (
+        <EditableCell value={0.1} format="percent" onCommit={onCommit} />
+      ))
 
       await userEvent.click(screen.getByText("10.0%"))
       await userEvent.clear(screen.getByRole("textbox"))
@@ -56,7 +70,9 @@ describe("EditableCell", () => {
 
     it("cancels on Escape without committing", async () => {
       const onCommit = vi.fn()
-      render(<EditableCell value={0.1} format="percent" onCommit={onCommit} />)
+      render(() => (
+        <EditableCell value={0.1} format="percent" onCommit={onCommit} />
+      ))
 
       await userEvent.click(screen.getByText("10.0%"))
       await userEvent.clear(screen.getByRole("textbox"))
@@ -68,12 +84,12 @@ describe("EditableCell", () => {
 
     it("commits on blur", async () => {
       const onCommit = vi.fn()
-      render(
+      render(() => (
         <div>
           <EditableCell value={0.1} format="percent" onCommit={onCommit} />
-          <button>other</button>
-        </div>,
-      )
+          <button type="button">other</button>
+        </div>
+      ))
 
       await userEvent.click(screen.getByText("10.0%"))
       await userEvent.clear(screen.getByRole("textbox"))
@@ -86,15 +102,15 @@ describe("EditableCell", () => {
 
   describe("keyboard shortcut to edit", () => {
     it("enters edit mode when editKey is pressed while selected", async () => {
-      render(
+      render(() => (
         <EditableCell
           value={0.1}
           format="percent"
           onCommit={vi.fn()}
           isSelected={true}
           editKey="w"
-        />,
-      )
+        />
+      ))
 
       fireEvent.keyDown(document, { key: "w" })
 
@@ -102,15 +118,15 @@ describe("EditableCell", () => {
     })
 
     it("does not enter edit mode when not selected", () => {
-      render(
+      render(() => (
         <EditableCell
           value={0.1}
           format="percent"
           onCommit={vi.fn()}
           isSelected={false}
           editKey="w"
-        />,
-      )
+        />
+      ))
 
       fireEvent.keyDown(document, { key: "w" })
 
@@ -120,15 +136,15 @@ describe("EditableCell", () => {
 
   describe("directEdit mode", () => {
     it("enters edit mode when typing a number (5-9) while selected with directEdit", () => {
-      render(
+      render(() => (
         <EditableCell
           value={0.1}
           format="percent"
           onCommit={vi.fn()}
           isSelected={true}
           directEdit
-        />,
-      )
+        />
+      ))
 
       fireEvent.keyDown(document, { key: "5" })
 
@@ -137,15 +153,15 @@ describe("EditableCell", () => {
     })
 
     it("does not enter edit mode for panel focus keys (1, 2, 3, 4)", () => {
-      render(
+      render(() => (
         <EditableCell
           value={0.1}
           format="percent"
           onCommit={vi.fn()}
           isSelected={true}
           directEdit
-        />,
-      )
+        />
+      ))
 
       // Test key '1'
       fireEvent.keyDown(document, { key: "1" })
@@ -157,15 +173,15 @@ describe("EditableCell", () => {
     })
 
     it("enters edit mode when typing decimal point", () => {
-      render(
+      render(() => (
         <EditableCell
           value={0.1}
           format="percent"
           onCommit={vi.fn()}
           isSelected={true}
           directEdit
-        />,
-      )
+        />
+      ))
 
       fireEvent.keyDown(document, { key: "." })
 
@@ -174,15 +190,15 @@ describe("EditableCell", () => {
     })
 
     it("does not enter edit mode when not selected", () => {
-      render(
+      render(() => (
         <EditableCell
           value={0.1}
           format="percent"
           onCommit={vi.fn()}
           isSelected={false}
           directEdit
-        />,
-      )
+        />
+      ))
 
       fireEvent.keyDown(document, { key: "5" })
 
@@ -191,15 +207,15 @@ describe("EditableCell", () => {
 
     it("allows full workflow: type number, continue typing, commit", async () => {
       const onCommit = vi.fn()
-      render(
+      render(() => (
         <EditableCell
           value={0.1}
           format="percent"
           onCommit={onCommit}
           isSelected={true}
           directEdit
-        />,
-      )
+        />
+      ))
 
       // Start by typing '5'
       fireEvent.keyDown(document, { key: "5" })
@@ -215,7 +231,9 @@ describe("EditableCell", () => {
   describe("input parsing", () => {
     it("parses percent input without % symbol", async () => {
       const onCommit = vi.fn()
-      render(<EditableCell value={0.1} format="percent" onCommit={onCommit} />)
+      render(() => (
+        <EditableCell value={0.1} format="percent" onCommit={onCommit} />
+      ))
 
       await userEvent.click(screen.getByText("10.0%"))
       await userEvent.clear(screen.getByRole("textbox"))
@@ -226,9 +244,9 @@ describe("EditableCell", () => {
 
     it("parses currency input with k suffix", async () => {
       const onCommit = vi.fn()
-      render(
-        <EditableCell value={5000} format="currency" onCommit={onCommit} />,
-      )
+      render(() => (
+        <EditableCell value={5000} format="currency" onCommit={onCommit} />
+      ))
 
       await userEvent.click(screen.getByText("$5.0k"))
       await userEvent.clear(screen.getByRole("textbox"))
@@ -239,9 +257,9 @@ describe("EditableCell", () => {
 
     it("parses currency input without k suffix", async () => {
       const onCommit = vi.fn()
-      render(
-        <EditableCell value={5000} format="currency" onCommit={onCommit} />,
-      )
+      render(() => (
+        <EditableCell value={5000} format="currency" onCommit={onCommit} />
+      ))
 
       await userEvent.click(screen.getByText("$5.0k"))
       await userEvent.clear(screen.getByRole("textbox"))
@@ -252,7 +270,9 @@ describe("EditableCell", () => {
 
     it("does not commit invalid input", async () => {
       const onCommit = vi.fn()
-      render(<EditableCell value={0.1} format="percent" onCommit={onCommit} />)
+      render(() => (
+        <EditableCell value={0.1} format="percent" onCommit={onCommit} />
+      ))
 
       await userEvent.click(screen.getByText("10.0%"))
       await userEvent.clear(screen.getByRole("textbox"))
@@ -263,7 +283,9 @@ describe("EditableCell", () => {
 
     it("does not commit if value unchanged", async () => {
       const onCommit = vi.fn()
-      render(<EditableCell value={0.1} format="percent" onCommit={onCommit} />)
+      render(() => (
+        <EditableCell value={0.1} format="percent" onCommit={onCommit} />
+      ))
 
       await userEvent.click(screen.getByText("10.0%"))
       await userEvent.type(screen.getByRole("textbox"), "{Enter}")

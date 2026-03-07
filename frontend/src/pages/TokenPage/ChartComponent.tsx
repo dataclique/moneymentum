@@ -1,4 +1,4 @@
-import * as React from "react"
+import { onMount, onCleanup, createEffect } from "solid-js"
 import {
   CandlestickSeries,
   ColorType,
@@ -34,22 +34,18 @@ interface ChartComponentProps {
   timeframe: string
 }
 
-const ChartComponent: React.FC<ChartComponentProps> = ({
-  data,
-  selectedMetric,
-  timeframe,
-}) => {
-  const chartContainerRef = React.useRef<HTMLDivElement>(null)
-  const chartRef = React.useRef<IChartApi | null>(null)
-  const seriesRef = React.useRef<AnySeries | null>(null)
-  const volumeSeriesRef = React.useRef<AnySeries | null>(null)
+const ChartComponent = (props: ChartComponentProps) => {
+  let chartContainerRef: HTMLDivElement | undefined
+  let chartRef: IChartApi | null = null
+  let seriesRef: AnySeries | null = null
+  let volumeSeriesRef: AnySeries | null = null
 
-  React.useEffect(() => {
-    if (!chartContainerRef.current) return
+  onMount(() => {
+    if (!chartContainerRef) return
 
     try {
       // Create chart
-      const chart = createChart(chartContainerRef.current, {
+      const chart = createChart(chartContainerRef, {
         layout: {
           background: { type: ColorType.Solid, color: "#000" },
           textColor: "#fff",
@@ -67,13 +63,13 @@ const ChartComponent: React.FC<ChartComponentProps> = ({
         timeScale: {
           borderColor: "#485563",
           timeVisible: true,
-          secondsVisible: timeframe === "15m",
+          secondsVisible: props.timeframe === "15m",
         },
-        width: chartContainerRef.current.clientWidth,
-        height: chartContainerRef.current.clientHeight,
+        width: chartContainerRef.clientWidth,
+        height: chartContainerRef.clientHeight,
       })
 
-      chartRef.current = chart
+      chartRef = chart
 
       // Handle resize
       const resizeObserver = new ResizeObserver(entries => {
@@ -83,55 +79,57 @@ const ChartComponent: React.FC<ChartComponentProps> = ({
         }
       })
 
-      resizeObserver.observe(chartContainerRef.current)
+      resizeObserver.observe(chartContainerRef)
 
-      return () => {
+      onCleanup(() => {
         resizeObserver.disconnect()
 
         // Clean up series references first
-        seriesRef.current = null
-        volumeSeriesRef.current = null
+        seriesRef = null
+        volumeSeriesRef = null
 
         // Then remove the chart
-        if (chartRef.current) {
-          chartRef.current.remove()
-          chartRef.current = null
+        if (chartRef) {
+          chartRef.remove()
+          chartRef = null
         }
-      }
+      })
     } catch (error) {
       console.error("Error creating chart:", error)
     }
-  }, [timeframe])
+  })
 
-  React.useEffect(() => {
-    if (!chartRef.current || !data.length) return
+  createEffect(() => {
+    const currentData = props.data
+    const currentSelectedMetric = props.selectedMetric
+    if (!chartRef || !currentData.length) return
 
     try {
-      const chart = chartRef.current
+      const chart = chartRef
       // Remove existing series safely
-      if (seriesRef.current) {
+      if (seriesRef) {
         try {
           // Type assertion needed as the library's removeSeries typing is overly restrictive
           chart.removeSeries(
-            seriesRef.current as Parameters<typeof chart.removeSeries>[0],
+            seriesRef as Parameters<typeof chart.removeSeries>[0],
           )
         } catch {
           // Series may already be removed
         }
-        seriesRef.current = null
+        seriesRef = null
       }
-      if (volumeSeriesRef.current) {
+      if (volumeSeriesRef) {
         try {
           chart.removeSeries(
-            volumeSeriesRef.current as Parameters<typeof chart.removeSeries>[0],
+            volumeSeriesRef as Parameters<typeof chart.removeSeries>[0],
           )
         } catch {
           // Series may already be removed
         }
-        volumeSeriesRef.current = null
+        volumeSeriesRef = null
       }
 
-      if (selectedMetric === "price") {
+      if (currentSelectedMetric === "price") {
         // Create candlestick series for price data
         const candlestickSeries = chart.addSeries(CandlestickSeries, {
           upColor: "#26a69a",
@@ -141,7 +139,7 @@ const ChartComponent: React.FC<ChartComponentProps> = ({
           wickDownColor: "#ef5350",
         })
 
-        const ohlcData = transformToOHLC(data)
+        const ohlcData = transformToOHLC(currentData)
         const chartData = ohlcData.map(item => ({
           time: (item.date.getTime() / 1000) as Time,
           open: item.open,
@@ -164,7 +162,7 @@ const ChartComponent: React.FC<ChartComponentProps> = ({
           candlestickSeries.setData(chartData)
         }
 
-        seriesRef.current = candlestickSeries
+        seriesRef = candlestickSeries
 
         // Add volume series only if we have volume data
         if (ohlcData.some(item => item.volume > 0)) {
@@ -195,11 +193,11 @@ const ChartComponent: React.FC<ChartComponentProps> = ({
             volumeSeries.setData(volumeData)
           }
 
-          volumeSeriesRef.current = volumeSeries
+          volumeSeriesRef = volumeSeries
         }
       } else {
-        // Create line series for metrics (selectedMetric is narrowed to keyof TradingData here)
-        const lineData = transformToLineData(data, selectedMetric)
+        // Create line series for metrics (currentSelectedMetric is narrowed to keyof TradingData here)
+        const lineData = transformToLineData(currentData, currentSelectedMetric)
 
         // Calculate the range of values to determine appropriate precision
         const values = lineData.map(d => d.value)
@@ -212,12 +210,12 @@ const ChartComponent: React.FC<ChartComponentProps> = ({
         // Determine precision and format based on the metric type
         let precision = 2
         const isReturnMetric =
-          selectedMetric.includes("return") ||
-          selectedMetric === "sharpe" ||
-          selectedMetric === "sortino"
+          currentSelectedMetric.includes("return") ||
+          currentSelectedMetric === "sharpe" ||
+          currentSelectedMetric === "sortino"
         const isVolatilityMetric =
-          selectedMetric.includes("volatility") ||
-          selectedMetric.includes("stddev")
+          currentSelectedMetric.includes("volatility") ||
+          currentSelectedMetric.includes("stddev")
 
         // Handle edge case where all values are very close to zero
         if (range < 0.0000001 && avgAbsValue < 0.000001) {
@@ -272,7 +270,7 @@ const ChartComponent: React.FC<ChartComponentProps> = ({
         }))
 
         lineSeries.setData(chartData)
-        seriesRef.current = lineSeries
+        seriesRef = lineSeries
 
         // Set visible range to show data properly
         if (lineData.length > 0) {
@@ -287,7 +285,7 @@ const ChartComponent: React.FC<ChartComponentProps> = ({
     } catch (error) {
       console.error("Error updating chart data:", error)
     }
-  }, [data, selectedMetric, timeframe])
+  })
 
   return (
     <div

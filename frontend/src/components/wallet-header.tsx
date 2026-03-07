@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react"
+import { createSignal, createEffect, Show } from "solid-js"
 import { Switch } from "@/components/ui/switch"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -19,7 +19,7 @@ import {
 import { useWalletSettings, useSwitchNetwork } from "@/hooks/useTrading"
 import { useNetwork } from "@/hooks/useNetwork"
 import { useWallet } from "@/hooks/useWallet"
-import { toast } from "sonner"
+import { toast } from "solid-sonner"
 
 const formatPublicKey = (key: string): string => {
   if (!key || key.length < 10) return key
@@ -33,31 +33,37 @@ interface WalletHeaderProps {
   autoOpen?: boolean
 }
 
-export const WalletHeader = ({ autoOpen = false }: WalletHeaderProps) => {
+export const WalletHeader = (props: WalletHeaderProps) => {
   const { data: walletSettings, isConnected } = useWalletSettings()
   const switchNetworkMutation = useSwitchNetwork()
   const { isNetworkSwitching, setIsNetworkSwitching } = useNetwork()
   const { connect, disconnect } = useWallet()
 
-  const [dialogOpen, setDialogOpen] = useState(false)
-  const [accountAddress, setAccountAddress] = useState("")
-  const [apiWalletAddress, setApiWalletAddress] = useState("")
-  const [privateKey, setPrivateKey] = useState("")
-  const [vaultAddress, setVaultAddress] = useState("")
+  const [dialogOpen, setDialogOpen] = createSignal(false)
+  const [accountAddress, setAccountAddress] = createSignal("")
+  const [apiWalletAddress, setApiWalletAddress] = createSignal("")
+  const [privateKey, setPrivateKey] = createSignal("")
+  const [vaultAddress, setVaultAddress] = createSignal("")
+  const [hasAutoOpened, setHasAutoOpened] = createSignal(false)
+  const [menuOpen, setMenuOpen] = createSignal(false)
 
-  useEffect(() => {
-    if (autoOpen && !isConnected) {
+  // Auto-open the dialog once on mount when autoOpen is true and no wallet is
+  // connected. The hasAutoOpened flag prevents re-triggering on later
+  // disconnects.
+  createEffect(() => {
+    if (props.autoOpen && !isConnected() && !hasAutoOpened()) {
       setDialogOpen(true)
+      setHasAutoOpened(true)
     }
-  }, [autoOpen, isConnected])
+  })
 
   const handleTestnetToggle = async (checked: boolean) => {
-    if (!isConnected) {
+    if (!isConnected()) {
       toast.error("Please connect wallet first")
       return
     }
 
-    if (switchNetworkMutation.isPending || isNetworkSwitching) {
+    if (switchNetworkMutation.isPending || isNetworkSwitching()) {
       return
     }
 
@@ -75,9 +81,9 @@ export const WalletHeader = ({ autoOpen = false }: WalletHeaderProps) => {
 
   const handleConnect = () => {
     if (
-      !accountAddress.trim() ||
-      !apiWalletAddress.trim() ||
-      !privateKey.trim()
+      !accountAddress().trim() ||
+      !apiWalletAddress().trim() ||
+      !privateKey().trim()
     ) {
       toast.error(
         "Please enter account address, API wallet address, and private key",
@@ -91,13 +97,13 @@ export const WalletHeader = ({ autoOpen = false }: WalletHeaderProps) => {
       privateKey: string
       vaultAddress?: string
     } = {
-      accountAddress: accountAddress.trim(),
-      apiWalletAddress: apiWalletAddress.trim(),
-      privateKey: privateKey.trim(),
+      accountAddress: accountAddress().trim(),
+      apiWalletAddress: apiWalletAddress().trim(),
+      privateKey: privateKey().trim(),
     }
 
-    if (vaultAddress.trim()) {
-      credentials.vaultAddress = vaultAddress.trim()
+    if (vaultAddress().trim()) {
+      credentials.vaultAddress = vaultAddress().trim()
     }
 
     connect(credentials)
@@ -116,20 +122,19 @@ export const WalletHeader = ({ autoOpen = false }: WalletHeaderProps) => {
     toast.success("Wallet disconnected")
   }
 
-  const currentAccountAddress = walletSettings?.accountAddress ?? ""
-  const currentIsTestnet = walletSettings?.isTestnet ?? true
-  const isDisabled =
-    !isConnected || switchNetworkMutation.isPending || isNetworkSwitching
-  const [menuOpen, setMenuOpen] = useState(false)
+  const currentAccountAddress = () => walletSettings()?.accountAddress ?? ""
+  const currentIsTestnet = () => walletSettings()?.isTestnet ?? true
+  const isDisabled = () =>
+    !isConnected() || switchNetworkMutation.isPending || isNetworkSwitching()
 
   const handleCopyAddress = async () => {
-    if (!currentAccountAddress) {
+    if (!currentAccountAddress()) {
       toast.error("No wallet address to copy")
       return
     }
 
     try {
-      await navigator.clipboard.writeText(currentAccountAddress)
+      await navigator.clipboard.writeText(currentAccountAddress())
       toast.success("Address copied")
     } catch (error) {
       console.error("Failed to copy address to clipboard:", error)
@@ -138,58 +143,136 @@ export const WalletHeader = ({ autoOpen = false }: WalletHeaderProps) => {
   }
 
   return (
-    <div className="flex items-center gap-4">
-      {isNetworkSwitching && (
-        <span className="text-[11px] text-muted-foreground">Switching…</span>
-      )}
+    <div class="flex items-center gap-4">
+      <Show when={isNetworkSwitching()}>
+        <span class="text-[11px] text-muted-foreground">Switching...</span>
+      </Show>
 
-      {isConnected ? (
-        <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
-          <DropdownMenuTrigger asChild>
-            <button
-              type="button"
-              className="cursor-pointer rounded-md border border-border px-3 py-1.5 font-mono text-[11px] text-muted-foreground transition-colors hover:border-foreground/50 hover:text-foreground"
+      <Show
+        when={isConnected()}
+        fallback={
+          <Dialog open={dialogOpen()} onOpenChange={setDialogOpen}>
+            <DialogTrigger
+              as="button"
+              class="cursor-pointer rounded-md border border-border px-3 py-1.5 font-mono text-[11px] text-muted-foreground transition-colors hover:border-foreground/50 hover:text-foreground"
             >
-              {currentAccountAddress
-                ? formatPublicKey(currentAccountAddress)
+              {currentAccountAddress()
+                ? formatPublicKey(currentAccountAddress())
                 : "No wallet configured"}
-            </button>
+            </DialogTrigger>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Connect Wallet</DialogTitle>
+                <DialogDescription>
+                  Enter your Hyperliquid API wallet credentials to connect.
+                </DialogDescription>
+              </DialogHeader>
+
+              <div class="space-y-4 text-[12px]">
+                <div class="space-y-2">
+                  <label for="accountAddress" class="font-medium">
+                    Hyperliquid main wallet address
+                  </label>
+                  <Input
+                    id="accountAddress"
+                    placeholder="0x..."
+                    value={accountAddress()}
+                    onInput={event => {
+                      setAccountAddress(event.currentTarget.value)
+                    }}
+                  />
+                </div>
+                <div class="space-y-2">
+                  <label for="apiWalletAddress" class="font-medium">
+                    Hyperliquid public API wallet address
+                  </label>
+                  <Input
+                    id="apiWalletAddress"
+                    placeholder="0x..."
+                    value={apiWalletAddress()}
+                    onInput={event => {
+                      setApiWalletAddress(event.currentTarget.value)
+                    }}
+                  />
+                </div>
+                <div class="space-y-2">
+                  <label for="privateKey" class="font-medium">
+                    Hyperliquid private API wallet key
+                  </label>
+                  <Input
+                    id="privateKey"
+                    type="password"
+                    placeholder="0x..."
+                    value={privateKey()}
+                    onInput={event => {
+                      setPrivateKey(event.currentTarget.value)
+                    }}
+                  />
+                </div>
+                <div class="space-y-2">
+                  <label for="vaultAddress" class="font-medium">
+                    Vault Address (Optional)
+                  </label>
+                  <Input
+                    id="vaultAddress"
+                    placeholder="0x... (leave empty for personal trading)"
+                    value={vaultAddress()}
+                    onInput={event => {
+                      setVaultAddress(event.currentTarget.value)
+                    }}
+                  />
+                </div>
+              </div>
+              <DialogFooter>
+                <Button onClick={handleConnect}>Connect</Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        }
+      >
+        <DropdownMenu open={menuOpen()} onOpenChange={setMenuOpen}>
+          <DropdownMenuTrigger
+            as="button"
+            class="cursor-pointer rounded-md border border-border px-3 py-1.5 font-mono text-[11px] text-muted-foreground transition-colors hover:border-foreground/50 hover:text-foreground"
+          >
+            {currentAccountAddress()
+              ? formatPublicKey(currentAccountAddress())
+              : "No wallet configured"}
           </DropdownMenuTrigger>
           <DropdownMenuContent
-            align="end"
-            className="w-[260px] p-3 text-[11px] leading-snug"
+            class="w-[260px] p-3 text-[11px] leading-snug"
           >
-            <div className="flex flex-col gap-3">
-              <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0 flex-1">
-                  <p className="text-[10px] text-muted-foreground">Account</p>
-                  <p className="break-all font-mono text-[11px]">
-                    {currentAccountAddress}
+            <div class="flex flex-col gap-3">
+              <div class="flex items-start justify-between gap-2">
+                <div class="min-w-0 flex-1">
+                  <p class="text-[10px] text-muted-foreground">Account</p>
+                  <p class="break-all font-mono text-[11px]">
+                    {currentAccountAddress()}
                   </p>
                 </div>
                 <Button
                   type="button"
                   variant="ghost"
                   size="sm"
-                  className="h-6 px-2 text-[10px]"
+                  class="h-6 px-2 text-[10px]"
                   onClick={handleCopyAddress}
                 >
                   Copy
                 </Button>
               </div>
 
-              <div className="h-px bg-border" />
+              <div class="h-px bg-border" />
 
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-muted-foreground">Testnet</span>
+              <div class="flex items-center justify-between gap-2">
+                <span class="text-muted-foreground">Testnet</span>
                 <Switch
-                  checked={currentIsTestnet}
-                  onCheckedChange={handleTestnetToggle}
-                  disabled={isDisabled}
+                  checked={currentIsTestnet()}
+                  onChange={handleTestnetToggle}
+                  disabled={isDisabled()}
                 />
               </div>
 
-              <div className="h-px bg-border" />
+              <div class="h-px bg-border" />
 
               <Button
                 type="button"
@@ -201,87 +284,7 @@ export const WalletHeader = ({ autoOpen = false }: WalletHeaderProps) => {
             </div>
           </DropdownMenuContent>
         </DropdownMenu>
-      ) : (
-        <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-          <DialogTrigger asChild>
-            <button
-              type="button"
-              className="cursor-pointer rounded-md border border-border px-3 py-1.5 font-mono text-[11px] text-muted-foreground transition-colors hover:border-foreground/50 hover:text-foreground"
-            >
-              {currentAccountAddress
-                ? formatPublicKey(currentAccountAddress)
-                : "No wallet configured"}
-            </button>
-          </DialogTrigger>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Connect Wallet</DialogTitle>
-              <DialogDescription>
-                Enter your Hyperliquid API wallet credentials to connect.
-              </DialogDescription>
-            </DialogHeader>
-
-            <div className="space-y-4 text-[12px]">
-              <div className="space-y-2">
-                <label htmlFor="accountAddress" className="font-medium">
-                  Hyperliquid main wallet address
-                </label>
-                <Input
-                  id="accountAddress"
-                  placeholder="0x..."
-                  value={accountAddress}
-                  onChange={event => {
-                    setAccountAddress(event.target.value)
-                  }}
-                />
-              </div>
-              <div className="space-y-2">
-                <label htmlFor="apiWalletAddress" className="font-medium">
-                  Hyperliquid public API wallet address
-                </label>
-                <Input
-                  id="apiWalletAddress"
-                  placeholder="0x..."
-                  value={apiWalletAddress}
-                  onChange={event => {
-                    setApiWalletAddress(event.target.value)
-                  }}
-                />
-              </div>
-              <div className="space-y-2">
-                <label htmlFor="privateKey" className="font-medium">
-                  Hyperliquid private API wallet key
-                </label>
-                <Input
-                  id="privateKey"
-                  type="password"
-                  placeholder="0x..."
-                  value={privateKey}
-                  onChange={event => {
-                    setPrivateKey(event.target.value)
-                  }}
-                />
-              </div>
-              <div className="space-y-2">
-                <label htmlFor="vaultAddress" className="font-medium">
-                  Vault Address (Optional)
-                </label>
-                <Input
-                  id="vaultAddress"
-                  placeholder="0x... (leave empty for personal trading)"
-                  value={vaultAddress}
-                  onChange={event => {
-                    setVaultAddress(event.target.value)
-                  }}
-                />
-              </div>
-            </div>
-            <DialogFooter>
-              <Button onClick={handleConnect}>Connect</Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-      )}
+      </Show>
     </div>
   )
 }

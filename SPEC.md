@@ -208,7 +208,7 @@ Revenue comes from PMs managing other people's money.
 | Layer         | Technology           | Rationale                                |
 | ------------- | -------------------- | ---------------------------------------- |
 | Backend       | Rust                 | See below.                               |
-| Frontend      | TypeScript + React   | Monitoring dashboard, PM controls.       |
+| Frontend      | TypeScript + SolidJS | Monitoring dashboard, PM controls.       |
 | Vault Program | Anchor (Rust)        | Deposits, withdrawals, fees, NAV.        |
 | Custody       | Privy server wallets | Policy-enforced signing.                 |
 | Dependencies  | Nix                  | Reproducible builds. Non-negotiable.     |

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
-import { render, screen } from "@testing-library/react"
+import { render, screen } from "@solidjs/testing-library"
 import userEvent from "@testing-library/user-event"
 import { PerformanceTab } from "./PerformanceTab"
 import type {
@@ -84,19 +84,19 @@ describe("PerformanceTab", () => {
 
   describe("rendering", () => {
     it("renders the performance tab", () => {
-      render(<PerformanceTab {...defaultProps} />)
+      render(() => <PerformanceTab {...defaultProps} />)
       expect(screen.getByTestId("performance-tab")).toBeInTheDocument()
     })
 
     it("displays chart type buttons", () => {
-      render(<PerformanceTab {...defaultProps} />)
+      render(() => <PerformanceTab {...defaultProps} />)
       expect(screen.getByText("Equity")).toBeInTheDocument()
       expect(screen.getByText("Drawdown")).toBeInTheDocument()
       expect(screen.getByText("Distribution")).toBeInTheDocument()
     })
 
     it("displays period buttons", () => {
-      render(<PerformanceTab {...defaultProps} />)
+      render(() => <PerformanceTab {...defaultProps} />)
       expect(screen.getByText("1M")).toBeInTheDocument()
       expect(screen.getByText("3M")).toBeInTheDocument()
       expect(screen.getByText("6M")).toBeInTheDocument()
@@ -105,7 +105,7 @@ describe("PerformanceTab", () => {
     })
 
     it("displays performance stats", () => {
-      render(<PerformanceTab {...defaultProps} />)
+      render(() => <PerformanceTab {...defaultProps} />)
       expect(screen.getByText("Return")).toBeInTheDocument()
       expect(screen.getByText("Sharpe")).toBeInTheDocument()
       expect(screen.getByText("Sortino")).toBeInTheDocument()
@@ -116,12 +116,12 @@ describe("PerformanceTab", () => {
     })
 
     it("formats positive return with + sign", () => {
-      render(<PerformanceTab {...defaultProps} />)
+      render(() => <PerformanceTab {...defaultProps} />)
       expect(screen.getByText("+25.0%")).toBeInTheDocument()
     })
 
     it("formats sharpe ratio to 2 decimal places", () => {
-      render(<PerformanceTab {...defaultProps} />)
+      render(() => <PerformanceTab {...defaultProps} />)
       expect(screen.getByText("1.50")).toBeInTheDocument()
     })
   })
@@ -129,7 +129,7 @@ describe("PerformanceTab", () => {
   describe("chart type switching", () => {
     it("switches to Equity when clicking Equity button", async () => {
       const user = userEvent.setup()
-      render(<PerformanceTab {...defaultProps} />)
+      render(() => <PerformanceTab {...defaultProps} />)
 
       await user.click(screen.getByText("Drawdown"))
       await user.click(screen.getByText("Equity"))
@@ -141,7 +141,7 @@ describe("PerformanceTab", () => {
 
     it("switches to Drawdown when clicking Drawdown button", async () => {
       const user = userEvent.setup()
-      render(<PerformanceTab {...defaultProps} />)
+      render(() => <PerformanceTab {...defaultProps} />)
 
       await user.click(screen.getByText("Drawdown"))
 
@@ -151,7 +151,7 @@ describe("PerformanceTab", () => {
 
     it("switches to Distribution when clicking Distribution button", async () => {
       const user = userEvent.setup()
-      render(<PerformanceTab {...defaultProps} />)
+      render(() => <PerformanceTab {...defaultProps} />)
 
       await user.click(screen.getByText("Distribution"))
 
@@ -163,7 +163,7 @@ describe("PerformanceTab", () => {
   describe("keyboard navigation when focused", () => {
     it("switches chart type with 1 key", async () => {
       const user = userEvent.setup()
-      render(<PerformanceTab {...defaultProps} isFocused={true} />)
+      render(() => <PerformanceTab {...defaultProps} isFocused={true} />)
 
       // First switch away from equity
       await user.keyboard("2")
@@ -176,7 +176,7 @@ describe("PerformanceTab", () => {
 
     it("switches chart type with 2 key", async () => {
       const user = userEvent.setup()
-      render(<PerformanceTab {...defaultProps} isFocused={true} />)
+      render(() => <PerformanceTab {...defaultProps} isFocused={true} />)
 
       await user.keyboard("2")
 
@@ -186,7 +186,7 @@ describe("PerformanceTab", () => {
 
     it("switches chart type with 3 key", async () => {
       const user = userEvent.setup()
-      render(<PerformanceTab {...defaultProps} isFocused={true} />)
+      render(() => <PerformanceTab {...defaultProps} isFocused={true} />)
 
       await user.keyboard("3")
 
@@ -196,7 +196,7 @@ describe("PerformanceTab", () => {
 
     it("changes period with q key (1M)", async () => {
       const user = userEvent.setup()
-      render(<PerformanceTab {...defaultProps} isFocused={true} />)
+      render(() => <PerformanceTab {...defaultProps} isFocused={true} />)
 
       await user.keyboard("q")
 
@@ -206,7 +206,7 @@ describe("PerformanceTab", () => {
 
     it("changes period with w key (3M)", async () => {
       const user = userEvent.setup()
-      render(<PerformanceTab {...defaultProps} isFocused={true} />)
+      render(() => <PerformanceTab {...defaultProps} isFocused={true} />)
 
       await user.keyboard("w")
 
@@ -216,7 +216,7 @@ describe("PerformanceTab", () => {
 
     it("changes period with e key (6M)", async () => {
       const user = userEvent.setup()
-      render(<PerformanceTab {...defaultProps} isFocused={true} />)
+      render(() => <PerformanceTab {...defaultProps} isFocused={true} />)
 
       await user.keyboard("e")
 
@@ -226,7 +226,7 @@ describe("PerformanceTab", () => {
 
     it("changes period with r key (1Y)", async () => {
       const user = userEvent.setup()
-      render(<PerformanceTab {...defaultProps} isFocused={true} />)
+      render(() => <PerformanceTab {...defaultProps} isFocused={true} />)
 
       await user.keyboard("r")
 
@@ -236,7 +236,7 @@ describe("PerformanceTab", () => {
 
     it("changes period with t key (All)", async () => {
       const user = userEvent.setup()
-      render(<PerformanceTab {...defaultProps} isFocused={true} />)
+      render(() => <PerformanceTab {...defaultProps} isFocused={true} />)
 
       // First change to something else
       await user.keyboard("q")
@@ -249,7 +249,7 @@ describe("PerformanceTab", () => {
 
     it("navigates periods with ArrowLeft", async () => {
       const user = userEvent.setup()
-      render(<PerformanceTab {...defaultProps} isFocused={true} />)
+      render(() => <PerformanceTab {...defaultProps} isFocused={true} />)
 
       // Default is "All", move left to 1Y
       await user.keyboard("{ArrowLeft}")
@@ -260,7 +260,7 @@ describe("PerformanceTab", () => {
 
     it("navigates periods with ArrowRight", async () => {
       const user = userEvent.setup()
-      render(<PerformanceTab {...defaultProps} isFocused={true} />)
+      render(() => <PerformanceTab {...defaultProps} isFocused={true} />)
 
       // First go to 1M
       await user.keyboard("q")
@@ -273,7 +273,7 @@ describe("PerformanceTab", () => {
 
     it("navigates periods with h key (left)", async () => {
       const user = userEvent.setup()
-      render(<PerformanceTab {...defaultProps} isFocused={true} />)
+      render(() => <PerformanceTab {...defaultProps} isFocused={true} />)
 
       await user.keyboard("h")
 
@@ -283,7 +283,7 @@ describe("PerformanceTab", () => {
 
     it("navigates periods with l key (right)", async () => {
       const user = userEvent.setup()
-      render(<PerformanceTab {...defaultProps} isFocused={true} />)
+      render(() => <PerformanceTab {...defaultProps} isFocused={true} />)
 
       await user.keyboard("q") // Go to 1M
       await user.keyboard("l") // Go right to 3M
@@ -294,7 +294,7 @@ describe("PerformanceTab", () => {
 
     it("does not go below first period", async () => {
       const user = userEvent.setup()
-      render(<PerformanceTab {...defaultProps} isFocused={true} />)
+      render(() => <PerformanceTab {...defaultProps} isFocused={true} />)
 
       await user.keyboard("q") // Go to 1M
       await user.keyboard("{ArrowLeft}") // Try to go before 1M
@@ -306,7 +306,7 @@ describe("PerformanceTab", () => {
 
     it("does not go beyond last period", async () => {
       const user = userEvent.setup()
-      render(<PerformanceTab {...defaultProps} isFocused={true} />)
+      render(() => <PerformanceTab {...defaultProps} isFocused={true} />)
 
       await user.keyboard("{ArrowRight}") // Already at All, try to go right
       await user.keyboard("{ArrowRight}")
@@ -318,7 +318,7 @@ describe("PerformanceTab", () => {
 
   describe("comparison mode", () => {
     it("does not show comparison mode when no staged trades", () => {
-      render(<PerformanceTab {...defaultProps} hasStagedTrades={false} />)
+      render(() => <PerformanceTab {...defaultProps} hasStagedTrades={false} />)
 
       expect(screen.queryByText("current")).not.toBeInTheDocument()
       expect(screen.queryByText("target")).not.toBeInTheDocument()
@@ -326,7 +326,7 @@ describe("PerformanceTab", () => {
     })
 
     it("shows comparison mode buttons when has staged trades", () => {
-      render(<PerformanceTab {...defaultProps} hasStagedTrades={true} />)
+      render(() => <PerformanceTab {...defaultProps} hasStagedTrades={true} />)
 
       expect(screen.getByText("current")).toBeInTheDocument()
       expect(screen.getByText("target")).toBeInTheDocument()
@@ -335,13 +335,13 @@ describe("PerformanceTab", () => {
 
     it("cycles comparison mode with c key", async () => {
       const user = userEvent.setup()
-      render(
+      render(() => (
         <PerformanceTab
           {...defaultProps}
           hasStagedTrades={true}
           isFocused={true}
-        />,
-      )
+        />
+      ))
 
       // Default is 'current'
       const currentButton = screen.getByText("current").closest("button")
@@ -367,13 +367,13 @@ describe("PerformanceTab", () => {
 
     it("does not respond to c key when no staged trades", async () => {
       const user = userEvent.setup()
-      render(
+      render(() => (
         <PerformanceTab
           {...defaultProps}
           hasStagedTrades={false}
           isFocused={true}
-        />,
-      )
+        />
+      ))
 
       // Press c - should not show comparison buttons
       await user.keyboard("c")
@@ -383,7 +383,7 @@ describe("PerformanceTab", () => {
 
     it("clicking comparison mode button switches mode", async () => {
       const user = userEvent.setup()
-      render(<PerformanceTab {...defaultProps} hasStagedTrades={true} />)
+      render(() => <PerformanceTab {...defaultProps} hasStagedTrades={true} />)
 
       await user.click(screen.getByText("target"))
 
@@ -395,7 +395,7 @@ describe("PerformanceTab", () => {
   describe("not focused", () => {
     it("does not respond to keyboard when not focused", async () => {
       const user = userEvent.setup()
-      render(<PerformanceTab {...defaultProps} isFocused={false} />)
+      render(() => <PerformanceTab {...defaultProps} isFocused={false} />)
 
       await user.keyboard("2")
 
@@ -407,14 +407,14 @@ describe("PerformanceTab", () => {
 
   describe("focus ring", () => {
     it("shows focus ring when focused", () => {
-      render(<PerformanceTab {...defaultProps} isFocused={true} />)
+      render(() => <PerformanceTab {...defaultProps} isFocused={true} />)
 
       const tab = screen.getByTestId("performance-tab")
       expect(tab.className).toContain("ring-1")
     })
 
     it("does not show focus ring when not focused", () => {
-      render(<PerformanceTab {...defaultProps} isFocused={false} />)
+      render(() => <PerformanceTab {...defaultProps} isFocused={false} />)
 
       const tab = screen.getByTestId("performance-tab")
       expect(tab.className).not.toContain("ring-1")
@@ -423,9 +423,9 @@ describe("PerformanceTab", () => {
 
   describe("keyboard hints when focused", () => {
     it("shows number hints next to chart type buttons when focused", () => {
-      const { container } = render(
-        <PerformanceTab {...defaultProps} isFocused={true} />,
-      )
+      const { container } = render(() => (
+        <PerformanceTab {...defaultProps} isFocused={true} />
+      ))
 
       // Check for the number hints in the chart type buttons
       const buttons = container.querySelectorAll("button")
@@ -436,9 +436,9 @@ describe("PerformanceTab", () => {
     })
 
     it("shows arrow hints next to period buttons when focused", () => {
-      const { container } = render(
-        <PerformanceTab {...defaultProps} isFocused={true} />,
-      )
+      const { container } = render(() => (
+        <PerformanceTab {...defaultProps} isFocused={true} />
+      ))
 
       // The arrows hint should be visible
       expect(container.textContent).toContain("←→")

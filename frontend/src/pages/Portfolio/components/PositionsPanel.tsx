@@ -1,7 +1,7 @@
-import { useState, useEffect, useRef } from "react"
-import type { JSX } from "react"
+import { createSignal, createEffect, Show, For, untrack } from "solid-js"
+import type { JSX } from "solid-js"
 import Decimal from "decimal.js"
-import { Trash2, Undo2, AlertCircle } from "lucide-react"
+import { Trash2, Undo2, CircleAlert } from "lucide-solid"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -19,8 +19,7 @@ import {
 } from "@/components/ui/tooltip"
 import { Slider } from "@/components/ui/slider"
 import { Skeleton } from "@/components/ui/skeleton"
-import { clsx } from "clsx"
-import { twMerge } from "tailwind-merge"
+import { cn } from "@/lib/cn"
 import type { OrderSide } from "@/hooks/useTrading"
 import {
   type TokenAllocation,
@@ -51,19 +50,7 @@ const getSideBadgeClass = (side: OrderSide) =>
     ? "bg-green-500/20 text-green-500"
     : "bg-red-500/20 text-red-500"
 
-const PositionsTableRow = ({
-  token,
-  displayNotional,
-  maxLeverage,
-  isPrecise,
-  onRemove,
-  onUndoRemove,
-  onSideChange,
-  onLeverageChange,
-  onNotionalChange,
-  onWeightChange,
-  fundingRate,
-}: {
+const PositionsTableRow = (props: {
   token: TokenAllocation
   displayNotional: number
   maxLeverage: number | undefined
@@ -76,385 +63,394 @@ const PositionsTableRow = ({
   onWeightChange: (symbol: string, percentage: number) => void
   fundingRate?: number
 }): JSX.Element => {
-  const usdAmount =
-    displayNotional > 0
-      ? new Decimal(token.percentage)
+  const usdAmount = () =>
+    props.displayNotional > 0
+      ? new Decimal(props.token.percentage)
           .div(100)
-          .mul(displayNotional)
+          .mul(props.displayNotional)
           .toDecimalPlaces(2, Decimal.ROUND_HALF_UP)
           .toFixed(2)
       : "0.00"
-  const [weightInput, setWeightInput] = useState(() => String(token.percentage))
-  const [notionalInput, setNotionalInput] = useState(() =>
-    (token.notional ?? parseFloat(usdAmount)).toFixed(2),
+  const [weightInput, setWeightInput] = createSignal(
+    untrack(() => String(props.token.percentage)),
   )
-  const [isWeightFocused, setIsWeightFocused] = useState(false)
-  const [isNotionalFocused, setIsNotionalFocused] = useState(false)
-  const externalNotional = token.notional ?? parseFloat(usdAmount)
-  const prevNotionalRef = useRef(externalNotional)
-  const prevPercentageRef = useRef(token.percentage)
+  const [notionalInput, setNotionalInput] = createSignal(
+    untrack(() => (props.token.notional ?? parseFloat(usdAmount())).toFixed(2)),
+  )
+  const [isWeightFocused, setIsWeightFocused] = createSignal(false)
+  const [isNotionalFocused, setIsNotionalFocused] = createSignal(false)
+  const externalNotional = () => props.token.notional ?? parseFloat(usdAmount())
+  let prevNotional = untrack(externalNotional)
+  let prevPercentage = untrack(() => props.token.percentage)
 
-  // Sync external notional props (externalNotional) into the controlled input state (notionalInput via setNotionalInput).
-  // useEffect is required here instead of computing on render to avoid uncontrolled→controlled input transitions and visual flicker
-  // when upstream props change. prevNotionalRef lets us detect real changes and skip redundant setNotionalInput calls.
-  useEffect(() => {
-    if (!isNotionalFocused && prevNotionalRef.current !== externalNotional) {
-      prevNotionalRef.current = externalNotional
-      setNotionalInput(externalNotional.toFixed(2))
+  // Sync external notional into controlled input state
+  createEffect(() => {
+    const current = externalNotional()
+    if (!isNotionalFocused() && prevNotional !== current) {
+      prevNotional = current
+      setNotionalInput(current.toFixed(2))
     }
-  }, [externalNotional, isNotionalFocused])
+  })
 
-  // Sync external percentage props (token.percentage) into the controlled weight input state (weightInput via setWeightInput).
-  // This useEffect keeps the displayed value aligned with upstream changes while prevPercentageRef prevents unnecessary
-  // setWeightInput updates on every render.
-  useEffect(() => {
-    if (!isWeightFocused && prevPercentageRef.current !== token.percentage) {
-      prevPercentageRef.current = token.percentage
-      setWeightInput(String(token.percentage))
+  // Sync external percentage into controlled weight input state
+  createEffect(() => {
+    const current = props.token.percentage
+    if (!isWeightFocused() && prevPercentage !== current) {
+      prevPercentage = current
+      setWeightInput(String(current))
     }
-  }, [token.percentage, isWeightFocused])
+  })
 
-  const targetValue =
-    token.targetNotional ?? token.notional ?? parseFloat(usdAmount)
-  const showDeltaWarning =
-    !isPrecise &&
-    token.deltaInsufficient === true &&
-    token.status === "modified"
-  const showSmallPositionWarning =
-    token.status !== "untouched" &&
-    token.status !== "deleted" &&
-    targetValue > 0 &&
-    new Decimal(targetValue).plus(0.01).lt(MIN_USD)
+  const targetValue = () =>
+    props.token.targetNotional ??
+    props.token.notional ??
+    parseFloat(usdAmount())
+  const showDeltaWarning = () =>
+    !props.isPrecise &&
+    props.token.deltaInsufficient === true &&
+    props.token.status === "modified"
+  const showSmallPositionWarning = () =>
+    props.token.status !== "untouched" &&
+    props.token.status !== "deleted" &&
+    targetValue() > 0 &&
+    new Decimal(targetValue()).plus(0.01).lt(MIN_USD)
 
   // fundingRate we got from hyperliquid API is 1 hour rate
   // to get annualized rate, we multiply by 24 (hours) and 365 (days)
-  const annualizedFundingRate =
-    fundingRate === undefined ? null : fundingRate * 24 * 365
-  const positionAdjustedFundingRate =
-    annualizedFundingRate === null
-      ? null
-      : token.side === "buy"
-        ? -annualizedFundingRate
-        : annualizedFundingRate
-  const fundingDisplay =
-    positionAdjustedFundingRate === null
-      ? "—"
-      : `${(positionAdjustedFundingRate * 100).toFixed(2)}%`
-  const fundingClassName =
-    positionAdjustedFundingRate === null || positionAdjustedFundingRate === 0
-      ? "text-muted-foreground"
-      : positionAdjustedFundingRate > 0
-        ? "text-emerald-500"
-        : "text-rose-500"
+  const annualizedFundingRate = () =>
+    props.fundingRate === undefined ? null : props.fundingRate * 24 * 365
+  const positionAdjustedFundingRate = () => {
+    const rate = annualizedFundingRate()
+    if (rate === null) return null
+    return props.token.side === "buy" ? -rate : rate
+  }
+  const fundingDisplay = () => {
+    const rate = positionAdjustedFundingRate()
+    return rate === null ? "--" : `${(rate * 100).toFixed(2)}%`
+  }
+  const fundingClassName = () => {
+    const rate = positionAdjustedFundingRate()
+    if (rate === null || rate === 0) return "text-muted-foreground"
+    return rate > 0 ? "text-emerald-500" : "text-rose-500"
+  }
 
-  const showWarning = showDeltaWarning || showSmallPositionWarning
+  const showWarning = () => showDeltaWarning() || showSmallPositionWarning()
 
-  const sliderMaxLeverage = typeof maxLeverage === "number" ? maxLeverage : 1
+  const sliderMaxLeverage = () =>
+    typeof props.maxLeverage === "number" ? props.maxLeverage : 1
 
   return (
     <tr
-      className={twMerge(
-        clsx(
-          "border-b border-border/30 hover:bg-muted/20",
-          token.status === "deleted" && "opacity-50",
-        ),
+      class={cn(
+        "border-b border-border/30 hover:bg-muted/20",
+        props.token.status === "deleted" && "opacity-50",
       )}
     >
-      <td className="px-2 py-1 font-medium flex flex-row gap-[4px]">
-        <span className="font-medium">{token.symbol.split("/")[0]}</span>
+      <td class="px-2 py-1 font-medium flex flex-row gap-[4px]">
+        <span class="font-medium">{props.token.symbol.split("/")[0]}</span>
         <Dialog>
-          <DialogTrigger asChild disabled={token.status === "deleted"}>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-auto px-1.5 py-0 text-[10px] font-mono border border-border rounded"
-              disabled={token.status === "deleted"}
-            >
-              {token.leverage}x
-            </Button>
+          <DialogTrigger
+            as={Button}
+            variant="ghost"
+            size="sm"
+            class="h-auto px-1.5 py-0 text-[10px] font-mono border border-border rounded"
+            disabled={props.token.status === "deleted"}
+          >
+            {props.token.leverage}x
           </DialogTrigger>
-          <DialogContent className="sm:max-w-[425px]">
+          <DialogContent class="sm:max-w-[425px]">
             <DialogHeader>
-              <DialogTitle>Leverage {token.symbol}</DialogTitle>
+              <DialogTitle>Leverage {props.token.symbol}</DialogTitle>
               <DialogDescription>
                 Max leverage{" "}
-                {maxLeverage !== undefined ? maxLeverage.toFixed(1) : "1.0"}x
+                {props.maxLeverage !== undefined
+                  ? props.maxLeverage.toFixed(1)
+                  : "1.0"}
+                x
               </DialogDescription>
             </DialogHeader>
-            <div className="grid gap-4 py-4">
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-[11px]">{token.leverage}x</span>
+            <div class="grid gap-4 py-4">
+              <div class="flex items-center justify-between gap-2">
+                <span class="text-[11px]">{props.token.leverage}x</span>
                 <Slider
-                  value={[token.leverage]}
-                  onValueChange={([value]: number[]) => {
-                    onLeverageChange(token.symbol, value)
+                  value={[props.token.leverage]}
+                  onChange={([leverage]) => {
+                    props.onLeverageChange(props.token.symbol, leverage)
                   }}
-                  min={1}
-                  max={sliderMaxLeverage}
+                  minValue={1}
+                  maxValue={sliderMaxLeverage()}
                   step={1}
-                  className="w-[80%]"
+                  class="w-[80%]"
                 />
               </div>
             </div>
           </DialogContent>
         </Dialog>
       </td>
-      <td className="px-2 py-1">
+      <td class="px-2 py-1">
         <select
-          value={token.side}
+          value={props.token.side}
           onChange={event => {
-            onSideChange(token.symbol, event.target.value as OrderSide)
+            props.onSideChange(
+              props.token.symbol,
+              event.currentTarget.value as OrderSide,
+            )
           }}
-          disabled={token.status === "deleted"}
-          className={twMerge(
+          disabled={props.token.status === "deleted"}
+          class={cn(
             "text-[10px] font-medium px-1.5 py-0.5 rounded border-0 bg-transparent cursor-pointer",
-            getSideBadgeClass(token.side),
+            getSideBadgeClass(props.token.side),
           )}
         >
           <option value="buy">LONG</option>
           <option value="sell">SHORT</option>
         </select>
       </td>
-      <td className="px-2 py-1 text-right">
+      <td class="px-2 py-1 text-right">
         <input
           type="number"
-          value={weightInput}
-          onChange={e => {
-            const raw = e.target.value
+          value={weightInput()}
+          onInput={inputEvent => {
+            const raw = inputEvent.currentTarget.value
             setWeightInput(raw)
             const parsed = raw === "" ? 0 : Number.parseFloat(raw)
             if (!Number.isNaN(parsed) && parsed >= 0) {
-              onWeightChange(token.symbol, parsed)
+              props.onWeightChange(props.token.symbol, parsed)
             }
           }}
           onFocus={() => {
             setIsWeightFocused(true)
           }}
-          onBlur={e => {
+          onBlur={blurEvent => {
             setIsWeightFocused(false)
-            const raw = e.target.value
+            const raw = blurEvent.currentTarget.value
             if (raw.trim() === "") {
               // Treat empty input as 0 when leaving the field
-              onWeightChange(token.symbol, 0)
+              props.onWeightChange(props.token.symbol, 0)
               setWeightInput("0")
               return
             }
             const parsed = Number.parseFloat(raw)
             if (Number.isNaN(parsed) || parsed < 0) {
-              setWeightInput(String(token.percentage))
+              setWeightInput(String(props.token.percentage))
               return
             }
             const clamped = Math.min(100, parsed)
-            onWeightChange(token.symbol, clamped)
+            props.onWeightChange(props.token.symbol, clamped)
             setWeightInput(String(clamped))
           }}
-          disabled={token.status === "deleted"}
+          disabled={props.token.status === "deleted"}
           step={0.5}
           min={0}
           max={100}
-          className="w-12 text-right font-mono text-[11px] rounded border border-border bg-transparent px-1 py-0.5 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+          class="w-12 text-right font-mono text-[11px] rounded border border-border bg-transparent px-1 py-0.5 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
         />
-        <span className="text-muted-foreground text-[10px] ml-0.5">%</span>
+        <span class="text-muted-foreground text-[10px] ml-0.5">%</span>
       </td>
-      <td className="px-2 py-1 text-right">
-        <span className="text-muted-foreground text-[10px]">$</span>
+      <td class="px-2 py-1 text-right">
+        <span class="text-muted-foreground text-[10px]">$</span>
         <input
           type="number"
-          value={notionalInput}
-          onChange={e => {
-            const raw = e.target.value
+          value={notionalInput()}
+          onInput={inputEvent => {
+            const raw = inputEvent.currentTarget.value
             setNotionalInput(raw)
             const parsed = raw === "" ? 0 : Number.parseFloat(raw)
             if (!Number.isNaN(parsed) && parsed >= 0) {
-              onNotionalChange(token.symbol, parsed)
+              props.onNotionalChange(props.token.symbol, parsed)
             }
           }}
           onFocus={() => {
             setIsNotionalFocused(true)
           }}
-          onBlur={e => {
+          onBlur={blurEvent => {
             setIsNotionalFocused(false)
-            const raw = e.target.value
+            const raw = blurEvent.currentTarget.value
             if (raw.trim() === "") {
               // Treat empty input as 0 when leaving the field
-              onNotionalChange(token.symbol, 0)
+              props.onNotionalChange(props.token.symbol, 0)
               setNotionalInput("0.00")
               return
             }
             const parsed = Number.parseFloat(raw)
             if (Number.isNaN(parsed) || parsed < 0) {
-              const fallback = token.notional ?? parseFloat(usdAmount)
+              const fallback = props.token.notional ?? parseFloat(usdAmount())
               setNotionalInput(fallback.toFixed(2))
               return
             }
-            onNotionalChange(token.symbol, parsed)
+            props.onNotionalChange(props.token.symbol, parsed)
             setNotionalInput(parsed.toFixed(2))
           }}
-          disabled={token.status === "deleted"}
+          disabled={props.token.status === "deleted"}
           step={1}
           min={0}
-          className="w-16 text-right font-mono text-[11px] rounded border border-border bg-transparent px-1 py-0.5 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+          class="w-16 text-right font-mono text-[11px] rounded border border-border bg-transparent px-1 py-0.5 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
         />
-        <TooltipProvider delayDuration={0}>
+        <TooltipProvider>
           <Tooltip>
-            <TooltipTrigger asChild>
-              <AlertCircle
-                className={twMerge(
-                  "inline-block h-3 w-3 text-amber-500 ml-0.5 align-middle",
-                  !showWarning && "pointer-events-none opacity-0",
-                )}
-              />
+            <TooltipTrigger
+              class={cn(
+                "inline-block ml-0.5 align-middle",
+                !showWarning() && "pointer-events-none opacity-0",
+              )}
+            >
+              <CircleAlert class="h-3 w-3 text-amber-500" />
             </TooltipTrigger>
-            <TooltipContent className="text-xs">
-              {showDeltaWarning && (
+            <TooltipContent class="text-xs">
+              <Show when={showDeltaWarning()}>
                 <p>
                   Delta $
                   {Math.abs(
-                    (token.targetNotional ?? 0) - (token.currentNotional ?? 0),
+                    (props.token.targetNotional ?? 0) -
+                      (props.token.currentNotional ?? 0),
                   ).toFixed(2)}{" "}
                   below ${MIN_CHANGE_DELTA} minimum.
                 </p>
-              )}
-              {showSmallPositionWarning && (
+              </Show>
+              <Show when={showSmallPositionWarning()}>
                 <p>
-                  Position ${targetValue.toFixed(2)} below ${MIN_USD} minimum.
+                  Position ${targetValue().toFixed(2)} below ${MIN_USD} minimum.
                 </p>
-              )}
+              </Show>
             </TooltipContent>
           </Tooltip>
         </TooltipProvider>
       </td>
       <td
-        className={twMerge(
+        class={cn(
           "px-2 py-1 text-right font-mono text-[11px] w-[11ch]",
-          fundingClassName,
+          fundingClassName(),
         )}
       >
-        {fundingDisplay}
+        {fundingDisplay()}
       </td>
-      <td className="px-2 py-1 text-right font-mono text-[11px] text-muted-foreground">
+      <td class="px-2 py-1 text-right font-mono text-[11px] text-muted-foreground">
         0
       </td>
-      <td className="px-2 py-1 text-right font-mono text-[11px] text-muted-foreground">
+      <td class="px-2 py-1 text-right font-mono text-[11px] text-muted-foreground">
         0
       </td>
-      <td className="px-2 py-1 text-right font-mono text-[11px] text-muted-foreground">
+      <td class="px-2 py-1 text-right font-mono text-[11px] text-muted-foreground">
         0
       </td>
-      <td className="px-2 py-1 text-right">
+      <td class="px-2 py-1 text-right">
         <Button
           variant="ghost"
           size="icon"
-          className="h-6 w-6"
+          class="h-6 w-6"
           onClick={() => {
-            if (token.status === "deleted") {
-              onUndoRemove(token.symbol)
+            if (props.token.status === "deleted") {
+              props.onUndoRemove(props.token.symbol)
             } else {
-              onRemove(token.symbol)
+              props.onRemove(props.token.symbol)
             }
           }}
         >
-          {token.status === "deleted" ? (
-            <Undo2 className="h-3 w-3" />
-          ) : (
-            <Trash2 className="h-3 w-3" />
-          )}
+          <Show
+            when={props.token.status === "deleted"}
+            fallback={<Trash2 class="h-3 w-3" />}
+          >
+            <Undo2 class="h-3 w-3" />
+          </Show>
         </Button>
       </td>
     </tr>
   )
 }
 
-export const PositionsPanel = ({
-  tokens,
-  isLoading,
-  displayNotional,
-  leverageLimitsMap,
-  // isRebalancing, TODO: add this back in
-  isPrecise,
-  onRemove,
-  onUndoRemove,
-  onSideChange,
-  onLeverageChange,
-  onNotionalChange,
-  onWeightChange,
-  fundingRatesByBaseSymbol,
-}: PositionsPanelProps): JSX.Element => {
+export const PositionsPanel = (props: PositionsPanelProps): JSX.Element => {
   const { isConnected } = useWallet()
 
   return (
-    <div className="flex flex-col rounded border border-border min-h-0 max-h-[calc(100vh-4rem)] w-full max-w-[600px] shrink-0">
-      <div className="px-2 py-1.5 border-b border-border bg-muted/30 flex items-center justify-between shrink-0">
-        <div className="flex items-center gap-2">
-          <span className="font-medium">POSITIONS</span>
-          <span className="text-muted-foreground text-[11px]">
-            {tokens.length} position{tokens.length !== 1 ? "s" : ""}
+    <div class="flex flex-col rounded border border-border min-h-0 max-h-[calc(100vh-4rem)] w-full max-w-[600px] shrink-0">
+      <div class="px-2 py-1.5 border-b border-border bg-muted/30 flex items-center justify-between shrink-0">
+        <div class="flex items-center gap-2">
+          <span class="font-medium">POSITIONS</span>
+          <span class="text-muted-foreground text-[11px]">
+            {props.tokens.length} position
+            {props.tokens.length !== 1 ? "s" : ""}
           </span>
         </div>
       </div>
-      <div className="flex-1 min-h-0 overflow-auto scrollbar-hide">
-        {isLoading ? (
-          <div className="p-2 space-y-1">
-            {Array.from({ length: 8 }).map((_placeholder, index) => (
-              <Skeleton key={index} className="h-5 w-full" />
-            ))}
-          </div>
-        ) : !isConnected ? (
-          <div className="h-full flex flex-col items-center justify-center gap-3 p-4 text-center text-muted-foreground text-[11px]">
-            <p className="max-w-[260px]">
-              Connect your wallet to view and rebalance positions.
-            </p>
-            <WalletHeader />
-          </div>
-        ) : tokens.length === 0 ? (
-          <div className="p-4 text-center text-muted-foreground text-[11px]">
-            Add positions from the screener.
-          </div>
-        ) : (
-          <table className="w-full">
-            <thead className="sticky top-0 bg-muted/90 z-10">
-              <tr className="text-muted-foreground text-[10px]">
-                <th className="px-2 py-1 text-left font-medium">Asset</th>
-                <th className="px-2 py-1 text-left font-medium">Side</th>
-                <th className="px-2 py-1 text-right font-medium">Weight</th>
-                <th className="px-2 py-1 text-right font-medium">Notional</th>
-                <th
-                  className="px-2 py-1 text-right font-medium w-[11ch]"
-                  title="Annualized funding rate (signed by position direction)"
-                >
-                  Rate
-                </th>
-                <th className="px-2 py-1 text-right font-medium">Δ</th>
-                <th className="px-2 py-1 text-right font-medium">Γ</th>
-                <th className="px-2 py-1 text-right font-medium">Θ</th>
-                <th className="px-2 py-1 text-right font-medium w-10"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {tokens.map(token => {
-                const baseSymbol = token.symbol.split("/")[0] ?? token.symbol
-                const fundingRate = fundingRatesByBaseSymbol?.[baseSymbol]
+      <div class="flex-1 min-h-0 overflow-auto scrollbar-hide">
+        <Show
+          when={!props.isLoading}
+          fallback={
+            <div class="p-2 space-y-1">
+              <For each={Array.from({ length: 8 })}>
+                {() => <Skeleton class="h-5 w-full" />}
+              </For>
+            </div>
+          }
+        >
+          <Show
+            when={isConnected()}
+            fallback={
+              <div class="h-full flex flex-col items-center justify-center gap-3 p-4 text-center text-muted-foreground text-[11px]">
+                <p class="max-w-[260px]">
+                  Connect your wallet to view and rebalance positions.
+                </p>
+                <WalletHeader />
+              </div>
+            }
+          >
+            <Show
+              when={props.tokens.length > 0}
+              fallback={
+                <div class="p-4 text-center text-muted-foreground text-[11px]">
+                  Add positions from the screener.
+                </div>
+              }
+            >
+              <table class="w-full">
+                <thead class="sticky top-0 bg-muted/90 z-10">
+                  <tr class="text-muted-foreground text-[10px]">
+                    <th class="px-2 py-1 text-left font-medium">Asset</th>
+                    <th class="px-2 py-1 text-left font-medium">Side</th>
+                    <th class="px-2 py-1 text-right font-medium">Weight</th>
+                    <th class="px-2 py-1 text-right font-medium">Notional</th>
+                    <th
+                      class="px-2 py-1 text-right font-medium w-[11ch]"
+                      title="Annualized funding rate (signed by position direction)"
+                    >
+                      Rate
+                    </th>
+                    <th class="px-2 py-1 text-right font-medium">D</th>
+                    <th class="px-2 py-1 text-right font-medium">G</th>
+                    <th class="px-2 py-1 text-right font-medium">T</th>
+                    <th class="px-2 py-1 text-right font-medium w-10" />
+                  </tr>
+                </thead>
+                <tbody>
+                  <For each={props.tokens}>
+                    {token => {
+                      const baseSymbol =
+                        token.symbol.split("/")[0] ?? token.symbol
+                      const fundingRate =
+                        props.fundingRatesByBaseSymbol?.[baseSymbol]
 
-                return (
-                  <PositionsTableRow
-                    key={token.symbol}
-                    token={token}
-                    displayNotional={displayNotional}
-                    maxLeverage={leverageLimitsMap[token.symbol]}
-                    isPrecise={isPrecise}
-                    onRemove={onRemove}
-                    onUndoRemove={onUndoRemove}
-                    onSideChange={onSideChange}
-                    onLeverageChange={onLeverageChange}
-                    onNotionalChange={onNotionalChange}
-                    onWeightChange={onWeightChange}
-                    fundingRate={fundingRate}
-                  />
-                )
-              })}
-            </tbody>
-          </table>
-        )}
+                      return (
+                        <PositionsTableRow
+                          token={token}
+                          displayNotional={props.displayNotional}
+                          maxLeverage={props.leverageLimitsMap[token.symbol]}
+                          isPrecise={props.isPrecise}
+                          onRemove={props.onRemove}
+                          onUndoRemove={props.onUndoRemove}
+                          onSideChange={props.onSideChange}
+                          onLeverageChange={props.onLeverageChange}
+                          onNotionalChange={props.onNotionalChange}
+                          onWeightChange={props.onWeightChange}
+                          fundingRate={fundingRate}
+                        />
+                      )
+                    }}
+                  </For>
+                </tbody>
+              </table>
+            </Show>
+          </Show>
+        </Show>
       </div>
     </div>
   )

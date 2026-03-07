@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/solid-query"
 import type { Timeframe } from "@/components/ui/timeframe-select"
 
 export type TradingData = {
@@ -41,11 +41,11 @@ export interface AnalysisDataParams {
   timeframe: Timeframe
 }
 
-export const useDateRange = (timeframe: Timeframe) => {
-  return useQuery<DateRange>({
-    queryKey: ["dateRange", timeframe],
+export const useDateRange = (timeframe: () => Timeframe) => {
+  return useQuery<DateRange>(() => ({
+    queryKey: ["dateRange", timeframe()],
     queryFn: async () => {
-      const response = await fetch(`/api/date-range?timeframe=${timeframe}`)
+      const response = await fetch(`/api/date-range?timeframe=${timeframe()}`)
       if (!response.ok) {
         const errorData = (await response.json().catch(() => ({}))) as ApiError
         throw new Error(
@@ -54,60 +54,63 @@ export const useDateRange = (timeframe: Timeframe) => {
       }
       return response.json() as Promise<DateRange>
     },
-  })
+  }))
 }
 
-export const useAnalysisData = ({
-  startDate,
-  endDate,
-  timeframe,
-}: AnalysisDataParams) => {
-  return useQuery<{ data: TradingData[]; message: string | null }>({
-    queryKey: ["analysisData", timeframe, startDate, endDate],
-    queryFn: async () => {
-      const startDateTime = `${startDate}T00:00:00Z`
-      const endDateTime = `${endDate}T23:59:59Z`
+export const useAnalysisData = (params: () => AnalysisDataParams) => {
+  return useQuery<{ data: TradingData[]; message: string | null }>(() => {
+    const { startDate, endDate, timeframe } = params()
+    return {
+      queryKey: ["analysisData", timeframe, startDate, endDate],
+      queryFn: async () => {
+        const startDateTime = `${startDate}T00:00:00Z`
+        const endDateTime = `${endDate}T23:59:59Z`
 
-      const response = await fetch(`/api/data?timeframe=${timeframe}`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          start_date: startDateTime,
-          end_date: endDateTime,
-        }),
-      })
+        const response = await fetch(`/api/data?timeframe=${timeframe}`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            start_date: startDateTime,
+            end_date: endDateTime,
+          }),
+        })
 
-      if (!response.ok) {
-        const errorData = (await response.json().catch(() => ({}))) as ApiError
-        throw new Error(
-          errorData.detail ?? `HTTP error! status: ${String(response.status)}`,
-        )
-      }
+        if (!response.ok) {
+          const errorData = (await response
+            .json()
+            .catch(() => ({}))) as ApiError
+          throw new Error(
+            errorData.detail ??
+              `HTTP error! status: ${String(response.status)}`,
+          )
+        }
 
-      return response.json() as Promise<{
-        data: TradingData[]
-        message: string | null
-      }>
-    },
-    enabled: !!startDate && !!endDate,
+        return response.json() as Promise<{
+          data: TradingData[]
+          message: string | null
+        }>
+      },
+      enabled: !!startDate && !!endDate,
+    }
   })
 }
 
 export const useTokenData = (
-  ticker: string | undefined,
-  timeframe: Timeframe,
+  ticker: () => string | undefined,
+  timeframe: () => Timeframe,
 ) => {
-  return useQuery<{ data: TradingData[]; message?: string }>({
-    queryKey: ["tokenData", ticker, timeframe],
+  return useQuery<{ data: TradingData[]; message?: string }>(() => ({
+    queryKey: ["tokenData", ticker(), timeframe()],
     queryFn: async () => {
-      if (!ticker) {
+      const t = ticker()
+      if (!t) {
         throw new Error("Ticker is required")
       }
 
       const response = await fetch(
-        `/api/token/${ticker}?timeframe=${timeframe}`,
+        `/api/token/${encodeURIComponent(t)}?timeframe=${timeframe()}`,
       )
 
       if (!response.ok) {
@@ -125,15 +128,15 @@ export const useTokenData = (
 
       return result
     },
-    enabled: !!ticker,
-  })
+    enabled: !!ticker(),
+  }))
 }
 
 export const useReloadData = () => {
   const queryClient = useQueryClient()
 
-  return useMutation<undefined, Error, { mode: string }>({
-    mutationFn: async ({ mode }) => {
+  return useMutation(() => ({
+    mutationFn: async ({ mode }: { mode: string }) => {
       const controller = new AbortController()
 
       const response = await fetch("/api/reload_data/stream", {
@@ -174,11 +177,11 @@ export const useReloadData = () => {
       void queryClient.invalidateQueries({ queryKey: ["tokenData"] })
       void queryClient.invalidateQueries({ queryKey: ["dateRange"] })
     },
-  })
+  }))
 }
 
 export const useStopReload = () => {
-  return useMutation({
+  return useMutation(() => ({
     mutationFn: async () => {
       const response = await fetch("/api/stop_reload", {
         method: "POST",
@@ -188,11 +191,11 @@ export const useStopReload = () => {
         throw new Error(`HTTP error! status: ${String(response.status)}`)
       }
     },
-  })
+  }))
 }
 
 export const useBudgetPreference = () => {
-  return useQuery<{ budget: number }>({
+  return useQuery<{ budget: number }>(() => ({
     queryKey: ["hyperliquid", "budget-preference"],
     queryFn: async () => {
       const response = await fetch("/api/hyperliquid/budget-preference")
@@ -202,11 +205,11 @@ export const useBudgetPreference = () => {
       }
       return response.json() as Promise<{ budget: number }>
     },
-  })
+  }))
 }
 
 export const useSaveBudgetPreference = () => {
-  return useMutation({
+  return useMutation(() => ({
     mutationFn: async (payload: { budget: number }) => {
       const response = await fetch("/api/hyperliquid/budget-preference", {
         method: "POST",
@@ -221,5 +224,5 @@ export const useSaveBudgetPreference = () => {
         throw new Error(errorData.detail ?? "Unable to save budget preference")
       }
     },
-  })
+  }))
 }

@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from "react"
+import { createSignal, createMemo } from "solid-js"
 
 export type ListPanelId = "screener" | "positions"
 
@@ -16,8 +16,8 @@ interface PositionItem {
 }
 
 interface UseListSelectionConfig {
-  screenerItems: ScreenerItem[]
-  positionItems: PositionItem[]
+  screenerItems: () => ScreenerItem[]
+  positionItems: () => PositionItem[]
   onAddTrade: (symbol: string, side: "buy" | "sell") => void
   onAdjustWeight?: (symbol: string, delta: number) => void
 }
@@ -25,7 +25,7 @@ interface UseListSelectionConfig {
 interface SelectionState {
   screener: number | null
   positions: number | null
-  instrumentIndex: number | null // Index within expanded underlying's instruments
+  instrumentIndex: number | null
 }
 
 const clampIndex = (index: number | null, length: number): number | null => {
@@ -35,254 +35,223 @@ const clampIndex = (index: number | null, length: number): number | null => {
 }
 
 export const useListSelection = (config: UseListSelectionConfig) => {
-  const { screenerItems, positionItems, onAddTrade, onAdjustWeight } = config
+  const { onAddTrade, onAdjustWeight } = config
 
-  const [focusedPanel, setFocusedPanel] = useState<ListPanelId | null>(null)
-  const [rawSelection, setRawSelection] = useState<SelectionState>({
+  const [focusedPanel, setFocusedPanel] = createSignal<ListPanelId | null>(null)
+  const [rawSelection, setRawSelection] = createSignal<SelectionState>({
     screener: null,
     positions: null,
     instrumentIndex: null,
   })
-  // Initialize with multi-instrument positions expanded (matches UI default)
-  const [expandedUnderlyings, setExpandedUnderlyings] = useState<Set<string>>(
-    () =>
-      new Set(
-        positionItems
-          .filter(p => p.instruments.length > 1)
-          .map(p => p.underlying),
-      ),
+  const [expandedUnderlyings, setExpandedUnderlyings] = createSignal<
+    Set<string>
+  >(
+    new Set(
+      config
+        .positionItems()
+        .filter(p => p.instruments.length > 1)
+        .map(p => p.underlying),
+    ),
   )
 
-  // Derive clamped selection during render (no useEffect needed)
-  const selection = useMemo((): SelectionState => {
-    const clampedPositions = clampIndex(
-      rawSelection.positions,
-      positionItems.length,
-    )
+  const selection = createMemo((): SelectionState => {
+    const raw = rawSelection()
+    const posItems = config.positionItems()
+    const scrItems = config.screenerItems()
+    const expanded = expandedUnderlyings()
 
-    // Clamp instrument index based on selected position's instruments
+    const clampedPositions = clampIndex(raw.positions, posItems.length)
+
     let clampedInstrumentIndex: number | null = null
-    if (clampedPositions !== null && rawSelection.instrumentIndex !== null) {
-      const selectedPosition = positionItems[clampedPositions]
-      if (expandedUnderlyings.has(selectedPosition.underlying)) {
+    if (clampedPositions !== null && raw.instrumentIndex !== null) {
+      const selectedPosition = posItems[clampedPositions]
+      if (expanded.has(selectedPosition.underlying)) {
         clampedInstrumentIndex = clampIndex(
-          rawSelection.instrumentIndex,
+          raw.instrumentIndex,
           selectedPosition.instruments.length,
         )
       }
     }
 
     return {
-      screener: clampIndex(rawSelection.screener, screenerItems.length),
+      screener: clampIndex(raw.screener, scrItems.length),
       positions: clampedPositions,
       instrumentIndex: clampedInstrumentIndex,
     }
-  }, [rawSelection, screenerItems.length, positionItems, expandedUnderlyings])
+  })
 
-  const getListLength = useCallback(
-    (panel: ListPanelId): number => {
-      return panel === "screener" ? screenerItems.length : positionItems.length
-    },
-    [screenerItems.length, positionItems.length],
-  )
+  const getListLength = (panel: ListPanelId): number => {
+    return panel === "screener"
+      ? config.screenerItems().length
+      : config.positionItems().length
+  }
 
-  const focusPanel = useCallback(
-    (panel: ListPanelId | null) => {
-      setFocusedPanel(panel)
+  const focusPanel = (panel: ListPanelId | null) => {
+    setFocusedPanel(panel)
 
-      if (panel !== null) {
-        setRawSelection(prev => {
-          // If already has selection for this panel, keep it
-          if (prev[panel] !== null) return prev
+    if (panel !== null) {
+      setRawSelection(prev => {
+        if (prev[panel] !== null) return prev
 
-          // Otherwise select first item if list is not empty
-          const length =
-            panel === "screener" ? screenerItems.length : positionItems.length
-          if (length === 0) return prev
+        const length =
+          panel === "screener"
+            ? config.screenerItems().length
+            : config.positionItems().length
+        if (length === 0) return prev
 
-          return { ...prev, [panel]: 0 }
-        })
+        return { ...prev, [panel]: 0 }
+      })
+    }
+  }
+
+  const getSelectedIndex = (panel: ListPanelId): number | null => {
+    return selection()[panel]
+  }
+
+  const isAtBoundary = (direction: "up" | "down"): boolean => {
+    const panel = focusedPanel()
+    if (panel === null) return false
+
+    const length = getListLength(panel)
+    if (length === 0) return true
+
+    const sel = selection()
+    const current = sel[panel]
+    if (current === null) return false
+
+    if (panel === "positions") {
+      const posItems = config.positionItems()
+      const selectedPosition = posItems[current]
+      const isPositionExpanded = expandedUnderlyings().has(
+        selectedPosition.underlying,
+      )
+
+      if (direction === "down") {
+        const isLastUnderlying = current >= length - 1
+        if (!isLastUnderlying) return false
+
+        if (isPositionExpanded) {
+          const instrumentCount = selectedPosition.instruments.length
+          const atLastInstrument =
+            sel.instrumentIndex !== null &&
+            sel.instrumentIndex >= instrumentCount - 1
+          return atLastInstrument
+        }
+        return true
+      } else {
+        return current === 0 && sel.instrumentIndex === null
       }
-    },
-    [screenerItems.length, positionItems.length],
-  )
+    }
 
-  const getSelectedIndex = useCallback(
-    (panel: ListPanelId): number | null => {
-      return selection[panel]
-    },
-    [selection],
-  )
+    if (direction === "down") {
+      return current >= length - 1
+    } else {
+      return current === 0
+    }
+  }
 
-  // Check if we're at the boundary of the list (can't move further in direction)
-  const isAtBoundary = useCallback(
-    (direction: "up" | "down"): boolean => {
-      if (focusedPanel === null) return false
+  const moveSelection = (direction: "up" | "down"): "moved" | "boundary" => {
+    const panel = focusedPanel()
+    if (panel === null) return "boundary"
 
-      const length = getListLength(focusedPanel)
-      if (length === 0) return true
+    const length = getListLength(panel)
+    if (length === 0) return "boundary"
 
-      const current = selection[focusedPanel]
-      if (current === null) return false
+    if (isAtBoundary(direction)) {
+      return "boundary"
+    }
 
-      if (focusedPanel === "positions") {
-        const selectedPosition = positionItems[current]
-        const isPositionExpanded = expandedUnderlyings.has(
+    setRawSelection(prev => {
+      const current = prev[panel]
+      const posItems = config.positionItems()
+
+      if (panel === "positions" && current !== null) {
+        const selectedPosition = posItems[current]
+        const isExpanded = expandedUnderlyings().has(
           selectedPosition.underlying,
         )
 
-        if (direction === "down") {
-          // At boundary if: at last underlying AND (not expanded OR at last instrument)
-          const isLastUnderlying = current >= length - 1
-          if (!isLastUnderlying) return false
+        if (isExpanded) {
+          const instrumentCount = selectedPosition.instruments.length
 
-          if (isPositionExpanded) {
-            const instrumentCount = selectedPosition.instruments.length
-            const atLastInstrument =
-              selection.instrumentIndex !== null &&
-              selection.instrumentIndex >= instrumentCount - 1
-            return atLastInstrument
-          }
-          return true
-        } else {
-          // At boundary if: at first underlying AND at underlying level (not in instruments)
-          return current === 0 && selection.instrumentIndex === null
-        }
-      }
-
-      // For screener panel
-      if (direction === "down") {
-        return current >= length - 1
-      } else {
-        return current === 0
-      }
-    },
-    [
-      focusedPanel,
-      getListLength,
-      selection,
-      positionItems,
-      expandedUnderlyings,
-    ],
-  )
-
-  const moveSelection = useCallback(
-    (direction: "up" | "down"): "moved" | "boundary" => {
-      if (focusedPanel === null) return "boundary"
-
-      const length = getListLength(focusedPanel)
-      if (length === 0) return "boundary"
-
-      // Check if at boundary before moving
-      if (isAtBoundary(direction)) {
-        return "boundary"
-      }
-
-      setRawSelection(prev => {
-        const current = prev[focusedPanel]
-
-        // Handle nested navigation for positions panel
-        if (focusedPanel === "positions" && current !== null) {
-          const selectedPosition = positionItems[current]
-          const isExpanded = expandedUnderlyings.has(
-            selectedPosition.underlying,
-          )
-
-          if (isExpanded) {
-            const instrumentCount = selectedPosition.instruments.length
-
-            if (direction === "down") {
-              // If at underlying level, move to first instrument
-              if (prev.instrumentIndex === null) {
-                return { ...prev, instrumentIndex: 0 }
-              }
-              // If at last instrument, move to next underlying
-              if (prev.instrumentIndex >= instrumentCount - 1) {
-                const nextIndex = Math.min(current + 1, length - 1)
-                return { ...prev, positions: nextIndex, instrumentIndex: null }
-              }
-              // Move to next instrument
-              return { ...prev, instrumentIndex: prev.instrumentIndex + 1 }
-            } else {
-              // direction === "up"
-              // If at first instrument, move back to underlying level
-              if (prev.instrumentIndex === 0) {
-                return { ...prev, instrumentIndex: null }
-              }
-              // If at underlying level with instruments, move to previous underlying
-              if (prev.instrumentIndex === null) {
-                const prevIndex = Math.max(current - 1, 0)
-                return { ...prev, positions: prevIndex }
-              }
-              // Move to previous instrument
-              return { ...prev, instrumentIndex: prev.instrumentIndex - 1 }
+          if (direction === "down") {
+            if (prev.instrumentIndex === null) {
+              return { ...prev, instrumentIndex: 0 }
             }
+            if (prev.instrumentIndex >= instrumentCount - 1) {
+              const nextIndex = Math.min(current + 1, length - 1)
+              return { ...prev, positions: nextIndex, instrumentIndex: null }
+            }
+            return { ...prev, instrumentIndex: prev.instrumentIndex + 1 }
+          } else {
+            if (prev.instrumentIndex === 0) {
+              return { ...prev, instrumentIndex: null }
+            }
+            if (prev.instrumentIndex === null) {
+              const prevIndex = Math.max(current - 1, 0)
+              return { ...prev, positions: prevIndex }
+            }
+            return { ...prev, instrumentIndex: prev.instrumentIndex - 1 }
           }
         }
+      }
 
-        // Standard flat navigation
-        let newIndex: number
-        if (current === null) {
-          newIndex = 0
-        } else if (direction === "down") {
-          newIndex = Math.min(current + 1, length - 1)
-        } else {
-          newIndex = Math.max(current - 1, 0)
-        }
+      let newIndex: number
+      if (current === null) {
+        newIndex = 0
+      } else if (direction === "down") {
+        newIndex = Math.min(current + 1, length - 1)
+      } else {
+        newIndex = Math.max(current - 1, 0)
+      }
 
-        return { ...prev, [focusedPanel]: newIndex, instrumentIndex: null }
-      })
+      return { ...prev, [panel]: newIndex, instrumentIndex: null }
+    })
 
-      return "moved"
-    },
-    [
-      focusedPanel,
-      getListLength,
-      positionItems,
-      expandedUnderlyings,
-      isAtBoundary,
-    ],
-  )
+    return "moved"
+  }
 
-  const getSelectedSymbol = useCallback((): string | null => {
-    if (focusedPanel === null) return null
+  const getSelectedSymbol = (): string | null => {
+    const panel = focusedPanel()
+    if (panel === null) return null
 
-    const index = selection[focusedPanel]
+    const sel = selection()
+    const index = sel[panel]
     if (index === null) return null
 
-    if (focusedPanel === "screener") {
-      return screenerItems[index]?.symbol ?? null
+    if (panel === "screener") {
+      return config.screenerItems()[index]?.symbol ?? null
     } else {
-      return positionItems[index]?.underlying ?? null
+      return config.positionItems()[index]?.underlying ?? null
     }
-  }, [focusedPanel, selection, screenerItems, positionItems])
+  }
 
-  const getSelectedInstrument = useCallback((): string | null => {
-    if (focusedPanel !== "positions") return null
+  const getSelectedInstrument = (): string | null => {
+    if (focusedPanel() !== "positions") return null
 
-    const posIndex = selection.positions
-    if (posIndex === null || selection.instrumentIndex === null) return null
+    const sel = selection()
+    const posIndex = sel.positions
+    if (posIndex === null || sel.instrumentIndex === null) return null
 
-    const position = positionItems[posIndex]
-    return position.instruments[selection.instrumentIndex]?.symbol ?? null
-  }, [focusedPanel, selection, positionItems])
+    const position = config.positionItems()[posIndex]
+    return position.instruments[sel.instrumentIndex]?.symbol ?? null
+  }
 
-  const isExpanded = useCallback(
-    (underlying: string): boolean => {
-      return expandedUnderlyings.has(underlying)
-    },
-    [expandedUnderlyings],
-  )
+  const isExpanded = (underlying: string): boolean => {
+    return expandedUnderlyings().has(underlying)
+  }
 
-  const toggleExpand = useCallback(() => {
-    if (focusedPanel !== "positions") return
+  const toggleExpand = () => {
+    if (focusedPanel() !== "positions") return
 
-    const posIndex = selection.positions
+    const sel = selection()
+    const posIndex = sel.positions
     if (posIndex === null) return
 
-    const position = positionItems[posIndex]
+    const posItems = config.positionItems()
+    const position = posItems[posIndex]
     const underlying = position.underlying
-    const isCurrentlyExpanded = expandedUnderlyings.has(underlying)
+    const isCurrentlyExpanded = expandedUnderlyings().has(underlying)
 
     if (isCurrentlyExpanded) {
       setExpandedUnderlyings(
@@ -292,71 +261,50 @@ export const useListSelection = (config: UseListSelectionConfig) => {
     } else {
       setExpandedUnderlyings(prev => new Set([...prev, underlying]))
     }
-  }, [focusedPanel, selection.positions, positionItems, expandedUnderlyings])
+  }
 
-  const adjustWeight = useCallback(
-    (delta: number) => {
-      if (!onAdjustWeight) return
-      if (focusedPanel !== "positions") return
+  const adjustWeight = (delta: number) => {
+    if (!onAdjustWeight) return
+    if (focusedPanel() !== "positions") return
 
-      const instrumentSymbol = getSelectedInstrument()
-      if (!instrumentSymbol) return
+    const instrumentSymbol = getSelectedInstrument()
+    if (!instrumentSymbol) return
 
-      onAdjustWeight(instrumentSymbol, delta)
-    },
-    [focusedPanel, getSelectedInstrument, onAdjustWeight],
-  )
+    onAdjustWeight(instrumentSymbol, delta)
+  }
 
-  const triggerTrade = useCallback(
-    (side: "buy" | "sell") => {
-      const symbol = getSelectedSymbol()
-      if (symbol === null) return
+  const triggerTrade = (side: "buy" | "sell") => {
+    const symbol = getSelectedSymbol()
+    if (symbol === null) return
 
-      onAddTrade(symbol, side)
-    },
-    [getSelectedSymbol, onAddTrade],
-  )
+    onAddTrade(symbol, side)
+  }
 
-  const handleEscape = useCallback(() => {
-    if (focusedPanel === null) return
+  const handleEscape = () => {
+    const panel = focusedPanel()
+    if (panel === null) return
 
-    const currentSelection = selection[focusedPanel]
+    const sel = selection()
+    const currentSelection = sel[panel]
 
     if (currentSelection !== null) {
-      // First escape: clear selection
-      setRawSelection(prev => ({ ...prev, [focusedPanel]: null }))
+      setRawSelection(prev => ({ ...prev, [panel]: null }))
     } else {
-      // Second escape: unfocus panel
       setFocusedPanel(null)
     }
-  }, [focusedPanel, selection])
+  }
 
-  return useMemo(
-    () => ({
-      focusedPanel,
-      focusPanel,
-      getSelectedIndex,
-      moveSelection,
-      triggerTrade,
-      handleEscape,
-      getSelectedSymbol,
-      getSelectedInstrument,
-      isExpanded,
-      toggleExpand,
-      adjustWeight,
-    }),
-    [
-      focusedPanel,
-      focusPanel,
-      getSelectedIndex,
-      moveSelection,
-      triggerTrade,
-      handleEscape,
-      getSelectedSymbol,
-      getSelectedInstrument,
-      isExpanded,
-      toggleExpand,
-      adjustWeight,
-    ],
-  )
+  return {
+    focusedPanel,
+    focusPanel,
+    getSelectedIndex,
+    moveSelection,
+    triggerTrade,
+    handleEscape,
+    getSelectedSymbol,
+    getSelectedInstrument,
+    isExpanded,
+    toggleExpand,
+    adjustWeight,
+  }
 }

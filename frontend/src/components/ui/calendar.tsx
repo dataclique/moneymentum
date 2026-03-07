@@ -1,253 +1,395 @@
-import * as React from "react"
 import {
-  ChevronDownIcon,
-  ChevronLeftIcon,
-  ChevronRightIcon,
-} from "lucide-react"
-import { DayButton, DayPicker, getDefaultClassNames } from "react-day-picker"
-import { clsx } from "clsx"
-import { twMerge } from "tailwind-merge"
+  createSignal,
+  createMemo,
+  createEffect,
+  For,
+  Show,
+  onCleanup,
+  untrack,
+  type JSX,
+} from "solid-js"
+import { ChevronLeft, ChevronRight } from "lucide-solid"
+
+import { cn } from "@/lib/cn"
 import { Button } from "@/components/ui/button"
-import { buttonVariants } from "@/lib/button-variants"
 
-const Calendar = ({
-  className,
-  classNames,
-  showOutsideDays = true,
-  captionLayout = "label",
-  buttonVariant = "ghost",
-  formatters,
-  components,
-  ...props
-}: React.ComponentProps<typeof DayPicker> & {
-  buttonVariant?: React.ComponentProps<typeof Button>["variant"]
-}) => {
-  const defaultClassNames = getDefaultClassNames()
-
-  return (
-    <DayPicker
-      showOutsideDays={showOutsideDays}
-      className={twMerge(
-        clsx(
-          "bg-background group/calendar p-3 [--cell-size:--spacing(8)] [[data-slot=card-content]_&]:bg-transparent [[data-slot=popover-content]_&]:bg-transparent",
-          String.raw`rtl:**:[.rdp-button\_next>svg]:rotate-180`,
-          String.raw`rtl:**:[.rdp-button\_previous>svg]:rotate-180`,
-          className,
-        ),
-      )}
-      captionLayout={captionLayout}
-      formatters={{
-        formatMonthDropdown: date =>
-          date.toLocaleString("default", { month: "short" }),
-        ...formatters,
-      }}
-      classNames={{
-        root: twMerge(clsx("w-fit", defaultClassNames.root)),
-        months: twMerge(
-          clsx(
-            "flex gap-4 flex-col md:flex-row relative",
-            defaultClassNames.months,
-          ),
-        ),
-        month: twMerge(
-          clsx("flex flex-col w-full gap-4", defaultClassNames.month),
-        ),
-        nav: twMerge(
-          clsx(
-            "flex items-center gap-1 w-full absolute top-0 inset-x-0 justify-between",
-            defaultClassNames.nav,
-          ),
-        ),
-        button_previous: twMerge(
-          clsx(
-            buttonVariants({ variant: buttonVariant }),
-            "size-(--cell-size) aria-disabled:opacity-50 p-0 select-none",
-            defaultClassNames.button_previous,
-          ),
-        ),
-        button_next: twMerge(
-          clsx(
-            buttonVariants({ variant: buttonVariant }),
-            "size-(--cell-size) aria-disabled:opacity-50 p-0 select-none",
-            defaultClassNames.button_next,
-          ),
-        ),
-        month_caption: twMerge(
-          clsx(
-            "flex items-center justify-center h-(--cell-size) w-full px-(--cell-size)",
-            defaultClassNames.month_caption,
-          ),
-        ),
-        dropdowns: twMerge(
-          clsx(
-            "w-full flex items-center text-sm font-medium justify-center h-(--cell-size) gap-1.5",
-            defaultClassNames.dropdowns,
-          ),
-        ),
-        dropdown_root: twMerge(
-          clsx(
-            "relative has-focus:border-ring border border-input shadow-xs has-focus:ring-ring/50 has-focus:ring-[3px] rounded-md",
-            defaultClassNames.dropdown_root,
-          ),
-        ),
-        dropdown: twMerge(
-          clsx("absolute inset-0 opacity-0", defaultClassNames.dropdown),
-        ),
-        caption_label: twMerge(
-          clsx(
-            "select-none font-medium",
-            captionLayout === "label"
-              ? "text-sm"
-              : "rounded-md pl-2 pr-1 flex items-center gap-1 text-sm h-8 [&>svg]:text-muted-foreground [&>svg]:size-3.5",
-            defaultClassNames.caption_label,
-          ),
-        ),
-        table: "w-full border-collapse",
-        weekdays: twMerge(clsx("flex", defaultClassNames.weekdays)),
-        weekday: twMerge(
-          clsx(
-            "text-muted-foreground rounded-md flex-1 font-normal text-[0.8rem] select-none",
-            defaultClassNames.weekday,
-          ),
-        ),
-        week: twMerge(clsx("flex w-full mt-2", defaultClassNames.week)),
-        week_number_header: twMerge(
-          clsx(
-            "select-none w-(--cell-size)",
-            defaultClassNames.week_number_header,
-          ),
-        ),
-        week_number: twMerge(
-          clsx(
-            "text-[0.8rem] select-none text-muted-foreground",
-            defaultClassNames.week_number,
-          ),
-        ),
-        day: twMerge(
-          clsx(
-            "relative w-full h-full p-0 text-center [&:first-child[data-selected=true]_button]:rounded-l-md [&:last-child[data-selected=true]_button]:rounded-r-md group/day aspect-square select-none",
-            defaultClassNames.day,
-          ),
-        ),
-        range_start: twMerge(
-          clsx("rounded-l-md bg-accent", defaultClassNames.range_start),
-        ),
-        range_middle: twMerge(
-          clsx("rounded-none", defaultClassNames.range_middle),
-        ),
-        range_end: twMerge(
-          clsx("rounded-r-md bg-accent", defaultClassNames.range_end),
-        ),
-        today: twMerge(
-          clsx(
-            "bg-accent text-accent-foreground rounded-md data-[selected=true]:rounded-none",
-            defaultClassNames.today,
-          ),
-        ),
-        outside: twMerge(
-          clsx(
-            "text-muted-foreground aria-selected:text-muted-foreground",
-            defaultClassNames.outside,
-          ),
-        ),
-        disabled: twMerge(
-          clsx("text-muted-foreground opacity-50", defaultClassNames.disabled),
-        ),
-        hidden: twMerge(clsx("invisible", defaultClassNames.hidden)),
-        ...classNames,
-      }}
-      components={{
-        Root: ({ className, rootRef, ...props }) => {
-          return (
-            <div
-              data-slot="calendar"
-              ref={rootRef}
-              className={twMerge(clsx(className))}
-              {...props}
-            />
-          )
-        },
-        Chevron: ({ className, orientation, ...props }) => {
-          if (orientation === "left") {
-            return (
-              <ChevronLeftIcon
-                className={twMerge(clsx("size-4", className))}
-                {...props}
-              />
-            )
-          }
-
-          if (orientation === "right") {
-            return (
-              <ChevronRightIcon
-                className={twMerge(clsx("size-4", className))}
-                {...props}
-              />
-            )
-          }
-
-          return (
-            <ChevronDownIcon
-              className={twMerge(clsx("size-4", className))}
-              {...props}
-            />
-          )
-        },
-        DayButton: CalendarDayButton,
-        WeekNumber: ({ children, ...props }) => {
-          return (
-            <td {...props}>
-              <div className="flex size-(--cell-size) items-center justify-center text-center">
-                {children}
-              </div>
-            </td>
-          )
-        },
-        ...components,
-      }}
-      {...props}
-    />
-  )
+interface CalendarProps {
+  class?: string
+  mode?: "single"
+  selected?: Date
+  onSelect?: (date: Date | undefined) => void
+  captionLayout?: "label" | "dropdown"
+  startMonth?: Date
+  endMonth?: Date
+  disabled?: Array<{ before: Date } | { after: Date }>
+  showOutsideDays?: boolean
 }
 
-const CalendarDayButton = ({
-  className,
-  day,
-  modifiers,
-  ...props
-}: React.ComponentProps<typeof DayButton>) => {
-  const defaultClassNames = getDefaultClassNames()
+const WEEKDAY_LABELS = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"]
+const MONTH_LABELS = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+]
 
-  const ref = React.useRef<HTMLButtonElement>(null)
-  React.useEffect(() => {
-    if (modifiers.focused) ref.current?.focus()
-  }, [modifiers.focused])
+const getDaysInMonth = (year: number, month: number) =>
+  new Date(year, month + 1, 0).getDate()
 
-  return (
-    <Button
-      ref={ref}
-      variant="ghost"
-      size="icon"
-      data-day={day.date.toLocaleDateString()}
-      data-selected-single={
-        modifiers.selected &&
-        !modifiers.range_start &&
-        !modifiers.range_end &&
-        !modifiers.range_middle
+const getFirstDayOfMonth = (year: number, month: number) =>
+  new Date(year, month, 1).getDay()
+
+const isSameDay = (dateA: Date, dateB: Date) =>
+  dateA.getFullYear() === dateB.getFullYear() &&
+  dateA.getMonth() === dateB.getMonth() &&
+  dateA.getDate() === dateB.getDate()
+
+const toCalendarDay = (date: Date): Date =>
+  new Date(date.getFullYear(), date.getMonth(), date.getDate())
+
+const isDateDisabled = (
+  date: Date,
+  disabled: Array<{ before: Date } | { after: Date }>,
+) => {
+  const normalized = toCalendarDay(date)
+  return disabled.some(rule => {
+    if ("before" in rule) return normalized < toCalendarDay(rule.before)
+    if ("after" in rule) return normalized > toCalendarDay(rule.after)
+    return false
+  })
+}
+
+const clampToRange = (
+  year: number,
+  month: number,
+  startMonth: Date | undefined,
+  endMonth: Date | undefined,
+): { year: number; month: number } => {
+  if (startMonth) {
+    const startYear = startMonth.getFullYear()
+    const startMo = startMonth.getMonth()
+    if (year < startYear || (year === startYear && month < startMo)) {
+      return { year: startYear, month: startMo }
+    }
+  }
+  if (endMonth) {
+    const endYear = endMonth.getFullYear()
+    const endMo = endMonth.getMonth()
+    if (year > endYear || (year === endYear && month > endMo)) {
+      return { year: endYear, month: endMo }
+    }
+  }
+  return { year, month }
+}
+
+const Calendar = (props: CalendarProps): JSX.Element => {
+  const clampedInitial = untrack(() => {
+    const initial = props.selected ?? new Date()
+    return clampToRange(
+      initial.getFullYear(),
+      initial.getMonth(),
+      props.startMonth,
+      props.endMonth,
+    )
+  })
+  const [viewYear, setViewYear] = createSignal(clampedInitial.year)
+  const [viewMonth, setViewMonth] = createSignal(clampedInitial.month)
+
+  const showOutsideDays = () => props.showOutsideDays ?? true
+  const isDropdown = () => props.captionLayout === "dropdown"
+
+  const monthOptions = createMemo(() => {
+    const startYear = props.startMonth?.getFullYear() ?? viewYear() - 10
+    const startMo = props.startMonth?.getMonth() ?? 0
+    const endYear = props.endMonth?.getFullYear() ?? viewYear() + 10
+    const endMo = props.endMonth?.getMonth() ?? 11
+
+    return Array.from({ length: 12 }, (_, month) => month).filter(month => {
+      const tooEarly = viewYear() === startYear && month < startMo
+      const tooLate = viewYear() === endYear && month > endMo
+      return !tooEarly && !tooLate
+    })
+  })
+
+  const yearOptions = createMemo(() => {
+    const startYear = props.startMonth?.getFullYear() ?? viewYear() - 10
+    const endYear = props.endMonth?.getFullYear() ?? viewYear() + 10
+    return Array.from(
+      { length: endYear - startYear + 1 },
+      (_, index) => startYear + index,
+    )
+  })
+
+  const canGoBack = () => {
+    if (!props.startMonth) return true
+    return (
+      viewYear() > props.startMonth.getFullYear() ||
+      (viewYear() === props.startMonth.getFullYear() &&
+        viewMonth() > props.startMonth.getMonth())
+    )
+  }
+
+  const canGoForward = () => {
+    if (!props.endMonth) return true
+    return (
+      viewYear() < props.endMonth.getFullYear() ||
+      (viewYear() === props.endMonth.getFullYear() &&
+        viewMonth() < props.endMonth.getMonth())
+    )
+  }
+
+  const goToPrevMonth = () => {
+    if (!canGoBack()) return
+    if (viewMonth() === 0) {
+      setViewMonth(11)
+      setViewYear(prev => prev - 1)
+    } else {
+      setViewMonth(prev => prev - 1)
+    }
+  }
+
+  const goToNextMonth = () => {
+    if (!canGoForward()) return
+    if (viewMonth() === 11) {
+      setViewMonth(0)
+      setViewYear(prev => prev + 1)
+    } else {
+      setViewMonth(prev => prev + 1)
+    }
+  }
+
+  const calendarDays = createMemo(() => {
+    const year = viewYear()
+    const month = viewMonth()
+    const daysInMonth = getDaysInMonth(year, month)
+    const firstDay = getFirstDayOfMonth(year, month)
+
+    const days: Array<{ date: Date | null; isOutside: boolean }> = []
+
+    if (showOutsideDays()) {
+      const prevMonthDays = getDaysInMonth(year, month - 1)
+      for (let offset = firstDay - 1; offset >= 0; offset--) {
+        days.push({
+          date: new Date(year, month - 1, prevMonthDays - offset),
+          isOutside: true,
+        })
       }
-      data-range-start={modifiers.range_start}
-      data-range-end={modifiers.range_end}
-      data-range-middle={modifiers.range_middle}
-      className={twMerge(
-        clsx(
-          "data-[selected-single=true]:bg-primary data-[selected-single=true]:text-primary-foreground data-[range-middle=true]:bg-accent data-[range-middle=true]:text-accent-foreground data-[range-start=true]:bg-primary data-[range-start=true]:text-primary-foreground data-[range-end=true]:bg-primary data-[range-end=true]:text-primary-foreground group-data-[focused=true]/day:border-ring group-data-[focused=true]/day:ring-ring/50 dark:hover:text-accent-foreground flex aspect-square size-auto w-full min-w-(--cell-size) flex-col gap-1 leading-none font-normal group-data-[focused=true]/day:relative group-data-[focused=true]/day:z-10 group-data-[focused=true]/day:ring-[3px] data-[range-end=true]:rounded-md data-[range-end=true]:rounded-r-md data-[range-middle=true]:rounded-none data-[range-start=true]:rounded-md data-[range-start=true]:rounded-l-md [&>span]:text-xs [&>span]:opacity-70",
-          defaultClassNames.day,
-          className,
-        ),
-      )}
-      {...props}
-    />
+    } else {
+      for (let offset = 0; offset < firstDay; offset++) {
+        days.push({ date: null, isOutside: true })
+      }
+    }
+
+    for (let day = 1; day <= daysInMonth; day++) {
+      days.push({ date: new Date(year, month, day), isOutside: false })
+    }
+
+    const remaining = 7 - (days.length % 7)
+    if (remaining < 7) {
+      for (let offset = 1; offset <= remaining; offset++) {
+        if (showOutsideDays()) {
+          days.push({
+            date: new Date(year, month + 1, offset),
+            isOutside: true,
+          })
+        } else {
+          days.push({ date: null, isOutside: true })
+        }
+      }
+    }
+
+    return days
+  })
+
+  const weeks = createMemo(() => {
+    const allDays = calendarDays()
+    const result: Array<typeof allDays> = []
+    for (let weekStart = 0; weekStart < allDays.length; weekStart += 7) {
+      result.push(allDays.slice(weekStart, weekStart + 7))
+    }
+    return result
+  })
+
+  const [today, setToday] = createSignal(new Date())
+  const msUntilMidnight = () => {
+    const now = new Date()
+    const midnight = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate() + 1,
+    )
+    return midnight.getTime() - now.getTime()
+  }
+  createEffect(() => {
+    const timer = setTimeout(() => {
+      setToday(new Date())
+    }, msUntilMidnight())
+    onCleanup(() => {
+      clearTimeout(timer)
+    })
+  })
+
+  return (
+    <div data-slot="calendar" class={cn("bg-background p-3", props.class)}>
+      <div class="flex items-center justify-between mb-2">
+        <Button
+          variant="ghost"
+          size="icon"
+          class="size-8 p-0"
+          disabled={!canGoBack()}
+          onClick={goToPrevMonth}
+          aria-label="Previous month"
+        >
+          <ChevronLeft class="size-4" />
+        </Button>
+
+        <div class="flex items-center gap-1.5">
+          <Show
+            when={isDropdown()}
+            fallback={
+              <span class="text-sm font-medium select-none">
+                {MONTH_LABELS[viewMonth()]} {viewYear()}
+              </span>
+            }
+          >
+            <div class="relative rounded-md border border-input shadow-xs">
+              <select
+                aria-label="Select month"
+                class="appearance-none bg-transparent px-2 py-1 pr-6 text-sm font-medium cursor-pointer"
+                value={viewMonth()}
+                onChange={event =>
+                  setViewMonth(Number(event.currentTarget.value))
+                }
+              >
+                <For each={monthOptions()}>
+                  {month => (
+                    <option value={month}>{MONTH_LABELS[month]}</option>
+                  )}
+                </For>
+              </select>
+            </div>
+            <div class="relative rounded-md border border-input shadow-xs">
+              <select
+                aria-label="Select year"
+                class="appearance-none bg-transparent px-2 py-1 pr-6 text-sm font-medium cursor-pointer"
+                value={viewYear()}
+                onChange={event => {
+                  const newYear = Number(event.currentTarget.value)
+                  setViewYear(newYear)
+                  const newMonthOptions = monthOptions()
+                  if (!newMonthOptions.includes(viewMonth())) {
+                    setViewMonth(newMonthOptions[0] ?? 0)
+                  }
+                }}
+              >
+                <For each={yearOptions()}>
+                  {year => <option value={year}>{year}</option>}
+                </For>
+              </select>
+            </div>
+          </Show>
+        </div>
+
+        <Button
+          variant="ghost"
+          size="icon"
+          class="size-8 p-0"
+          disabled={!canGoForward()}
+          onClick={goToNextMonth}
+          aria-label="Next month"
+        >
+          <ChevronRight class="size-4" />
+        </Button>
+      </div>
+
+      <div role="grid" class="grid grid-cols-7 gap-0">
+        <div role="row" class="contents">
+          <For each={WEEKDAY_LABELS}>
+            {label => (
+              <div
+                role="columnheader"
+                class="text-muted-foreground text-center text-[0.8rem] font-normal select-none py-1"
+              >
+                {label}
+              </div>
+            )}
+          </For>
+        </div>
+
+        <For each={weeks()}>
+          {week => (
+            <div role="row" class="contents">
+              <For each={week}>
+                {day => {
+                  if (!day.date) {
+                    return <div role="gridcell" class="aspect-square" />
+                  }
+
+                  const date = day.date
+                  const disabled = () =>
+                    props.disabled
+                      ? isDateDisabled(date, props.disabled)
+                      : false
+                  const selected = () =>
+                    props.selected ? isSameDay(date, props.selected) : false
+                  const isToday = () => isSameDay(date, today())
+                  const dateLabel = () =>
+                    date.toLocaleDateString(undefined, {
+                      weekday: "long",
+                      year: "numeric",
+                      month: "long",
+                      day: "numeric",
+                    })
+
+                  return (
+                    <Show
+                      when={!day.isOutside || showOutsideDays()}
+                      fallback={<div role="gridcell" class="aspect-square" />}
+                    >
+                      <div role="gridcell">
+                        <button
+                          type="button"
+                          disabled={disabled()}
+                          aria-selected={selected()}
+                          aria-disabled={disabled()}
+                          aria-label={dateLabel()}
+                          tabIndex={selected() || isToday() ? 0 : -1}
+                          class={cn(
+                            "inline-flex aspect-square w-full items-center justify-center rounded-md text-sm font-normal transition-colors",
+                            "hover:bg-accent hover:text-accent-foreground",
+                            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+                            "disabled:pointer-events-none disabled:opacity-50",
+                            day.isOutside && "text-muted-foreground opacity-50",
+                            selected() &&
+                              "bg-primary text-primary-foreground hover:bg-primary hover:text-primary-foreground",
+                            isToday() &&
+                              !selected() &&
+                              "bg-accent text-accent-foreground",
+                          )}
+                          onClick={() => props.onSelect?.(date)}
+                        >
+                          {date.getDate()}
+                        </button>
+                      </div>
+                    </Show>
+                  )
+                }}
+              </For>
+            </div>
+          )}
+        </For>
+      </div>
+    </div>
   )
 }
 
-export { Calendar, CalendarDayButton }
+export { Calendar }
+export type { CalendarProps }

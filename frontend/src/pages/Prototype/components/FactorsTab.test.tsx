@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
-import { render, screen, within } from "@testing-library/react"
+import { render, screen, within } from "@solidjs/testing-library"
 import userEvent from "@testing-library/user-event"
 import { FactorsTab } from "./FactorsTab"
 import type {
@@ -76,7 +76,7 @@ describe("FactorsTab", () => {
 
   describe("view mode switching", () => {
     it("renders exposures view by default", () => {
-      render(<FactorsTab {...defaultProps} />)
+      render(() => <FactorsTab {...defaultProps} />)
 
       // Should show exposures content
       expect(screen.getByText("Market Beta")).toBeInTheDocument()
@@ -85,7 +85,7 @@ describe("FactorsTab", () => {
     })
 
     it("shows view mode buttons", () => {
-      render(<FactorsTab {...defaultProps} />)
+      render(() => <FactorsTab {...defaultProps} />)
 
       expect(screen.getByText("exposures")).toBeInTheDocument()
       expect(screen.getByText("performance")).toBeInTheDocument()
@@ -94,7 +94,7 @@ describe("FactorsTab", () => {
 
     it("switches to exposures view when clicking button", async () => {
       const user = userEvent.setup()
-      render(<FactorsTab {...defaultProps} />)
+      render(() => <FactorsTab {...defaultProps} />)
 
       // First switch to performance
       await user.click(screen.getByText("performance"))
@@ -107,7 +107,7 @@ describe("FactorsTab", () => {
 
     it("switches to performance view when clicking button", async () => {
       const user = userEvent.setup()
-      render(<FactorsTab {...defaultProps} />)
+      render(() => <FactorsTab {...defaultProps} />)
 
       await user.click(screen.getByText("performance"))
 
@@ -117,7 +117,7 @@ describe("FactorsTab", () => {
 
     it("switches to attribution view when clicking button", async () => {
       const user = userEvent.setup()
-      render(<FactorsTab {...defaultProps} />)
+      render(() => <FactorsTab {...defaultProps} />)
 
       await user.click(screen.getByText("attribution"))
 
@@ -128,7 +128,7 @@ describe("FactorsTab", () => {
 
   describe("exposures view", () => {
     it("displays factor names", () => {
-      render(<FactorsTab {...defaultProps} />)
+      render(() => <FactorsTab {...defaultProps} />)
 
       for (const factor of mockFactorExposures) {
         expect(screen.getByText(factor.name)).toBeInTheDocument()
@@ -136,7 +136,7 @@ describe("FactorsTab", () => {
     })
 
     it("displays factor values", () => {
-      render(<FactorsTab {...defaultProps} />)
+      render(() => <FactorsTab {...defaultProps} />)
 
       // Check for formatted values
       expect(screen.getByText("+0.85")).toBeInTheDocument()
@@ -145,13 +145,13 @@ describe("FactorsTab", () => {
     })
 
     it("shows positive values with + prefix", () => {
-      render(<FactorsTab {...defaultProps} />)
+      render(() => <FactorsTab {...defaultProps} />)
 
       expect(screen.getByText("+0.85")).toBeInTheDocument()
     })
 
     it("shows negative values with - prefix", () => {
-      render(<FactorsTab {...defaultProps} />)
+      render(() => <FactorsTab {...defaultProps} />)
 
       expect(screen.getByText("-0.15")).toBeInTheDocument()
     })
@@ -159,14 +159,14 @@ describe("FactorsTab", () => {
 
   describe("simulation feature in exposures view", () => {
     it("shows simulation dropdown", () => {
-      render(<FactorsTab {...defaultProps} />)
+      render(() => <FactorsTab {...defaultProps} />)
 
       expect(screen.getByText("Simulate:")).toBeInTheDocument()
       expect(screen.getByRole("combobox")).toBeInTheDocument()
     })
 
     it("has None as default simulation option", () => {
-      render(<FactorsTab {...defaultProps} />)
+      render(() => <FactorsTab {...defaultProps} />)
 
       const select = screen.getByRole("combobox")
       expect(select).toHaveValue("")
@@ -174,7 +174,7 @@ describe("FactorsTab", () => {
 
     it("shows available factors in simulation dropdown", async () => {
       const user = userEvent.setup()
-      render(<FactorsTab {...defaultProps} />)
+      render(() => <FactorsTab {...defaultProps} />)
 
       const select = screen.getByRole("combobox")
       await user.click(select)
@@ -186,7 +186,7 @@ describe("FactorsTab", () => {
 
     it("shows projected impact when simulation is selected", async () => {
       const user = userEvent.setup()
-      render(<FactorsTab {...defaultProps} />)
+      render(() => <FactorsTab {...defaultProps} />)
 
       const select = screen.getByRole("combobox")
       await user.selectOptions(select, "Momentum")
@@ -196,7 +196,7 @@ describe("FactorsTab", () => {
 
     it("shows delta changes when simulating", async () => {
       const user = userEvent.setup()
-      render(<FactorsTab {...defaultProps} />)
+      render(() => <FactorsTab {...defaultProps} />)
 
       const select = screen.getByRole("combobox")
       await user.selectOptions(select, "Momentum")
@@ -209,7 +209,7 @@ describe("FactorsTab", () => {
   describe("performance view", () => {
     it("shows factor buttons for selection", async () => {
       const user = userEvent.setup()
-      render(<FactorsTab {...defaultProps} />)
+      render(() => <FactorsTab {...defaultProps} />)
 
       await user.click(screen.getByText("performance"))
 
@@ -220,7 +220,7 @@ describe("FactorsTab", () => {
 
     it("has two factors selected by default", async () => {
       const user = userEvent.setup()
-      render(<FactorsTab {...defaultProps} />)
+      render(() => <FactorsTab {...defaultProps} />)
 
       await user.click(screen.getByText("performance"))
 
@@ -232,7 +232,7 @@ describe("FactorsTab", () => {
 
     it("toggles factor selection when clicking", async () => {
       const user = userEvent.setup()
-      render(<FactorsTab {...defaultProps} />)
+      render(() => <FactorsTab {...defaultProps} />)
 
       await user.click(screen.getByText("performance"))
 
@@ -246,7 +246,7 @@ describe("FactorsTab", () => {
 
     it("limits selection to 2 factors", async () => {
       const user = userEvent.setup()
-      render(<FactorsTab {...defaultProps} />)
+      render(() => <FactorsTab {...defaultProps} />)
 
       await user.click(screen.getByText("performance"))
 
@@ -276,7 +276,7 @@ describe("FactorsTab", () => {
 
     it("can deselect a factor", async () => {
       const user = userEvent.setup()
-      render(<FactorsTab {...defaultProps} />)
+      render(() => <FactorsTab {...defaultProps} />)
 
       await user.click(screen.getByText("performance"))
 
@@ -294,7 +294,7 @@ describe("FactorsTab", () => {
   describe("attribution view", () => {
     it("displays factor attribution", async () => {
       const user = userEvent.setup()
-      render(<FactorsTab {...defaultProps} />)
+      render(() => <FactorsTab {...defaultProps} />)
 
       await user.click(screen.getByText("attribution"))
 
@@ -305,7 +305,7 @@ describe("FactorsTab", () => {
 
     it("shows contribution percentages", async () => {
       const user = userEvent.setup()
-      render(<FactorsTab {...defaultProps} />)
+      render(() => <FactorsTab {...defaultProps} />)
 
       await user.click(screen.getByText("attribution"))
 
@@ -317,7 +317,7 @@ describe("FactorsTab", () => {
 
     it("shows total return explained", async () => {
       const user = userEvent.setup()
-      render(<FactorsTab {...defaultProps} />)
+      render(() => <FactorsTab {...defaultProps} />)
 
       await user.click(screen.getByText("attribution"))
 
@@ -328,7 +328,7 @@ describe("FactorsTab", () => {
 
     it("displays positive contributions in green", async () => {
       const user = userEvent.setup()
-      render(<FactorsTab {...defaultProps} />)
+      render(() => <FactorsTab {...defaultProps} />)
 
       await user.click(screen.getByText("attribution"))
 
@@ -338,7 +338,7 @@ describe("FactorsTab", () => {
 
     it("displays negative contributions in red", async () => {
       const user = userEvent.setup()
-      render(<FactorsTab {...defaultProps} />)
+      render(() => <FactorsTab {...defaultProps} />)
 
       await user.click(screen.getByText("attribution"))
 
@@ -350,7 +350,7 @@ describe("FactorsTab", () => {
   describe("simulation does not show in other views", () => {
     it("does not show simulation dropdown in performance view", async () => {
       const user = userEvent.setup()
-      render(<FactorsTab {...defaultProps} />)
+      render(() => <FactorsTab {...defaultProps} />)
 
       await user.click(screen.getByText("performance"))
 
@@ -359,7 +359,7 @@ describe("FactorsTab", () => {
 
     it("does not show simulation dropdown in attribution view", async () => {
       const user = userEvent.setup()
-      render(<FactorsTab {...defaultProps} />)
+      render(() => <FactorsTab {...defaultProps} />)
 
       await user.click(screen.getByText("attribution"))
 

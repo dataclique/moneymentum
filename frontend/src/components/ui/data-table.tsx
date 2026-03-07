@@ -1,4 +1,4 @@
-import React, { useRef } from "react"
+import { createSignal, For, Show, type JSX } from "solid-js"
 
 import {
   type ColumnDef,
@@ -6,13 +6,9 @@ import {
   getCoreRowModel,
   getSortedRowModel,
   type SortingState,
-  useReactTable,
-} from "@tanstack/react-table"
-import {
-  useVirtualizer,
-  type Virtualizer,
-  type VirtualItem,
-} from "@tanstack/react-virtual"
+  createSolidTable,
+} from "@tanstack/solid-table"
+import { createVirtualizer, type VirtualItem } from "@tanstack/solid-virtual"
 
 import {
   Table,
@@ -23,7 +19,6 @@ import {
   TableRow,
 } from "@/components/ui/table"
 
-// Virtual scrolling constants
 const ESTIMATED_ROW_HEIGHT_PX = 34
 const OVERSCAN_ROW_COUNT = 10
 const TABLE_CONTAINER_HEIGHT_PX = 500
@@ -33,94 +28,125 @@ interface DataTableProps<TData, TValue> {
   data: TData[]
 }
 
-export const DataTable = <TData, TValue>({
-  columns,
-  data,
-}: DataTableProps<TData, TValue>) => {
-  const [sorting, setSorting] = React.useState<SortingState>([])
+export const DataTable = <TData, TValue>(
+  props: DataTableProps<TData, TValue>,
+): JSX.Element => {
+  const [sorting, setSorting] = createSignal<SortingState>([])
+  let tableContainerRef!: HTMLDivElement
 
-  const table = useReactTable({
-    data,
-    columns,
+  const table = createSolidTable({
+    get data() {
+      return props.data
+    },
+    get columns() {
+      return props.columns
+    },
     getCoreRowModel: getCoreRowModel(),
     onSortingChange: setSorting,
     getSortedRowModel: getSortedRowModel(),
     state: {
-      sorting,
+      get sorting() {
+        return sorting()
+      },
     },
   })
 
-  const { rows } = table.getRowModel()
-  const tableContainerRef = useRef<HTMLDivElement>(null)
-  const rowVirtualizer: Virtualizer<HTMLDivElement, Element> = useVirtualizer({
-    count: rows.length,
-    getScrollElement: () => tableContainerRef.current,
+  const rows = () => table.getRowModel().rows
+
+  const rowVirtualizer = createVirtualizer({
+    get count() {
+      return rows().length
+    },
+    getScrollElement: () => tableContainerRef,
     estimateSize: () => ESTIMATED_ROW_HEIGHT_PX,
     overscan: OVERSCAN_ROW_COUNT,
   })
 
-  const virtualRows: VirtualItem[] = rowVirtualizer.getVirtualItems()
-  const totalSize: number = rowVirtualizer.getTotalSize()
+  const virtualRows = () => rowVirtualizer.getVirtualItems()
+  const totalSize = () => rowVirtualizer.getTotalSize()
 
-  const paddingTop = virtualRows.length > 0 ? (virtualRows[0]?.start ?? 0) : 0
-  const paddingBottom =
-    virtualRows.length > 0
-      ? totalSize - (virtualRows[virtualRows.length - 1]?.end ?? 0)
+  const paddingTop = () => {
+    const items = virtualRows()
+    return items.length > 0 ? (items[0]?.start ?? 0) : 0
+  }
+
+  const paddingBottom = () => {
+    const items = virtualRows()
+    return items.length > 0
+      ? totalSize() - (items[items.length - 1]?.end ?? 0)
       : 0
+  }
 
   return (
     <div
-      className="w-full overflow-auto rounded-md border"
+      class="w-full overflow-auto rounded-md border"
       style={{ height: `${String(TABLE_CONTAINER_HEIGHT_PX)}px` }}
       ref={tableContainerRef}
     >
       <Table>
         <TableHeader>
-          {table.getHeaderGroups().map(headerGroup => (
-            <TableRow key={headerGroup.id}>
-              {headerGroup.headers.map(header => {
-                return (
-                  <TableHead key={header.id}>
-                    {header.isPlaceholder
-                      ? null
-                      : flexRender(
-                          header.column.columnDef.header,
-                          header.getContext(),
-                        )}
-                  </TableHead>
-                )
-              })}
-            </TableRow>
-          ))}
+          <For each={table.getHeaderGroups()}>
+            {headerGroup => (
+              <TableRow>
+                <For each={headerGroup.headers}>
+                  {header => (
+                    <TableHead colSpan={header.colSpan}>
+                      {header.isPlaceholder
+                        ? null
+                        : flexRender(
+                            header.column.columnDef.header,
+                            header.getContext(),
+                          )}
+                    </TableHead>
+                  )}
+                </For>
+              </TableRow>
+            )}
+          </For>
         </TableHeader>
         <TableBody>
-          {paddingTop > 0 && (
+          <Show when={paddingTop() > 0}>
             <tr>
-              <td style={{ height: `${String(paddingTop)}px` }} />
+              <td
+                colSpan={props.columns.length}
+                style={{ height: `${String(paddingTop())}px` }}
+              />
             </tr>
-          )}
-          {virtualRows.map((virtualRow: VirtualItem) => {
-            const row = rows[virtualRow.index]
-            return (
-              <TableRow
-                key={row.id}
-                data-state={row.getIsSelected() && "selected"}
-              >
-                {row.getVisibleCells().map(cell => (
-                  <TableCell key={cell.id}>
-                    {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                  </TableCell>
-                ))}
-              </TableRow>
-            )
-          })}
-          {paddingBottom > 0 && (
+          </Show>
+          <For each={virtualRows()}>
+            {(virtualRow: VirtualItem) => {
+              const row = rows()[virtualRow.index] as
+                | ReturnType<typeof rows>[number]
+                | undefined
+              if (!row) return null
+              return (
+                <TableRow>
+                  <For each={row.getVisibleCells()}>
+                    {cell => (
+                      <TableCell>
+                        {flexRender(
+                          cell.column.columnDef.cell,
+                          cell.getContext(),
+                        )}
+                      </TableCell>
+                    )}
+                  </For>
+                </TableRow>
+              )
+            }}
+          </For>
+          <Show when={paddingBottom() > 0}>
             <tr>
-              <td style={{ height: `${String(paddingBottom)}px` }} />
+              <td
+                colSpan={props.columns.length}
+                style={{ height: `${String(paddingBottom())}px` }}
+              />
             </tr>
-          )}
+          </Show>
         </TableBody>
       </Table>
     </div>
   )
 }
+
+export type { DataTableProps }

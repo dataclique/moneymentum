@@ -1,14 +1,18 @@
-import { StrictMode } from "react"
-import { createRoot } from "react-dom/client"
+/* @refresh reload */
+import { render } from "solid-js/web"
+import { Router, Route } from "@solidjs/router"
+import { lazy } from "solid-js"
+import { QueryClient, QueryClientProvider } from "@tanstack/solid-query"
+import { AppLayout, FullscreenLayout } from "./App"
+import { NetworkProvider } from "./contexts/NetworkContext"
+import { WalletProvider } from "./contexts/WalletProvider"
+import { ThemeProvider } from "./components/ui/theme-provider"
 import "./index.css"
-import App from "./App.tsx"
-import { BrowserRouter } from "react-router-dom"
-import { ThemeProvider } from "@/components/ui/theme-provider"
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { ReactQueryDevtools } from "@tanstack/react-query-devtools"
-import { NetworkProvider } from "@/contexts/NetworkContext"
-import { WalletProvider } from "@/contexts/WalletProvider"
-import { Toaster } from "@/components/ui/sonner"
+
+const PortfolioPage = lazy(() => import("./pages/Portfolio"))
+const MainPage = lazy(() => import("./pages/MainPage"))
+const PrototypePage = lazy(() => import("./pages/Prototype"))
+const TokenPage = lazy(() => import("./pages/TokenPage"))
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -25,20 +29,26 @@ if (!rootElement) {
   throw new Error("Root element not found")
 }
 
-createRoot(rootElement).render(
-  <StrictMode>
+render(
+  () => (
     <QueryClientProvider client={queryClient}>
       <ThemeProvider defaultTheme="dark" storageKey="vite-ui-theme">
-        <WalletProvider>
-          <NetworkProvider>
-            <BrowserRouter>
-              <App />
-            </BrowserRouter>
-          </NetworkProvider>
-        </WalletProvider>
-        <Toaster />
+        <NetworkProvider>
+          <WalletProvider>
+            <Router>
+              <Route path="/prototype" component={FullscreenLayout}>
+                <Route path="/*" component={PrototypePage} />
+              </Route>
+              <Route path="/" component={AppLayout}>
+                <Route path="/" component={PortfolioPage} />
+                <Route path="/dashboard" component={MainPage} />
+                <Route path="/token/:ticker" component={TokenPage} />
+              </Route>
+            </Router>
+          </WalletProvider>
+        </NetworkProvider>
       </ThemeProvider>
-      <ReactQueryDevtools initialIsOpen={false} />
     </QueryClientProvider>
-  </StrictMode>,
+  ),
+  rootElement,
 )

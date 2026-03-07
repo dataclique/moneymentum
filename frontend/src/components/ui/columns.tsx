@@ -1,355 +1,69 @@
-import type { ColumnDef } from "@tanstack/react-table"
-import { ArrowUpDown } from "lucide-react"
+import type { ColumnDef, Column } from "@tanstack/solid-table"
+import { ArrowUpDown } from "lucide-solid"
+import { A } from "@solidjs/router"
+
 import { Button } from "./button"
-import { Link } from "react-router-dom"
 import type { TradingData } from "@/hooks/useApi"
 
+const sortableHeader =
+  (label: string) => (ctx: { column: Column<TradingData> }) => (
+    <Button
+      variant="ghost"
+      onClick={() => {
+        ctx.column.toggleSorting(ctx.column.getIsSorted() === "asc")
+      }}
+    >
+      {label}
+      <ArrowUpDown class="ml-2 h-4 w-4" />
+    </Button>
+  )
+
 export const columns: ColumnDef<TradingData>[] = [
-  {
-    accessorKey: "timestamp",
-    header: ({ column }) => {
-      return (
-        <Button
-          variant="ghost"
-          onClick={() => {
-            column.toggleSorting(column.getIsSorted() === "asc")
-          }}
-        >
-          Timestamp
-          <ArrowUpDown className="ml-2 h-4 w-4" />
-        </Button>
-      )
-    },
-  },
-  {
-    accessorKey: "close",
-    header: ({ column }) => {
-      return (
-        <Button
-          variant="ghost"
-          onClick={() => {
-            column.toggleSorting(column.getIsSorted() === "asc")
-          }}
-        >
-          Close
-          <ArrowUpDown className="ml-2 h-4 w-4" />
-        </Button>
-      )
-    },
-  },
-  {
-    accessorKey: "volume",
-    header: ({ column }) => {
-      return (
-        <Button
-          variant="ghost"
-          onClick={() => {
-            column.toggleSorting(column.getIsSorted() === "asc")
-          }}
-        >
-          Volume
-          <ArrowUpDown className="ml-2 h-4 w-4" />
-        </Button>
-      )
-    },
-  },
+  { accessorKey: "timestamp", header: sortableHeader("Timestamp") },
+  { accessorKey: "close", header: sortableHeader("Close") },
+  { accessorKey: "volume", header: sortableHeader("Volume") },
   {
     accessorKey: "ticker",
-    header: ({ column }) => {
+    header: sortableHeader("Ticker"),
+    cell: cellContext => {
+      const ticker = String(cellContext.getValue())
       return (
-        <Button
-          variant="ghost"
-          onClick={() => {
-            column.toggleSorting(column.getIsSorted() === "asc")
-          }}
-        >
-          Ticker
-          <ArrowUpDown className="ml-2 h-4 w-4" />
-        </Button>
-      )
-    },
-    cell: ({ row }) => {
-      const ticker = String(row.getValue("ticker"))
-      return (
-        <Link
-          to={`/token/${ticker}`}
-          className="underline text-blue-400 hover:text-blue-300"
+        <A
+          href={`/token/${ticker}`}
+          class="underline text-blue-400 hover:text-blue-300"
         >
           {ticker}
-        </Link>
+        </A>
       )
     },
   },
-  {
-    accessorKey: "log_return",
-    header: ({ column }) => {
-      return (
-        <Button
-          variant="ghost"
-          onClick={() => {
-            column.toggleSorting(column.getIsSorted() === "asc")
-          }}
-        >
-          Log Return
-          <ArrowUpDown className="ml-2 h-4 w-4" />
-        </Button>
-      )
-    },
-  },
-  {
-    accessorKey: "cum_return",
-    header: ({ column }) => {
-      return (
-        <Button
-          variant="ghost"
-          onClick={() => {
-            column.toggleSorting(column.getIsSorted() === "asc")
-          }}
-        >
-          Cum Return
-          <ArrowUpDown className="ml-2 h-4 w-4" />
-        </Button>
-      )
-    },
-  },
-  {
-    accessorKey: "autocorrelation",
-    header: ({ column }) => {
-      return (
-        <Button
-          variant="ghost"
-          onClick={() => {
-            column.toggleSorting(column.getIsSorted() === "asc")
-          }}
-        >
-          Autocorrelation
-          <ArrowUpDown className="ml-2 h-4 w-4" />
-        </Button>
-      )
-    },
-  },
-  {
-    accessorKey: "stddev",
-    header: ({ column }) => {
-      return (
-        <Button
-          variant="ghost"
-          onClick={() => {
-            column.toggleSorting(column.getIsSorted() === "asc")
-          }}
-        >
-          Stddev
-          <ArrowUpDown className="ml-2 h-4 w-4" />
-        </Button>
-      )
-    },
-  },
+  { accessorKey: "log_return", header: sortableHeader("Log Return") },
+  { accessorKey: "cum_return", header: sortableHeader("Cum Return") },
+  { accessorKey: "autocorrelation", header: sortableHeader("Autocorrelation") },
+  { accessorKey: "stddev", header: sortableHeader("Stddev") },
   {
     accessorKey: "annualized_volatility",
-    header: ({ column }) => {
-      return (
-        <Button
-          variant="ghost"
-          onClick={() => {
-            column.toggleSorting(column.getIsSorted() === "asc")
-          }}
-        >
-          Annualized Volatility
-          <ArrowUpDown className="ml-2 h-4 w-4" />
-        </Button>
-      )
-    },
+    header: sortableHeader("Annualized Volatility"),
   },
-  {
-    accessorKey: "sma",
-    header: ({ column }) => {
-      return (
-        <Button
-          variant="ghost"
-          onClick={() => {
-            column.toggleSorting(column.getIsSorted() === "asc")
-          }}
-        >
-          SMA
-          <ArrowUpDown className="ml-2 h-4 w-4" />
-        </Button>
-      )
-    },
-  },
-  {
-    accessorKey: "mean_return",
-    header: ({ column }) => {
-      return (
-        <Button
-          variant="ghost"
-          onClick={() => {
-            column.toggleSorting(column.getIsSorted() === "asc")
-          }}
-        >
-          Mean Return
-          <ArrowUpDown className="ml-2 h-4 w-4" />
-        </Button>
-      )
-    },
-  },
-  {
-    accessorKey: "price_stddev",
-    header: ({ column }) => {
-      return (
-        <Button
-          variant="ghost"
-          onClick={() => {
-            column.toggleSorting(column.getIsSorted() === "asc")
-          }}
-        >
-          Price Stddev
-          <ArrowUpDown className="ml-2 h-4 w-4" />
-        </Button>
-      )
-    },
-  },
-  {
-    accessorKey: "return_stddev",
-    header: ({ column }) => {
-      return (
-        <Button
-          variant="ghost"
-          onClick={() => {
-            column.toggleSorting(column.getIsSorted() === "asc")
-          }}
-        >
-          Return Stddev
-          <ArrowUpDown className="ml-2 h-4 w-4" />
-        </Button>
-      )
-    },
-  },
-  {
-    accessorKey: "price_zscore",
-    header: ({ column }) => {
-      return (
-        <Button
-          variant="ghost"
-          onClick={() => {
-            column.toggleSorting(column.getIsSorted() === "asc")
-          }}
-        >
-          Price Zscore
-          <ArrowUpDown className="ml-2 h-4 w-4" />
-        </Button>
-      )
-    },
-  },
-  {
-    accessorKey: "covariance",
-    header: ({ column }) => {
-      return (
-        <Button
-          variant="ghost"
-          onClick={() => {
-            column.toggleSorting(column.getIsSorted() === "asc")
-          }}
-        >
-          Covariance
-          <ArrowUpDown className="ml-2 h-4 w-4" />
-        </Button>
-      )
-    },
-  },
-  {
-    accessorKey: "beta",
-    header: ({ column }) => {
-      return (
-        <Button
-          variant="ghost"
-          onClick={() => {
-            column.toggleSorting(column.getIsSorted() === "asc")
-          }}
-        >
-          Beta
-          <ArrowUpDown className="ml-2 h-4 w-4" />
-        </Button>
-      )
-    },
-  },
+  { accessorKey: "sma", header: sortableHeader("SMA") },
+  { accessorKey: "mean_return", header: sortableHeader("Mean Return") },
+  { accessorKey: "price_stddev", header: sortableHeader("Price Stddev") },
+  { accessorKey: "return_stddev", header: sortableHeader("Return Stddev") },
+  { accessorKey: "price_zscore", header: sortableHeader("Price Zscore") },
+  { accessorKey: "covariance", header: sortableHeader("Covariance") },
+  { accessorKey: "beta", header: sortableHeader("Beta") },
   {
     accessorKey: "information_discreteness",
-    header: ({ column }) => {
-      return (
-        <Button
-          variant="ghost"
-          onClick={() => {
-            column.toggleSorting(column.getIsSorted() === "asc")
-          }}
-        >
-          Information Discreteness
-          <ArrowUpDown className="ml-2 h-4 w-4" />
-        </Button>
-      )
-    },
+    header: sortableHeader("Information Discreteness"),
   },
-  {
-    accessorKey: "sharpe",
-    header: ({ column }) => {
-      return (
-        <Button
-          variant="ghost"
-          onClick={() => {
-            column.toggleSorting(column.getIsSorted() === "asc")
-          }}
-        >
-          Sharpe
-          <ArrowUpDown className="ml-2 h-4 w-4" />
-        </Button>
-      )
-    },
-  },
+  { accessorKey: "sharpe", header: sortableHeader("Sharpe") },
   {
     accessorKey: "log_return_above_mar",
-    header: ({ column }) => {
-      return (
-        <Button
-          variant="ghost"
-          onClick={() => {
-            column.toggleSorting(column.getIsSorted() === "asc")
-          }}
-        >
-          Log Return Above MAR
-          <ArrowUpDown className="ml-2 h-4 w-4" />
-        </Button>
-      )
-    },
+    header: sortableHeader("Log Return Above MAR"),
   },
   {
     accessorKey: "downside_deviation",
-    header: ({ column }) => {
-      return (
-        <Button
-          variant="ghost"
-          onClick={() => {
-            column.toggleSorting(column.getIsSorted() === "asc")
-          }}
-        >
-          Downside Deviation
-          <ArrowUpDown className="ml-2 h-4 w-4" />
-        </Button>
-      )
-    },
+    header: sortableHeader("Downside Deviation"),
   },
-  {
-    accessorKey: "sortino",
-    header: ({ column }) => {
-      return (
-        <Button
-          variant="ghost"
-          onClick={() => {
-            column.toggleSorting(column.getIsSorted() === "asc")
-          }}
-        >
-          Sortino
-          <ArrowUpDown className="ml-2 h-4 w-4" />
-        </Button>
-      )
-    },
-  },
+  { accessorKey: "sortino", header: sortableHeader("Sortino") },
 ]

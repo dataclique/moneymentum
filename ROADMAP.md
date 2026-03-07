@@ -3,107 +3,81 @@
 > **Purpose**: Practical path from where we are today to the north star in
 > [SPEC.md](./SPEC.md).
 
----
-
-## Starting Point
-
-**What we have:**
-
-- **Portfolio rebalancer at `/`**: Set positions by weight, adjust cross-account
-  leverage while maintaining proportions. Simple but already useful daily.
-- **Historical data**: OHLCV and funding rates accumulated via collection
-  scripts (more depth than Hyperliquid API provides directly).
-- **Prototype at `/prototype`**: Design reference for target UI/UX. Like Figma
-  but in code.
-
-**What's missing:**
-
-The rebalancer shows market exposure as `net = long notional - short notional`.
-This ignores correlations entirely—a portfolio that's "net neutral" in notional
-terms might still have massive BTC beta. Without beta, hedging is guesswork.
+Each `##` section is an epic — a goal-oriented group of related issues. Epics
+are ordered by priority (highest first).
 
 ---
 
-## Phase 1: Backend Foundation + Portfolio Beta
+## Frontend rewrite in SolidJS
 
-> See SPEC.md: Technology Stack, Domain Architecture
+React is slow, has a runtime, and AI tooling defaults to React patterns when it
+sees `.jsx`. SolidJS compiles away the runtime, has cleaner reactivity, and
+shadcn-solid provides the component library. Clean break — new SolidJS app
+replaces the React frontend, using the old code as reference.
 
-**Goal**: Users can see their portfolio's beta exposure, enabling proper
-hedging.
+```mermaid
+graph TD
+    A["SolidJS project setup"] --> B["rewrite rebalancer"]
+    B --> C["rewrite prototype page"]
+```
 
-### 1.1 Backend Infrastructure
-
-Set up Rust project with Nix:
-
-- Cargo workspace structure
-- Nix flake for reproducible dev environment
-- Basic HTTP server (rocket) that can serve a health check
-
-### 1.2 Data Ingestion
-
-Fetch Hyperliquid market data:
-
-- OHLCV candles for all perp markets
-- Store in Parquet format for polars
-- Scheduled refresh (cron or simple loop)
-
-### 1.3 Beta Calculation
-
-Compute rolling beta for each asset against BTC:
-
-- Read historical returns from ingested data
-- Calculate covariance / variance
-- Expose via API endpoint
-
-### 1.4 Portfolio Beta in Frontend
-
-Wire portfolio beta into the rebalancer:
-
-- Fetch betas from backend
-- Compute portfolio-weighted beta
-- Display alongside net notional
+- [ ] SolidJS project setup (Nix, Vite, shadcn-solid, routing)
+- [ ] Rewrite rebalancer page
+- [ ] Rewrite prototype/design reference page
 
 ---
 
-## Phase 2: Risk Analytics
+## Portfolio beta in frontend
+
+The backend already computes portfolio-weighted beta (`POST /beta` takes weights
+and benchmark, returns a single beta value). The frontend doesn't use it yet —
+the rebalancer still shows raw net notional, which ignores correlations and
+makes hedging guesswork.
+
+- [ ] Fetch portfolio beta from backend (`POST /beta`)
+- [ ] Display alongside net notional in rebalancer
+
+---
+
+## Risk analytics
 
 > See SPEC.md: Analytics Capabilities > Risk Engine
 
-**Goal**: Users can assess portfolio risk beyond just beta.
+Portfolio risk assessment beyond beta.
 
-- Monte Carlo simulation of portfolio returns
-- VaR/CVaR at configurable confidence levels
-- Historical drawdown analysis
-- Correlation matrix visualization
+- [ ] Monte Carlo simulation of portfolio returns
+- [ ] VaR/CVaR at configurable confidence levels
+- [ ] Historical drawdown analysis
+- [ ] Correlation matrix visualization
 
 ---
 
-## Phase 3: Screener + Staged Trade Simulation
+## Screener and staged trade simulation
 
 > See SPEC.md: Core Workflow > Screen, Stage, Simulate
 
-**Goal**: Users can find assets by factor characteristics and preview portfolio
-changes before executing.
+Find assets by factor characteristics and preview portfolio changes before
+executing.
 
-- Screener: rank assets by beta, momentum, carry, volatility
-- Staged trades: add/remove positions, see simulated impact on risk metrics
-- Compare staged vs current portfolio
+- [ ] Screener: rank assets by beta, momentum, carry, volatility
+- [ ] Staged trades: add/remove positions, see simulated impact on risk metrics
+- [ ] Compare staged vs current portfolio
 
 ---
 
-## Phase 4: Spot Trading
+## Spot trading
 
 > See SPEC.md: Domain Architecture > Spot Trading
 
-**Goal**: Unified perp + spot portfolio management.
+Unified perp + spot portfolio management.
 
-- Hyperliquid spot integration
-- Combined notional and weight calculations
-- Single rebalance across both instrument types
+- [ ] Hyperliquid spot integration
+- [ ] Combined notional and weight calculations
+- [ ] Single rebalance across both instrument types
 
 ---
 
-## Future
+## Not epic
 
 These are directions we know matter but haven't designed:
 
@@ -111,3 +85,21 @@ These are directions we know matter but haven't designed:
 - Tokenized equities (st0x) for TradFi factor exposure
 - Yield products (Pendle)
 - Multi-account support
+
+---
+
+## Completed: Backend foundation and portfolio beta
+
+Rust backend with Rocket, Polars, CQRS/ES on SQLite. Ingestion pipeline fetches
+OHLCV and funding rates from Hyperliquid, stores as CSV. Beta calculation
+computes rolling covariance/variance against BTC. Deployed to DigitalOcean via
+NixOS + deploy-rs.
+
+- [x] Cargo workspace + Nix flake + CI/CD
+- [x] Rocket HTTP server with health check
+- [x] CQRS event store + Apalis job queue (SQLite)
+- [x] Hyperliquid OHLCV ingestion (15m, 1h, 1d candles)
+- [x] Funding rate ingestion
+- [x] Rolling beta calculation (`POST /beta`)
+- [x] Candle API (`GET /candles/<timeframe>`)
+- [x] Ingestion status API (`GET /ingestion/status`)

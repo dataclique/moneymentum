@@ -1,5 +1,7 @@
+import * as Effect from "effect/Effect"
 import { useQuery } from "@tanstack/solid-query"
 import { createEffect, on } from "solid-js"
+import { postJson } from "@/lib/http"
 import type { TokenAllocation } from "./usePortfolioState"
 
 const BETA_BENCHMARK = "BTC"
@@ -48,24 +50,20 @@ interface BetaResponse {
   beta: number | null
 }
 
-const fetchBeta = async (
+const fetchBeta = (
   weights: Record<string, number>,
   benchmark: string,
   signal?: AbortSignal,
-): Promise<BetaResponse> => {
-  const res = await fetch(`${import.meta.env.BASE_URL}api/beta`, {
-    method: "POST",
-    // Abort the request if the backend is unresponsive for too long, or if
-    // TanStack Query cancels it (e.g. query key changed while in-flight).
-    signal: signal
-      ? AbortSignal.any([signal, AbortSignal.timeout(10_000)])
-      : AbortSignal.timeout(10_000),
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ weights, benchmark }),
-  })
-  if (!res.ok) throw new Error(`beta request failed: ${res.status}`)
-  return res.json() as Promise<BetaResponse>
-}
+) =>
+  postJson<BetaResponse>(
+    `${import.meta.env.BASE_URL}api/beta`,
+    { weights, benchmark },
+    {
+      signal: signal
+        ? AbortSignal.any([signal, AbortSignal.timeout(10_000)])
+        : AbortSignal.timeout(10_000),
+    },
+  )
 
 export const useBeta = (tokens: () => TokenAllocation[]) => {
   const weights = () => weightsFromTokens(tokens())
@@ -75,7 +73,8 @@ export const useBeta = (tokens: () => TokenAllocation[]) => {
 
   const query = useQuery(() => ({
     queryKey: ["beta", weightsKey(), BETA_BENCHMARK] as const,
-    queryFn: ctx => fetchBeta(weights(), BETA_BENCHMARK, ctx.signal),
+    queryFn: ({ signal }) =>
+      Effect.runPromise(fetchBeta(weights(), BETA_BENCHMARK, signal)),
     enabled: hasTokens(),
     // Retry a couple of times on transient failures.
     retry: 2,

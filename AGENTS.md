@@ -7,32 +7,29 @@ this document is a directive, not a suggestion.
 
 ## Project Direction
 
-This project is transitioning from a Python-based momentum trading bot to an
-institutional-grade quant toolkit. See [SPEC.md](./SPEC.md) for the vision and
-[ROADMAP.md](./ROADMAP.md) for the path.
+Factor-based portfolio management toolkit for DeFi trading. See
+[SPEC.md](./SPEC.md) for the architecture and [ROADMAP.md](./ROADMAP.md) for
+current priorities and progress.
 
-**Current state:**
+**What works today:**
 
-- Frontend at `/` is a working portfolio rebalancer (weight-based positions,
-  cross-account leverage). Used daily.
-- Frontend at `/prototype` is a design reference (like Figma in code).
-- Python backend (`yang/`, `pipeline.py`, `server.py`) exists but is being
-  replaced by a Rust backend.
-
-**What's being built:**
-
-- Rust backend for analytics and API (polars, cqrs-es, rocket)
-- First priority: portfolio beta calculation (current tool shows net notional,
-  which ignores correlations and makes hedging guesswork)
+- Portfolio rebalancer at `/` (weight-based positions, cross-account leverage,
+  beta display). Used daily.
+- Rust backend (Axum, Polars, CQRS-ES) serving beta calculation and data
+  ingestion.
+- Design reference at `/prototype` (keyboard-driven UI, target UX patterns).
 
 **Key architectural decisions:**
 
-- **All Rust**: Official SDKs for Hyperliquid, Derive, deBridge, Jupiter. Polars
-  for analytics. Single language from API to blockchain interactions.
-- **Frontend holds credentials**: Backend generates execution plans, frontend
-  executes. Credentials never leave the browser.
-- **Portfolios as proportions**: Target portfolios are defined as weights +
-  leverage, not dollar amounts. Rebalancing = return to target proportions.
+- **All Rust backend**: Official SDKs for Hyperliquid, Derive, deBridge,
+  Jupiter. Polars for analytics. Single language from API to blockchain.
+- **Turnkey for signing**: TEE-secured wallet management via AWS Nitro enclaves.
+  See [SPEC.md - Security Model](./SPEC.md#security-model).
+- **Portfolios as proportions**: Target portfolios are weights + leverage, not
+  dollar amounts. Rebalancing = return to target proportions.
+- **Interface-first development**: Every new capability starts with a trait/DTO
+  and mock. Consumers develop against mocks while implementations are built in
+  parallel.
 
 ---
 
@@ -88,16 +85,6 @@ sqlx migrate add <migration_name>  # Creates timestamped migration file
 sqlx migrate run                   # Applies pending migrations
 ```
 
-### Legacy Python (still functional, being replaced)
-
-```bash
-python server.py   # FastAPI server on port 8000
-python backtest.py # Generate analysis CSV
-pytest             # Run tests
-ruff check .       # Lint
-ruff format .      # Format
-```
-
 ### Environment
 
 - **Nix + Direnv**: `direnv allow` activates the dev environment
@@ -141,6 +128,19 @@ mechanism. No prefixes like `feat:` or `fix:`.
 
 <1-3 sentences explaining the approach and key decisions>
 ```
+
+### Roadmap maintenance
+
+**Every PR must update ROADMAP.md before submission.** When you open a PR that
+completes a roadmap item, mark it `[x]` and link the PR in the same commit. The
+roadmap in master must be current the moment any PR merges -- not after a
+separate "update docs" pass. This means:
+
+- Mark items done when you open the PR (optimistic: if it merges, the roadmap is
+  already correct)
+- Add new items discovered during implementation
+- Move fully-completed epics to the "Completed" section at the bottom
+- Update PR references when old PRs are superseded by new ones
 
 ### Quality checks
 

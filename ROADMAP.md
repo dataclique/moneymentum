@@ -112,7 +112,7 @@ can't ask investors to paste private keys into a browser.
 
 Turnkey runs signing inside AWS Nitro enclaves. Keys never leave attested
 hardware, signing latency is 50-100ms, and there's a native Rust SDK. The
-`Wallet` trait (PR #108) and Turnkey EVM implementation (PR #109) are already
+`Wallet` trait (PR #120) and Turnkey EVM implementation (PR #121) are already
 built.
 
 ### What exists
@@ -156,13 +156,11 @@ graph TD
 - [x] [#97 wallet trait + crate architecture](https://github.com/data-cartel/moneymentum/issues/97)
       -- **`@0xgleb`**
   - PR:
-    [#107 crate architecture docs](https://github.com/data-cartel/moneymentum/pull/107)
-    ->
-    [#108 wallet trait + mock](https://github.com/data-cartel/moneymentum/pull/108)
+    [#120 wallet trait + mock](https://github.com/data-cartel/moneymentum/pull/120)
 - [x] [#98 Turnkey EVM wallet](https://github.com/data-cartel/moneymentum/issues/98)
       -- **`@0xgleb`**
   - PR:
-    [#109 Turnkey EVM implementation](https://github.com/data-cartel/moneymentum/pull/109)
+    [#121 Turnkey EVM implementation](https://github.com/data-cartel/moneymentum/pull/121)
 - [ ] [#99 Turnkey Solana wallet](https://github.com/data-cartel/moneymentum/issues/99)
       -- **`@0xgleb`**
 - [ ] [#100 Turnkey Derive wallet](https://github.com/data-cartel/moneymentum/issues/100)
@@ -171,7 +169,6 @@ graph TD
       -- **`@0xgleb`**
 - [ ] Wallet connection UI (Turnkey passkey flow, replaces raw key input) --
       **`@levsgit`**
-- [ ] [PR #96 replace Privy with Turnkey (research + SPEC update)](https://github.com/data-cartel/moneymentum/pull/96)
 
 ## Multi-venue capital flow
 

@@ -1,8 +1,12 @@
 #[cfg(feature = "mock")]
 mod mock;
+#[cfg(feature = "turnkey")]
+mod turnkey;
 
 #[cfg(feature = "mock")]
 pub use mock::MockWallet;
+#[cfg(feature = "turnkey")]
+pub use turnkey::{OrganizationId, TurnkeyEvmWallet, TurnkeyWalletError};
 
 /// Domain capability for transaction signing and address retrieval.
 ///

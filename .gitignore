@@ -15,3 +15,4 @@
 *.db-shm
 *.db-wal
 /.venv
+.worktrees/

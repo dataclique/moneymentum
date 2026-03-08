@@ -25,8 +25,8 @@ let
       };
 
       serviceConfig = {
-        DynamicUser = true;
-        SupplementaryGroups = [ "mm-data" ];
+        User = "moneymentum";
+        Group = "warehouse";
         ExecStart = "${path} --config ${configFile}";
         Restart = "always";
         RestartSec = 5;
@@ -178,7 +178,12 @@ in {
     };
   };
 
-  users.groups.mm-data = { };
+  users.users.moneymentum = {
+    isSystemUser = true;
+    group = "warehouse";
+  };
+
+  users.groups.warehouse = { };
   programs.bash.interactiveShellInit = "set -o vi";
 
   systemd.services = lib.mapAttrs mkService enabledServices // {
@@ -202,6 +207,10 @@ in {
       Persistent = true;
     };
   };
+
+  systemd.tmpfiles.rules =
+    let dataDirs = lib.mapAttrsToList (_: cfg: cfg.dataDir) enabledServices;
+    in map (dir: "d ${dir} 0770 moneymentum warehouse -") dataDirs;
 
   system.activationScripts.moneymentum-init.text = "mkdir -p /run/moneymentum";
 

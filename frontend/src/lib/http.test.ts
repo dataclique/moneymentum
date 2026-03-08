@@ -1,12 +1,14 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
-import { Effect } from "effect"
+import * as Effect from "effect/Effect"
 import {
   fetchJson,
   postJson,
   postEmpty,
+  fetchStreamChecked,
   NetworkError,
   HttpStatusError,
   JsonParseError,
+  JsonSerializeError,
 } from "./http"
 
 describe("http", () => {
@@ -73,6 +75,45 @@ describe("http", () => {
         if (error._tag === "Fail") {
           expect(error.error).toBeInstanceOf(HttpStatusError)
           expect((error.error as HttpStatusError).status).toBe(500)
+          expect((error.error as HttpStatusError).detail).toBeUndefined()
+        }
+      }
+    })
+
+    it("returns HttpStatusError without detail when body is non-object JSON", async () => {
+      mockFetch().mockResolvedValue({
+        ok: false,
+        status: 400,
+        json: () => Promise.resolve("just a string"),
+      })
+
+      const exit = await Effect.runPromiseExit(fetchJson("/api/test"))
+
+      expect(exit._tag).toBe("Failure")
+      if (exit._tag === "Failure") {
+        const error = exit.cause
+        if (error._tag === "Fail") {
+          expect(error.error).toBeInstanceOf(HttpStatusError)
+          expect((error.error as HttpStatusError).status).toBe(400)
+          expect((error.error as HttpStatusError).detail).toBeUndefined()
+        }
+      }
+    })
+
+    it("returns HttpStatusError without detail when body is null JSON", async () => {
+      mockFetch().mockResolvedValue({
+        ok: false,
+        status: 400,
+        json: () => Promise.resolve(null),
+      })
+
+      const exit = await Effect.runPromiseExit(fetchJson("/api/test"))
+
+      expect(exit._tag).toBe("Failure")
+      if (exit._tag === "Failure") {
+        const error = exit.cause
+        if (error._tag === "Fail") {
+          expect(error.error).toBeInstanceOf(HttpStatusError)
           expect((error.error as HttpStatusError).detail).toBeUndefined()
         }
       }
@@ -150,6 +191,77 @@ describe("http", () => {
           signal: expect.any(AbortSignal),
         }),
       )
+    })
+  })
+
+  describe("fetchStreamChecked", () => {
+    it("returns Response on successful fetch", async () => {
+      const mockResponse = { ok: true, body: "stream" }
+      mockFetch().mockResolvedValue(mockResponse)
+
+      const result = await Effect.runPromise(
+        fetchStreamChecked("/api/stream", { method: "POST" }),
+      )
+
+      expect(result).toBe(mockResponse)
+      expect(mockFetch()).toHaveBeenCalledWith("/api/stream", {
+        method: "POST",
+      })
+    })
+
+    it("returns HttpStatusError on non-ok response", async () => {
+      mockFetch().mockResolvedValue({
+        ok: false,
+        status: 502,
+        json: () => Promise.resolve({ detail: "Bad gateway" }),
+      })
+
+      const exit = await Effect.runPromiseExit(
+        fetchStreamChecked("/api/stream"),
+      )
+
+      expect(exit._tag).toBe("Failure")
+      if (exit._tag === "Failure") {
+        const error = exit.cause
+        if (error._tag === "Fail") {
+          expect(error.error).toBeInstanceOf(HttpStatusError)
+          expect((error.error as HttpStatusError).status).toBe(502)
+          expect((error.error as HttpStatusError).detail).toBe("Bad gateway")
+        }
+      }
+    })
+
+    it("returns NetworkError when fetch fails", async () => {
+      mockFetch().mockRejectedValue(new TypeError("Network error"))
+
+      const exit = await Effect.runPromiseExit(
+        fetchStreamChecked("/api/stream"),
+      )
+
+      expect(exit._tag).toBe("Failure")
+      if (exit._tag === "Failure") {
+        const error = exit.cause
+        if (error._tag === "Fail") {
+          expect(error.error).toBeInstanceOf(NetworkError)
+        }
+      }
+    })
+  })
+
+  describe("postJson - serialization", () => {
+    it("returns JsonSerializeError when body is not serializable", async () => {
+      const circular: Record<string, unknown> = {}
+      circular.self = circular
+
+      const exit = await Effect.runPromiseExit(postJson("/api/test", circular))
+
+      expect(exit._tag).toBe("Failure")
+      if (exit._tag === "Failure") {
+        const error = exit.cause
+        if (error._tag === "Fail") {
+          expect(error.error).toBeInstanceOf(JsonSerializeError)
+        }
+      }
     })
   })
 

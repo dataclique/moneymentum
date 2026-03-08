@@ -194,6 +194,26 @@ starts the deposit UI without waiting for fees or withdrawals. `attest_nav`
 program is developed with local keypairs -- Turnkey signing plugs in via the
 `VaultClient` crate (#130) for production.
 
+```mermaid
+graph TD
+    A["#122 vault spec<br/>(done)"] --> B["#123 scaffold + types<br/>+ share math"]
+    B --> C["#124 initialize + deposit"]
+    B --> D["#125 attest_nav"]
+    B --> E["#126 treasury mgmt"]
+    B --> F["#127 fee math"]
+    F --> G["#128 two-phase withdrawal"]
+    C --> H["#129 admin + hardening"]
+    D --> H
+    E --> H
+    G --> H
+    H --> I["#130 VaultClient crate"]
+    J["#99 Solana wallet"] --> I
+    C -.-> K["#131 deposit UI<br/>@levsgit"]
+    G -.-> L["#132 withdraw UI<br/>@levsgit"]
+    I -.-> M["NAV oracle<br/>(multi-venue epic)"]
+    I -.-> N["capital deployment<br/>(multi-venue epic)"]
+```
+
 ### On-chain program (3 parallel tracks after scaffold)
 
 The scaffold (#123) defines account types and share math -- pure Rust, fully

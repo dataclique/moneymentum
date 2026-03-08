@@ -9,7 +9,9 @@ type KeyBinding = {
 const createKeyboardHandler =
   (bindings: KeyBinding[]) => (event: KeyboardEvent) => {
     const binding = bindings.find(
-      b => b.key === event.key && (b.when === undefined || b.when()),
+      binding =>
+        binding.key === event.key &&
+        (binding.when === undefined || binding.when()),
     )
     if (binding) {
       if (binding.preventDefault !== false) {

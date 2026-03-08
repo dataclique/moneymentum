@@ -167,7 +167,7 @@ const redistributeWeights = (
   newPercentage: number,
   totalNotional: number,
 ): TokenAllocation[] => {
-  const changedToken = tokens.find(t => t.symbol === changedSymbol)
+  const changedToken = tokens.find(token => token.symbol === changedSymbol)
   if (!changedToken) return tokens
 
   const oldPercentage = changedToken.percentage
@@ -175,10 +175,10 @@ const redistributeWeights = (
 
   // Sum of other active tokens' percentages
   const otherActiveTokens = tokens.filter(
-    t => t.symbol !== changedSymbol && t.status !== "deleted",
+    token => token.symbol !== changedSymbol && token.status !== "deleted",
   )
   const otherTotalPercent = otherActiveTokens.reduce(
-    (sum, t) => sum + t.percentage,
+    (sum, token) => sum + token.percentage,
     0,
   )
 
@@ -393,7 +393,7 @@ export const usePortfolioState = (
       const mergedTokens: TokenAllocation[] = storedDataSnapshot.tokens.map(
         token => {
           const exchangeToken = exchangeTokens.find(
-            t => t.symbol === token.symbol,
+            candidate => candidate.symbol === token.symbol,
           )
           if (exchangeToken) {
             // Token exists on exchange - use exchange notional
@@ -448,7 +448,7 @@ export const usePortfolioState = (
       // Baseline portfolio = only tokens that exist on exchange (for comparison)
       const initialPortfolioTokens = exchangeTokens.map(exchangeToken => {
         const mergedToken = tokensWithPercentages.find(
-          t => t.symbol === exchangeToken.symbol,
+          candidate => candidate.symbol === exchangeToken.symbol,
         )
         return mergedToken ?? exchangeToken
       })
@@ -573,7 +573,7 @@ export const usePortfolioState = (
       // Current notional from exchange (what exists on exchange now)
       // Look up from initialPortfolio to get the actual exchange position
       const exchangePosition = initialPortfolio().find(
-        p => p.symbol === token.symbol,
+        position => position.symbol === token.symbol,
       )
       const currentNotional = exchangePosition?.notional ?? 0
 
@@ -969,13 +969,13 @@ export const usePortfolioState = (
         setSelectedTokensAndPersist(prev =>
           prev.map(token => {
             const hasSmallChange = tokensWithSmallChangesOnSubmit.some(
-              t => t.symbol === token.symbol,
+              candidate => candidate.symbol === token.symbol,
             )
             if (!hasSmallChange) return token
 
             const targetValue = getTokenUsdAllocation(token, targetNotional())
             const initialToken = initialPortfolio().find(
-              it => it.symbol === token.symbol,
+              candidate => candidate.symbol === token.symbol,
             )
             const currentValue = initialToken
               ? getTokenUsdAllocation(initialToken, targetNotional())
@@ -1024,7 +1024,7 @@ export const usePortfolioState = (
       precise: isPrecise(),
       positions: tokensWithDeltaTracking().map(token => {
         const exchangePosition = initialPortfolio().find(
-          p => p.symbol === token.symbol,
+          position => position.symbol === token.symbol,
         )
         return {
           symbol: token.symbol,

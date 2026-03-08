@@ -38,9 +38,9 @@ export const RiskTab = (props: RiskTabProps) => {
 
   const getCorrelation = (a1: string, a2: string): number => {
     const entry = props.correlationMatrix.find(
-      e =>
-        (e.asset1 === a1 && e.asset2 === a2) ||
-        (e.asset1 === a2 && e.asset2 === a1),
+      entry =>
+        (entry.asset1 === a1 && entry.asset2 === a2) ||
+        (entry.asset1 === a2 && entry.asset2 === a1),
     )
     return entry?.correlation ?? 0
   }

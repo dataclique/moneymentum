@@ -67,7 +67,7 @@ export const MetricSelector = (props: MetricSelectorProps) => {
 
       if (!props.isOpen && needsWindow()) {
         const currentIndex = WINDOW_OPTIONS.findIndex(
-          w => w.id === props.selectedWindowId,
+          window => window.id === props.selectedWindowId,
         )
         if (event.key === "ArrowLeft" || event.key === "h") {
           event.preventDefault()

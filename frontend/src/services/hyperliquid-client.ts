@@ -683,7 +683,8 @@ export class HyperliquidClient {
 
     // 2. Filter for positions that need rebalancing
     const positionsToRebalance = positions.filter(
-      p => p.status !== "untouched" && p.status !== "deleted",
+      position =>
+        position.status !== "untouched" && position.status !== "deleted",
     )
 
     if (positionsToRebalance.length === 0) {
@@ -692,10 +693,10 @@ export class HyperliquidClient {
 
     // 3. Set leverages only where changed (using leverageChanged flag from hook)
     const positionsNeedingLeverageChange = positionsToRebalance.filter(
-      p => p.leverageChanged,
+      position => position.leverageChanged,
     )
     const positionsWithUnchangedLeverage = positionsToRebalance.filter(
-      p => !p.leverageChanged,
+      position => !position.leverageChanged,
     )
 
     const successfulPositions: Position[] = [...positionsWithUnchangedLeverage]
@@ -707,9 +708,9 @@ export class HyperliquidClient {
           return position
         }),
       )
-      for (let i = 0; i < leverageResults.length; i++) {
-        const result = leverageResults[i]
-        const position = positionsNeedingLeverageChange[i]
+      for (let index = 0; index < leverageResults.length; index++) {
+        const result = leverageResults[index]
+        const position = positionsNeedingLeverageChange[index]
         if (result.status === "fulfilled") {
           successfulPositions.push(result.value)
         } else {

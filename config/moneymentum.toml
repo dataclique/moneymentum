@@ -2,5 +2,6 @@ port = 8000
 data_dir = "/mnt/data/prod"
 database_url = "sqlite:///mnt/data/prod/moneymentum.db?mode=rwc"
 log_level = "info"
+board_port = 8082
 max_concurrent_requests = 3
 max_retries = 5

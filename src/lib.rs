@@ -13,32 +13,27 @@ use std::net::Ipv4Addr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use apalis::prelude::{Monitor, Storage, WorkerBuilder, WorkerFactoryFn};
-use apalis_sql::sqlite::SqliteStorage;
+use apalis::prelude::{Monitor, TaskSink, WorkerBuilder};
+use apalis_board::axum::framework::{ApiBuilder, RegisterRoute};
+use apalis_board::axum::ui::ServeUI;
+use apalis_codec::json::JsonCodec;
+use apalis_sqlite::fetcher::SqliteFetcher;
+use apalis_sqlite::{CompactType, SqliteStorage};
+use axum::extract::{Path as AxumPath, State};
+use axum::http::StatusCode;
+use axum::response::Json;
+use axum::{Router, routing};
 use cqrs_es::persist::GenericQuery;
-use rocket::config::Config as RocketConfig;
-use rocket::http::Status;
-use rocket::request::FromParam;
-use rocket::response::content::RawJson;
-use rocket::serde::json::Json;
-use rocket::{Rocket, State, get, post, routes};
 use serde::Deserialize;
 use sqlx::SqlitePool;
 use thiserror::Error;
+use tokio::net::TcpListener;
 use tracing::{debug, error, info};
 use tracing_subscriber::EnvFilter;
 
 use ingestion::{Ingestion, IngestionId, IngestionJob, IngestionServices, IngestionStatus};
 use timeframe::Timeframe;
 use wire::{Cons, Nil, UnwiredQuery};
-
-impl<'r> FromParam<'r> for Timeframe {
-    type Error = &'r str;
-
-    fn from_param(param: &'r str) -> Result<Self, Self::Error> {
-        Self::from_interval_string(param).ok_or(param)
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -64,7 +59,8 @@ impl LogLevel {
 
 #[derive(Debug, Deserialize)]
 pub struct Config {
-    port: u16,
+    pub port: u16,
+    board_port: u16,
     data_dir: PathBuf,
     database_url: String,
     hyperliquid_base_url: Option<url::Url>,
@@ -96,45 +92,50 @@ pub enum ConfigError {
 
 type IngestionCqrs = Arc<wire::Cqrs<Ingestion>>;
 type IngestionView = wire::View<Ingestion>;
-type IngestionJobQueue = SqliteStorage<IngestionJob>;
+type IngestionJobQueue = SqliteStorage<IngestionJob, JsonCodec<CompactType>, SqliteFetcher>;
 type QueryDeps = Cons<Ingestion, Nil>;
 
-#[get("/health")]
-fn health() -> &'static str {
+pub(crate) struct AppState {
+    config: Config,
+    view: IngestionView,
+    job_queue: IngestionJobQueue,
+}
+
+async fn health() -> &'static str {
     "ok"
 }
 
-#[get("/candles/<timeframe>")]
 async fn get_candles(
-    config: &State<Config>,
-    timeframe: Timeframe,
-) -> Result<RawJson<Vec<u8>>, Status> {
-    candle::read_candles_json(&config.data_dir, timeframe)
+    State(state): State<Arc<AppState>>,
+    AxumPath(timeframe_str): AxumPath<String>,
+) -> Result<(StatusCode, Vec<u8>), StatusCode> {
+    let timeframe =
+        Timeframe::from_interval_string(&timeframe_str).ok_or(StatusCode::UNPROCESSABLE_ENTITY)?;
+
+    candle::read_candles_json(&state.config.data_dir, timeframe)
         .await
         .map_err(|err| {
             error!(error = %err, "failed to read candles");
-            Status::InternalServerError
+            StatusCode::INTERNAL_SERVER_ERROR
         })?
-        .map(RawJson)
-        .ok_or(Status::NotFound)
+        .map(|bytes| (StatusCode::OK, bytes))
+        .ok_or(StatusCode::NOT_FOUND)
 }
 
-#[post("/ingest")]
-async fn start_ingestion(job_queue: &State<IngestionJobQueue>) -> Status {
-    if let Err(err) = job_queue.inner().clone().push(IngestionJob).await {
-        error!(error = %err, "failed to queue ingestion job");
-        return Status::InternalServerError;
+async fn start_ingestion(State(state): State<Arc<AppState>>) -> StatusCode {
+    if let Err(err) = state.job_queue.clone().push(IngestionJob).await {
+        error!(error = %err, "failed to queue ingestion");
+        return StatusCode::INTERNAL_SERVER_ERROR;
     }
-    Status::Accepted
+    StatusCode::ACCEPTED
 }
 
-#[get("/ingestion/status")]
 async fn get_ingestion_status(
-    view: &State<IngestionView>,
-) -> Result<Json<Option<IngestionStatus>>, Status> {
-    let lifecycle = view.load::<IngestionId>(()).await.map_err(|err| {
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Option<IngestionStatus>>, StatusCode> {
+    let lifecycle = state.view.load::<IngestionId>(()).await.map_err(|err| {
         error!(error = %err, "failed to load ingestion view");
-        Status::InternalServerError
+        StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
     let status = lifecycle
@@ -156,19 +157,18 @@ struct BetaResponse {
     beta: Option<f64>,
 }
 
-#[post("/beta", data = "<body>")]
 async fn post_beta(
-    config: &State<Config>,
-    body: Json<BetaRequest>,
-) -> Result<Json<BetaResponse>, Status> {
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<BetaRequest>,
+) -> Result<Json<BetaResponse>, StatusCode> {
     if body.benchmark.trim().is_empty() {
-        return Err(Status::BadRequest);
+        return Err(StatusCode::BAD_REQUEST);
     }
     if body.weights.is_empty() {
-        return Err(Status::BadRequest);
+        return Err(StatusCode::BAD_REQUEST);
     }
     if body.weights.values().any(|weight| !weight.is_finite()) {
-        return Err(Status::BadRequest);
+        return Err(StatusCode::BAD_REQUEST);
     }
 
     let weights: Vec<(String, f64)> = {
@@ -181,33 +181,27 @@ async fn post_beta(
         sorted_weights
     };
 
-    match beta::compute_portfolio_beta(&config.data_dir, &weights, &body.benchmark).await {
+    match beta::compute_portfolio_beta(&state.config.data_dir, &weights, &body.benchmark).await {
         Ok(beta) => Ok(Json(BetaResponse { beta })),
         Err(err) => {
             error!(error = %err, "beta calculation failed");
-            Err(Status::InternalServerError)
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
         }
     }
 }
 
-/// Build and configure the Rocket HTTP server for the moneymentum backend.
+/// Build and configure the axum HTTP server for the moneymentum backend.
 ///
 /// # Errors
 ///
 /// Returns an error if the database connection, migrations, Hyperliquid client,
-/// or Rocket initialization fail.
-pub async fn rocket(
+/// or router initialization fail.
+pub async fn app(
     config: Config,
-) -> Result<Rocket<rocket::Build>, Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<(Router, u16), Box<dyn std::error::Error + Send + Sync>> {
     let filter = EnvFilter::new(format!("moneymentum={}", config.log_level.as_str()));
     // Ignore error if subscriber already set (e.g., multiple tests running)
     let _ = tracing_subscriber::fmt().with_env_filter(filter).try_init();
-
-    let rocket_config = RocketConfig {
-        port: config.port,
-        address: Ipv4Addr::UNSPECIFIED.into(),
-        ..RocketConfig::default()
-    };
 
     let pool = SqlitePool::connect(&config.database_url).await?;
     debug!("database connected");
@@ -222,12 +216,11 @@ pub async fn rocket(
     //
     // Solution: Run apalis first (if not already set up), then our migrations
     // with `ignore_missing` so we don't fail on apalis's migrations.
-    let apalis_tables_exist: bool = sqlx::query_scalar!(
-        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='Jobs')"
+    let apalis_tables_exist: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='Jobs')",
     )
     .fetch_one(&pool)
-    .await?
-        != 0;
+    .await?;
 
     if !apalis_tables_exist {
         SqliteStorage::setup(&pool).await?;
@@ -235,7 +228,7 @@ pub async fn rocket(
     sqlx::migrate!().set_ignore_missing(true).run(&pool).await?;
     debug!("migrations applied");
 
-    let job_queue = SqliteStorage::<IngestionJob>::new(pool.clone());
+    let job_queue: IngestionJobQueue = SqliteStorage::new(&pool);
 
     let view: IngestionView = wire::View::new(pool.clone());
     let query = GenericQuery::new(view.repo());
@@ -271,13 +264,13 @@ pub async fn rocket(
         let services = Arc::clone(&services);
         let job_queue = job_queue.clone();
         async move {
-            let monitor = Monitor::new().register(
+            let monitor = Monitor::new().register(move |_worker_id| {
                 WorkerBuilder::new("ingestion")
-                    .data(cqrs)
-                    .data(services)
-                    .backend(job_queue)
-                    .build_fn(IngestionJob::run),
-            );
+                    .backend(job_queue.clone())
+                    .data(cqrs.clone())
+                    .data(services.clone())
+                    .build(IngestionJob::run)
+            });
             if let Err(err) = monitor.run().await {
                 error!(error = %err, "ingestion monitor crashed");
             }
@@ -285,22 +278,46 @@ pub async fn rocket(
     });
     debug!("ingestion worker started");
 
-    info!(port = config.port, "moneymentum ready");
-    Ok(rocket::custom(rocket_config)
-        .manage(config)
-        .manage(cqrs)
-        .manage(view)
-        .manage(job_queue)
-        .mount(
-            "/",
-            routes![
-                health,
-                get_candles,
-                start_ingestion,
-                get_ingestion_status,
-                post_beta
-            ],
-        ))
+    // Spawn apalis-board dashboard
+    let board_port = config.board_port;
+    {
+        let board_api = ApiBuilder::new(Router::new())
+            .register(job_queue.clone())
+            .build();
+        let board_router = Router::new()
+            .nest("/api/v1", board_api)
+            .fallback_service(ServeUI::new());
+
+        tokio::spawn(async move {
+            let addr = (Ipv4Addr::UNSPECIFIED, board_port);
+            match TcpListener::bind(addr).await {
+                Ok(listener) => {
+                    debug!(port = board_port, "apalis board ready");
+                    if let Err(err) = axum::serve(listener, board_router).await {
+                        error!(error = %err, "apalis board crashed");
+                    }
+                }
+                Err(err) => error!(error = %err, port = board_port, "failed to bind board"),
+            }
+        });
+    }
+
+    let state = Arc::new(AppState {
+        config,
+        view,
+        job_queue,
+    });
+
+    let router = Router::new()
+        .route("/health", routing::get(health))
+        .route("/candles/{timeframe}", routing::get(get_candles))
+        .route("/ingest", routing::post(start_ingestion))
+        .route("/ingestion/status", routing::get(get_ingestion_status))
+        .route("/beta", routing::post(post_beta))
+        .with_state(state);
+
+    info!(port = board_port, "moneymentum ready");
+    Ok((router, board_port))
 }
 
 /// Asserts that a log line at the given level contains all snippets.
@@ -329,13 +346,68 @@ pub(crate) fn logs_contain_at(level: tracing::Level, snippets: &[&str]) -> bool 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::body::Body;
+    use axum::http::Request;
+    use cqrs_es::persist::GenericQuery;
     use proptest::prelude::*;
-    use rocket::local::blocking::Client;
     use tempfile::TempDir;
+    use tower::ServiceExt;
 
-    fn test_rocket(data_dir: &std::path::Path) -> rocket::Rocket<rocket::Build> {
+    use crate::candle::Candle;
+    use crate::finance::Market;
+    use crate::funding::FundingRate;
+    use crate::hyperliquid::{Hyperliquid, HyperliquidError};
+    use async_trait::async_trait;
+    use chrono::{DateTime, Utc};
+    struct StubHyperliquid;
+
+    #[async_trait]
+    impl Hyperliquid for StubHyperliquid {
+        async fn list_markets(&self) -> Result<Vec<Market>, HyperliquidError> {
+            Ok(vec![])
+        }
+
+        async fn fetch_candles(
+            &self,
+            _market: &Market,
+            _timeframe: crate::timeframe::Timeframe,
+            _start: DateTime<Utc>,
+        ) -> Result<Vec<Candle>, HyperliquidError> {
+            Ok(vec![])
+        }
+
+        async fn fetch_funding_rates(
+            &self,
+            _market: &Market,
+            _start: DateTime<Utc>,
+        ) -> Result<Vec<FundingRate>, HyperliquidError> {
+            Ok(vec![])
+        }
+    }
+
+    async fn test_state(data_dir: &std::path::Path) -> Arc<AppState> {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        SqliteStorage::setup(&pool).await.unwrap();
+        sqlx::migrate!()
+            .set_ignore_missing(true)
+            .run(&pool)
+            .await
+            .unwrap();
+        let job_queue: IngestionJobQueue = SqliteStorage::new(&pool);
+        let view: IngestionView = wire::View::new(pool.clone());
+        let query = GenericQuery::new(view.repo());
+        let unwired = UnwiredQuery::<_, QueryDeps>::new(query);
+        let (cqrs, (wired, ())) = wire::CqrsBuilder::<Ingestion>::new(pool)
+            .wire(unwired)
+            .build(ingestion::IngestionServices {
+                hyperliquid: Arc::new(StubHyperliquid),
+                data_dir: data_dir.to_path_buf(),
+                max_concurrent_requests: 1,
+            });
+        drop(wired.into_inner());
         let config = Config {
             port: 0,
+            board_port: 0,
             data_dir: data_dir.to_path_buf(),
             database_url: "sqlite::memory:".to_string(),
             hyperliquid_base_url: None,
@@ -343,9 +415,12 @@ mod tests {
             max_concurrent_requests: 3,
             max_retries: 5,
         };
-        rocket::build()
-            .manage(config)
-            .mount("/", routes![health, get_candles])
+        drop(cqrs);
+        Arc::new(AppState {
+            config,
+            view,
+            job_queue,
+        })
     }
 
     proptest! {
@@ -353,6 +428,7 @@ mod tests {
         fn port_round_trips_through_toml(port in 1u16..=65535u16) {
             let toml = format!(r#"
                 port = {port}
+                board_port = 8082
                 data_dir = "data"
                 database_url = "sqlite::memory:"
                 log_level = "info"
@@ -370,6 +446,7 @@ mod tests {
         let config: Config = toml::from_str(content).unwrap();
 
         assert_eq!(config.port, 8000);
+        assert_eq!(config.board_port, 8082);
         assert_eq!(config.data_dir, PathBuf::from("data"));
     }
 
@@ -379,51 +456,99 @@ mod tests {
         assert!(matches!(result, Err(ConfigError::Io(_))));
     }
 
-    #[test]
-    fn health_returns_ok() {
-        let rocket = rocket::build().mount("/", routes![health]);
-        let client = Client::tracked(rocket).unwrap();
-        let response = client.get("/health").dispatch();
+    #[tokio::test]
+    async fn health_returns_ok() {
+        let router = Router::new().route("/health", routing::get(health));
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/health")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
 
-        assert_eq!(response.status(), Status::Ok);
-        assert_eq!(response.into_string(), Some("ok".to_owned()));
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(&body[..], b"ok");
     }
 
-    #[test]
-    fn get_candles_returns_404_when_no_data() {
+    #[tokio::test]
+    async fn get_candles_returns_404_when_no_data() {
         let data_dir = TempDir::new().unwrap();
-        let client = Client::tracked(test_rocket(data_dir.path())).unwrap();
-        let response = client.get("/candles/1h").dispatch();
+        let state = test_state(data_dir.path()).await;
+        let router = Router::new()
+            .route("/candles/{timeframe}", routing::get(get_candles))
+            .with_state(state);
 
-        assert_eq!(response.status(), Status::NotFound);
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/candles/1h")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 
-    #[test]
-    fn get_candles_returns_422_for_invalid_timeframe() {
+    #[tokio::test]
+    async fn get_candles_returns_422_for_invalid_timeframe() {
         let data_dir = TempDir::new().unwrap();
-        let client = Client::tracked(test_rocket(data_dir.path())).unwrap();
-        let response = client.get("/candles/invalid").dispatch();
+        let state = test_state(data_dir.path()).await;
+        let router = Router::new()
+            .route("/candles/{timeframe}", routing::get(get_candles))
+            .with_state(state);
 
-        assert_eq!(response.status(), Status::UnprocessableEntity);
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/candles/invalid")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
     }
 
-    #[test]
-    fn get_candles_returns_written_csv_as_json() {
+    #[tokio::test]
+    async fn get_candles_returns_written_csv_as_json() {
         let data_dir = TempDir::new().unwrap();
 
-        // Write a CSV file in the expected format
         let csv_content = "timestamp,open,high,low,close,volume,symbol\n\
                            1700000000000,42000.0,43000.0,41500.0,42500.0,1000.0,BTC\n\
                            1700000000000,2000.0,2100.0,1900.0,2050.0,500.0,ETH\n";
         std::fs::write(data_dir.path().join("ohlcv_1h.csv"), csv_content).unwrap();
 
-        let client = Client::tracked(test_rocket(data_dir.path())).unwrap();
-        let response = client.get("/candles/1h").dispatch();
+        let state = test_state(data_dir.path()).await;
+        let router = Router::new()
+            .route("/candles/{timeframe}", routing::get(get_candles))
+            .with_state(state);
 
-        assert_eq!(response.status(), Status::Ok);
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/candles/1h")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
 
-        let body = response.into_string().unwrap();
-        let candles: Vec<serde_json::Value> = body
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body_str = String::from_utf8(body.to_vec()).unwrap();
+        let candles: Vec<serde_json::Value> = body_str
             .lines()
             .filter(|line| !line.is_empty())
             .map(|line| serde_json::from_str(line).expect("each line should be valid JSON"))

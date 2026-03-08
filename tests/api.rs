@@ -8,11 +8,12 @@
     clippy::manual_assert
 )]
 
-use moneymentum::{Config, rocket};
-use rocket::http::Status;
-use rocket::local::asynchronous::Client;
+use std::net::Ipv4Addr;
+
+use moneymentum::{Config, app};
 use serde_json::json;
 use tempfile::TempDir;
+use tokio::net::TcpListener;
 use wiremock::matchers::{body_partial_json, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -61,10 +62,11 @@ async fn mount_funding_mock(server: &MockServer) {
         .await;
 }
 
-async fn create_test_client(mock_server: &MockServer, data_dir: &TempDir) -> Client {
+async fn spawn_test_server(mock_server: &MockServer, data_dir: &TempDir) -> String {
     let toml_str = format!(
         r#"
         port = 0
+        board_port = 0
         data_dir = "{}"
         database_url = "sqlite::memory:"
         hyperliquid_base_url = "{}"
@@ -76,20 +78,33 @@ async fn create_test_client(mock_server: &MockServer, data_dir: &TempDir) -> Cli
         mock_server.uri()
     );
     let config: Config = toml::from_str(&toml_str).unwrap();
-    Client::tracked(rocket(config).await.unwrap())
+    let (router, _board_port) = app(config).await.unwrap();
+
+    let listener = TcpListener::bind((Ipv4Addr::UNSPECIFIED, 0u16))
         .await
-        .unwrap()
+        .unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, router).await.unwrap();
+    });
+
+    format!("http://{addr}")
 }
 
 async fn poll_for_status(
-    client: &Client,
+    client: &reqwest::Client,
+    base_url: &str,
     status: &str,
     max_polls: usize,
     interval_ms: u64,
 ) -> bool {
     for _ in 0..max_polls {
-        let response = client.get("/ingestion/status").dispatch().await;
-        let body = response.into_string().await.unwrap();
+        let response = client
+            .get(format!("{base_url}/ingestion/status"))
+            .send()
+            .await
+            .unwrap();
+        let body = response.text().await.unwrap();
         if body.contains(status) {
             return true;
         }
@@ -101,7 +116,7 @@ async fn poll_for_status(
 // Temporarily skipped: fails due to OneWeek timeframe overflow when using a
 // 5000-entry window; see https://github.com/data-cartel/moneymentum/issues/64.
 #[ignore = "OneWeek timeframe window overflows when requesting 5000 candles (see issue #64)"]
-#[rocket::async_test]
+#[tokio::test]
 async fn ingest_and_query_candles() {
     let mock_server = MockServer::start().await;
     mount_meta_mock(&mock_server).await;
@@ -109,25 +124,38 @@ async fn ingest_and_query_candles() {
     mount_funding_mock(&mock_server).await;
 
     let data_dir = TempDir::new().unwrap();
-    let client = create_test_client(&mock_server, &data_dir).await;
+    let base_url = spawn_test_server(&mock_server, &data_dir).await;
+    let client = reqwest::Client::new();
 
-    let ingest_response = client.post("/ingest").dispatch().await;
-    assert_eq!(ingest_response.status(), Status::Accepted);
+    let ingest_response = client
+        .post(format!("{base_url}/ingest"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(ingest_response.status(), reqwest::StatusCode::ACCEPTED);
 
-    let completed = poll_for_status(&client, "Completed", 100, 50).await;
+    let completed = poll_for_status(&client, &base_url, "Completed", 100, 50).await;
     if !completed {
-        let response = client.get("/ingestion/status").dispatch().await;
-        let body = response.into_string().await.unwrap();
+        let response = client
+            .get(format!("{base_url}/ingestion/status"))
+            .send()
+            .await
+            .unwrap();
+        let body = response.text().await.unwrap();
         if body.contains("Failed") {
             panic!("ingestion failed: {body}");
         }
         panic!("ingestion did not complete within timeout, last status: {body}");
     }
 
-    let candles_response = client.get("/candles/1h").dispatch().await;
-    assert_eq!(candles_response.status(), Status::Ok);
+    let candles_response = client
+        .get(format!("{base_url}/candles/1h"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(candles_response.status(), reqwest::StatusCode::OK);
 
-    let body = candles_response.into_string().await.unwrap();
+    let body = candles_response.text().await.unwrap();
     let candles: Vec<serde_json::Value> = body
         .lines()
         .filter(|line| !line.is_empty())
@@ -152,7 +180,7 @@ async fn ingest_and_query_candles() {
 
 /// After a previous failed ingestion, restarting should show "Running" status,
 /// not the old "Failed" status.
-#[rocket::async_test]
+#[tokio::test]
 async fn status_shows_running_after_restart_from_failed() {
     let mock_server = MockServer::start().await;
 
@@ -166,13 +194,18 @@ async fn status_shows_running_after_restart_from_failed() {
         .await;
 
     let data_dir = TempDir::new().unwrap();
-    let client = create_test_client(&mock_server, &data_dir).await;
+    let base_url = spawn_test_server(&mock_server, &data_dir).await;
+    let client = reqwest::Client::new();
 
     // Trigger first ingestion (will fail)
-    client.post("/ingest").dispatch().await;
+    client
+        .post(format!("{base_url}/ingest"))
+        .send()
+        .await
+        .unwrap();
 
     // Wait for failure (retries take ~12s with exponential backoff)
-    let failed = poll_for_status(&client, "Failed", 200, 100).await;
+    let failed = poll_for_status(&client, &base_url, "Failed", 200, 100).await;
     assert!(failed, "first ingestion should fail");
 
     // Set up successful mock for second run
@@ -204,12 +237,16 @@ async fn status_shows_running_after_restart_from_failed() {
     mount_funding_mock(&mock_server).await;
 
     // Trigger second ingestion
-    let ingest_response = client.post("/ingest").dispatch().await;
-    assert_eq!(ingest_response.status(), Status::Accepted);
+    let ingest_response = client
+        .post(format!("{base_url}/ingest"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(ingest_response.status(), reqwest::StatusCode::ACCEPTED);
 
     // Poll for Running or Completed status
-    let saw_running = poll_for_status(&client, "Running", 50, 100).await
-        || poll_for_status(&client, "Completed", 50, 100).await;
+    let saw_running = poll_for_status(&client, &base_url, "Running", 50, 100).await
+        || poll_for_status(&client, &base_url, "Completed", 50, 100).await;
 
     assert!(
         saw_running,

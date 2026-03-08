@@ -194,11 +194,15 @@
                 };
               };
 
-              # DATABASE_URL is read by sqlx for compile-time query verification
-              # and by migration tooling. The runtime config uses db_path field.
+              # DATABASE_URL is read by sqlx-cli for migrations (`sqlx migrate run`)
+              # and by `cargo sqlx prepare` to generate offline query data.
+              # SQLX_OFFLINE makes cargo use .sqlx/ dirs instead of hitting the DB
+              # at compile time — required because apalis-sqlite uses query_file!
+              # macros that need its own tables.
               # PATH so git-hooks:install finds git (common macOS paths; profile has git too).
               env = env // {
                 DATABASE_URL = "sqlite:./moneymentum.db?mode=rwc";
+                SQLX_OFFLINE = "true";
                 PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin";
               };
 

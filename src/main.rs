@@ -1,5 +1,8 @@
+use std::net::Ipv4Addr;
+
 use clap::Parser;
-use moneymentum::{Config, rocket};
+use moneymentum::{Config, app};
+use tokio::net::TcpListener;
 
 #[derive(Parser)]
 struct Env {
@@ -7,10 +10,14 @@ struct Env {
     config_path: String,
 }
 
-#[rocket::main]
+#[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let env = Env::parse();
     let config = Config::load(&env.config_path)?;
-    rocket(config).await?.launch().await?;
+    let port = config.port;
+    let (router, _board_port) = app(config).await?;
+
+    let listener = TcpListener::bind((Ipv4Addr::UNSPECIFIED, port)).await?;
+    axum::serve(listener, router).await?;
     Ok(())
 }

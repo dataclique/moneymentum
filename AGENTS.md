@@ -268,9 +268,13 @@ user-visible output (UI text, CLI messages). Use ASCII equivalents in comments:
 ### Descriptive names
 
 - Avoid generic names like `result`, `data`, `value`, `item` - name what it IS
-- No single-letter variables in closures: `|r|` is unreadable, use `|rate|`
+- **No single-letter variable or parameter names anywhere**: `c` is unreadable,
+  use `client`. `r` is unreadable, use `rate`. This applies to function
+  parameters, arrow function args, local variables, destructured bindings, and
+  loop variables. The only exception is `_` for intentionally unused values
 - No abbreviations unless universally understood (`id`, `url`, `http`, `msg`,
-  `tx` are fine)
+  `tx` are fine). This includes namespace import aliases: `import * as Hl` is
+  wrong, use `import * as Hyperliquid`
 
 ### Colocate types
 

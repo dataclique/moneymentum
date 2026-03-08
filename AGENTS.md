@@ -116,9 +116,31 @@ Fix immediately. The user never sends messages just for the sake of it.
 
 Never add "Generated with [Tool Name]" to commits, PRs, or code.
 
-### PR descriptions
+### PR titles and descriptions
 
-Explain WHY the PR exists, not what changed.
+**Titles**: Lowercase, imperative, concise. Describe the outcome, not the
+mechanism. No prefixes like `feat:` or `fix:`.
+
+- Good: `migrate frontend from React to SolidJS`
+- Good: `replace exceptions with typed Effect errors`
+- Bad: `Add Effect library for functional HTTP error handling`
+- Bad: `Refactor API hooks to use Effect-based error handling`
+
+**Descriptions**: Two sections -- `## Why` and `## How`.
+
+- **Why**: The problem or motivation. Why does this PR exist?
+- **How**: High-level approach. Explain the solution, not the file changes --
+  the diff tab handles that. No file paths, no bullet lists of changes.
+
+```
+## Why
+
+<1-3 sentences explaining the problem or motivation>
+
+## How
+
+<1-3 sentences explaining the approach and key decisions>
+```
 
 ### Quality checks
 

@@ -83,8 +83,10 @@ let
       ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isDarwin
       [ pkgs.apple-sdk_15 ];
 
-    # Compile-time env for sqlx. Tests are skipped in nix builds.
-    DATABASE_URL = "sqlite::memory:";
+    # Use offline sqlx query verification so builds don't need a live database.
+    # Each crate (ours + apalis-sqlite) ships its own .sqlx/ with prepared data.
+    # Run `cargo sqlx prepare` after changing sqlx macros to regenerate.
+    SQLX_OFFLINE = "true";
   };
 
   cargoArtifacts = craneLib.buildDepsOnly (commonArgs // { src = depsSrc; });

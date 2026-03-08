@@ -7,6 +7,9 @@ database_url = "sqlite:./moneymentum.db?mode=rwc"
 
 log_level = "debug"
 
+# apalis-board dashboard
+board_port = 8082
+
 # Ingestion tuning - balance speed vs rate limiting
 max_concurrent_requests = 3
 max_retries = 5

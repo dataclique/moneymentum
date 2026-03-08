@@ -1,0 +1,18 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='Jobs')",
+  "describe": {
+    "columns": [
+      {
+        "name": "EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='Jobs')",
+        "ordinal": 0,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [false]
+  },
+  "hash": "42bf0f240bb02e790ca2a1df830f84fdb5233bb3b0ff3b2f0d0a882b3c1be882"
+}

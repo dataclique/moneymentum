@@ -147,17 +147,19 @@
           }];
         };
 
-        devShell = devenv.lib.mkShell {
+      in {
+        devShells.default = devenv.lib.mkShell {
           inherit inputs pkgs;
           modules = [
             ({ config, ... }: {
               # https://devenv.sh/reference/options/
               packages = with pkgs;
-                deps ++ [
+                let solanaDeps = [ anchor solana-cli yarn ];
+                in deps ++ solanaDeps ++ [
                   git
-                  ragenix.packages.${system}.default
                   sqlx-cli
                   doctl
+                  ragenix.packages.${system}.default
                   infraPkgs.remote
                   deployPkgs.deployNixos
                   deployPkgs.deployService
@@ -215,8 +217,6 @@
           ];
         };
 
-      in {
-        devShells.default = devShell;
         devShells.frontend = frontendShell;
 
         checks = {
@@ -225,6 +225,7 @@
             src = self;
           };
         };
+
         packages = {
           default = rustPkgs.package;
           moneymentum = rustPkgs.package;

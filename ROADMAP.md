@@ -5,6 +5,18 @@ Practical path from where we are today to the north star in
 
 [^1]: Completed work lives at the bottom in chronological order.
 
+```mermaid
+graph LR
+    W["wallet signing<br/>(#98 done, #99-#101)"] --> V["vault program<br/>(#123-#130)"]
+    W --> MV["multi-venue<br/>capital flow"]
+    V --> MV
+    F["funding-adjusted returns"] ~~~ R["risk analytics + screening"]
+    R ~~~ UX["portfolio UX reliability"]
+```
+
+Epics above the line have cross-dependencies (see per-epic diagrams for
+details). Epics below (funding, risk, UX, sharing) are independent streams.
+
 ---
 
 ## Reliable infrastructure and deployment
@@ -170,33 +182,109 @@ graph TD
 - [ ] Wallet connection UI (Turnkey passkey flow, replaces raw key input) --
       **`@levsgit`**
 
+## Solana vault program
+
+On-chain custody for investor capital. Deposits mint share tokens, withdrawals
+burn shares and deduct fees, NAV attestations from the backend determine share
+price. Full spec in [VAULT.md](./VAULT.md).
+
+The IDL is the decoupling point. Once #124 deploys to devnet, **`@levsgit`**
+starts the deposit UI without waiting for fees or withdrawals. `attest_nav`
+(#125) unblocks the backend NAV oracle once the Solana wallet (#99) lands. The
+program is developed with local keypairs -- Turnkey signing plugs in via the
+`VaultClient` crate (#130) for production.
+
+### On-chain program (3 parallel tracks after scaffold)
+
+The scaffold (#123) defines account types and share math -- pure Rust, fully
+unit-testable, unblocks everything. After that, three tracks proceed in
+parallel: deposit flow (#124), NAV + treasury (#125, #126), and fee math +
+withdrawal (#127, #128). Admin (#129) converges them for mainnet readiness.
+
+```mermaid
+graph TD
+    B["#123 scaffold + types + share math"] --> C["#124 initialize + deposit"]
+    B --> D["#125 attest_nav"]
+    B --> E["#126 treasury mgmt"]
+    B --> F["#127 fee math"]
+    F --> G["#128 two-phase withdrawal"]
+    C & D & E & G --> H["#129 admin + hardening"]
+```
+
+- [x] Vault program spec ([VAULT.md](./VAULT.md)) -- **`@0xgleb`**
+  - PR: [#122](https://github.com/data-cartel/moneymentum/pull/122)
+- [ ] [#123 Scaffold + account types + share math](https://github.com/data-cartel/moneymentum/issues/123)
+      -- **`@0xgleb`**
+- [ ] [#124 initialize_vault + deposit](https://github.com/data-cartel/moneymentum/issues/124)
+      -- **`@0xgleb`**
+- [ ] [#125 attest_nav](https://github.com/data-cartel/moneymentum/issues/125)
+      -- **`@0xgleb`**
+- [ ] [#126 Treasury management](https://github.com/data-cartel/moneymentum/issues/126)
+      -- **`@0xgleb`**
+- [ ] [#127 Fee math](https://github.com/data-cartel/moneymentum/issues/127) --
+      **`@0xgleb`**
+- [ ] [#128 Two-phase withdrawal](https://github.com/data-cartel/moneymentum/issues/128)
+      -- **`@0xgleb`**
+- [ ] [#129 Admin + hardening](https://github.com/data-cartel/moneymentum/issues/129)
+      -- **`@0xgleb`**
+
+### Backend + frontend integration
+
+The `VaultClient` crate (#130) wraps program instructions behind the `Wallet`
+trait, plugging Turnkey Solana signing (#99) into NAV attestation and capital
+deployment. Frontend work starts once the IDL is on devnet.
+
+```mermaid
+graph TD
+    H["#129 admin + hardening"] --> VC["#130 VaultClient crate"]
+    SOL["#99 Solana wallet"] --> VC
+    VC -.->|"NAV oracle,<br/>capital deployment"| MV["multi-venue epic"]
+    IDL["#124 IDL on devnet"] -.-> DUI["#131 deposit UI<br/>@levsgit"]
+    WD["#128 two-phase withdrawal"] -.-> WUI["#132 withdraw UI<br/>@levsgit"]
+```
+
+- [ ] [#130 VaultClient crate](https://github.com/data-cartel/moneymentum/issues/130)
+      -- **`@0xgleb`**
+- [ ] [#131 Deposit UI against devnet IDL](https://github.com/data-cartel/moneymentum/issues/131)
+      -- **`@levsgit`**
+- [ ] [#132 Withdraw UI](https://github.com/data-cartel/moneymentum/issues/132)
+      -- **`@levsgit`**
+
 ## Multi-venue capital flow
 
 A perps-only platform on a single exchange can't grow into a fund management
 tool. Portfolio managers need to hold spot positions (basis trades, funding arb
-with spot hedge), bridge capital across chains, and accept investor deposits.
-This epic wires Turnkey signing into actual venue integrations.
+with spot hedge), bridge capital across chains, and deploy investor capital from
+the vault. This epic wires Turnkey signing into actual venue integrations.
 
-### Vault program -- **`@0xgleb`**
+```mermaid
+graph TD
+    subgraph wallets [from wallet epic]
+        EVM["#98 EVM wallet<br/>(done)"]
+        SOL["#99 Solana wallet"]
+        DBW["#101 deBridge wallet"]
+    end
 
-The Anchor program handles investor lifecycle: deposits mint share tokens,
-withdrawals burn shares and deduct fees, NAV attestations from the backend
-determine share price. The program is developed with local keypairs on devnet --
-Turnkey Solana wallet plugs in later for production signing.
+    subgraph vault_epic [from vault epic]
+        CLIENT["#130 VaultClient"]
+        TREASURY["#126 treasury mgmt"]
+    end
 
-Key instructions: `initialize_vault`, `deposit` (mint shares at current NAV),
-`withdraw` (burn shares, deduct management + performance fees, send net USDC),
-`update_nav` (backend posts signed attestation). Fee structure per SPEC: annual
-management fee on AUM, performance fee above HWM.
+    EVM --> HL["#77 Hyperliquid spot"]
+    SOL --> HUMI["HumidiFi spot"]
+    DBW --> DB["deBridge integration"]
 
-The IDL is the decoupling point -- once published, **`@levsgit`** builds the
-deposit/withdraw UI against devnet while the program is still being hardened.
+    HL --> NAV["NAV oracle"]
+    HUMI --> NAV
+    DB --> NAV
+    CLIENT --> NAV
+    TREASURY --> DEPLOY["capital deployment"]
+    DB --> DEPLOY
 
-- [ ] Anchor program: vault initialization, deposit/withdraw, share token
-      accounting, fee deduction, NAV attestation -- **`@0xgleb`**
-- [ ] `VaultClient` crate (Rust client for the program, plugs into Turnkey
-      Solana wallet) -- **`@0xgleb`**
-- [ ] Deposit/withdraw UI against devnet IDL -- **`@levsgit`**
+    HL -.-> HL_UI["spot trading UI<br/>@levsgit"]
+    HUMI -.-> HL_UI
+    DB -.-> BRIDGE_UI["bridging status UI<br/>@levsgit"]
+```
 
 ### Spot trading
 
@@ -245,6 +333,13 @@ The sharing UI can be built against existing position data (which already works
 for Hyperliquid). Full multi-venue position display comes later when venue
 integrations land. **`@levsgit`** owns the UI, **`@0xgleb`** owns the backend
 API and access control.
+
+```mermaid
+graph TD
+    API["sharing API:<br/>generate link, access control<br/>@0xgleb"] --> VIEW["read-only portfolio view<br/>@levsgit"]
+    API --> LIVE["live position + performance<br/>display for viewers<br/>@levsgit"]
+    VENUES["venue integrations<br/>(multi-venue epic)"] -.->|"later: multi-venue<br/>position display"| LIVE
+```
 
 - [ ] Sharing API: generate link, access control -- **`@0xgleb`**
 - [ ] Read-only portfolio view with shareable link -- **`@levsgit`**

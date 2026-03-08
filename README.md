@@ -13,8 +13,8 @@ path there.
 ## What Works Today
 
 **Portfolio Rebalancer** (`/`): Set positions by weight, adjust cross-account
-leverage while maintaining proportions. Currently shows net notional exposure;
-beta-aware hedging coming soon.
+leverage while maintaining proportions. Displays portfolio beta (BTC
+correlation) and funding rates alongside positions.
 
 **Design Reference** (`/prototype`): Interactive mockup of the target UI/UX.
 
@@ -22,11 +22,10 @@ beta-aware hedging coming soon.
 
 ## Architecture
 
-| Layer          | Technology           | Status         |
-| -------------- | -------------------- | -------------- |
-| Frontend       | TypeScript + SolidJS | Active         |
-| Backend        | Rust                 | Building       |
-| Legacy Backend | Python               | Being replaced |
+| Layer    | Technology                  | Status |
+| -------- | --------------------------- | ------ |
+| Frontend | TypeScript + SolidJS (Vite) | Active |
+| Backend  | Rust (Rocket, Polars)       | Active |
 
 The frontend holds credentials and executes trades directly to venues. The
 backend provides analytics and execution plans but never touches credentials.
@@ -55,10 +54,10 @@ cd frontend
 bun run dev  # http://localhost:5173
 ```
 
-### Run Legacy Backend (Python)
+### Run Backend
 
 ```bash
-python server.py  # FastAPI on port 8000
+cargo run  # Rust backend on port 8000
 ```
 
 ---
@@ -71,10 +70,10 @@ bun run typecheck
 bun run lint
 bun run test
 
-# Legacy Python
-ruff check .
-ruff format .
-pytest
+# Backend
+cargo check
+cargo test -q
+cargo clippy
 
 # Pre-commit (must pass)
 pre-commit run -a
@@ -116,6 +115,14 @@ nix run .#tfApply
 
 # Bootstrap NixOS on the provisioned server
 nix run .#bootstrap
+```
+
+### Deployment
+
+```bash
+nix run .#deployAll     # Deploy NixOS config + all services
+nix run .#deployNixos   # Deploy NixOS config only
+nix run .#deployService -- <profile>  # Deploy a single service
 ```
 
 ### Ongoing operations

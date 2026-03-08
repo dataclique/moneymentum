@@ -1,8 +1,11 @@
 # Moneymentum Architecture Specification
 
+> **Where we're going.** For the practical path to get there, see
+> [ROADMAP.md](./ROADMAP.md).
+
 ## Terminology Standard
 
-Use proper financial terminology throughout—docs, code, UI. It's precise,
+Use proper financial terminology throughout--docs, code, UI. It's precise,
 expected by institutional traders, and avoids ambiguity. Define terms in context
 when first introduced. The system should educate, not gate-keep or oversimplify.
 
@@ -10,9 +13,9 @@ when first introduced. The system should educate, not gate-keep or oversimplify.
 
 A portfolio of 10 crypto assets looks diversified, but if they all move in
 lockstep with BTC, you effectively have one bet. Professional traders think in
-**factor exposures**—systematic drivers of returns like beta (correlation to a
+**factor exposures**--systematic drivers of returns like beta (correlation to a
 benchmark), momentum (tendency of winners to keep winning), and carry (yield
-from holding a position)—rather than individual positions. This lets them:
+from holding a position)--rather than individual positions. This lets them:
 
 - **Reason about risk**: "What's my actual BTC exposure across spot and perps
   (perpetual futures) combined?"
@@ -26,7 +29,7 @@ analytics, and simulation of changes before execution.
 
 **Portfolios as proportions, not positions.** Professional portfolio managers
 define targets as weights (40% asset A, 30% asset B, 30% asset C) and a leverage
-multiplier (total exposure as a multiple of capital)—not as fixed position
+multiplier (total exposure as a multiple of capital)--not as fixed position
 sizes. This matters because:
 
 - **Rebalancing has meaning**: When prices move, weights drift. Rebalancing
@@ -34,29 +37,29 @@ sizes. This matters because:
   action.
 - **Scaling is trivial**: Double your capital? Same weights, same risk profile.
   No need to recalculate position sizes.
-- **Leverage is explicit**: Total exposure = NAV (net asset value) × leverage. A
+- **Leverage is explicit**: Total exposure = NAV (net asset value) * leverage. A
   2x leveraged portfolio at 40/30/30 weights is immediately understandable.
 
-The alternative—thinking in position sizes ("2.5 BTC, 10 ETH")—obscures risk.
+The alternative--thinking in position sizes ("2.5 BTC, 10 ETH")--obscures risk.
 Your weights change silently as prices move. "Rebalancing" becomes ambiguous.
 This tool enforces proportion-based thinking.
 
 ## Core Workflow
 
-**Monitor → Screen → Stage → Simulate → Execute → Repeat**
+**Monitor -> Screen -> Stage -> Simulate -> Execute -> Repeat**
 
-1. **Monitor**: Check how your portfolio is doing—performance, factor exposures,
-   risk metrics
+1. **Monitor**: Check how your portfolio is doing--performance, factor
+   exposures, risk metrics
 2. **Screen**: Search for positions based on what you want to change:
    - Direct exposure to specific assets
    - Beta to assets (BTC, ETH, SPY)
    - Funding rates (periodic payments between long and short holders in
-     perps—positive = longs pay shorts)
+     perps--positive = longs pay shorts)
    - Sharpe ratio (risk-adjusted return), volatility
 3. **Stage**: Add/remove positions, adjust weights and leverage. Portfolio is
    defined as **proportions + leverage**, not dollar amounts
 4. **Simulate**: Instantly see how staged portfolio compares to
-   current—historical performance, factor decomposition, risk metrics, and the
+   current--historical performance, factor decomposition, risk metrics, and the
    specific trades needed to rebalance
 5. **Execute**: Hit rebalance when satisfied
 6. **Repeat**: Market moves change your realized weights. Hit rebalance to
@@ -88,10 +91,10 @@ flowchart LR
         DATA --> ANAL --> PLAN --> ROUTE
     end
 
-    subgraph Privy["Privy (Policy Enforcement)"]
+    subgraph Turnkey["Turnkey (TEE Signing)"]
         direction TB
         POL[Policy Engine]
-        WALLET[Server Wallets]
+        WALLET[Enclave Wallets]
         POL --> WALLET
     end
 
@@ -104,8 +107,11 @@ flowchart LR
 
 ## Security Model
 
-**Policy-enforced custody via Privy server wallets.** The backend orchestrates
-execution but never holds raw private keys.
+**TEE-enforced custody via Turnkey enclave wallets.** The backend orchestrates
+execution but never holds raw private keys. Turnkey runs signing inside AWS
+Nitro enclaves--keys never exist outside attested enclave memory, and every
+signing request is evaluated against JSON-defined policies before a signature is
+produced.
 
 - **Policy engine**: Contract allowlists, calldata restrictions, deny rules.
   Even if the backend is compromised, it cannot execute transactions outside
@@ -119,12 +125,13 @@ frontend is a monitoring and control dashboard.
 
 ## Custody & Execution
 
-**Privy server wallets** provide the custody layer with policy enforcement at
+**Turnkey enclave wallets** provide the custody layer with policy enforcement at
 the signing layer. The backend routes orders to venues but cannot withdraw funds
-or interact with non-whitelisted contracts.
+or interact with non-whitelisted contracts. Signing latency is 50-100ms with
+native Rust SDK support and explicit Hyperliquid EIP-712 compatibility.
 
 **Solana vault program** (Anchor) handles investor deposits/withdrawals, share
-token accounting, and fee deductions. Capital flows from the vault to Privy
+token accounting, and fee deductions. Capital flows from the vault to Turnkey
 wallets for trading across venues.
 
 **NAV oracle**: The backend aggregates positions across all venues, computes
@@ -135,10 +142,10 @@ total NAV, and posts signed attestations to the vault program.
 title: "Flow of Funds: Deposits, Rebalancing & Withdrawals"
 ---
 graph TB
-    subgraph Solana["── Solana ──"]
+    subgraph Solana["Solana"]
         Investor["Investor"]
-        Vault["Vault Program<br/>─────────────<br/>share tokens<br/>fee accounting<br/>NAV attestations"]
-        SOLWallet["Privy SOL Wallet<br/>(vault custody)"]
+        Vault["Vault Program<br/>share tokens<br/>fee accounting<br/>NAV attestations"]
+        SOLWallet["Turnkey SOL Wallet<br/>(vault custody)"]
         HumidiFi["HumidiFi<br/>spot trading"]
         PMFee["PM Fee Wallet"]
 
@@ -153,19 +160,19 @@ graph TB
         Vault -. "mgmt + perf fee" .-> PMFee
     end
 
-    subgraph Bridge["── deBridge ──"]
-        deBridge["Solana ↔ Hyperliquid<br/>direct USDC"]
+    subgraph Bridge["deBridge"]
+        deBridge["Solana <-> Hyperliquid<br/>direct USDC"]
     end
 
-    subgraph Hyperliquid["── Hyperliquid L1 ──"]
-        EVMWallet["Privy EVM Wallet<br/>(HyperEVM home)"]
+    subgraph Hyperliquid["Hyperliquid L1"]
+        EVMWallet["Turnkey EVM Wallet<br/>(HyperEVM home)"]
         HyperCore["HyperCore<br/>perps + spot"]
 
         EVMWallet -- "deposit USDC" --> HyperCore
         HyperCore -- "withdraw USDC" --> EVMWallet
     end
 
-    subgraph DeriveChain["── Derive Chain ──"]
+    subgraph DeriveChain["Derive Chain"]
         DeriveDeposit["Derive Native Deposit<br/>from HyperEVM"]
         DeriveProtocol["Derive Protocol<br/>options"]
 
@@ -198,28 +205,29 @@ Revenue comes from PMs managing other people's money.
 
 - **Management fee**: Annual percentage of AUM (assets under management),
   deducted at withdrawal
-- **Performance fee**: Percentage of profits above high-water mark (HWM)—ensures
-  fees only on new profits
+- **Performance fee**: Percentage of profits above high-water mark
+  (HWM)--ensures fees only on new profits
 - **Platform fee**: Percentage of PM's collected fees (not investor capital),
   creating aligned incentives
 
 ## Technology Stack
 
-| Layer         | Technology           | Rationale                                |
-| ------------- | -------------------- | ---------------------------------------- |
-| Backend       | Rust                 | See below.                               |
-| Frontend      | TypeScript + SolidJS | Monitoring dashboard, PM controls.       |
-| Vault Program | Anchor (Rust)        | Deposits, withdrawals, fees, NAV.        |
-| Custody       | Privy server wallets | Policy-enforced signing.                 |
-| Dependencies  | Nix                  | Reproducible builds. Non-negotiable.     |
-| Storage       | SQLite > Postgres    | Start simple, migrate when needed.       |
-| Analytics     | Parquet              | Historical prices for VaR, stress tests. |
+| Layer         | Technology              | Rationale                                |
+| ------------- | ----------------------- | ---------------------------------------- |
+| Backend       | Rust                    | See below.                               |
+| Frontend      | TypeScript + SolidJS    | Fine-grained reactivity, no VDOM.        |
+| Vault Program | Anchor (Rust)           | Deposits, withdrawals, fees, NAV.        |
+| Custody       | Turnkey enclave wallets | TEE signing, 50-100ms latency.           |
+| Dependencies  | Nix                     | Reproducible builds. Non-negotiable.     |
+| Storage       | SQLite > Postgres       | Start simple, migrate when needed.       |
+| Analytics     | Parquet                 | Historical prices for VaR, stress tests. |
 
 **Why Rust?**
 
-- Official SDKs for Hyperliquid, Derive, deBridge, Jupiter—no client-building
-- Polars for analytics—Rust-native DataFrames, no JVM overhead
-- Alloy for HyperEVM, solana-sdk for Solana—transaction building in one language
+- Official SDKs for Hyperliquid, Derive, deBridge, Jupiter--no client-building
+- Polars for analytics--Rust-native DataFrames, no JVM overhead
+- Alloy for HyperEVM, solana-sdk for Solana--transaction building in one
+  language
 - Single binary deployment, instant startup, minimal runtime dependencies
 - Type safety and memory safety without garbage collector pauses
 
@@ -234,6 +242,7 @@ Revenue comes from PMs managing other people's money.
 | Solana    | solana-sdk, anchor-client                        |
 | Venues    | hyperliquid-rs, cockpit, jupiter-swap-api-client |
 | DB        | sqlx                                             |
+| Signing   | turnkey_client, alloy-signer-turnkey             |
 | Types     | ts-rs (TypeScript bindings)                      |
 
 ## Domain Architecture
@@ -243,7 +252,7 @@ Revenue comes from PMs managing other people's money.
 | Domain              | Responsibility                                          |
 | ------------------- | ------------------------------------------------------- |
 | **Portfolio**       | Target weights, current positions, NAV computation      |
-| **Chain**           | Blockchain abstraction—tx formats, RPC, confirmations   |
+| **Chain**           | Blockchain abstraction--tx formats, RPC, confirmations  |
 | **Analytics**       | Factor exposures, risk metrics, correlations            |
 | **Spot Trading**    | Buy/sell tokens on spot venues                          |
 | **Perps Trading**   | Open/close perpetual futures positions                  |
@@ -257,17 +266,17 @@ Revenue comes from PMs managing other people's money.
 
 | Crate      | Trait          | Implementations                  |
 | ---------- | -------------- | -------------------------------- |
-| portfolio  | —              | —                                |
+| portfolio  | --             | --                               |
 | chain      | `Chain`        | `solana`, `evm`, `mock`          |
 | analytics  | `Analytics`    | `polars`, `mock`                 |
 | spot       | `SpotVenue`    | `hyperliquid`, `jupiter`, `mock` |
 | perps      | `PerpsVenue`   | `hyperliquid`, `mock`            |
 | options    | `OptionsVenue` | `derive`, `mock`                 |
 | bridging   | `Bridge`       | `debridge`, `mock`               |
-| signing    | `Signer`       | `privy`, `mock`                  |
+| wallet     | `Wallet`       | `turnkey`, `mock`                |
 | vault      | `VaultClient`  | `anchor`, `mock`                 |
-| rebalancer | —              | —                                |
-| api        | —              | —                                |
+| rebalancer | --             | --                               |
+| api        | --             | --                               |
 
 Each crate exposes a trait and common types. Implementations are behind feature
 flags (e.g., `spot/hyperliquid`, `spot/mock`) to enforce domain boundaries,
@@ -288,7 +297,7 @@ improve build times, and enable testing with mocks.
 ## UI/UX Principles
 
 **Keyboard-first, mouse-friendly.** Professional trading tools need speed. Power
-users get vim-style and Bloomberg-style keyboard navigation—hjkl movement,
+users get vim-style and Bloomberg-style keyboard navigation--hjkl movement,
 single-key actions, modal editing. But unlike vim, you shouldn't need to google
 "how to quit" on day one. Everything is also clickable. Power comes from
 learning the shortcuts, not from requiring them.

@@ -7,76 +7,29 @@ this document is a directive, not a suggestion.
 
 ## Project Direction
 
-This project is an institutional-grade quant toolkit. See [SPEC.md](./SPEC.md)
-for the vision and [ROADMAP.md](./ROADMAP.md) for the path.
+Factor-based portfolio management toolkit for DeFi trading. See
+[SPEC.md](./SPEC.md) for the architecture and [ROADMAP.md](./ROADMAP.md) for
+current priorities and progress.
 
-### Agent Implementations
+**What works today:**
 
-This section documents concrete AI agents used in this repository. Each agent
-entry includes a short identifier, its purpose, core capabilities and
-limitations, typical usage patterns, and orchestration boundaries so
-contributors know what the agent owns vs. what human workflows or other
-automation must handle.
-
-#### Cursor Coding Agent (`cursor-coding`)
-
-- **Purpose**: Assist with day-to-day development on the Rust backend and
-  frontend, following this document’s rules.
-- **Capabilities**:
-  - Reads and understands existing Rust, TypeScript, Nix, and documentation.
-  - Proposes and implements code changes inside the repo (including tests),
-    respecting project style and TTDD workflow.
-  - Runs local tooling via the provided commands (e.g., `cargo check`,
-    `bun run lint`, `nix flake check`) when explicitly instructed or when needed
-    to validate changes.
-  - Suggests refactors, test cases, and documentation improvements.
-  - **Limitations**:
-    - Does not manage secrets or production infrastructure directly; only edits
-      code and config checked into git.
-    - Does not bypass or relax quality gates (clippy, linters, tests) unless
-      explicitly authorized in a discussion and annotated in code.
-- **Usage patterns**:
-  - **When to invoke**: Implementing new features (e.g., portfolio beta
-    analytics), updating API endpoints, adjusting frontend behavior, or
-    refactoring existing modules (Rust, TS, Nix).
-  - **Expected inputs**: A clear description of the change, relevant file
-    references (e.g., `@tests/api.rs`, `@rust.nix`), and any constraints
-    (performance, backwards compatibility, rollout considerations).
-  - **Expected outputs**: Updated code, tests, and configuration with a short,
-    high-level summary of what changed and how to run checks.
-  - **Integration points**: Works within local dev flows (`cargo check`,
-    `cargo test -q`, `bun run test`, `nix flake check`) and existing CI. Human
-    contributors remain responsible for reviewing diffs, running deployments,
-    and updating external systems (e.g., Terraform, Hyperliquid keys).
-  - **Handoff boundaries**: The agent owns code and test changes inside this
-    repo; humans own orchestration, approvals, production deploys, and any
-    manual secret/config management outside git.
-  - **Runtime requirements / config keys**: Assumes the Nix-based dev
-    environment is active (`direnv allow`, `nix develop`/`devenv shell`) and
-    that project configuration files (e.g., `example.toml`-derived configs) are
-    present when running or testing the binaries.
-
-**Current state:**
-
-- Frontend at `/` is a working portfolio rebalancer (weight-based positions,
-  cross-account leverage). Used daily.
-- Frontend at `/prototype` is a design reference (like Figma in code).
-- Rust backend provides analytics and API.
-
-**What's being built:**
-
-- Rust backend for analytics and API (polars, cqrs-es, rocket)
-- First priority: portfolio beta calculation (current tool shows net notional,
-  which ignores correlations and makes hedging guesswork)
+- Portfolio rebalancer at `/` (weight-based positions, cross-account leverage,
+  beta display). Used daily.
+- Rust backend (Axum, Polars, CQRS-ES) serving beta calculation and data
+  ingestion.
+- Design reference at `/prototype` (keyboard-driven UI, target UX patterns).
 
 **Key architectural decisions:**
 
-- **All Rust**: Official SDKs for Hyperliquid, Derive, deBridge, Jupiter. Polars
-  for analytics. Single language from API to blockchain interactions.
-- **Frontend holds credentials**: Backend generates execution plans, frontend
-  executes. Credentials never leave the browser.
-- **Portfolios as proportions**: Target portfolios are defined as weights +
-  leverage, not dollar amounts. Rebalancing = return to target proportions.
+- **All Rust backend**: Official SDKs for Hyperliquid, Derive, deBridge,
+  Jupiter. Polars for analytics. Single language from API to blockchain.
+- **Turnkey for signing**: TEE-secured wallet management via AWS Nitro enclaves.
+  See [SPEC.md - Security Model](./SPEC.md#security-model).
+- **Portfolios as proportions**: Target portfolios are weights + leverage, not
+  dollar amounts. Rebalancing = return to target proportions.
+- **Interface-first development**: Every new capability starts with a trait/DTO
+  and mock. Consumers develop against mocks while implementations are built in
+  parallel.
 
 ---
 
@@ -175,6 +128,19 @@ mechanism. No prefixes like `feat:` or `fix:`.
 
 <1-3 sentences explaining the approach and key decisions>
 ```
+
+### Roadmap maintenance
+
+**Every PR must update ROADMAP.md before submission.** When you open a PR that
+completes a roadmap item, mark it `[x]` and link the PR in the same commit. The
+roadmap in master must be current the moment any PR merges -- not after a
+separate "update docs" pass. This means:
+
+- Mark items done when you open the PR (optimistic: if it merges, the roadmap is
+  already correct)
+- Add new items discovered during implementation
+- Move fully-completed epics to the "Completed" section at the bottom
+- Update PR references when old PRs are superseded by new ones
 
 ### Quality checks
 

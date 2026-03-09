@@ -153,11 +153,12 @@
             ({ config, ... }: {
               # https://devenv.sh/reference/options/
               packages = with pkgs;
-                deps ++ [
+                let solanaDeps = [ anchor yarn ];
+                in deps ++ solanaDeps ++ [
                   git
-                  ragenix.packages.${system}.default
-                  sqlx-cli
                   doctl
+                  sqlx-cli
+                  ragenix.packages.${system}.default
                   infraPkgs.remote
                   deployPkgs.deployNixos
                   deployPkgs.deployService

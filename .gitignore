@@ -16,3 +16,6 @@
 *.db-wal
 /.venv
 .worktrees/
+.anchor
+test-ledger
+**/*.rs.bk

@@ -27,6 +27,8 @@ import {
   MIN_CHANGE_DELTA,
   MIN_USD,
 } from "../hooks/usePortfolioState"
+import { useWallet } from "@/hooks/useWallet"
+import { WalletHeader } from "@/components/wallet-header"
 
 interface PositionsPanelProps {
   tokens: TokenAllocation[]
@@ -378,6 +380,8 @@ export const PositionsPanel = ({
   onWeightChange,
   fundingRatesByBaseSymbol,
 }: PositionsPanelProps): JSX.Element => {
+  const { isConnected } = useWallet()
+
   return (
     <div className="flex flex-col rounded border border-border min-h-0 max-h-[calc(100vh-4rem)] w-full max-w-[600px] shrink-0">
       <div className="px-2 py-1.5 border-b border-border bg-muted/30 flex items-center justify-between shrink-0">
@@ -394,6 +398,13 @@ export const PositionsPanel = ({
             {Array.from({ length: 8 }).map((_placeholder, index) => (
               <Skeleton key={index} className="h-5 w-full" />
             ))}
+          </div>
+        ) : !isConnected ? (
+          <div className="h-full flex flex-col items-center justify-center gap-3 p-4 text-center text-muted-foreground text-[11px]">
+            <p className="max-w-[260px]">
+              Connect your wallet to view and rebalance positions.
+            </p>
+            <WalletHeader />
           </div>
         ) : tokens.length === 0 ? (
           <div className="p-4 text-center text-muted-foreground text-[11px]">

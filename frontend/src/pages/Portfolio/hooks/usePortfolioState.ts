@@ -209,7 +209,7 @@ export const usePortfolioState = (
   isPrecise: boolean = false,
   isWeightRedistribution: boolean = true,
 ) => {
-  const { networkMode } = useWallet()
+  const { networkMode, isConnected } = useWallet()
 
   // Exchange data queries
   const {
@@ -228,7 +228,8 @@ export const usePortfolioState = (
   // Mutations
   const rebalancePositionsMutation = useRebalanceHyperliquidPositions()
 
-  const [storedDataSnapshot] = useState(() => getStoredPortfolio(networkMode))
+  const [storedDataSnapshot, setStoredDataSnapshot] =
+    useState<StoredPortfolioState | null>(() => getStoredPortfolio(networkMode))
 
   const [crossAccountLeverage, setCrossAccountLeverage] = useState(
     DEFAULT_CROSS_ACCOUNT_LEVERAGE,
@@ -261,6 +262,37 @@ export const usePortfolioState = (
   const [positionsLoadedFromExchange, setPositionsLoadedFromExchange] =
     useState(false)
   const [hasHydratedFromStorage, setHasHydratedFromStorage] = useState(false)
+  const wasConnectedRef = useRef(isConnected)
+
+  // Transition-based disconnect cleanup: detect the falling edge from connected
+  // to disconnected via wasConnectedRef and imperatively clear in-memory state
+  // (selectedTokens, initialPortfolio, crossAccountLeverage,
+  // initialCrossAccountLeverage, positionsLoadedFromExchange,
+  // hasHydratedFromStorage) and persisted snapshots
+  // (localStorage.removeItem(getStorageKey(networkMode)) and
+  // storedDataSnapshot) so no consumer can rehydrate stale portfolio data after
+  // a disconnect. This must run in a useEffect (not via TanStack Query,
+  // useMemo, or localStorage helpers) because it is tied to this specific
+  // connection transition edge.
+  useEffect(() => {
+    const wasConnected = wasConnectedRef.current
+    wasConnectedRef.current = isConnected
+
+    if (!wasConnected || isConnected) {
+      return
+    }
+
+    setSelectedTokens([])
+    setInitialPortfolio([])
+    setCrossAccountLeverage(DEFAULT_CROSS_ACCOUNT_LEVERAGE)
+    setInitialCrossAccountLeverage(null)
+    setPositionsLoadedFromExchange(false)
+    setHasHydratedFromStorage(false)
+
+    const key = getStorageKey(networkMode)
+    localStorage.removeItem(key)
+    setStoredDataSnapshot(null)
+  }, [isConnected, networkMode])
 
   // Derive accountValue from account summary
   const accountValue = useMemo(
@@ -443,9 +475,13 @@ export const usePortfolioState = (
       } = recalculateFromNotionals(mergedTokens)
 
       if (accountValue > 0) {
-        const newLeverage = calcLeverage(fullTotalNotional, accountValue)
-        setCrossAccountLeverage(newLeverage)
-        setInitialCrossAccountLeverage(newLeverage)
+        // crossAccountLeverage reflects the merged (current) portfolio,
+        // but initialCrossAccountLeverage must stay tied to the pure
+        // exchange snapshot (initialLeverage) so that leverage deltas
+        // in the staged panel are measured vs. actual exchange state.
+        const mergedLeverage = calcLeverage(fullTotalNotional, accountValue)
+        setCrossAccountLeverage(mergedLeverage)
+        setInitialCrossAccountLeverage(initialLeverage)
       }
 
       setSelectedTokens(tokensWithPercentages)
@@ -764,6 +800,7 @@ export const usePortfolioState = (
   const hasTotalPercentExceeded =
     derivedTotalPercent > 100 + MAX_TOTAL_PERCENT_TOLERANCE
   const hasTotalPercentBelow =
+    derivedActiveTokens.length > 0 &&
     derivedTotalPercent < 100 - MAX_TOTAL_PERCENT_TOLERANCE
   const showTargetOfTotal =
     Math.abs(derivedTotalPercent - 100) > MAX_TOTAL_PERCENT_TOLERANCE
@@ -1269,12 +1306,17 @@ export const usePortfolioState = (
 
     setCrossAccountLeverage(baseLeverage)
     latestCrossAccountLeverageRef.current = baseLeverage
-    setSelectedTokensAndPersist(initialPortfolio)
+    setSelectedTokensAndPersist(() => {
+      // Start from the pure exchange snapshot and let updateByNotionalChange
+      // recompute percentages and leverage from notionals so that weights
+      // renormalize to 100% without any local-only tokens.
+      return updateByNotionalChange(initialPortfolio)
+    })
   }, [
     initialPortfolio,
     initialCrossAccountLeverage,
-    latestCrossAccountLeverageRef,
     setSelectedTokensAndPersist,
+    updateByNotionalChange,
   ])
 
   const disableSubmit =

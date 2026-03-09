@@ -1,3 +1,4 @@
+import { useCallback } from "react"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { useWallet } from "./useWallet"
 import type {
@@ -218,9 +219,16 @@ export const useWalletSettings = () => {
   }
 }
 
+export const useFullHyperliquidRefresh = () => {
+  const queryClient = useQueryClient()
+
+  return useCallback(() => {
+    void queryClient.invalidateQueries({ queryKey: ["hyperliquid"] })
+  }, [queryClient])
+}
+
 export const useSwitchNetwork = () => {
   const { setNetworkMode } = useWallet()
-  const queryClient = useQueryClient()
 
   return useMutation({
     mutationFn: (network: "testnet" | "mainnet") => {
@@ -228,18 +236,11 @@ export const useSwitchNetwork = () => {
       return Promise.resolve(network)
     },
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: QUERY_KEYS.balance })
-      void queryClient.invalidateQueries({
-        queryKey: QUERY_KEYS.accountSummary,
-      })
-      void queryClient.invalidateQueries({ queryKey: QUERY_KEYS.positions })
-      void queryClient.invalidateQueries({ queryKey: QUERY_KEYS.tickers })
-      void queryClient.invalidateQueries({
-        queryKey: QUERY_KEYS.leverageLimits,
-      })
-      void queryClient.invalidateQueries({
-        queryKey: QUERY_KEYS.fundingRates,
-      })
+      // Force a full UI reload so all React state and local storage–backed
+      // portfolio snapshots are re-initialized for the new network.
+      if (typeof window !== "undefined") {
+        window.location.reload()
+      }
     },
   })
 }

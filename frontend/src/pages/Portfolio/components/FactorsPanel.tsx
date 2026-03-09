@@ -1,49 +1,54 @@
 import { clsx } from "clsx"
 import { twMerge } from "tailwind-merge"
+import { Skeleton } from "@/components/ui/skeleton"
 
 interface FactorExposure {
   name: string
-  value: number
+  value: string // should be a number or decimal in future
 }
 
 interface FactorAttribution {
   factor: string
-  contribution: number
+  contribution: string // should be a number or decimal in future
 }
 
 interface ConcentrationMetric {
   metric: string
-  value: number
+  value: string // should be a number or decimal in future
 }
 
 const mockExposures: FactorExposure[] = [
-  { name: "β to BTC", value: 0.85 },
-  { name: "β to SPY", value: 0.42 },
-  { name: "Momentum", value: 0.28 },
-  { name: "Carry", value: -0.15 },
-  { name: "Volatility", value: 0.12 },
+  { name: "β to SPY", value: "TODO" },
+  { name: "Momentum", value: "TODO" },
+  { name: "Carry", value: "TODO" },
+  { name: "Volatility", value: "TODO" },
 ]
 
 const mockAttribution: FactorAttribution[] = [
-  { factor: "β to BTC", contribution: 0.156 },
-  { factor: "β to SPY", contribution: 0.042 },
-  { factor: "Momentum", contribution: 0.098 },
-  { factor: "Carry", contribution: -0.023 },
-  { factor: "Volatility", contribution: 0.025 },
-  { factor: "Idiosyncratic", contribution: 0.044 },
+  { factor: "β to BTC", contribution: "TODO" },
+  { factor: "β to SPY", contribution: "TODO" },
+  { factor: "Momentum", contribution: "TODO" },
+  { factor: "Carry", contribution: "TODO" },
+  { factor: "Volatility", contribution: "TODO" },
+  { factor: "Idiosyncratic", contribution: "TODO" },
 ]
 
 const mockConcentration: ConcentrationMetric[] = [
-  { metric: "Top Position", value: 0.23 },
-  { metric: "Top 3 Positions", value: 0.46 },
-  { metric: "Top 5 Positions", value: 0.59 },
-  { metric: "Herfindahl Index", value: 0.12 },
-  { metric: "Effective Positions", value: 8.3 },
+  { metric: "Top Position", value: "TODO" },
+  { metric: "Top 3 Positions", value: "TODO" },
+  { metric: "Top 5 Positions", value: "TODO" },
+  { metric: "Herfindahl Index", value: "TODO" },
+  { metric: "Effective Positions", value: "TODO" },
 ]
 
-export const FactorsPanel = () => {
+interface FactorsPanelProps {
+  beta: number | null
+  isBetaLoading: boolean
+}
+
+export const FactorsPanel = ({ beta, isBetaLoading }: FactorsPanelProps) => {
   return (
-    <div className="shrink-0 border border-border rounded flex flex-col min-w-0 relative">
+    <div className="shrink-0 border border-border rounded flex flex-col min-w-[25%] relative">
       <div className="px-2 py-1 border-b border-border bg-muted/30 font-medium flex items-center justify-between">
         <span>FACTORS</span>
         <div className="flex items-center gap-2">
@@ -65,6 +70,28 @@ export const FactorsPanel = () => {
           <div className="text-[10px] text-muted-foreground font-medium">
             Exposures
           </div>
+          <div className="flex items-center justify-between">
+            <span className="text-muted-foreground truncate">β to BTC</span>
+            <span className="font-mono">
+              {isBetaLoading ? (
+                <Skeleton className="inline-block h-3 w-10 align-middle" />
+              ) : beta !== null ? (
+                <span
+                  className={twMerge(
+                    clsx(
+                      beta > 0 && "text-green-500",
+                      beta < 0 && "text-red-500",
+                    ),
+                  )}
+                >
+                  {beta >= 0 ? "+" : ""}
+                  {beta.toFixed(2)}
+                </span>
+              ) : (
+                <span className="text-muted-foreground">—</span>
+              )}
+            </span>
+          </div>
           {mockExposures.map(exposure => (
             <div
               key={exposure.name}
@@ -73,10 +100,7 @@ export const FactorsPanel = () => {
               <span className="text-muted-foreground truncate">
                 {exposure.name}
               </span>
-              <span className="font-mono">
-                {exposure.value >= 0 ? "+" : ""}
-                {exposure.value.toFixed(2)}
-              </span>
+              <span className="font-mono">{exposure.value}</span>
             </div>
           ))}
         </div>
@@ -94,18 +118,8 @@ export const FactorsPanel = () => {
               <span className="text-muted-foreground truncate">
                 {attribution.factor}
               </span>
-              <span
-                className={twMerge(
-                  clsx(
-                    "w-14 text-right font-mono",
-                    attribution.contribution >= 0
-                      ? "text-green-500"
-                      : "text-red-500",
-                  ),
-                )}
-              >
-                {attribution.contribution >= 0 ? "+" : ""}
-                {(attribution.contribution * 100).toFixed(1)}%
+              <span className={twMerge(clsx("w-14 text-right font-mono"))}>
+                {attribution.contribution}
               </span>
             </div>
           ))}
@@ -123,11 +137,7 @@ export const FactorsPanel = () => {
                 className="flex items-center justify-between"
               >
                 <span className="text-muted-foreground">{metric.metric}</span>
-                <span className="font-mono">
-                  {metric.value <= 1
-                    ? `${(metric.value * 100).toFixed(0)}%`
-                    : metric.value.toFixed(1)}
-                </span>
+                <span className="font-mono">{metric.value}</span>
               </div>
             ))}
           </div>

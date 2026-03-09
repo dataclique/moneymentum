@@ -1,14 +1,14 @@
 const mockRiskMetrics = {
-  var95: -0.12,
-  var99: -0.2,
-  diversificationRatio: 1.35,
-  effectiveBets: 4.7,
+  var95: "TODO",
+  var99: "TODO",
+  diversificationRatio: "TODO",
+  effectiveBets: "TODO",
 }
 
 const mockStressTests = [
-  { scenario: "BTC -20%", portfolioImpact: -0.18 },
-  { scenario: "SPX -10%", portfolioImpact: -0.08 },
-  { scenario: "Rates +200bps", portfolioImpact: -0.05 },
+  { scenario: "BTC -20%", portfolioImpact: "TODO" },
+  { scenario: "SPX -10%", portfolioImpact: "TODO" },
+  { scenario: "Rates +200bps", portfolioImpact: "TODO" },
 ]
 
 const mockMonteCarlo = [
@@ -58,8 +58,6 @@ const getCorrelationColor = (value: number): string => {
   return "bg-muted text-foreground"
 }
 
-const formatPct = (v: number): string => `${(v * 100).toFixed(1)}%`
-
 export const RiskPanel = () => {
   return (
     <div className="flex-1 border border-border rounded flex flex-col min-w-0">
@@ -72,26 +70,24 @@ export const RiskPanel = () => {
           <div className="flex justify-between">
             <span className="text-muted-foreground">VaR 95%</span>
             <span className="text-red-400 font-mono">
-              {formatPct(mockRiskMetrics.var95)}
+              {mockRiskMetrics.var95}
             </span>
           </div>
           <div className="flex justify-between">
             <span className="text-muted-foreground">VaR 99%</span>
             <span className="text-red-400 font-mono">
-              {formatPct(mockRiskMetrics.var99)}
+              {mockRiskMetrics.var99}
             </span>
           </div>
           <div className="flex justify-between">
             <span className="text-muted-foreground">Diversification</span>
             <span className="font-mono">
-              {mockRiskMetrics.diversificationRatio.toFixed(2)}x
+              {mockRiskMetrics.diversificationRatio}
             </span>
           </div>
           <div className="flex justify-between">
             <span className="text-muted-foreground">Effective Bets</span>
-            <span className="font-mono">
-              {mockRiskMetrics.effectiveBets.toFixed(1)}
-            </span>
+            <span className="font-mono">{mockRiskMetrics.effectiveBets}</span>
           </div>
         </div>
 
@@ -109,14 +105,8 @@ export const RiskPanel = () => {
                 <span className="text-muted-foreground truncate">
                   {stressTest.scenario}
                 </span>
-                <span
-                  className={
-                    stressTest.portfolioImpact < 0
-                      ? "text-red-400 font-mono"
-                      : "text-green-400 font-mono"
-                  }
-                >
-                  {formatPct(stressTest.portfolioImpact)}
+                <span className={"text-white-500 font-mono"}>
+                  {stressTest.portfolioImpact}
                 </span>
               </div>
             ))}
@@ -126,7 +116,7 @@ export const RiskPanel = () => {
         {/* Monte Carlo */}
         <div className="border-t border-border/50 pt-2">
           <div className="text-[10px] text-muted-foreground font-medium mb-1.5">
-            Monte Carlo (1 Year)
+            Monte Carlo (1 Year) TODO
           </div>
           <div className="flex items-end gap-px h-12">
             {mockMonteCarlo.map(monteCarloPoint => (
@@ -148,7 +138,7 @@ export const RiskPanel = () => {
         {/* Correlation heatmap */}
         <div className="border-t border-border/50 pt-2">
           <div className="text-[10px] text-muted-foreground font-medium mb-1.5">
-            Correlation
+            Correlation TODO
           </div>
           <table className="w-full">
             <thead>

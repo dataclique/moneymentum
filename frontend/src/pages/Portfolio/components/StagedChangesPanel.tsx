@@ -39,6 +39,12 @@ const formatUnsignedPct = (weightFraction: number): string =>
 
 const formatUsdPrecise = (value: number): string => `$${value.toFixed(2)}`
 
+// Minimum notional change to show an arrow in the notional preview.
+// Difference between initial and target notional arises because
+// initial total notional is rounded to 2 decimal places while target
+// is computed from accountValue * leverage separately.
+const NOTIONAL_EPSILON_USD = 0.1
+
 export const StagedChangesPanel = ({
   stagedTrades: stagedTradesProp,
   initialTotalNotional,
@@ -52,6 +58,16 @@ export const StagedChangesPanel = ({
 }: StagedChangesPanelProps) => {
   const stagedTrades = stagedTradesProp ?? []
   const hasStaged = stagedTrades.length > 0
+  const shouldShowNotionalArrow =
+    initialTotalNotional !== undefined &&
+    targetNotional !== undefined &&
+    Math.abs(targetNotional - initialTotalNotional) >= NOTIONAL_EPSILON_USD
+  const initialLeverage = initialCrossAccountLeverage
+  const currentLeverage = crossAccountLeverage
+  const shouldShowLeverageArrow =
+    initialLeverage !== null &&
+    currentLeverage !== undefined &&
+    initialLeverage !== currentLeverage
 
   return (
     <div className="flex-1 border border-border rounded flex flex-col min-w-0">
@@ -160,19 +176,23 @@ export const StagedChangesPanel = ({
               <span className="font-mono">
                 {initialTotalNotional !== undefined &&
                 targetNotional !== undefined ? (
-                  <>
-                    {formatUsdPrecise(initialTotalNotional)}{" "}
-                    <span className="text-muted-foreground">→</span>{" "}
-                    <span
-                      className={
-                        targetNotional >= initialTotalNotional
-                          ? "text-green-500"
-                          : "text-red-500"
-                      }
-                    >
-                      {formatUsdPrecise(targetNotional)}
-                    </span>
-                  </>
+                  shouldShowNotionalArrow ? (
+                    <>
+                      {formatUsdPrecise(initialTotalNotional)}{" "}
+                      <span className="text-muted-foreground">→</span>{" "}
+                      <span
+                        className={
+                          targetNotional >= initialTotalNotional
+                            ? "text-green-500"
+                            : "text-red-500"
+                        }
+                      >
+                        {formatUsdPrecise(targetNotional)}
+                      </span>
+                    </>
+                  ) : (
+                    formatUsdPrecise(targetNotional)
+                  )
                 ) : (
                   "TODO"
                 )}
@@ -182,15 +202,17 @@ export const StagedChangesPanel = ({
               <span className="text-muted-foreground">Leverage</span>
               <span className="font-mono">
                 {crossAccountLeverage !== undefined ? (
-                  <>
-                    {(
-                      initialCrossAccountLeverage ?? crossAccountLeverage
-                    ).toFixed(2)}
-                    x <span className="text-muted-foreground">→</span>{" "}
-                    <span className="text-yellow-500">
-                      {crossAccountLeverage.toFixed(2)}x
-                    </span>
-                  </>
+                  shouldShowLeverageArrow ? (
+                    <>
+                      {initialLeverage?.toFixed(2)}x{" "}
+                      <span className="text-muted-foreground">→</span>{" "}
+                      <span className="text-yellow-500">
+                        {currentLeverage.toFixed(2)}x
+                      </span>
+                    </>
+                  ) : (
+                    `${crossAccountLeverage.toFixed(2)}x`
+                  )
                 ) : (
                   "TODO"
                 )}

@@ -8,8 +8,8 @@ let
   moneymentumPackage = self.packages.${system}.moneymentum;
 
   services = import ./services.nix;
-  enabledServices =
-    builtins.attrNames (builtins.filterAttrs (_: v: v.enabled) services);
+  enabledServices = builtins.filter (name: services.${name}.enabled)
+    (builtins.attrNames services);
 
   mkServiceProfile = name:
     let markerFile = "/run/moneymentum/${name}.ready";
@@ -29,7 +29,7 @@ let
 in {
   config = {
     nodes.moneymentum = {
-      hostname = builtins.getEnv "DEPLOY_HOST";
+      hostname = "MUST_OVERRIDE_HOSTNAME";
       sshUser = "root";
       user = "root";
 
@@ -46,12 +46,19 @@ in {
 
   wrappers = { pkgs, infraPkgs, localSystem }:
     let
-      deployInputs = infraPkgs.buildInputs
-        ++ [ deploy-rs.packages.${localSystem}.deploy-rs ];
+      # Only rage (decrypt state) + jq (parse IP) + deploy-rs are needed.
+      # infraPkgs.buildInputs also includes terraform and ragenix which
+      # deploy scripts never use.
+      deployInputs =
+        [ pkgs.rage pkgs.jq deploy-rs.packages.${localSystem}.deploy-rs ];
 
       deployPreamble = ''
         ${infraPkgs.resolveIp}
-        export DEPLOY_HOST="$host_ip"
+
+        if [ -z "$host_ip" ]; then
+          echo "ERROR: host_ip not resolved — check resolveIp or --hostname flag" >&2
+          exit 1
+        fi
 
         ssh_flag=""
         if [ "$identity" != "$HOME/.ssh/id_ed25519" ]; then
@@ -60,10 +67,11 @@ in {
         fi
       '';
 
-      deployFlags = if localSystem == "x86_64-linux" then
-        ""
-      else
-        "--skip-checks --remote-build";
+      deployFlags =
+        if localSystem == "x86_64-linux" then "" else "--remote-build";
+
+      serviceCleanup = builtins.concatStringsSep "; "
+        (map (name: "systemctl reset-failed ${name} || true") enabledServices);
 
     in {
       deployNixos = pkgs.writeShellApplication {
@@ -71,8 +79,7 @@ in {
         runtimeInputs = deployInputs;
         text = ''
           ${deployPreamble}
-          deploy ${deployFlags} ''${ssh_flag:+"$ssh_flag"} .#moneymentum.system \
-            -- --impure "$@"
+          deploy ${deployFlags} --hostname "$host_ip" ''${ssh_flag:+"$ssh_flag"} "$@" .#moneymentum.system
         '';
       };
 
@@ -83,18 +90,19 @@ in {
           ${deployPreamble}
           profile="''${1:?usage: deploy-service <profile>}"
           shift
-          deploy ${deployFlags} ''${ssh_flag:+"$ssh_flag"} ".#moneymentum.$profile" \
-            -- --impure "$@"
+          deploy ${deployFlags} --hostname "$host_ip" ''${ssh_flag:+"$ssh_flag"} "$@" ".#moneymentum.$profile"
         '';
       };
 
       deployAll = pkgs.writeShellApplication {
         name = "deploy-all";
-        runtimeInputs = deployInputs;
+        runtimeInputs = deployInputs ++ [ pkgs.openssh ];
         text = ''
           ${deployPreamble}
-          deploy ${deployFlags} ''${ssh_flag:+"$ssh_flag"} .#moneymentum \
-            -- --impure "$@"
+
+          ssh -i "$identity" "root@$host_ip" '${serviceCleanup}'
+
+          deploy ${deployFlags} --hostname "$host_ip" ''${ssh_flag:+"$ssh_flag"} "$@" .#moneymentum
         '';
       };
     };

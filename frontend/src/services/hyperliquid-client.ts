@@ -14,6 +14,18 @@ interface MarketsCache {
   networkMode: NetworkMode
 }
 
+const isDeployed = (): boolean =>
+  typeof window !== "undefined" && window.location.hostname !== "localhost"
+
+const applyApiProxy = (
+  exchange: HyperliquidExchange,
+  networkMode: NetworkMode,
+): void => {
+  if (!isDeployed()) return
+  const proxyBase = networkMode === "testnet" ? "/hl-testnet" : "/hl"
+  exchange.urls["api"] = { public: proxyBase, private: proxyBase }
+}
+
 const createTempExchange = (networkMode: NetworkMode): HyperliquidExchange => {
   const HyperliquidClass = ccxt.hyperliquid as unknown as new (
     config: Record<string, unknown>,
@@ -26,6 +38,8 @@ const createTempExchange = (networkMode: NetworkMode): HyperliquidExchange => {
   if (networkMode === "testnet") {
     exchange.setSandboxMode(true)
   }
+
+  applyApiProxy(exchange, networkMode)
 
   return exchange
 }
@@ -138,6 +152,7 @@ const SLIPPAGE = 0.05
 interface HyperliquidExchange {
   setSandboxMode: (enabled: boolean) => void
   options: Record<string, unknown>
+  urls: Record<string, string | Record<string, string>>
   walletAddress?: string
   loadMarkets: () => Promise<Record<string, unknown>>
   fetchBalance: () => Promise<{
@@ -214,6 +229,8 @@ export class HyperliquidClient {
     if (networkMode === "testnet") {
       this.exchange.setSandboxMode(true)
     }
+
+    applyApiProxy(this.exchange, networkMode)
 
     this.exchange.options["builderFee"] = false
     this.exchange.options["approvedBuilderFee"] = false

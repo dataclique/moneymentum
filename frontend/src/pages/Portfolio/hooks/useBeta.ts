@@ -52,7 +52,7 @@ const fetchBeta = async (
   weights: Record<string, number>,
   benchmark: string,
 ): Promise<BetaResponse> => {
-  const res = await fetch("/beta", {
+  const res = await fetch(`${import.meta.env.BASE_URL}api/beta`, {
     method: "POST",
     // Abort the request if the backend is unresponsive for too long.
     signal: AbortSignal.timeout(10_000),

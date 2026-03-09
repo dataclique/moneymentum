@@ -27,6 +27,7 @@
     nixos-anywhere.inputs.nixpkgs.follows = "nixpkgs";
 
     deploy-rs.url = "github:serokell/deploy-rs";
+    deploy-rs.inputs.nixpkgs.follows = "nixpkgs";
 
     bun2nix.url = "github:nix-community/bun2nix?tag=2.0.7";
     bun2nix.inputs.nixpkgs.follows = "nixpkgs";
@@ -37,7 +38,7 @@
     {
       nixosConfigurations.moneymentum = nixpkgs.lib.nixosSystem {
         system = "x86_64-linux";
-        specialArgs.frontend = self.packages.x86_64-linux.frontend;
+        specialArgs = { frontend = self.packages.x86_64-linux.frontend; };
 
         modules =
           [ disko.nixosModules.disko ragenix.nixosModules.default ./os.nix ];
@@ -203,7 +204,6 @@
             inherit hooks;
             src = self;
           };
-          inherit (rustPkgs) clippy;
         };
         packages = {
           devenv-up = devShell.config.procfileScript;
@@ -217,7 +217,7 @@
 
           resolveIp = pkgs.writeShellApplication {
             name = "resolve-ip";
-            runtimeInputs = infraPkgs.buildInputs;
+            runtimeInputs = [ pkgs.rage pkgs.jq ];
             text = ''
               ${infraPkgs.resolveIp}
               echo "$host_ip"
@@ -225,16 +225,19 @@
           };
 
           inherit (infraPkgs)
-            tfInit tfPlan tfApply tfImport tfEditVars tfCreateVars bootstrap
-            remote;
+            tfInit tfPlan tfApply tfImport tfEditVars tfCreateVars tfRekey rekey
+            bootstrap remote;
           inherit (deployPkgs) deployNixos deployService deployAll;
         };
       });
 
   nixConfig = {
-    extra-substituters = "https://devenv.cachix.org";
-    extra-trusted-public-keys =
-      "devenv.cachix.org-1:w1cLUi8dv3hnoSPGAuibQv+f9TZLr6cv/Hm9XgU50cw=";
+    extra-substituters =
+      [ "https://devenv.cachix.org" "https://nix-community.cachix.org" ];
+    extra-trusted-public-keys = [
+      "devenv.cachix.org-1:w1cLUi8dv3hnoSPGAuibQv+f9TZLr6cv/Hm9XgU50cw="
+      "nix-community.cachix.org-1:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs="
+    ];
     allow-unfree = true;
   };
 }

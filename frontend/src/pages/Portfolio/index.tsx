@@ -14,6 +14,8 @@ import { clsx } from "clsx"
 import { twMerge } from "tailwind-merge"
 import { useState, useEffect, useCallback, useMemo } from "react"
 import { useNetwork } from "@/hooks/useNetwork"
+import { WalletHeader } from "@/components/wallet-header"
+import { ModeToggle } from "@/components/ui/mode-toggle"
 
 import { usePortfolioState } from "./hooks/usePortfolioState"
 import { useBeta } from "./hooks/useBeta"
@@ -61,12 +63,14 @@ const PortfolioPage = () => {
     accountValue,
     crossAccountLeverage,
     initialCrossAccountLeverage,
+    initialTotalNotional,
     targetNotional,
     selectedTokens,
     activeTokens,
     displayNotional,
     blockingReasons,
     leverageLimitsMap,
+    stagedTrades,
     disableSubmit,
     isRebalancing,
     isBalanceLoading,
@@ -80,6 +84,7 @@ const PortfolioPage = () => {
     handleWeightChange,
     handleCrossAccountLeverageChange,
     handleOpenPositions,
+    handleResetToInitial,
   } = usePortfolioState(isPrecise, isWeightRedistribution)
 
   const { beta, isLoading: isBetaLoading } = useBeta(activeTokens)
@@ -125,13 +130,19 @@ const PortfolioPage = () => {
   return (
     <>
       <header className="flex items-center justify-between px-3 py-1.5 border-b border-border shrink-0 bg-muted/30">
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-5">
           <span className="font-semibold">Moneymentum</span>
           <div className="h-4 border-l border-border" />
-          <span className="text-muted-foreground">NAV</span>
-          <span className="font-mono">${accountValue.toFixed(2)}</span>
-          <span className="text-muted-foreground">Notional</span>
-          <span className="font-mono">${targetNotional.toFixed(2)}</span>
+          <WalletHeader />
+          <div className="h-4 border-l border-border" />
+          <div className="flex gap-1.5">
+            <span className="text-muted-foreground">NAV</span>
+            <span className="font-mono">${accountValue.toFixed(2)}</span>
+          </div>
+          <div className="flex gap-1.5">
+            <span className="text-muted-foreground">Notional</span>
+            <span className="font-mono">${targetNotional.toFixed(2)}</span>
+          </div>
           <span className="text-muted-foreground">
             TODO: effectiveLeverage.toFixed(2)x
           </span>
@@ -146,6 +157,7 @@ const PortfolioPage = () => {
           <div className="h-4 border-l border-border" />
           <span className="text-muted-foreground">TODO Var</span>
           <span className="font-mono text-red-400">TODO</span>
+          <ModeToggle />
           <kbd
             className="px-1.5 py-0.5 text-[10px] font-mono bg-muted rounded cursor-pointer hover:bg-muted/80"
             onClick={() => {
@@ -173,7 +185,7 @@ const PortfolioPage = () => {
         />
         <div className="flex-1 min-w-0 flex gap-1 overflow-hidden">
           {/* Center: Positions */}
-          <div className="shrink-0 basis-[540px] flex flex-col overflow-hidden">
+          <div className="shrink-0 basis-[600px] flex flex-col overflow-hidden">
             <div className="flex gap-1 min-h-0 min-w-0 flex-1">
               <PositionsPanel
                 tokens={selectedTokens}
@@ -203,34 +215,15 @@ const PortfolioPage = () => {
 
             {/* Footer */}
             <div className="sticky bottom-0 bg-background/80 backdrop-blur mt-auto">
-              <div className=" text-[12px] flex flex-wrap items-center justify-start gap-3 border-t border-border pt-3">
-                <div className="font-semibold text-muted-foreground">
-                  <span>Beta (vs BTC) </span>
-                  {isBetaLoading ? (
-                    <Skeleton className="inline-block h-4 w-16 align-middle" />
-                  ) : beta !== null ? (
-                    <span
-                      className={twMerge(
-                        clsx(
-                          beta > 0 && "text-green-500",
-                          beta < 0 && "text-red-500",
-                        ),
-                      )}
-                    >
-                      {beta.toFixed(2)}
-                    </span>
-                  ) : (
-                    <span className="text-muted-foreground">—</span>
-                  )}
-                </div>
-                <div className="flex items-center gap-4">
+              <div className="text-[12px] border-t border-border pt-3 flex items-center">
+                <div className="flex items-center gap-4 w-full">
                   {/* Cross Account Leverage Slider */}
-                  <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-3 flex-1">
                     <span className="font-semibold text-muted-foreground whitespace-nowrap">
-                      Leverage:
+                      Leverage
                     </span>
                     {isBalanceLoading ? (
-                      <Skeleton className="h-4 w-32" />
+                      <Skeleton className="h-4 w-full" />
                     ) : (
                       <>
                         <Slider
@@ -241,7 +234,7 @@ const PortfolioPage = () => {
                           min={LEVERAGE_MIN}
                           max={LEVERAGE_MAX}
                           step={LEVERAGE_STEP}
-                          className="w-32"
+                          className="flex-1"
                         />
                         <input
                           type="number"
@@ -260,13 +253,13 @@ const PortfolioPage = () => {
                           min={LEVERAGE_MIN}
                           max={LEVERAGE_MAX}
                           step={LEVERAGE_STEP}
-                          className="w-14 rounded-md border border-border bg-transparent px-2 py-1 text-center font-medium [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                          className="w-16 rounded-md border border-border bg-transparent px-2 py-1 text-center font-medium [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                         />
                         <span className="text-sm font-medium">x</span>
                       </>
                     )}
                   </div>
-                  <div className="flex gap-4">
+                  <div className="flex items-center gap-4">
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
                         <Button
@@ -304,12 +297,6 @@ const PortfolioPage = () => {
                         </DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
-                    <Button
-                      onClick={handleOpenPositions}
-                      disabled={disableSubmit}
-                    >
-                      {isRebalancing ? "Sending..." : "Rebalance"}
-                    </Button>
                   </div>
                 </div>
               </div>
@@ -320,9 +307,25 @@ const PortfolioPage = () => {
           <div className="flex flex-col gap-1 min-h-0 w-full">
             <PerformancePanel />
             <div className="flex-1 flex gap-1 min-h-0">
-              <StagedChangesPanel />
-              <FactorsPanel />
-              <RiskPanel />
+              <div className="flex flex-[0_0_40%] min-w-0">
+                <StagedChangesPanel
+                  stagedTrades={stagedTrades}
+                  initialTotalNotional={initialTotalNotional}
+                  targetNotional={targetNotional}
+                  initialCrossAccountLeverage={initialCrossAccountLeverage}
+                  crossAccountLeverage={crossAccountLeverage}
+                  onRebalance={handleOpenPositions}
+                  isRebalancing={isRebalancing}
+                  disableSubmit={disableSubmit}
+                  onClearAll={handleResetToInitial}
+                />
+              </div>
+              <div className="flex-[0_0_25%] min-w-0">
+                <FactorsPanel beta={beta} isBetaLoading={isBetaLoading} />
+              </div>
+              <div className="flex-1 min-w-0">
+                <RiskPanel />
+              </div>
             </div>
           </div>
         </div>

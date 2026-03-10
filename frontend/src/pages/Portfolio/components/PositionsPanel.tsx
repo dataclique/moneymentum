@@ -27,6 +27,8 @@ import {
   MIN_CHANGE_DELTA,
   MIN_USD,
 } from "../hooks/usePortfolioState"
+import { useWallet } from "@/hooks/useWallet"
+import { WalletHeader } from "@/components/wallet-header"
 
 interface PositionsPanelProps {
   tokens: TokenAllocation[]
@@ -86,6 +88,8 @@ const PositionsTableRow = ({
   const [notionalInput, setNotionalInput] = useState(() =>
     (token.notional ?? parseFloat(usdAmount)).toFixed(2),
   )
+  const [isWeightFocused, setIsWeightFocused] = useState(false)
+  const [isNotionalFocused, setIsNotionalFocused] = useState(false)
   const externalNotional = token.notional ?? parseFloat(usdAmount)
   const prevNotionalRef = useRef(externalNotional)
   const prevPercentageRef = useRef(token.percentage)
@@ -94,21 +98,21 @@ const PositionsTableRow = ({
   // useEffect is required here instead of computing on render to avoid uncontrolled→controlled input transitions and visual flicker
   // when upstream props change. prevNotionalRef lets us detect real changes and skip redundant setNotionalInput calls.
   useEffect(() => {
-    if (prevNotionalRef.current !== externalNotional) {
+    if (!isNotionalFocused && prevNotionalRef.current !== externalNotional) {
       prevNotionalRef.current = externalNotional
       setNotionalInput(externalNotional.toFixed(2))
     }
-  }, [externalNotional])
+  }, [externalNotional, isNotionalFocused])
 
   // Sync external percentage props (token.percentage) into the controlled weight input state (weightInput via setWeightInput).
   // This useEffect keeps the displayed value aligned with upstream changes while prevPercentageRef prevents unnecessary
   // setWeightInput updates on every render.
   useEffect(() => {
-    if (prevPercentageRef.current !== token.percentage) {
+    if (!isWeightFocused && prevPercentageRef.current !== token.percentage) {
       prevPercentageRef.current = token.percentage
       setWeightInput(String(token.percentage))
     }
-  }, [token.percentage])
+  }, [token.percentage, isWeightFocused])
 
   const targetValue =
     token.targetNotional ?? token.notional ?? parseFloat(usdAmount)
@@ -143,7 +147,6 @@ const PositionsTableRow = ({
         ? "text-emerald-500"
         : "text-rose-500"
 
-  console.log(token.symbol, targetValue, token.status)
   const showWarning = showDeltaWarning || showSmallPositionWarning
 
   const sliderMaxLeverage = typeof maxLeverage === "number" ? maxLeverage : 1
@@ -157,14 +160,14 @@ const PositionsTableRow = ({
         ),
       )}
     >
-      <td className="px-2 py-1 font-medium">
+      <td className="px-2 py-1 font-medium flex flex-row gap-[4px]">
         <span className="font-medium">{token.symbol.split("/")[0]}</span>
         <Dialog>
           <DialogTrigger asChild disabled={token.status === "deleted"}>
             <Button
               variant="ghost"
               size="sm"
-              className="ml-1 h-auto px-1.5 py-0 text-[10px] font-mono border border-border rounded"
+              className="h-auto px-1.5 py-0 text-[10px] font-mono border border-border rounded"
               disabled={token.status === "deleted"}
             >
               {token.leverage}x
@@ -219,8 +222,31 @@ const PositionsTableRow = ({
           onChange={e => {
             const raw = e.target.value
             setWeightInput(raw)
-            const value = raw === "" ? 0 : parseFloat(raw)
-            if (!Number.isNaN(value)) onWeightChange(token.symbol, value)
+            const parsed = raw === "" ? 0 : Number.parseFloat(raw)
+            if (!Number.isNaN(parsed) && parsed >= 0) {
+              onWeightChange(token.symbol, parsed)
+            }
+          }}
+          onFocus={() => {
+            setIsWeightFocused(true)
+          }}
+          onBlur={e => {
+            setIsWeightFocused(false)
+            const raw = e.target.value
+            if (raw.trim() === "") {
+              // Treat empty input as 0 when leaving the field
+              onWeightChange(token.symbol, 0)
+              setWeightInput("0")
+              return
+            }
+            const parsed = Number.parseFloat(raw)
+            if (Number.isNaN(parsed) || parsed < 0) {
+              setWeightInput(String(token.percentage))
+              return
+            }
+            const clamped = Math.min(100, parsed)
+            onWeightChange(token.symbol, clamped)
+            setWeightInput(String(clamped))
           }}
           disabled={token.status === "deleted"}
           step={0.5}
@@ -238,8 +264,31 @@ const PositionsTableRow = ({
           onChange={e => {
             const raw = e.target.value
             setNotionalInput(raw)
-            const value = raw === "" ? 0 : parseFloat(raw)
-            if (!Number.isNaN(value)) onNotionalChange(token.symbol, value)
+            const parsed = raw === "" ? 0 : Number.parseFloat(raw)
+            if (!Number.isNaN(parsed) && parsed >= 0) {
+              onNotionalChange(token.symbol, parsed)
+            }
+          }}
+          onFocus={() => {
+            setIsNotionalFocused(true)
+          }}
+          onBlur={e => {
+            setIsNotionalFocused(false)
+            const raw = e.target.value
+            if (raw.trim() === "") {
+              // Treat empty input as 0 when leaving the field
+              onNotionalChange(token.symbol, 0)
+              setNotionalInput("0.00")
+              return
+            }
+            const parsed = Number.parseFloat(raw)
+            if (Number.isNaN(parsed) || parsed < 0) {
+              const fallback = token.notional ?? parseFloat(usdAmount)
+              setNotionalInput(fallback.toFixed(2))
+              return
+            }
+            onNotionalChange(token.symbol, parsed)
+            setNotionalInput(parsed.toFixed(2))
           }}
           disabled={token.status === "deleted"}
           step={1}
@@ -331,8 +380,10 @@ export const PositionsPanel = ({
   onWeightChange,
   fundingRatesByBaseSymbol,
 }: PositionsPanelProps): JSX.Element => {
+  const { isConnected } = useWallet()
+
   return (
-    <div className="flex flex-col rounded border border-border min-h-0 max-h-[calc(100vh-4rem)] w-full max-w-[540px] shrink-0">
+    <div className="flex flex-col rounded border border-border min-h-0 max-h-[calc(100vh-4rem)] w-full max-w-[600px] shrink-0">
       <div className="px-2 py-1.5 border-b border-border bg-muted/30 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-2">
           <span className="font-medium">POSITIONS</span>
@@ -347,6 +398,13 @@ export const PositionsPanel = ({
             {Array.from({ length: 8 }).map((_placeholder, index) => (
               <Skeleton key={index} className="h-5 w-full" />
             ))}
+          </div>
+        ) : !isConnected ? (
+          <div className="h-full flex flex-col items-center justify-center gap-3 p-4 text-center text-muted-foreground text-[11px]">
+            <p className="max-w-[260px]">
+              Connect your wallet to view and rebalance positions.
+            </p>
+            <WalletHeader />
           </div>
         ) : tokens.length === 0 ? (
           <div className="p-4 text-center text-muted-foreground text-[11px]">

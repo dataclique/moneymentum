@@ -72,12 +72,57 @@ const createWrapper = () => {
 
 describe("usePortfolioState", () => {
   beforeEach(() => {
-    localStorage.clear()
+    // Ensure a working in-memory localStorage implementation for this test file.
+    const globalAny = globalThis as any
+    if (
+      !globalAny.localStorage ||
+      typeof globalAny.localStorage.getItem !== "function"
+    ) {
+      const store = new Map<string, string>()
+      globalAny.localStorage = {
+        getItem: (key: string) => (store.has(key) ? store.get(key)! : null),
+        setItem: (key: string, value: string) => {
+          store.set(key, value)
+        },
+        removeItem: (key: string) => {
+          store.delete(key)
+        },
+        clear: () => {
+          store.clear()
+        },
+        key: (index: number) => Array.from(store.keys())[index] ?? null,
+        get length() {
+          return store.size
+        },
+      }
+    } else if (typeof globalAny.localStorage.clear !== "function") {
+      globalAny.localStorage.clear = () => {
+        const storage: Storage = globalAny.localStorage
+        // Use the Storage API to ensure we clear actual stored keys.
+        while (storage.length > 0) {
+          const key = storage.key(0)
+          if (key === null) {
+            break
+          }
+          storage.removeItem(key)
+        }
+      }
+    }
+
+    if (typeof globalAny.localStorage.clear === "function") {
+      globalAny.localStorage.clear()
+    }
   })
 
   afterEach(() => {
     vi.restoreAllMocks()
-    localStorage.clear()
+    const globalAny = globalThis as any
+    if (
+      globalAny.localStorage &&
+      typeof globalAny.localStorage.clear === "function"
+    ) {
+      globalAny.localStorage.clear()
+    }
   })
 
   describe("constants", () => {

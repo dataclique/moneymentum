@@ -72,12 +72,6 @@
           nil.enable = true;
           nixfmt-classic.enable = true;
 
-          # Python
-          mypy.enable = false;
-          ruff.enable = true;
-          ruff-format.enable = true;
-          sort-requirements-txt.enable = true;
-
           # TypeScript
           eslint = {
             enable = true;
@@ -166,16 +160,6 @@
 
               languages = {
                 nix.enable = true;
-
-                python = {
-                  enable = true;
-                  package = pkgs.python311;
-                  venv.enable = true;
-                  venv.requirements = builtins.readFile ./requirements.txt;
-                  libraries = deps
-                    ++ [ pkgs.zlib pkgs.libffi pkgs.stdenv.cc.cc.lib ];
-                };
-
                 javascript = {
                   enable = true;
                   directory = "frontend";

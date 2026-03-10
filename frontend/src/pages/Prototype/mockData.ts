@@ -93,15 +93,12 @@ export interface StagedTrade {
   leverage: number
 }
 
-export type TradeSource = "weight_edit" | "leverage_change" | "manual"
-
 export interface ComputedTrade {
   id: string
   symbol: string
   underlying: string
   side: "buy" | "sell"
   notional: number
-  source: TradeSource
   previousWeight?: number
   newWeight?: number
 }

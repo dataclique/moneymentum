@@ -5,7 +5,6 @@ import type {
   StagedTrade,
   MockPosition,
   ComputedTrade,
-  TradeSource,
 } from "../mockData"
 import type { PositionsByUnderlying } from "../hooks/usePrototypeData"
 
@@ -349,7 +348,6 @@ export const computeStagedTradesFromDiff = ({
   minThreshold = 10,
 }: ComputeStagedTradesInput): ComputedTrade[] => {
   const trades: ComputedTrade[] = []
-  const leverageChanged = Math.abs(targetLeverage - committedLeverage) > 0.001
 
   for (const position of committedPositions) {
     const committedWeight = position.weight
@@ -363,20 +361,12 @@ export const computeStagedTradesFromDiff = ({
       continue
     }
 
-    const weightChanged = Math.abs(targetWeight - committedWeight) > 0.0001
-    const source: TradeSource = weightChanged
-      ? "weight_edit"
-      : leverageChanged
-        ? "leverage_change"
-        : "manual"
-
     trades.push({
       id: `${position.symbol}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
       symbol: position.symbol,
       underlying: position.underlying,
       side: delta > 0 ? "buy" : "sell",
       notional: Math.abs(delta),
-      source,
       previousWeight: committedWeight,
       newWeight: targetWeight,
     })

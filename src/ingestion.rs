@@ -86,10 +86,12 @@ async fn ingest_all(
     funding_ingester: &FundingRateIngester<dyn Hyperliquid>,
     data_dir: &Path,
 ) -> Result<DateTime<Utc>, HyperliquidError> {
+    funding_ingester.ingest(data_dir).await?;
+
     for timeframe in TIMEFRAMES {
         candle_ingester.ingest(*timeframe, data_dir).await?;
     }
-    funding_ingester.ingest(data_dir).await?;
+
     Ok(Utc::now())
 }
 

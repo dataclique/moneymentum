@@ -11,7 +11,6 @@ const mockTrades: ComputedTrade[] = [
     underlying: "BTC",
     side: "buy",
     notional: 1000,
-    source: "weight_edit",
     previousWeight: 0.2,
     newWeight: 0.25,
   },
@@ -21,7 +20,6 @@ const mockTrades: ComputedTrade[] = [
     underlying: "ETH",
     side: "sell",
     notional: 500,
-    source: "leverage_change",
     previousWeight: 0.15,
     newWeight: 0.12,
   },
@@ -158,10 +156,6 @@ describe("StagedTradesPanel", () => {
     expect(screen.getByText("Notional")).toBeInTheDocument()
   })
 
-  it("displays source badges for each trade", () => {
-    render(<StagedTradesPanel {...defaultProps} stagedTrades={mockTrades} />)
-
-    expect(screen.getByText("weight")).toBeInTheDocument()
-    expect(screen.getByText("leverage")).toBeInTheDocument()
-  })
+  // Source badges have been removed in the production UI; prototype panel
+  // no longer renders per-trade "source" labels.
 })

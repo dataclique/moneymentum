@@ -148,9 +148,6 @@ describe("usePrototypeData", () => {
 
       // Should have staged trades generated from the weight change
       expect(result.current.stagedTrades.length).toBeGreaterThan(0)
-      expect(
-        result.current.stagedTrades.some(t => t.source === "weight_edit"),
-      ).toBe(true)
     })
 
     it("generates staged trades when leverage changes", () => {
@@ -160,11 +157,8 @@ describe("usePrototypeData", () => {
         result.current.setLeverage(1.5)
       })
 
-      // All positions should have leverage_change trades
+      // All positions should have leverage-driven trades
       expect(result.current.stagedTrades.length).toBeGreaterThan(0)
-      expect(
-        result.current.stagedTrades.every(t => t.source === "leverage_change"),
-      ).toBe(true)
     })
 
     it("clearStagedTrades reverts to committed state", () => {

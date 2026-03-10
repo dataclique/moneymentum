@@ -32,15 +32,6 @@ interface StagedTradesPanelProps {
   onExecute: () => void
 }
 
-const SOURCE_BADGE_CONFIG = {
-  weight_edit: { label: "weight", className: "bg-blue-500/20 text-blue-400" },
-  leverage_change: {
-    label: "leverage",
-    className: "bg-purple-500/20 text-purple-400",
-  },
-  manual: { label: "manual", className: "bg-gray-500/20 text-gray-400" },
-}
-
 export const StagedTradesPanel = ({
   stagedTrades,
   leverage,
@@ -137,7 +128,6 @@ export const StagedTradesPanel = ({
       ) : (
         <div className="max-h-[200px] overflow-auto scrollbar-hide">
           {stagedTrades.map(t => {
-            const sourceConfig = SOURCE_BADGE_CONFIG[t.source]
             return (
               <div
                 key={t.id}
@@ -166,14 +156,6 @@ export const StagedTradesPanel = ({
                   )}
                 <span className="text-muted-foreground font-mono">
                   {formatUsd(t.notional)}
-                </span>
-                <span
-                  className={twMerge(
-                    "text-[9px] font-medium ml-2 px-1.5 py-0.5 rounded",
-                    sourceConfig.className,
-                  )}
-                >
-                  {sourceConfig.label}
                 </span>
               </div>
             )

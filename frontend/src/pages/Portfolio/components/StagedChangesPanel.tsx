@@ -2,109 +2,131 @@ import { twMerge } from "tailwind-merge"
 import { clsx } from "clsx"
 import { Send } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { formatUsd, formatPct } from "../../Prototype/utils/formatters"
+import type { AllocationStatus } from "../hooks/usePortfolioState"
 
 type Side = "buy" | "sell"
 
-interface MockStagedTrade {
+export interface StagedTrade {
   id: string
   underlying: string
   side: Side
   notional: number
   previousWeight?: number
   newWeight?: number
-  source: "weight_edit" | "leverage_change" | "manual"
+  status: AllocationStatus
+  message: string | null
 }
 
-const SOURCE_BADGE_CONFIG = {
-  weight_edit: { label: "weight", className: "bg-blue-500/20 text-blue-400" },
-  leverage_change: {
-    label: "leverage",
-    className: "bg-purple-500/20 text-purple-400",
-  },
-  manual: { label: "manual", className: "bg-gray-500/20 text-gray-400" },
-} as const
+interface StagedChangesPanelProps {
+  stagedTrades?: StagedTrade[]
+  initialTotalNotional?: number
+  targetNotional?: number
+  initialCrossAccountLeverage?: number | null
+  crossAccountLeverage?: number
+  onRebalance?: () => void
+  isRebalancing?: boolean
+  disableSubmit?: boolean
+  onClearAll?: () => void
+}
 
-const MOCK_TRADES: MockStagedTrade[] = [
-  {
-    id: "1",
-    underlying: "BTC/USDC",
-    side: "buy",
-    notional: 2500,
-    previousWeight: 0.25,
-    newWeight: 0.3,
-    source: "weight_edit",
-  },
-  {
-    id: "2",
-    underlying: "ETH/USDC",
-    side: "sell",
-    notional: 1500,
-    previousWeight: 0.2,
-    newWeight: 0.15,
-    source: "leverage_change",
-  },
-  {
-    id: "3",
-    underlying: "SOL/USDC",
-    side: "buy",
-    notional: 800,
-    source: "manual",
-  },
-]
+// Grid template for staged-change rows:
+// [0] Side badge (6ch) | [1] Symbol (~JELLYJELLY width + padding) | [2] Weight change (auto) | [3] Notional (≈ "$2000.00")
+const STAGED_ROW_GRID_TEMPLATE =
+  "grid grid-cols-[6ch_13ch_auto_8ch] items-center px-2 py-1.5 border-b border-border/30 text-[10px]"
 
-export const StagedChangesPanel = () => {
-  const stagedTrades = MOCK_TRADES
+const formatUnsignedPct = (weightFraction: number): string =>
+  `${(weightFraction * 100).toFixed(2)}%`
+
+const formatUsdPrecise = (value: number): string => `$${value.toFixed(2)}`
+
+// Minimum notional change to show an arrow in the notional preview.
+// Difference between initial and target notional arises because
+// initial total notional is rounded to 2 decimal places while target
+// is computed from accountValue * leverage separately.
+const NOTIONAL_EPSILON_USD = 0.1
+
+export const StagedChangesPanel = ({
+  stagedTrades: stagedTradesProp,
+  initialTotalNotional,
+  targetNotional,
+  initialCrossAccountLeverage,
+  crossAccountLeverage,
+  onRebalance,
+  isRebalancing = false,
+  disableSubmit = false,
+  onClearAll,
+}: StagedChangesPanelProps) => {
+  const stagedTrades = stagedTradesProp ?? []
   const hasStaged = stagedTrades.length > 0
+  const shouldShowNotionalArrow =
+    initialTotalNotional !== undefined &&
+    targetNotional !== undefined &&
+    Math.abs(targetNotional - initialTotalNotional) >= NOTIONAL_EPSILON_USD
+  const initialLeverage = initialCrossAccountLeverage
+  const currentLeverage = crossAccountLeverage
+  const shouldShowLeverageArrow =
+    initialLeverage !== null &&
+    currentLeverage !== undefined &&
+    initialLeverage !== currentLeverage
 
   return (
     <div className="flex-1 border border-border rounded flex flex-col min-w-0">
       <div className="px-2 py-1.5 bg-muted/30 flex items-center justify-between border-b border-border">
         <div className="flex items-center gap-2">
           <span className="font-medium">STAGED CHANGES</span>
-          <kbd className="px-1.5 py-0.5 text-[10px] font-mono bg-muted rounded">
-            4
-          </kbd>
         </div>
-        {hasStaged && (
+        {hasStaged && onClearAll && (
           <button
             type="button"
             className="text-muted-foreground hover:text-destructive text-[10px]"
+            onClick={() => {
+              onClearAll()
+            }}
           >
             Clear all
           </button>
         )}
       </div>
 
-      {/* Header / leverage summary */}
-      <div className="px-2 py-1.5 border-b border-border flex items-center justify-between text-[10px]">
-        <div className="flex items-center gap-2">
-          <span className="text-muted-foreground">Leverage</span>
-          <span className="font-mono">TODO 1.25x → 1.40x</span>
-        </div>
-        <Button size="sm" className="h-6 px-2 text-[10px] gap-1">
-          <Send className="h-3 w-3" />
-          Rebalance
-        </Button>
-      </div>
-
       {!hasStaged ? (
-        <div className="px-2 py-3 text-muted-foreground text-center text-[10px]">
+        <div className="px-2 py-3 text-muted-foreground text-center text-[10px] h-full">
           No pending trades. Edit weights or adjust leverage to stage trades.
         </div>
       ) : (
-        <div className="max-h-[180px] overflow-auto scrollbar-hide">
+        <div className="overflow-auto scrollbar-hide h-full">
           {stagedTrades.map(stagedTrade => {
-            const sourceConfig = SOURCE_BADGE_CONFIG[stagedTrade.source]
+            const baseSymbol =
+              stagedTrade.underlying.split("/")[0] ?? stagedTrade.underlying
+
+            const prevWeight = stagedTrade.previousWeight ?? 0
+            const nextWeight = stagedTrade.newWeight ?? prevWeight
+            const weightDelta = nextWeight - prevWeight
+
+            const arrow = weightDelta > 0 ? "↑" : weightDelta < 0 ? "↓" : "→"
+            const deltaClass =
+              weightDelta > 0
+                ? "text-emerald-500"
+                : weightDelta < 0
+                  ? "text-rose-500"
+                  : "text-muted-foreground"
+
             return (
               <div
                 key={stagedTrade.id}
-                className="flex items-center px-2 py-1.5 border-b border-border/30"
+                className={twMerge(
+                  STAGED_ROW_GRID_TEMPLATE,
+                  (stagedTrade.status === "working" ||
+                    stagedTrade.status === "deleted") &&
+                    isRebalancing &&
+                    "bg-yellow-500/10 border-yellow-500/40",
+                  stagedTrade.status === "failed" &&
+                    "bg-red-500/5 border-red-500/40",
+                )}
               >
                 <span
                   className={twMerge(
                     clsx(
-                      "text-[10px] font-medium px-1.5 py-0.5 rounded",
+                      "text-[10px] font-medium px-1 py-0.5 rounded w-[5ch] text-center",
                       stagedTrade.side === "buy"
                         ? "bg-green-500/20 text-green-500"
                         : "bg-red-500/20 text-red-500",
@@ -113,52 +135,110 @@ export const StagedChangesPanel = () => {
                 >
                   {stagedTrade.side === "buy" ? "BUY" : "SELL"}
                 </span>
-                <span className="flex-1 px-2 truncate font-medium text-[11px]">
-                  {stagedTrade.underlying}
+                <span className="px-1 truncate font-medium text-[11px] text-left">
+                  {baseSymbol}
                 </span>
-                {stagedTrade.previousWeight !== undefined &&
-                  stagedTrade.newWeight !== undefined && (
-                    <span className="text-[9px] text-muted-foreground font-mono mr-2">
-                      {formatPct(stagedTrade.previousWeight)} →{" "}
-                      {formatPct(stagedTrade.newWeight)}
-                    </span>
-                  )}
-                <span className="text-muted-foreground font-mono text-[10px]">
-                  {formatUsd(stagedTrade.notional)}
-                </span>
-                <span
+                <div
                   className={twMerge(
-                    "text-[9px] font-medium ml-2 px-1.5 py-0.5 rounded",
-                    sourceConfig.className,
+                    "font-mono mr-2 justify-self-center grid grid-cols-[max-content_2ch_max-content] items-baseline gap-x-1",
+                    deltaClass,
                   )}
                 >
-                  {sourceConfig.label}
+                  <span className="w-[6ch] text-right">
+                    {formatUnsignedPct(prevWeight)}
+                  </span>
+                  <span className="w-[2ch] text-center">{arrow}</span>
+                  <span className="w-[6ch] text-right">
+                    {formatUnsignedPct(nextWeight)}
+                  </span>
+                </div>
+                <span className="font-mono text-muted-foreground justify-self-end w-full text-right">
+                  {formatUsdPrecise(stagedTrade.notional)}
                 </span>
+                {stagedTrade.status === "failed" &&
+                  stagedTrade.message !== null && (
+                    <span className="ml-2 text-[9px] text-red-400 truncate max-w-[140px]">
+                      {stagedTrade.message}
+                    </span>
+                  )}
               </div>
             )
           })}
         </div>
       )}
 
-      {/* Simple impact preview */}
-      <div className="px-2 py-1.5 border-t border-border/30 bg-muted/20">
-        <div className="text-[10px] text-muted-foreground font-medium mb-1">
-          IMPACT PREVIEW
-        </div>
-        <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[10px]">
-          <div className="flex justify-between">
-            <span className="text-muted-foreground">Notional</span>
-            <span className="font-mono">
-              TODO $50,000 → <span className="text-green-500">$52,300</span>
-            </span>
+      {/* Impact preview + primary rebalance action pinned to bottom */}
+      <div className="px-2 py-1.5 border-t border-border/30 bg-muted/20 space-y-2">
+        <div>
+          <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[10px]">
+            <div className="flex justify-between flex-col">
+              <span className="text-muted-foreground">Notional</span>
+              <span className="font-mono">
+                {initialTotalNotional !== undefined &&
+                targetNotional !== undefined ? (
+                  shouldShowNotionalArrow ? (
+                    <>
+                      {formatUsdPrecise(initialTotalNotional)}{" "}
+                      <span className="text-muted-foreground">→</span>{" "}
+                      <span
+                        className={
+                          targetNotional >= initialTotalNotional
+                            ? "text-green-500"
+                            : "text-red-500"
+                        }
+                      >
+                        {formatUsdPrecise(targetNotional)}
+                      </span>
+                    </>
+                  ) : (
+                    formatUsdPrecise(targetNotional)
+                  )
+                ) : (
+                  "TODO"
+                )}
+              </span>
+            </div>
+            <div className="flex justify-between flex-col">
+              <span className="text-muted-foreground">Leverage</span>
+              <span className="font-mono">
+                {crossAccountLeverage !== undefined ? (
+                  shouldShowLeverageArrow ? (
+                    <>
+                      {initialLeverage?.toFixed(2)}x{" "}
+                      <span className="text-muted-foreground">→</span>{" "}
+                      <span className="text-yellow-500">
+                        {currentLeverage.toFixed(2)}x
+                      </span>
+                    </>
+                  ) : (
+                    `${crossAccountLeverage.toFixed(2)}x`
+                  )
+                ) : (
+                  "TODO"
+                )}
+              </span>
+            </div>
           </div>
-          <div className="flex justify-between">
-            <span className="text-muted-foreground">Leverage</span>
-            <span className="font-mono">
-              TODO 1.25x → <span className="text-yellow-500">1.40x</span>
-            </span>
-          </div>
         </div>
+        <Button
+          size="sm"
+          className="w-full h-8 text-[11px] gap-1"
+          onClick={() => {
+            if (!onRebalance || !hasStaged || disableSubmit || isRebalancing) {
+              return
+            }
+            onRebalance()
+          }}
+          disabled={
+            !onRebalance || disableSubmit || isRebalancing || !hasStaged
+          }
+          aria-disabled={
+            !onRebalance || disableSubmit || isRebalancing || !hasStaged
+          }
+        >
+          <Send className="h-3 w-3" />
+          {isRebalancing ? "Sending..." : "Rebalance"}
+        </Button>
       </div>
     </div>
   )

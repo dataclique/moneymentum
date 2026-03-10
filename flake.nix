@@ -206,7 +206,6 @@
           };
         };
         packages = {
-          devenv-up = devShell.config.procfileScript;
           default = rustPkgs.package;
           moneymentum = rustPkgs.package;
           moneymentum-clippy = rustPkgs.clippy;

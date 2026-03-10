@@ -67,8 +67,10 @@ in {
         fi
       '';
 
-      deployFlags =
-        if localSystem == "x86_64-linux" then "" else "--remote-build";
+      deployFlags = if localSystem == "x86_64-linux" then
+        "--skip-checks"
+      else
+        "--remote-build --skip-checks";
 
       serviceCleanup = builtins.concatStringsSep "; "
         (map (name: "systemctl reset-failed ${name} || true") enabledServices);

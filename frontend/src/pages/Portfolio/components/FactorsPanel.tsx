@@ -1,145 +1,149 @@
+import { For, Show } from "solid-js"
 import { clsx } from "clsx"
 import { twMerge } from "tailwind-merge"
 import { Skeleton } from "@/components/ui/skeleton"
 
 interface FactorExposure {
   name: string
-  value: string // should be a number or decimal in future
+  value: string
 }
 
 interface FactorAttribution {
   factor: string
-  contribution: string // should be a number or decimal in future
+  contribution: string
 }
 
 interface ConcentrationMetric {
   metric: string
-  value: string // should be a number or decimal in future
+  value: string
 }
 
-const mockExposures: FactorExposure[] = [
-  { name: "β to SPY", value: "TODO" },
-  { name: "Momentum", value: "TODO" },
-  { name: "Carry", value: "TODO" },
-  { name: "Volatility", value: "TODO" },
+const PLACEHOLDER = "--"
+
+const defaultExposures: FactorExposure[] = [
+  { name: "B to SPY", value: PLACEHOLDER },
+  { name: "Momentum", value: PLACEHOLDER },
+  { name: "Carry", value: PLACEHOLDER },
+  { name: "Volatility", value: PLACEHOLDER },
 ]
 
-const mockAttribution: FactorAttribution[] = [
-  { factor: "β to BTC", contribution: "TODO" },
-  { factor: "β to SPY", contribution: "TODO" },
-  { factor: "Momentum", contribution: "TODO" },
-  { factor: "Carry", contribution: "TODO" },
-  { factor: "Volatility", contribution: "TODO" },
-  { factor: "Idiosyncratic", contribution: "TODO" },
+const defaultAttribution: FactorAttribution[] = [
+  { factor: "B to BTC", contribution: PLACEHOLDER },
+  { factor: "B to SPY", contribution: PLACEHOLDER },
+  { factor: "Momentum", contribution: PLACEHOLDER },
+  { factor: "Carry", contribution: PLACEHOLDER },
+  { factor: "Volatility", contribution: PLACEHOLDER },
+  { factor: "Idiosyncratic", contribution: PLACEHOLDER },
 ]
 
-const mockConcentration: ConcentrationMetric[] = [
-  { metric: "Top Position", value: "TODO" },
-  { metric: "Top 3 Positions", value: "TODO" },
-  { metric: "Top 5 Positions", value: "TODO" },
-  { metric: "Herfindahl Index", value: "TODO" },
-  { metric: "Effective Positions", value: "TODO" },
+const defaultConcentration: ConcentrationMetric[] = [
+  { metric: "Top Position", value: PLACEHOLDER },
+  { metric: "Top 3 Positions", value: PLACEHOLDER },
+  { metric: "Top 5 Positions", value: PLACEHOLDER },
+  { metric: "Herfindahl Index", value: PLACEHOLDER },
+  { metric: "Effective Positions", value: PLACEHOLDER },
 ]
 
 interface FactorsPanelProps {
   beta: number | null
   isBetaLoading: boolean
+  exposures?: FactorExposure[]
+  attribution?: FactorAttribution[]
+  concentration?: ConcentrationMetric[]
 }
 
-export const FactorsPanel = ({ beta, isBetaLoading }: FactorsPanelProps) => {
+export const FactorsPanel = (props: FactorsPanelProps) => {
+  const exposures = () => props.exposures ?? defaultExposures
+  const attribution = () => props.attribution ?? defaultAttribution
+  const concentration = () => props.concentration ?? defaultConcentration
+
   return (
-    <div className="shrink-0 border border-border rounded flex flex-col min-w-[25%] relative">
-      <div className="px-2 py-1 border-b border-border bg-muted/30 font-medium flex items-center justify-between">
+    <div class="shrink-0 border border-border rounded flex flex-col min-w-[25%] relative">
+      <div class="px-2 py-1 border-b border-border bg-muted/30 font-medium flex items-center justify-between">
         <span>FACTORS</span>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            className="text-muted-foreground hover:text-foreground"
-            title="Configure factors (f)"
-          >
-            {/* TODO: factor config button */}
-          </button>
-          <kbd className="px-1.5 py-0.5 text-[10px] font-mono bg-muted rounded">
-            f
-          </kbd>
-        </div>
+        <kbd class="px-1.5 py-0.5 text-[10px] font-mono bg-muted rounded">
+          f
+        </kbd>
       </div>
-      <div className="flex-1 flex flex-col p-2 gap-3 overflow-auto scrollbar-hide">
+      <div class="flex-1 flex flex-col p-2 gap-3 overflow-auto scrollbar-hide">
         {/* Exposures */}
-        <div className="space-y-1.5">
-          <div className="text-[10px] text-muted-foreground font-medium">
+        <div class="space-y-1.5">
+          <div class="text-[10px] text-muted-foreground font-medium">
             Exposures
           </div>
-          <div className="flex items-center justify-between">
-            <span className="text-muted-foreground truncate">β to BTC</span>
-            <span className="font-mono">
-              {isBetaLoading ? (
-                <Skeleton className="inline-block h-3 w-10 align-middle" />
-              ) : beta !== null ? (
-                <span
-                  className={twMerge(
-                    clsx(
-                      beta > 0 && "text-green-500",
-                      beta < 0 && "text-red-500",
-                    ),
-                  )}
+          <div class="flex items-center justify-between">
+            <span class="text-muted-foreground truncate">B to BTC</span>
+            <span class="font-mono">
+              <Show
+                when={!props.isBetaLoading}
+                fallback={
+                  <Skeleton class="inline-block h-3 w-10 align-middle" />
+                }
+              >
+                <Show
+                  when={props.beta !== null}
+                  fallback={<span class="text-muted-foreground">--</span>}
                 >
-                  {beta >= 0 ? "+" : ""}
-                  {beta.toFixed(2)}
-                </span>
-              ) : (
-                <span className="text-muted-foreground">—</span>
-              )}
+                  <span
+                    class={twMerge(
+                      clsx(
+                        (props.beta ?? 0) > 0 && "text-green-500",
+                        (props.beta ?? 0) < 0 && "text-red-500",
+                      ),
+                    )}
+                  >
+                    {(props.beta ?? 0) >= 0 ? "+" : ""}
+                    {(props.beta ?? 0).toFixed(2)}
+                  </span>
+                </Show>
+              </Show>
             </span>
           </div>
-          {mockExposures.map(exposure => (
-            <div
-              key={exposure.name}
-              className="flex items-center justify-between"
-            >
-              <span className="text-muted-foreground truncate">
-                {exposure.name}
-              </span>
-              <span className="font-mono">{exposure.value}</span>
-            </div>
-          ))}
+          <For each={exposures()}>
+            {exposure => (
+              <div class="flex items-center justify-between">
+                <span class="text-muted-foreground truncate">
+                  {exposure.name}
+                </span>
+                <span class="font-mono">{exposure.value}</span>
+              </div>
+            )}
+          </For>
         </div>
 
         {/* Attribution */}
-        <div className="border-t border-border/50 pt-2">
-          <div className="text-[10px] text-muted-foreground font-medium mb-1.5">
+        <div class="border-t border-border/50 pt-2">
+          <div class="text-[10px] text-muted-foreground font-medium mb-1.5">
             Attribution
           </div>
-          {mockAttribution.map(attribution => (
-            <div
-              key={attribution.factor}
-              className="flex items-center justify-between mb-1"
-            >
-              <span className="text-muted-foreground truncate">
-                {attribution.factor}
-              </span>
-              <span className={twMerge(clsx("w-14 text-right font-mono"))}>
-                {attribution.contribution}
-              </span>
-            </div>
-          ))}
+          <For each={attribution()}>
+            {attribution => (
+              <div class="flex items-center justify-between mb-1">
+                <span class="text-muted-foreground truncate">
+                  {attribution.factor}
+                </span>
+                <span class={twMerge(clsx("w-14 text-right font-mono"))}>
+                  {attribution.contribution}
+                </span>
+              </div>
+            )}
+          </For>
         </div>
 
         {/* Concentration */}
-        <div className="border-t border-border/50 pt-2">
-          <div className="text-[10px] text-muted-foreground font-medium mb-1.5">
+        <div class="border-t border-border/50 pt-2">
+          <div class="text-[10px] text-muted-foreground font-medium mb-1.5">
             Concentration
           </div>
-          <div className="space-y-1">
-            {mockConcentration.map(metric => (
-              <div
-                key={metric.metric}
-                className="flex items-center justify-between"
-              >
-                <span className="text-muted-foreground">{metric.metric}</span>
-                <span className="font-mono">{metric.value}</span>
-              </div>
-            ))}
+          <div class="space-y-1">
+            <For each={concentration()}>
+              {metric => (
+                <div class="flex items-center justify-between">
+                  <span class="text-muted-foreground">{metric.metric}</span>
+                  <span class="font-mono">{metric.value}</span>
+                </div>
+              )}
+            </For>
           </div>
         </div>
       </div>

@@ -1,121 +1,155 @@
-import * as React from "react"
-import * as DialogPrimitive from "@radix-ui/react-dialog"
-import { X } from "lucide-react"
-import { clsx } from "clsx"
-import { twMerge } from "tailwind-merge"
+import type { Component, ComponentProps, JSX, ValidComponent } from "solid-js"
+import { splitProps } from "solid-js"
+
+import * as DialogPrimitive from "@kobalte/core/dialog"
+import type { PolymorphicProps } from "@kobalte/core/polymorphic"
+
+import { cn } from "@/lib/cn"
 
 const Dialog = DialogPrimitive.Root
-
 const DialogTrigger = DialogPrimitive.Trigger
 
-const DialogPortal = DialogPrimitive.Portal
+const DialogPortal: Component<DialogPrimitive.DialogPortalProps> = props => {
+  const [local, rest] = splitProps(props, ["children"])
+  return (
+    <DialogPrimitive.Portal {...rest}>
+      <div class="fixed inset-0 z-50 flex items-start justify-center sm:items-center">
+        {local.children}
+      </div>
+    </DialogPrimitive.Portal>
+  )
+}
 
-const DialogClose = DialogPrimitive.Close
+type DialogOverlayProps<T extends ValidComponent = "div"> =
+  DialogPrimitive.DialogOverlayProps<T> & { class?: string | undefined }
 
-const DialogOverlay = React.forwardRef<
-  React.ComponentRef<typeof DialogPrimitive.Overlay>,
-  React.ComponentPropsWithoutRef<typeof DialogPrimitive.Overlay>
->(({ className, ...props }, ref) => (
-  <DialogPrimitive.Overlay
-    ref={ref}
-    className={twMerge(
-      clsx(
-        "fixed inset-0 z-50 bg-black/80  data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
-        className,
-      ),
-    )}
-    {...props}
-  />
-))
-DialogOverlay.displayName = DialogPrimitive.Overlay.displayName
-
-const DialogContent = React.forwardRef<
-  React.ComponentRef<typeof DialogPrimitive.Content>,
-  React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content>
->(({ className, children, ...props }, ref) => (
-  <DialogPortal>
-    <DialogOverlay />
-    <DialogPrimitive.Content
-      ref={ref}
-      className={twMerge(
-        clsx(
-          "fixed left-[50%] top-[50%] z-50 grid w-full max-w-lg translate-x-[-50%] translate-y-[-50%] gap-4 border bg-background p-6 shadow-lg duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[state=closed]:slide-out-to-left-1/2 data-[state=closed]:slide-out-to-top-[48%] data-[state=open]:slide-in-from-left-1/2 data-[state=open]:slide-in-from-top-[48%] sm:rounded-lg",
-          className,
-        ),
+const DialogOverlay = <T extends ValidComponent = "div">(
+  props: PolymorphicProps<T, DialogOverlayProps<T>>,
+) => {
+  const [local, rest] = splitProps(props as DialogOverlayProps, ["class"])
+  return (
+    <DialogPrimitive.Overlay
+      class={cn(
+        "fixed inset-0 z-50 bg-black/80 data-[expanded]:animate-in data-[closed]:animate-out data-[closed]:fade-out-0 data-[expanded]:fade-in-0",
+        local.class,
       )}
-      {...props}
-    >
-      {children}
-      <DialogPrimitive.Close className="absolute right-4 top-4 rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none data-[state=open]:bg-accent data-[state=open]:text-muted-foreground">
-        <X className="h-4 w-4" />
-        <span className="sr-only">Close</span>
-      </DialogPrimitive.Close>
-    </DialogPrimitive.Content>
-  </DialogPortal>
-))
-DialogContent.displayName = DialogPrimitive.Content.displayName
+      {...rest}
+    />
+  )
+}
 
-const DialogHeader = ({
-  className,
-  ...props
-}: React.HTMLAttributes<HTMLDivElement>) => (
-  <div
-    className={twMerge(
-      clsx("flex flex-col space-y-1.5 text-center sm:text-left", className),
-    )}
-    {...props}
-  />
-)
-DialogHeader.displayName = "DialogHeader"
+type DialogContentProps<T extends ValidComponent = "div"> =
+  DialogPrimitive.DialogContentProps<T> & {
+    class?: string | undefined
+    children?: JSX.Element
+  }
 
-const DialogFooter = ({
-  className,
-  ...props
-}: React.HTMLAttributes<HTMLDivElement>) => (
-  <div
-    className={twMerge(
-      clsx(
+const DialogContent = <T extends ValidComponent = "div">(
+  props: PolymorphicProps<T, DialogContentProps<T>>,
+) => {
+  const [local, rest] = splitProps(props as DialogContentProps, [
+    "class",
+    "children",
+  ])
+  return (
+    <DialogPortal>
+      <DialogOverlay />
+      <DialogPrimitive.Content
+        class={cn(
+          "fixed left-1/2 top-1/2 z-50 grid max-h-screen w-full max-w-lg -translate-x-1/2 -translate-y-1/2 gap-4 overflow-y-auto border bg-background p-6 shadow-lg duration-200 data-[expanded]:animate-in data-[closed]:animate-out data-[closed]:fade-out-0 data-[expanded]:fade-in-0 data-[closed]:zoom-out-95 data-[expanded]:zoom-in-95 data-[closed]:slide-out-to-left-1/2 data-[closed]:slide-out-to-top-[48%] data-[expanded]:slide-in-from-left-1/2 data-[expanded]:slide-in-from-top-[48%] sm:rounded-lg",
+          local.class,
+        )}
+        {...rest}
+      >
+        {local.children}
+        <DialogPrimitive.CloseButton class="absolute right-4 top-4 rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none data-[expanded]:bg-accent data-[expanded]:text-muted-foreground">
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            class="size-4"
+            aria-hidden="true"
+          >
+            <path d="M18 6l-12 12" />
+            <path d="M6 6l12 12" />
+          </svg>
+          <span class="sr-only">Close</span>
+        </DialogPrimitive.CloseButton>
+      </DialogPrimitive.Content>
+    </DialogPortal>
+  )
+}
+
+const DialogHeader: Component<ComponentProps<"div">> = props => {
+  const [local, rest] = splitProps(props, ["class"])
+  return (
+    <div
+      class={cn(
+        "flex flex-col space-y-1.5 text-center sm:text-left",
+        local.class,
+      )}
+      {...rest}
+    />
+  )
+}
+
+const DialogFooter: Component<ComponentProps<"div">> = props => {
+  const [local, rest] = splitProps(props, ["class"])
+  return (
+    <div
+      class={cn(
         "flex flex-col-reverse sm:flex-row sm:justify-end sm:space-x-2",
-        className,
-      ),
-    )}
-    {...props}
-  />
-)
-DialogFooter.displayName = "DialogFooter"
+        local.class,
+      )}
+      {...rest}
+    />
+  )
+}
 
-const DialogTitle = React.forwardRef<
-  React.ComponentRef<typeof DialogPrimitive.Title>,
-  React.ComponentPropsWithoutRef<typeof DialogPrimitive.Title>
->(({ className, ...props }, ref) => (
-  <DialogPrimitive.Title
-    ref={ref}
-    className={twMerge(
-      clsx("text-lg font-semibold leading-none tracking-tight", className),
-    )}
-    {...props}
-  />
-))
-DialogTitle.displayName = DialogPrimitive.Title.displayName
+type DialogTitleProps<T extends ValidComponent = "h2"> =
+  DialogPrimitive.DialogTitleProps<T> & {
+    class?: string | undefined
+  }
 
-const DialogDescription = React.forwardRef<
-  React.ComponentRef<typeof DialogPrimitive.Description>,
-  React.ComponentPropsWithoutRef<typeof DialogPrimitive.Description>
->(({ className, ...props }, ref) => (
-  <DialogPrimitive.Description
-    ref={ref}
-    className={twMerge(clsx("text-sm text-muted-foreground", className))}
-    {...props}
-  />
-))
-DialogDescription.displayName = DialogPrimitive.Description.displayName
+const DialogTitle = <T extends ValidComponent = "h2">(
+  props: PolymorphicProps<T, DialogTitleProps<T>>,
+) => {
+  const [local, rest] = splitProps(props as DialogTitleProps, ["class"])
+  return (
+    <DialogPrimitive.Title
+      class={cn(
+        "text-lg font-semibold leading-none tracking-tight",
+        local.class,
+      )}
+      {...rest}
+    />
+  )
+}
+
+type DialogDescriptionProps<T extends ValidComponent = "p"> =
+  DialogPrimitive.DialogDescriptionProps<T> & {
+    class?: string | undefined
+  }
+
+const DialogDescription = <T extends ValidComponent = "p">(
+  props: PolymorphicProps<T, DialogDescriptionProps<T>>,
+) => {
+  const [local, rest] = splitProps(props as DialogDescriptionProps, ["class"])
+  return (
+    <DialogPrimitive.Description
+      class={cn("text-sm text-muted-foreground", local.class)}
+      {...rest}
+    />
+  )
+}
 
 export {
   Dialog,
-  DialogPortal,
-  DialogOverlay,
   DialogTrigger,
-  DialogClose,
   DialogContent,
   DialogHeader,
   DialogFooter,

@@ -1,13 +1,13 @@
+import { splitProps, type JSX } from "solid-js"
 import { twMerge } from "tailwind-merge"
 
-const Skeleton = ({
-  className,
-  ...props
-}: React.HTMLAttributes<HTMLDivElement>) => {
+const Skeleton = (props: JSX.HTMLAttributes<HTMLDivElement>) => {
+  const [local, rest] = splitProps(props, ["class"])
+
   return (
     <div
-      className={twMerge("animate-pulse rounded-md bg-primary/10", className)}
-      {...props}
+      class={twMerge("animate-pulse rounded-md bg-primary/10", local.class)}
+      {...rest}
     />
   )
 }

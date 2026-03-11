@@ -1,5 +1,5 @@
-import { twMerge } from "tailwind-merge"
-import { clsx } from "clsx"
+import { Show, For } from "solid-js"
+import { cn } from "@/lib/cn"
 import { PerformanceTab } from "./PerformanceTab"
 import { FactorsTab } from "./FactorsTab"
 import { RiskTab } from "./RiskTab"
@@ -39,83 +39,74 @@ interface AnalysisPanelProps {
   onTabChange: (tab: AnalysisTab) => void
 }
 
-export const AnalysisPanel = ({
-  backtestData,
-  drawdownData,
-  returnDistribution,
-  performanceStats,
-  factorExposures,
-  factorHistoricalReturns,
-  factorAttribution,
-  riskMetrics,
-  stressTests,
-  monteCarloData,
-  concentrationMetrics,
-  correlationMatrix,
-  correlationAssets,
-  hasStagedTrades,
-  activeTab,
-  onTabChange,
-}: AnalysisPanelProps) => {
+export const AnalysisPanel = (props: AnalysisPanelProps) => {
   return (
-    <div className="flex flex-col h-full">
-      <div className="flex items-center gap-1 px-2 py-1 border-b border-border shrink-0 bg-muted/30">
-        {(["performance", "factors", "risk"] as const).map(tab => (
-          <button
-            key={tab}
-            onClick={() => {
-              onTabChange(tab)
-            }}
-            className={twMerge(
-              clsx(
+    <div class="flex flex-col h-full">
+      <div
+        role="tablist"
+        class="flex items-center gap-1 px-2 py-1 border-b border-border shrink-0 bg-muted/30"
+      >
+        <For each={["performance", "factors", "risk"] as const}>
+          {tab => (
+            <button
+              type="button"
+              role="tab"
+              id={`tab-${tab}`}
+              aria-selected={props.activeTab === tab}
+              onClick={() => {
+                props.onTabChange(tab)
+              }}
+              class={cn(
                 "px-3 py-1 text-[10px] font-medium rounded transition-colors capitalize",
-                activeTab === tab
+                props.activeTab === tab
                   ? "bg-primary text-primary-foreground"
                   : "text-muted-foreground hover:bg-muted hover:text-foreground",
-              ),
-            )}
-          >
-            {tab}
-          </button>
-        ))}
-        <div className="flex-1" />
-        <div className="text-[9px] text-muted-foreground">
-          <kbd className="px-1 py-px bg-muted rounded font-mono">P</kbd>{" "}
-          Performance{" "}
-          <kbd className="px-1 py-px bg-muted rounded font-mono ml-1">F</kbd>{" "}
+              )}
+            >
+              {tab}
+            </button>
+          )}
+        </For>
+        <div class="flex-1" />
+        <div class="text-[9px] text-muted-foreground">
+          <kbd class="px-1 py-px bg-muted rounded font-mono">P</kbd> Performance{" "}
+          <kbd class="px-1 py-px bg-muted rounded font-mono ml-1">F</kbd>{" "}
           Factors{" "}
-          <kbd className="px-1 py-px bg-muted rounded font-mono ml-1">R</kbd>{" "}
-          Risk
+          <kbd class="px-1 py-px bg-muted rounded font-mono ml-1">R</kbd> Risk
         </div>
       </div>
 
-      <div className="flex-1 min-h-0 overflow-hidden">
-        {activeTab === "performance" && (
+      <div
+        role="tabpanel"
+        aria-labelledby={`tab-${props.activeTab}`}
+        class="flex-1 min-h-0 overflow-hidden"
+      >
+        <Show when={props.activeTab === "performance"}>
           <PerformanceTab
-            backtestData={backtestData}
-            drawdownData={drawdownData}
-            returnDistribution={returnDistribution}
-            performanceStats={performanceStats}
-            hasStagedTrades={hasStagedTrades}
+            backtestData={props.backtestData}
+            drawdownData={props.drawdownData}
+            returnDistribution={props.returnDistribution}
+            performanceStats={props.performanceStats}
+            hasStagedTrades={props.hasStagedTrades}
           />
-        )}
-        {activeTab === "factors" && (
+        </Show>
+        <Show when={props.activeTab === "factors"}>
           <FactorsTab
-            factorExposures={factorExposures}
-            factorHistoricalReturns={factorHistoricalReturns}
-            factorAttribution={factorAttribution}
+            factorExposures={props.factorExposures}
+            factorHistoricalReturns={props.factorHistoricalReturns}
+            factorAttribution={props.factorAttribution}
           />
-        )}
-        {activeTab === "risk" && (
+        </Show>
+        <Show when={props.activeTab === "risk"}>
           <RiskTab
-            riskMetrics={riskMetrics}
-            stressTests={stressTests}
-            monteCarloData={monteCarloData}
-            concentrationMetrics={concentrationMetrics}
-            correlationMatrix={correlationMatrix}
-            correlationAssets={correlationAssets}
+            riskMetrics={props.riskMetrics}
+            stressTests={props.stressTests}
+            monteCarloData={props.monteCarloData}
+            concentrationMetrics={props.concentrationMetrics}
+            correlationMatrix={props.correlationMatrix}
+            correlationAssets={props.correlationAssets}
           />
-        )}
+        </Show>
       </div>
     </div>
   )

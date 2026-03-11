@@ -1,9 +1,9 @@
-import { createContext } from "react"
+import { createContext, type Accessor } from "solid-js"
 
 type Theme = "dark" | "light" | "system"
 
 export type ThemeProviderState = {
-  theme: Theme
+  theme: Accessor<Theme>
   setTheme: (theme: Theme) => void
 }
 

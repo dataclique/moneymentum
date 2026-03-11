@@ -1,3 +1,5 @@
+import { For } from "solid-js"
+
 const mockRiskMetrics = {
   var95: "TODO",
   var99: "TODO",
@@ -60,122 +62,121 @@ const getCorrelationColor = (value: number): string => {
 
 export const RiskPanel = () => {
   return (
-    <div className="flex-1 border border-border rounded flex flex-col min-w-0">
-      <div className="px-2 py-1 border-b border-border bg-muted/30 font-medium">
+    <div class="flex-1 border border-border rounded flex flex-col min-w-0">
+      <div class="px-2 py-1 border-b border-border bg-muted/30 font-medium">
         RISK
       </div>
-      <div className="flex-1 flex flex-col p-2 gap-3 overflow-auto scrollbar-hide">
+      <div class="flex-1 flex flex-col p-2 gap-3 overflow-auto scrollbar-hide">
         {/* Top metrics */}
-        <div className="grid grid-cols-2 gap-x-4 gap-y-1">
-          <div className="flex justify-between">
-            <span className="text-muted-foreground">VaR 95%</span>
-            <span className="text-red-400 font-mono">
-              {mockRiskMetrics.var95}
-            </span>
+        <div class="grid grid-cols-2 gap-x-4 gap-y-1">
+          <div class="flex justify-between">
+            <span class="text-muted-foreground">VaR 95%</span>
+            <span class="text-red-400 font-mono">{mockRiskMetrics.var95}</span>
           </div>
-          <div className="flex justify-between">
-            <span className="text-muted-foreground">VaR 99%</span>
-            <span className="text-red-400 font-mono">
-              {mockRiskMetrics.var99}
-            </span>
+          <div class="flex justify-between">
+            <span class="text-muted-foreground">VaR 99%</span>
+            <span class="text-red-400 font-mono">{mockRiskMetrics.var99}</span>
           </div>
-          <div className="flex justify-between">
-            <span className="text-muted-foreground">Diversification</span>
-            <span className="font-mono">
+          <div class="flex justify-between">
+            <span class="text-muted-foreground">Diversification</span>
+            <span class="font-mono">
               {mockRiskMetrics.diversificationRatio}
             </span>
           </div>
-          <div className="flex justify-between">
-            <span className="text-muted-foreground">Effective Bets</span>
-            <span className="font-mono">{mockRiskMetrics.effectiveBets}</span>
+          <div class="flex justify-between">
+            <span class="text-muted-foreground">Effective Bets</span>
+            <span class="font-mono">{mockRiskMetrics.effectiveBets}</span>
           </div>
         </div>
 
         {/* Stress tests */}
-        <div className="border-t border-border/50 pt-2">
-          <div className="text-[10px] text-muted-foreground font-medium mb-1.5">
+        <div class="border-t border-border/50 pt-2">
+          <div class="text-[10px] text-muted-foreground font-medium mb-1.5">
             Stress Tests
           </div>
-          <div className="space-y-1">
-            {mockStressTests.map(stressTest => (
-              <div
-                key={stressTest.scenario}
-                className="flex items-center justify-between"
-              >
-                <span className="text-muted-foreground truncate">
-                  {stressTest.scenario}
-                </span>
-                <span className={"text-white-500 font-mono"}>
-                  {stressTest.portfolioImpact}
-                </span>
-              </div>
-            ))}
+          <div class="space-y-1">
+            <For each={mockStressTests}>
+              {stressTest => (
+                <div class="flex items-center justify-between">
+                  <span class="text-muted-foreground truncate">
+                    {stressTest.scenario}
+                  </span>
+                  <span class="text-white-500 font-mono">
+                    {stressTest.portfolioImpact}
+                  </span>
+                </div>
+              )}
+            </For>
           </div>
         </div>
 
         {/* Monte Carlo */}
-        <div className="border-t border-border/50 pt-2">
-          <div className="text-[10px] text-muted-foreground font-medium mb-1.5">
+        <div class="border-t border-border/50 pt-2">
+          <div class="text-[10px] text-muted-foreground font-medium mb-1.5">
             Monte Carlo (1 Year) TODO
           </div>
-          <div className="flex items-end gap-px h-12">
-            {mockMonteCarlo.map(monteCarloPoint => (
-              <div
-                key={monteCarloPoint.bucket}
-                className="flex-1"
-                style={{
-                  height: `${
-                    (monteCarloPoint.frequency / monteCarloMaxFreq) * 100
-                  }%`,
-                  backgroundColor:
-                    monteCarloPoint.bucket >= 0 ? "#22c55e" : "#ef4444",
-                }}
-              />
-            ))}
+          <div class="flex items-end gap-px h-12">
+            <For each={mockMonteCarlo}>
+              {monteCarloPoint => (
+                <div
+                  class="flex-1"
+                  style={{
+                    "height": `${
+                      (monteCarloPoint.frequency / monteCarloMaxFreq) * 100
+                    }%`,
+                    "background-color":
+                      monteCarloPoint.bucket >= 0 ? "#22c55e" : "#ef4444",
+                  }}
+                />
+              )}
+            </For>
           </div>
         </div>
 
         {/* Correlation heatmap */}
-        <div className="border-t border-border/50 pt-2">
-          <div className="text-[10px] text-muted-foreground font-medium mb-1.5">
+        <div class="border-t border-border/50 pt-2">
+          <div class="text-[10px] text-muted-foreground font-medium mb-1.5">
             Correlation TODO
           </div>
-          <table className="w-full">
+          <table class="w-full">
             <thead>
               <tr>
-                <th className="p-0.5"></th>
-                {correlationAssets.map(columnAsset => (
-                  <th
-                    key={columnAsset}
-                    className="p-0.5 text-[10px] text-muted-foreground font-medium text-center"
-                  >
-                    {columnAsset}
-                  </th>
-                ))}
+                <th class="p-0.5" />
+                <For each={correlationAssets}>
+                  {columnAsset => (
+                    <th class="p-0.5 text-[10px] text-muted-foreground font-medium text-center">
+                      {columnAsset}
+                    </th>
+                  )}
+                </For>
               </tr>
             </thead>
             <tbody>
-              {correlationAssets.map(rowAsset => (
-                <tr key={rowAsset}>
-                  <td className="p-0.5 text-[10px] text-muted-foreground font-medium">
-                    {rowAsset}
-                  </td>
-                  {correlationAssets.map(colAsset => {
-                    const corr = getCorrelation(rowAsset, colAsset)
-                    return (
-                      <td key={colAsset} className="p-0.5 text-center">
-                        <div
-                          className={`w-full h-4 flex items-center justify-center rounded text-[9px] font-mono ${getCorrelationColor(
-                            corr,
-                          )} ${rowAsset === colAsset ? "opacity-40" : ""}`}
-                        >
-                          {corr.toFixed(1)}
-                        </div>
-                      </td>
-                    )
-                  })}
-                </tr>
-              ))}
+              <For each={correlationAssets}>
+                {rowAsset => (
+                  <tr>
+                    <td class="p-0.5 text-[10px] text-muted-foreground font-medium">
+                      {rowAsset}
+                    </td>
+                    <For each={correlationAssets}>
+                      {colAsset => {
+                        const corr = getCorrelation(rowAsset, colAsset)
+                        return (
+                          <td class="p-0.5 text-center">
+                            <div
+                              class={`w-full h-4 flex items-center justify-center rounded text-[9px] font-mono ${getCorrelationColor(
+                                corr,
+                              )} ${rowAsset === colAsset ? "opacity-40" : ""}`}
+                            >
+                              {corr.toFixed(1)}
+                            </div>
+                          </td>
+                        )
+                      }}
+                    </For>
+                  </tr>
+                )}
+              </For>
             </tbody>
           </table>
         </div>

@@ -1,4 +1,4 @@
-import { useContext } from "react"
+import { useContext } from "solid-js"
 import { ThemeProviderContext } from "@/contexts/theme-context"
 
 export const useTheme = () => {

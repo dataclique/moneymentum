@@ -1,17 +1,15 @@
-import { useEffect, type DependencyList } from "react"
+import { createEffect, onCleanup } from "solid-js"
 import { createKeyboardHandler, type KeyBinding } from "../utils/keyboard"
 
 const useGlobalKeyboard = (
-  bindings: KeyBinding[],
-  deps: DependencyList,
+  bindings: () => KeyBinding[],
   options?: {
     ignoreInputs?: boolean
   },
 ) => {
-  // useEffect justified: Global keyboard shortcuts must listen on window/document
-  // since they work regardless of which element has focus. Cannot use component-level onKeyDown.
-  useEffect(() => {
+  createEffect(() => {
     const ignoreInputs = options?.ignoreInputs !== false
+    const currentBindings = bindings()
 
     const handler = (event: KeyboardEvent) => {
       if (ignoreInputs) {
@@ -22,15 +20,14 @@ const useGlobalKeyboard = (
           return
         }
       }
-      createKeyboardHandler(bindings)(event)
+      createKeyboardHandler(currentBindings)(event)
     }
 
     window.addEventListener("keydown", handler)
-    return () => {
+    onCleanup(() => {
       window.removeEventListener("keydown", handler)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, deps)
+    })
+  })
 }
 
 export { useGlobalKeyboard }

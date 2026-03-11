@@ -1,4 +1,4 @@
-import { useContext } from "react"
+import { useContext } from "solid-js"
 import { WalletContext } from "@/contexts/wallet-context"
 
 export const useWallet = () => {

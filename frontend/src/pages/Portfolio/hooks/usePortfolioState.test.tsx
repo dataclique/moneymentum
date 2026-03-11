@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
-import { renderHook, waitFor, act } from "@testing-library/react"
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import React from "react"
+import { renderHook, waitFor } from "@solidjs/testing-library"
+import { QueryClient, QueryClientProvider } from "@tanstack/solid-query"
+import type { ParentProps } from "solid-js"
 import { MIN_USD, usePortfolioState } from "./usePortfolioState"
 import {
   useHyperliquidAccountSummary,
@@ -48,9 +48,9 @@ vi.mock("@/hooks/useNetwork", () => ({
 // Mock useWallet hook
 vi.mock("@/hooks/useWallet", () => ({
   useWallet: vi.fn(() => ({
-    networkMode: "testnet",
+    networkMode: () => "testnet",
     credentials: null,
-    isConnected: false,
+    isConnected: () => false,
   })),
 }))
 
@@ -65,8 +65,10 @@ const createWrapper = () => {
       },
     },
   })
-  return ({ children }: { children: React.ReactNode }) => (
-    <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+  return (props: ParentProps) => (
+    <QueryClientProvider client={queryClient}>
+      {props.children}
+    </QueryClientProvider>
   )
 }
 
@@ -133,192 +135,253 @@ describe("usePortfolioState", () => {
 
   describe("initial state", () => {
     it("returns empty selectedTokens when no stored data", () => {
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(
+        () =>
+          usePortfolioState(
+            () => false,
+            () => false,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
-      expect(result.current.selectedTokens).toEqual([])
-      expect(result.current.activeTokens).toEqual([])
+      expect(result.selectedTokens).toEqual([])
+      expect(result.activeTokens).toEqual([])
     })
 
     it("returns disableSubmit true when no tokens selected", () => {
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(
+        () =>
+          usePortfolioState(
+            () => false,
+            () => false,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
-      expect(result.current.disableSubmit).toBe(true)
+      expect(result.disableSubmit).toBe(true)
     })
 
     it("returns zero netExposure when no tokens", () => {
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(
+        () =>
+          usePortfolioState(
+            () => false,
+            () => false,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
-      expect(result.current.netExposure).toBe(0)
+      expect(result.netExposure).toBe(0)
     })
   })
 
   describe("handleAddToken", () => {
     it("adds a new token with default values", async () => {
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(
+        () =>
+          usePortfolioState(
+            () => false,
+            () => false,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
-      await act(async () => {
-        result.current.handleAddToken("BTC/USDC:USDC")
-      })
+      result.handleAddToken("BTC/USDC:USDC")
 
-      expect(result.current.selectedTokens).toHaveLength(1)
-      expect(result.current.selectedTokens[0].symbol).toBe("BTC/USDC:USDC")
-      expect(result.current.selectedTokens[0].side).toBe("buy")
-      expect(result.current.selectedTokens[0].leverage).toBe(50) // Defaults to max leverage
-      expect(result.current.selectedTokens[0].status).toBe("idle")
+      expect(result.selectedTokens).toHaveLength(1)
+      expect(result.selectedTokens[0].symbol).toBe("BTC/USDC:USDC")
+      expect(result.selectedTokens[0].side).toBe("buy")
+      expect(result.selectedTokens[0].leverage).toBe(50) // Defaults to max leverage
+      expect(result.selectedTokens[0].status).toBe("idle")
     })
 
     it("does not add duplicate tokens", async () => {
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(
+        () =>
+          usePortfolioState(
+            () => false,
+            () => false,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
-      await act(async () => {
-        result.current.handleAddToken("BTC/USDC:USDC")
-      })
+      result.handleAddToken("BTC/USDC:USDC")
 
-      await act(async () => {
-        result.current.handleAddToken("BTC/USDC:USDC")
-      })
+      result.handleAddToken("BTC/USDC:USDC")
 
-      expect(result.current.selectedTokens).toHaveLength(1)
+      expect(result.selectedTokens).toHaveLength(1)
     })
   })
 
   describe("handleRemoveToken", () => {
     it("removes token that was not in initial portfolio", async () => {
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(
+        () =>
+          usePortfolioState(
+            () => false,
+            () => false,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
-      await act(async () => {
-        result.current.handleAddToken("BTC/USDC:USDC")
-      })
+      result.handleAddToken("BTC/USDC:USDC")
 
-      expect(result.current.selectedTokens).toHaveLength(1)
+      expect(result.selectedTokens).toHaveLength(1)
 
-      await act(async () => {
-        result.current.handleRemoveToken("BTC/USDC:USDC")
-      })
+      result.handleRemoveToken("BTC/USDC:USDC")
 
-      expect(result.current.selectedTokens).toHaveLength(0)
+      expect(result.selectedTokens).toHaveLength(0)
     })
   })
 
   describe("handleSideChange", () => {
     it("changes token side from buy to sell", async () => {
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(
+        () =>
+          usePortfolioState(
+            () => false,
+            () => false,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
-      await act(async () => {
-        result.current.handleAddToken("BTC/USDC:USDC")
-      })
+      result.handleAddToken("BTC/USDC:USDC")
 
-      expect(result.current.selectedTokens[0].side).toBe("buy")
+      expect(result.selectedTokens[0].side).toBe("buy")
 
-      await act(async () => {
-        result.current.handleSideChange("BTC/USDC:USDC", "sell")
-      })
+      result.handleSideChange("BTC/USDC:USDC", "sell")
 
-      expect(result.current.selectedTokens[0].side).toBe("sell")
+      expect(result.selectedTokens[0].side).toBe("sell")
     })
   })
 
   describe("handleLeverageChange", () => {
     it("changes token leverage within limits", async () => {
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(
+        () =>
+          usePortfolioState(
+            () => false,
+            () => false,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
-      await act(async () => {
-        result.current.handleAddToken("BTC/USDC:USDC")
-      })
+      result.handleAddToken("BTC/USDC:USDC")
 
-      expect(result.current.selectedTokens[0].leverage).toBe(50) // Defaults to max leverage
+      expect(result.selectedTokens[0].leverage).toBe(50) // Defaults to max leverage
 
-      await act(async () => {
-        result.current.handleLeverageChange("BTC/USDC:USDC", 5)
-      })
+      result.handleLeverageChange("BTC/USDC:USDC", 5)
 
-      expect(result.current.selectedTokens[0].leverage).toBe(5)
+      expect(result.selectedTokens[0].leverage).toBe(5)
     })
 
     it("clamps leverage to minimum of 1", async () => {
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(
+        () =>
+          usePortfolioState(
+            () => false,
+            () => false,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
-      await act(async () => {
-        result.current.handleAddToken("BTC/USDC:USDC")
-      })
+      result.handleAddToken("BTC/USDC:USDC")
 
-      await act(async () => {
-        result.current.handleLeverageChange("BTC/USDC:USDC", 0)
-      })
+      result.handleLeverageChange("BTC/USDC:USDC", 0)
 
-      expect(result.current.selectedTokens[0].leverage).toBe(1)
+      expect(result.selectedTokens[0].leverage).toBe(1)
     })
   })
 
   describe("netExposure calculation", () => {
     it("calculates positive exposure for long positions", async () => {
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(
+        () =>
+          usePortfolioState(
+            () => false,
+            () => false,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
-      await act(async () => {
-        result.current.handleAddToken("BTC/USDC:USDC")
-      })
+      result.handleAddToken("BTC/USDC:USDC")
 
       // Token should be added with buy side
-      expect(result.current.selectedTokens[0].side).toBe("buy")
-      expect(result.current.netExposure).toBeGreaterThan(0)
+      expect(result.selectedTokens[0].side).toBe("buy")
+      expect(result.netExposure).toBeGreaterThan(0)
     })
 
     it("calculates negative exposure for short positions", async () => {
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(
+        () =>
+          usePortfolioState(
+            () => false,
+            () => false,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
-      await act(async () => {
-        result.current.handleAddToken("BTC/USDC:USDC")
-      })
+      result.handleAddToken("BTC/USDC:USDC")
 
-      await act(async () => {
-        result.current.handleSideChange("BTC/USDC:USDC", "sell")
-      })
+      result.handleSideChange("BTC/USDC:USDC", "sell")
 
-      expect(result.current.netExposure).toBeLessThan(0)
+      expect(result.netExposure).toBeLessThan(0)
     })
   })
 
   describe("remainingPercent", () => {
     it("returns 100 when no tokens are allocated", () => {
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(
+        () =>
+          usePortfolioState(
+            () => false,
+            () => false,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
-      expect(result.current.remainingPercent).toBe(100)
+      expect(result.remainingPercent).toBe(100)
     })
   })
 
   describe("localStorage persistence", () => {
     it("persists tokens to localStorage", async () => {
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(
+        () =>
+          usePortfolioState(
+            () => false,
+            () => false,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
-      await act(async () => {
-        result.current.handleAddToken("BTC/USDC:USDC")
-      })
+      result.handleAddToken("BTC/USDC:USDC")
 
       // Wait for localStorage to be updated
       await waitFor(() => {
@@ -333,13 +396,18 @@ describe("usePortfolioState", () => {
     })
 
     it("persists crossAccountLeverage to localStorage when leverage changes", async () => {
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(
+        () =>
+          usePortfolioState(
+            () => false,
+            () => false,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
-      await act(async () => {
-        result.current.handleCrossAccountLeverageChange(2.5)
-      })
+      result.handleCrossAccountLeverageChange(2.5)
 
       await waitFor(() => {
         const stored = localStorage.getItem(STORAGE_KEY)
@@ -350,21 +418,22 @@ describe("usePortfolioState", () => {
     })
 
     it("persists token modifications to localStorage", async () => {
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(
+        () =>
+          usePortfolioState(
+            () => false,
+            () => false,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
-      await act(async () => {
-        result.current.handleAddToken("BTC/USDC:USDC")
-      })
+      result.handleAddToken("BTC/USDC:USDC")
 
-      await act(async () => {
-        result.current.handleSideChange("BTC/USDC:USDC", "sell")
-      })
+      result.handleSideChange("BTC/USDC:USDC", "sell")
 
-      await act(async () => {
-        result.current.handleLeverageChange("BTC/USDC:USDC", 5)
-      })
+      result.handleLeverageChange("BTC/USDC:USDC", 5)
 
       await waitFor(() => {
         const stored = localStorage.getItem(STORAGE_KEY)
@@ -377,23 +446,26 @@ describe("usePortfolioState", () => {
 
   describe("activeTokens filtering", () => {
     it("excludes deleted tokens from activeTokens", async () => {
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(
+        () =>
+          usePortfolioState(
+            () => false,
+            () => false,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
-      await act(async () => {
-        result.current.handleAddToken("BTC/USDC:USDC")
-      })
+      result.handleAddToken("BTC/USDC:USDC")
 
-      expect(result.current.activeTokens).toHaveLength(1)
+      expect(result.activeTokens).toHaveLength(1)
 
-      await act(async () => {
-        result.current.handleRemoveToken("BTC/USDC:USDC")
-      })
+      result.handleRemoveToken("BTC/USDC:USDC")
 
       // Token was not in initial portfolio so it gets removed completely
-      expect(result.current.activeTokens).toHaveLength(0)
-      expect(result.current.selectedTokens).toHaveLength(0)
+      expect(result.activeTokens).toHaveLength(0)
+      expect(result.selectedTokens).toHaveLength(0)
     })
   })
 
@@ -409,20 +481,23 @@ describe("usePortfolioState", () => {
         isLoading: false,
       } as ReturnType<typeof useHyperliquidAccountSummary>)
 
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(
+        () =>
+          usePortfolioState(
+            () => false,
+            () => false,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
-      await act(async () => {
-        result.current.handleAddToken("BTC/USDC:USDC")
-      })
+      result.handleAddToken("BTC/USDC:USDC")
 
-      await act(async () => {
-        result.current.handleWeightChange("BTC/USDC:USDC", 100)
-      })
+      result.handleWeightChange("BTC/USDC:USDC", 100)
 
       await waitFor(() => {
-        expect(result.current.blockingReasons).toEqual([])
+        expect(result.blockingReasons).toEqual([])
       })
     })
   })
@@ -444,28 +519,31 @@ describe("usePortfolioState", () => {
         isLoading: false,
       } as unknown as ReturnType<typeof useHyperliquidPositions>)
 
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(
+        () =>
+          usePortfolioState(
+            () => false,
+            () => false,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
       await waitFor(() => {
-        expect(result.current.accountValue).toBe(1000)
+        expect(result.accountValue).toBe(1000)
       })
 
       // With empty positions, leverage is set to 0. Set it explicitly to 1.
-      await act(async () => {
-        result.current.handleCrossAccountLeverageChange(1)
-      })
+      result.handleCrossAccountLeverageChange(1)
 
       // accountValue = 1000, crossAccountLeverage = 1, targetNotional = 1000
-      expect(result.current.displayNotional).toBe(1000)
+      expect(result.displayNotional).toBe(1000)
 
-      await act(async () => {
-        result.current.handleCrossAccountLeverageChange(2)
-      })
+      result.handleCrossAccountLeverageChange(2)
 
       // targetNotional = 1000 * 2 = 2000
-      expect(result.current.displayNotional).toBe(2000)
+      expect(result.displayNotional).toBe(2000)
     })
 
     it("returns 0 when no account value and no tokens", async () => {
@@ -479,12 +557,19 @@ describe("usePortfolioState", () => {
         isLoading: false,
       } as ReturnType<typeof useHyperliquidAccountSummary>)
 
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(
+        () =>
+          usePortfolioState(
+            () => false,
+            () => false,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
       // No accountValue and no tokens
-      expect(result.current.displayNotional).toBe(0)
+      expect(result.displayNotional).toBe(0)
     })
 
     it("uses minimum required notional when totalNotional is zero but tokens exist", async () => {
@@ -498,17 +583,22 @@ describe("usePortfolioState", () => {
         isLoading: false,
       } as ReturnType<typeof useHyperliquidAccountSummary>)
 
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(
+        () =>
+          usePortfolioState(
+            () => false,
+            () => false,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
-      await act(async () => {
-        result.current.handleAddToken("BTC/USDC:USDC")
-      })
+      result.handleAddToken("BTC/USDC:USDC")
 
       // displayNotional should fall back to MIN_USD when totalNotional is 0
       await waitFor(() => {
-        expect(result.current.displayNotional).toBeGreaterThanOrEqual(MIN_USD)
+        expect(result.displayNotional).toBeGreaterThanOrEqual(MIN_USD)
       })
     })
   })
@@ -532,19 +622,26 @@ describe("usePortfolioState", () => {
         }),
       )
 
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(
+        () =>
+          usePortfolioState(
+            () => false,
+            () => false,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
       await waitFor(() => {
-        expect(result.current.selectedTokens).toHaveLength(1)
+        expect(result.selectedTokens).toHaveLength(1)
         // Tokens from localStorage (no exchange data to compare) should be "idle" so they can be rebalanced
-        expect(result.current.selectedTokens[0].status).toBe("idle")
+        expect(result.selectedTokens[0].status).toBe("idle")
       })
-      expect(result.current.selectedTokens[0].symbol).toBe("BTC/USDC:USDC")
+      expect(result.selectedTokens[0].symbol).toBe("BTC/USDC:USDC")
       // Tokens from localStorage (no exchange data to compare) should be "idle" so they can be rebalanced
-      expect(result.current.selectedTokens[0].status).toBe("idle")
-      expect(result.current.selectedTokens[0].leverage).toBe(2)
+      expect(result.selectedTokens[0].status).toBe("idle")
+      expect(result.selectedTokens[0].leverage).toBe(2)
     })
 
     it("sets default leverage of 1 when not specified in stored data", async () => {
@@ -564,14 +661,21 @@ describe("usePortfolioState", () => {
         }),
       )
 
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(
+        () =>
+          usePortfolioState(
+            () => false,
+            () => false,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
       await waitFor(() => {
-        expect(result.current.selectedTokens).toHaveLength(1)
+        expect(result.selectedTokens).toHaveLength(1)
       })
-      expect(result.current.selectedTokens[0].leverage).toBe(1)
+      expect(result.selectedTokens[0].leverage).toBe(1)
     })
   })
 
@@ -587,12 +691,19 @@ describe("usePortfolioState", () => {
         isLoading: false,
       } as ReturnType<typeof useHyperliquidAccountSummary>)
 
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(
+        () =>
+          usePortfolioState(
+            () => false,
+            () => false,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
       await waitFor(() => {
-        expect(result.current.accountValue).toBe(2000)
+        expect(result.accountValue).toBe(2000)
       })
     })
   })
@@ -615,15 +726,22 @@ describe("usePortfolioState", () => {
         isLoading: false,
       } as unknown as ReturnType<typeof useHyperliquidPositions>)
 
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(
+        () =>
+          usePortfolioState(
+            () => false,
+            () => false,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
       await waitFor(() => {
-        expect(result.current.selectedTokens).toHaveLength(1)
+        expect(result.selectedTokens).toHaveLength(1)
       })
-      expect(result.current.selectedTokens[0].symbol).toBe("SOL/USDC:USDC")
-      expect(result.current.selectedTokens[0].notional).toBe(400)
+      expect(result.selectedTokens[0].symbol).toBe("SOL/USDC:USDC")
+      expect(result.selectedTokens[0].notional).toBe(400)
     })
 
     it("sets initialPortfolio when loading from exchange", async () => {
@@ -643,15 +761,22 @@ describe("usePortfolioState", () => {
         isLoading: false,
       } as unknown as ReturnType<typeof useHyperliquidPositions>)
 
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(
+        () =>
+          usePortfolioState(
+            () => false,
+            () => false,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
       await waitFor(() => {
-        expect(result.current.selectedTokens).toHaveLength(1)
+        expect(result.selectedTokens).toHaveLength(1)
       })
       // The token should have status untouched since initialPortfolio is set
-      expect(result.current.selectedTokens[0].status).toBe("untouched")
+      expect(result.selectedTokens[0].status).toBe("untouched")
     })
   })
 
@@ -673,16 +798,23 @@ describe("usePortfolioState", () => {
         isLoading: false,
       } as unknown as ReturnType<typeof useHyperliquidPositions>)
 
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(
+        () =>
+          usePortfolioState(
+            () => false,
+            () => false,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
       await waitFor(() => {
-        expect(result.current.selectedTokens).toHaveLength(1)
+        expect(result.selectedTokens).toHaveLength(1)
       })
 
       // Initially should be untouched when loaded from exchange
-      expect(result.current.selectedTokens[0].status).toBe("untouched")
+      expect(result.selectedTokens[0].status).toBe("untouched")
     })
 
     it("preserves token side when changed", async () => {
@@ -702,21 +834,26 @@ describe("usePortfolioState", () => {
         isLoading: false,
       } as unknown as ReturnType<typeof useHyperliquidPositions>)
 
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(
+        () =>
+          usePortfolioState(
+            () => false,
+            () => false,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
       await waitFor(() => {
-        expect(result.current.selectedTokens).toHaveLength(1)
+        expect(result.selectedTokens).toHaveLength(1)
       })
 
-      expect(result.current.selectedTokens[0].side).toBe("buy")
+      expect(result.selectedTokens[0].side).toBe("buy")
 
-      await act(async () => {
-        result.current.handleSideChange("BTC/USDC:USDC", "sell")
-      })
+      result.handleSideChange("BTC/USDC:USDC", "sell")
 
-      expect(result.current.selectedTokens[0].side).toBe("sell")
+      expect(result.selectedTokens[0].side).toBe("sell")
     })
 
     it("preserves token leverage when changed", async () => {
@@ -736,21 +873,26 @@ describe("usePortfolioState", () => {
         isLoading: false,
       } as unknown as ReturnType<typeof useHyperliquidPositions>)
 
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(
+        () =>
+          usePortfolioState(
+            () => false,
+            () => false,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
       await waitFor(() => {
-        expect(result.current.selectedTokens).toHaveLength(1)
+        expect(result.selectedTokens).toHaveLength(1)
       })
 
-      expect(result.current.selectedTokens[0].leverage).toBe(2)
+      expect(result.selectedTokens[0].leverage).toBe(2)
 
-      await act(async () => {
-        result.current.handleLeverageChange("BTC/USDC:USDC", 5)
-      })
+      result.handleLeverageChange("BTC/USDC:USDC", 5)
 
-      expect(result.current.selectedTokens[0].leverage).toBe(5)
+      expect(result.selectedTokens[0].leverage).toBe(5)
     })
 
     it("adds new token with idle status", async () => {
@@ -760,15 +902,20 @@ describe("usePortfolioState", () => {
         isLoading: false,
       } as unknown as ReturnType<typeof useHyperliquidPositions>)
 
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(
+        () =>
+          usePortfolioState(
+            () => false,
+            () => false,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
-      await act(async () => {
-        result.current.handleAddToken("NEW/USDC:USDC")
-      })
+      result.handleAddToken("NEW/USDC:USDC")
 
-      expect(result.current.selectedTokens[0].status).toBe("idle")
+      expect(result.selectedTokens[0].status).toBe("idle")
     })
   })
 
@@ -784,29 +931,30 @@ describe("usePortfolioState", () => {
         isLoading: false,
       } as ReturnType<typeof useHyperliquidAccountSummary>)
 
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(
+        () =>
+          usePortfolioState(
+            () => false,
+            () => false,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
-      await act(async () => {
-        result.current.handleAddToken("BTC/USDC:USDC")
-      })
+      result.handleAddToken("BTC/USDC:USDC")
 
       // With empty positions, leverage is 0, token gets MIN_USD = 11, percentage = 100%
       // When leverage increases: percentage stays fixed, notional scales with targetNotional
-      const initialPercentage = result.current.selectedTokens[0].percentage
+      const initialPercentage = result.selectedTokens[0].percentage
 
-      await act(async () => {
-        result.current.handleCrossAccountLeverageChange(2)
-      })
+      result.handleCrossAccountLeverageChange(2)
 
       await waitFor(() => {
         // Percentage stays fixed, notional = (percentage/100) * targetNotional
         // targetNotional = 1000 * 2 = 2000, so for 100% token: notional = 2000
-        expect(result.current.selectedTokens[0].percentage).toBe(
-          initialPercentage,
-        )
-        const newNotional = result.current.selectedTokens[0].notional ?? 0
+        expect(result.selectedTokens[0].percentage).toBe(initialPercentage)
+        const newNotional = result.selectedTokens[0].notional ?? 0
         const expectedNotional = (initialPercentage / 100) * 2000 // targetNotional at 2x
         expect(newNotional).toBeCloseTo(expectedNotional, 0)
       })
@@ -823,19 +971,22 @@ describe("usePortfolioState", () => {
         isLoading: false,
       } as ReturnType<typeof useHyperliquidAccountSummary>)
 
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(
+        () =>
+          usePortfolioState(
+            () => false,
+            () => false,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
-      await act(async () => {
-        result.current.handleAddToken("BTC/USDC:USDC")
-      })
+      result.handleAddToken("BTC/USDC:USDC")
 
       // MIN_USD is 11, so min percentage = (11/1000)*100 = 1.1%
       await waitFor(() => {
-        expect(
-          result.current.selectedTokens[0].percentage,
-        ).toBeGreaterThanOrEqual(1.1)
+        expect(result.selectedTokens[0].percentage).toBeGreaterThanOrEqual(1.1)
       })
     })
   })
@@ -858,22 +1009,27 @@ describe("usePortfolioState", () => {
         isLoading: false,
       } as unknown as ReturnType<typeof useHyperliquidPositions>)
 
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(
+        () =>
+          usePortfolioState(
+            () => false,
+            () => false,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
       await waitFor(() => {
-        expect(result.current.selectedTokens).toHaveLength(1)
+        expect(result.selectedTokens).toHaveLength(1)
       })
 
-      await act(async () => {
-        result.current.handleRemoveToken("BTC/USDC:USDC")
-      })
+      result.handleRemoveToken("BTC/USDC:USDC")
 
       // Should be marked as deleted, not removed
-      expect(result.current.selectedTokens).toHaveLength(1)
-      expect(result.current.selectedTokens[0].status).toBe("deleted")
-      expect(result.current.selectedTokens[0].percentage).toBe(0)
+      expect(result.selectedTokens).toHaveLength(1)
+      expect(result.selectedTokens[0].status).toBe("deleted")
+      expect(result.selectedTokens[0].percentage).toBe(0)
     })
 
     it("removes token completely when it was not in initialPortfolio", async () => {
@@ -883,22 +1039,25 @@ describe("usePortfolioState", () => {
         isLoading: false,
       } as unknown as ReturnType<typeof useHyperliquidPositions>)
 
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(
+        () =>
+          usePortfolioState(
+            () => false,
+            () => false,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
-      await act(async () => {
-        result.current.handleAddToken("NEW/USDC:USDC")
-      })
+      result.handleAddToken("NEW/USDC:USDC")
 
-      expect(result.current.selectedTokens).toHaveLength(1)
+      expect(result.selectedTokens).toHaveLength(1)
 
-      await act(async () => {
-        result.current.handleRemoveToken("NEW/USDC:USDC")
-      })
+      result.handleRemoveToken("NEW/USDC:USDC")
 
       // Should be completely removed
-      expect(result.current.selectedTokens).toHaveLength(0)
+      expect(result.selectedTokens).toHaveLength(0)
     })
 
     it("marks token as deleted when loaded from localStorage with notional (exchange position)", async () => {
@@ -937,22 +1096,27 @@ describe("usePortfolioState", () => {
         }),
       )
 
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(
+        () =>
+          usePortfolioState(
+            () => false,
+            () => false,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
       await waitFor(() => {
-        expect(result.current.selectedTokens).toHaveLength(1)
+        expect(result.selectedTokens).toHaveLength(1)
       })
 
-      await act(async () => {
-        result.current.handleRemoveToken("ASTER/USDC:USDC")
-      })
+      result.handleRemoveToken("ASTER/USDC:USDC")
 
       // initialPortfolio had ASTER from exchange -> token marked as deleted (not removed)
-      expect(result.current.selectedTokens).toHaveLength(1)
-      expect(result.current.selectedTokens[0].status).toBe("deleted")
-      expect(result.current.selectedTokens[0].percentage).toBe(0)
+      expect(result.selectedTokens).toHaveLength(1)
+      expect(result.selectedTokens[0].status).toBe("deleted")
+      expect(result.selectedTokens[0].percentage).toBe(0)
     })
 
     it("completely removes token from localStorage without notional (no exchange position)", async () => {
@@ -981,20 +1145,25 @@ describe("usePortfolioState", () => {
         }),
       )
 
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(
+        () =>
+          usePortfolioState(
+            () => false,
+            () => false,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
       await waitFor(() => {
-        expect(result.current.selectedTokens).toHaveLength(1)
+        expect(result.selectedTokens).toHaveLength(1)
       })
 
-      await act(async () => {
-        result.current.handleRemoveToken("NEW/USDC:USDC")
-      })
+      result.handleRemoveToken("NEW/USDC:USDC")
 
       // Should be completely removed since it doesn't exist on exchange
-      expect(result.current.selectedTokens).toHaveLength(0)
+      expect(result.selectedTokens).toHaveLength(0)
     })
   })
 
@@ -1016,30 +1185,31 @@ describe("usePortfolioState", () => {
         isLoading: false,
       } as unknown as ReturnType<typeof useHyperliquidPositions>)
 
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(
+        () =>
+          usePortfolioState(
+            () => false,
+            () => false,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
       await waitFor(() => {
-        expect(result.current.selectedTokens).toHaveLength(1)
+        expect(result.selectedTokens).toHaveLength(1)
       })
 
-      const originalPercentage = result.current.selectedTokens[0].percentage
+      const originalPercentage = result.selectedTokens[0].percentage
 
-      await act(async () => {
-        result.current.handleRemoveToken("BTC/USDC:USDC")
-      })
+      result.handleRemoveToken("BTC/USDC:USDC")
 
-      expect(result.current.selectedTokens[0].status).toBe("deleted")
+      expect(result.selectedTokens[0].status).toBe("deleted")
 
-      await act(async () => {
-        result.current.handleUndoRemoveToken("BTC/USDC:USDC")
-      })
+      result.handleUndoRemoveToken("BTC/USDC:USDC")
 
-      expect(result.current.selectedTokens[0].status).toBe("untouched")
-      expect(result.current.selectedTokens[0].percentage).toBe(
-        originalPercentage,
-      )
+      expect(result.selectedTokens[0].status).toBe("untouched")
+      expect(result.selectedTokens[0].percentage).toBe(originalPercentage)
     })
   })
 
@@ -1061,21 +1231,26 @@ describe("usePortfolioState", () => {
         isLoading: false,
       } as unknown as ReturnType<typeof useHyperliquidPositions>)
 
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(
+        () =>
+          usePortfolioState(
+            () => false,
+            () => false,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
       await waitFor(() => {
-        expect(result.current.selectedTokens).toHaveLength(1)
+        expect(result.selectedTokens).toHaveLength(1)
       })
 
-      expect(result.current.hasPendingDeletions).toBe(false)
+      expect(result.hasPendingDeletions).toBe(false)
 
-      await act(async () => {
-        result.current.handleRemoveToken("BTC/USDC:USDC")
-      })
+      result.handleRemoveToken("BTC/USDC:USDC")
 
-      expect(result.current.hasPendingDeletions).toBe(true)
+      expect(result.hasPendingDeletions).toBe(true)
     })
   })
 
@@ -1097,23 +1272,28 @@ describe("usePortfolioState", () => {
         isLoading: false,
       } as unknown as ReturnType<typeof useHyperliquidPositions>)
 
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(
+        () =>
+          usePortfolioState(
+            () => false,
+            () => false,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
       await waitFor(() => {
-        expect(result.current.selectedTokens).toHaveLength(1)
+        expect(result.selectedTokens).toHaveLength(1)
       })
 
-      expect(result.current.selectedTokens[0].status).toBe("untouched")
-      expect(result.current.selectedTokens[0].side).toBe("buy")
+      expect(result.selectedTokens[0].status).toBe("untouched")
+      expect(result.selectedTokens[0].side).toBe("buy")
 
-      await act(async () => {
-        result.current.handleSideChange("BTC/USDC:USDC", "sell")
-      })
+      result.handleSideChange("BTC/USDC:USDC", "sell")
 
       await waitFor(() => {
-        expect(result.current.selectedTokens[0].status).toBe("modified")
+        expect(result.selectedTokens[0].status).toBe("modified")
       })
     })
 
@@ -1134,23 +1314,28 @@ describe("usePortfolioState", () => {
         isLoading: false,
       } as unknown as ReturnType<typeof useHyperliquidPositions>)
 
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(
+        () =>
+          usePortfolioState(
+            () => false,
+            () => false,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
       await waitFor(() => {
-        expect(result.current.selectedTokens).toHaveLength(1)
+        expect(result.selectedTokens).toHaveLength(1)
       })
 
-      expect(result.current.selectedTokens[0].status).toBe("untouched")
-      expect(result.current.selectedTokens[0].leverage).toBe(2)
+      expect(result.selectedTokens[0].status).toBe("untouched")
+      expect(result.selectedTokens[0].leverage).toBe(2)
 
-      await act(async () => {
-        result.current.handleLeverageChange("BTC/USDC:USDC", 5)
-      })
+      result.handleLeverageChange("BTC/USDC:USDC", 5)
 
       await waitFor(() => {
-        expect(result.current.selectedTokens[0].status).toBe("modified")
+        expect(result.selectedTokens[0].status).toBe("modified")
       })
     })
 
@@ -1171,23 +1356,28 @@ describe("usePortfolioState", () => {
         isLoading: false,
       } as unknown as ReturnType<typeof useHyperliquidPositions>)
 
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(
+        () =>
+          usePortfolioState(
+            () => false,
+            () => false,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
       await waitFor(() => {
-        expect(result.current.selectedTokens).toHaveLength(1)
+        expect(result.selectedTokens).toHaveLength(1)
       })
 
-      await act(async () => {
-        result.current.handleRemoveToken("BTC/USDC:USDC")
-      })
+      result.handleRemoveToken("BTC/USDC:USDC")
 
-      expect(result.current.selectedTokens[0].status).toBe("deleted")
+      expect(result.selectedTokens[0].status).toBe("deleted")
 
       // Status should remain deleted even though values differ from initial
       await waitFor(() => {
-        expect(result.current.selectedTokens[0].status).toBe("deleted")
+        expect(result.selectedTokens[0].status).toBe("deleted")
       })
     })
   })
@@ -1230,15 +1420,22 @@ describe("usePortfolioState", () => {
         isLoading: false,
       } as unknown as ReturnType<typeof useHyperliquidPositions>)
 
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(
+        () =>
+          usePortfolioState(
+            () => false,
+            () => false,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
       // Should have BOTH localStorage token AND exchange position
       await waitFor(() => {
-        expect(result.current.selectedTokens).toHaveLength(2)
+        expect(result.selectedTokens).toHaveLength(2)
       })
-      const symbols = result.current.selectedTokens.map(t => t.symbol)
+      const symbols = result.selectedTokens.map(t => t.symbol)
       expect(symbols).toContain("ETH/USDC:USDC")
       expect(symbols).toContain("BTC/USDC:USDC")
     })
@@ -1280,15 +1477,22 @@ describe("usePortfolioState", () => {
         isLoading: false,
       } as unknown as ReturnType<typeof useHyperliquidPositions>)
 
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(
+        () =>
+          usePortfolioState(
+            () => false,
+            () => false,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
       await waitFor(() => {
-        expect(result.current.selectedTokens).toHaveLength(1)
+        expect(result.selectedTokens).toHaveLength(1)
       })
       // Should use localStorage values (user's customizations)
-      const btcToken = result.current.selectedTokens[0]
+      const btcToken = result.selectedTokens[0]
       expect(btcToken.side).toBe("sell")
       expect(btcToken.leverage).toBe(5)
     })
@@ -1320,13 +1524,20 @@ describe("usePortfolioState", () => {
         isLoading: false,
       } as unknown as ReturnType<typeof useHyperliquidPositions>)
 
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(
+        () =>
+          usePortfolioState(
+            () => false,
+            () => false,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
       // crossAccountLeverage = totalNotional / accountValue = 750 / 500 = 1.5
       await waitFor(() => {
-        expect(result.current.crossAccountLeverage).toBe(1.5)
+        expect(result.crossAccountLeverage).toBe(1.5)
       })
     })
   })
@@ -1349,16 +1560,21 @@ describe("usePortfolioState", () => {
         isLoading: false,
       } as ReturnType<typeof useHyperliquidAccountSummary>)
 
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(
+        () =>
+          usePortfolioState(
+            () => false,
+            () => false,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
-      await act(async () => {
-        result.current.handleAddToken("BTC/USDC:USDC")
-      })
+      result.handleAddToken("BTC/USDC:USDC")
 
       await waitFor(() => {
-        expect(result.current.selectedTokens[0].lockedUsd).toBe(MIN_USD)
+        expect(result.selectedTokens[0].lockedUsd).toBe(MIN_USD)
       })
     })
 
@@ -1379,16 +1595,23 @@ describe("usePortfolioState", () => {
         isLoading: false,
       } as unknown as ReturnType<typeof useHyperliquidPositions>)
 
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(
+        () =>
+          usePortfolioState(
+            () => false,
+            () => false,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
       await waitFor(() => {
-        expect(result.current.selectedTokens).toHaveLength(1)
+        expect(result.selectedTokens).toHaveLength(1)
       })
 
       // Should preserve the exchange notional, not bump to MIN_USD
-      expect(result.current.selectedTokens[0].notional).toBe(5)
+      expect(result.selectedTokens[0].notional).toBe(5)
     })
 
     it("does not enforce minimum on deleted tokens", async () => {
@@ -1408,21 +1631,26 @@ describe("usePortfolioState", () => {
         isLoading: false,
       } as unknown as ReturnType<typeof useHyperliquidPositions>)
 
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(
+        () =>
+          usePortfolioState(
+            () => false,
+            () => false,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
       await waitFor(() => {
-        expect(result.current.selectedTokens).toHaveLength(1)
+        expect(result.selectedTokens).toHaveLength(1)
       })
 
-      await act(async () => {
-        result.current.handleRemoveToken("BTC/USDC:USDC")
-      })
+      result.handleRemoveToken("BTC/USDC:USDC")
 
       // Deleted token should have percentage 0 and remain deleted
-      expect(result.current.selectedTokens[0].status).toBe("deleted")
-      expect(result.current.selectedTokens[0].percentage).toBe(0)
+      expect(result.selectedTokens[0].status).toBe("deleted")
+      expect(result.selectedTokens[0].percentage).toBe(0)
     })
   })
 
@@ -1443,13 +1671,20 @@ describe("usePortfolioState", () => {
         isLoading: false,
       } as unknown as ReturnType<typeof useHyperliquidPositions>)
 
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(
+        () =>
+          usePortfolioState(
+            () => false,
+            () => false,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
       // When positions are empty, totalNotional = 0, so calcLeverage(0, accountValue) = 0
       await waitFor(() => {
-        expect(result.current.crossAccountLeverage).toBe(0)
+        expect(result.crossAccountLeverage).toBe(0)
       })
     })
 
@@ -1480,13 +1715,20 @@ describe("usePortfolioState", () => {
         isLoading: false,
       } as unknown as ReturnType<typeof useHyperliquidPositions>)
 
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(
+        () =>
+          usePortfolioState(
+            () => false,
+            () => false,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
       // crossAccountLeverage = totalNotional / accountValue = 2000 / 1000 = 2
       await waitFor(() => {
-        expect(result.current.crossAccountLeverage).toBe(2)
+        expect(result.crossAccountLeverage).toBe(2)
       })
     })
 
@@ -1506,15 +1748,20 @@ describe("usePortfolioState", () => {
         isLoading: false,
       } as unknown as ReturnType<typeof useHyperliquidPositions>)
 
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(
+        () =>
+          usePortfolioState(
+            () => false,
+            () => false,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
-      await act(async () => {
-        result.current.handleCrossAccountLeverageChange(2.5)
-      })
+      result.handleCrossAccountLeverageChange(2.5)
 
-      expect(result.current.crossAccountLeverage).toBe(2.5)
+      expect(result.crossAccountLeverage).toBe(2.5)
     })
 
     it("clamps crossAccountLeverage to maximum of 5", async () => {
@@ -1533,15 +1780,20 @@ describe("usePortfolioState", () => {
         isLoading: false,
       } as unknown as ReturnType<typeof useHyperliquidPositions>)
 
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(
+        () =>
+          usePortfolioState(
+            () => false,
+            () => false,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
-      await act(async () => {
-        result.current.handleCrossAccountLeverageChange(10)
-      })
+      result.handleCrossAccountLeverageChange(10)
 
-      expect(result.current.crossAccountLeverage).toBe(5)
+      expect(result.crossAccountLeverage).toBe(5)
     })
 
     it("calculates totalNotional as accountValue * crossAccountLeverage", async () => {
@@ -1560,28 +1812,31 @@ describe("usePortfolioState", () => {
         isLoading: false,
       } as unknown as ReturnType<typeof useHyperliquidPositions>)
 
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(
+        () =>
+          usePortfolioState(
+            () => false,
+            () => false,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
       await waitFor(() => {
-        expect(result.current.accountValue).toBe(1000)
+        expect(result.accountValue).toBe(1000)
       })
 
       // With empty positions, leverage is 0; set to 1 first
-      await act(async () => {
-        result.current.handleCrossAccountLeverageChange(1)
-      })
+      result.handleCrossAccountLeverageChange(1)
 
       // With crossAccountLeverage = 1, targetNotional = 1000
-      expect(result.current.targetNotional).toBe(1000)
+      expect(result.targetNotional).toBe(1000)
 
-      await act(async () => {
-        result.current.handleCrossAccountLeverageChange(2.5)
-      })
+      result.handleCrossAccountLeverageChange(2.5)
 
       // With crossAccountLeverage = 2.5, targetNotional = 2500
-      expect(result.current.targetNotional).toBe(2500)
+      expect(result.targetNotional).toBe(2500)
     })
 
     it("persists crossAccountLeverage to localStorage", async () => {
@@ -1600,13 +1855,18 @@ describe("usePortfolioState", () => {
         isLoading: false,
       } as unknown as ReturnType<typeof useHyperliquidPositions>)
 
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(
+        () =>
+          usePortfolioState(
+            () => false,
+            () => false,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
-      await act(async () => {
-        result.current.handleCrossAccountLeverageChange(3)
-      })
+      result.handleCrossAccountLeverageChange(3)
 
       await waitFor(() => {
         const stored = localStorage.getItem(STORAGE_KEY)
@@ -1658,13 +1918,20 @@ describe("usePortfolioState", () => {
         }),
       )
 
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(
+        () =>
+          usePortfolioState(
+            () => false,
+            () => false,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
       // Should use exchange leverage (2.5), not localStorage (1.0)
       await waitFor(() => {
-        expect(result.current.crossAccountLeverage).toBe(2.5)
+        expect(result.crossAccountLeverage).toBe(2.5)
       })
     })
 
@@ -1684,38 +1951,39 @@ describe("usePortfolioState", () => {
         isLoading: false,
       } as unknown as ReturnType<typeof useHyperliquidPositions>)
 
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(
+        () =>
+          usePortfolioState(
+            () => false,
+            () => false,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
       await waitFor(() => {
-        expect(result.current.accountValue).toBe(1000)
+        expect(result.accountValue).toBe(1000)
       })
 
-      await act(async () => {
-        result.current.handleAddToken("BTC/USDC:USDC")
-      })
+      result.handleAddToken("BTC/USDC:USDC")
 
       // Set token to 50% allocation
-      await act(async () => {
-        result.current.handleWeightChange("BTC/USDC:USDC", 50)
-      })
+      result.handleWeightChange("BTC/USDC:USDC", 50)
 
       await waitFor(() => {
-        expect(result.current.selectedTokens[0].percentage).toBe(50)
+        expect(result.selectedTokens[0].percentage).toBe(50)
       })
 
       // Now increase leverage to 2
-      await act(async () => {
-        result.current.handleCrossAccountLeverageChange(2)
-      })
+      result.handleCrossAccountLeverageChange(2)
 
       // With percentage as source of truth, 50% stays as 50%
       // With crossAccountLeverage = 2, totalNotional = 2000
       // So the USD value is now 50% of 2000 = 1000 USD
       await waitFor(() => {
-        expect(result.current.totalNotional).toBe(1000)
-        expect(result.current.selectedTokens[0].percentage).toBe(50)
+        expect(result.totalNotional).toBe(1000)
+        expect(result.selectedTokens[0].percentage).toBe(50)
       })
     })
   })
@@ -1737,32 +2005,33 @@ describe("usePortfolioState", () => {
         isLoading: false,
       } as ReturnType<typeof useHyperliquidAccountSummary>)
 
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(
+        () =>
+          usePortfolioState(
+            () => false,
+            () => false,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
       // Add a token (gets MIN_USD = 11 initially)
-      await act(async () => {
-        result.current.handleAddToken("BTC/USDC:USDC")
-      })
+      result.handleAddToken("BTC/USDC:USDC")
 
       await waitFor(() => {
-        expect(result.current.selectedTokens).toHaveLength(1)
+        expect(result.selectedTokens).toHaveLength(1)
       })
 
       // Set leverage 0.5 so targetNotional = 200 * 0.5 = 100
-      await act(async () => {
-        result.current.handleCrossAccountLeverageChange(0.5)
-      })
+      result.handleCrossAccountLeverageChange(0.5)
 
       // Set weight to 11% so notional = 11% * 100 = 11 (MIN_USD)
-      await act(async () => {
-        result.current.handleWeightChange("BTC/USDC:USDC", 11)
-      })
+      result.handleWeightChange("BTC/USDC:USDC", 11)
 
       // With targetNotional 100 and 11% weight, lockedUsd = 11
-      expect(result.current.selectedTokens[0].lockedUsd).toBe(MIN_USD)
-      expect(result.current.selectedTokens[0].percentage).toBeCloseTo(11, 1)
+      expect(result.selectedTokens[0].lockedUsd).toBe(MIN_USD)
+      expect(result.selectedTokens[0].percentage).toBeCloseTo(11, 1)
     })
 
     it("derives percentage from notional when available", async () => {
@@ -1792,12 +2061,19 @@ describe("usePortfolioState", () => {
         isLoading: false,
       } as unknown as ReturnType<typeof useHyperliquidPositions>)
 
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(
+        () =>
+          usePortfolioState(
+            () => false,
+            () => false,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
       await waitFor(() => {
-        expect(result.current.selectedTokens).toHaveLength(1)
+        expect(result.selectedTokens).toHaveLength(1)
       })
 
       // crossAccountLeverage is initialized from exchange (0.5), but clamped to 0.1 (minimum)
@@ -1812,7 +2088,7 @@ describe("usePortfolioState", () => {
         // totalNotional = 500 * 0.5 = 250
         // percentage = (250 / 250) * 100 = 100%
         // But clamping rules: 0.1 min, 5 max, so 0.5 is valid
-        expect(result.current.selectedTokens[0].percentage).toBe(100)
+        expect(result.selectedTokens[0].percentage).toBe(100)
       })
     })
   })
@@ -1847,26 +2123,29 @@ describe("usePortfolioState", () => {
         isLoading: false,
       } as unknown as ReturnType<typeof useHyperliquidPositions>)
 
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(
+        () =>
+          usePortfolioState(
+            () => false,
+            () => false,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
       await waitFor(() => {
-        expect(result.current.selectedTokens).toHaveLength(1)
+        expect(result.selectedTokens).toHaveLength(1)
       })
 
       // Set leverage 1 so targetNotional = 1000
-      await act(async () => {
-        result.current.handleCrossAccountLeverageChange(1)
-      })
+      result.handleCrossAccountLeverageChange(1)
 
       // Adjust to 10.5% (target $105) - delta of $5 is below MIN_CHANGE_DELTA ($10)
-      await act(async () => {
-        result.current.handleWeightChange("BTC/USDC:USDC", 10.5)
-      })
+      result.handleWeightChange("BTC/USDC:USDC", 10.5)
 
       await waitFor(() => {
-        const token = result.current.selectedTokens[0]
+        const token = result.selectedTokens[0]
         expect(token.currentNotional).toBe(100)
         expect(token.targetNotional).toBeCloseTo(105, 0)
         expect(token.deltaInsufficient).toBe(true)
@@ -1900,26 +2179,29 @@ describe("usePortfolioState", () => {
         isLoading: false,
       } as unknown as ReturnType<typeof useHyperliquidPositions>)
 
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(
+        () =>
+          usePortfolioState(
+            () => false,
+            () => false,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
       await waitFor(() => {
-        expect(result.current.selectedTokens).toHaveLength(1)
+        expect(result.selectedTokens).toHaveLength(1)
       })
 
       // Set leverage 1 so targetNotional = 1000
-      await act(async () => {
-        result.current.handleCrossAccountLeverageChange(1)
-      })
+      result.handleCrossAccountLeverageChange(1)
 
       // Adjust to 12% (target $120) - delta of $20 meets MIN_ORDER_SIZE ($10)
-      await act(async () => {
-        result.current.handleWeightChange("BTC/USDC:USDC", 12)
-      })
+      result.handleWeightChange("BTC/USDC:USDC", 12)
 
       await waitFor(() => {
-        const token = result.current.selectedTokens[0]
+        const token = result.selectedTokens[0]
         expect(token.currentNotional).toBe(100)
         expect(token.targetNotional).toBeCloseTo(120, 0)
         expect(token.deltaInsufficient).toBe(false)
@@ -1942,18 +2224,23 @@ describe("usePortfolioState", () => {
         isLoading: false,
       } as unknown as ReturnType<typeof useHyperliquidPositions>)
 
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(
+        () =>
+          usePortfolioState(
+            () => false,
+            () => false,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
       // Add a new token (no existing position)
-      await act(async () => {
-        result.current.handleAddToken("NEW/USDC:USDC")
-      })
+      result.handleAddToken("NEW/USDC:USDC")
 
       await waitFor(() => {
-        expect(result.current.selectedTokens).toHaveLength(1)
-        const token = result.current.selectedTokens[0]
+        expect(result.selectedTokens).toHaveLength(1)
+        const token = result.selectedTokens[0]
         // New token has no currentNotional, so deltaInsufficient should be false
         expect(token.currentNotional).toBe(0)
         expect(token.deltaInsufficient).toBe(false)
@@ -1987,21 +2274,26 @@ describe("usePortfolioState", () => {
         isLoading: false,
       } as unknown as ReturnType<typeof useHyperliquidPositions>)
 
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(
+        () =>
+          usePortfolioState(
+            () => false,
+            () => false,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
       await waitFor(() => {
-        expect(result.current.selectedTokens).toHaveLength(1)
+        expect(result.selectedTokens).toHaveLength(1)
       })
 
       // Delete the token
-      await act(async () => {
-        result.current.handleRemoveToken("BTC/USDC:USDC")
-      })
+      result.handleRemoveToken("BTC/USDC:USDC")
 
       await waitFor(() => {
-        const token = result.current.selectedTokens[0]
+        const token = result.selectedTokens[0]
         expect(token.status).toBe("deleted")
         // Deleted tokens should not have deltaInsufficient set
         expect(token.deltaInsufficient).toBeUndefined()
@@ -2037,26 +2329,31 @@ describe("usePortfolioState", () => {
         isLoading: false,
       } as unknown as ReturnType<typeof useHyperliquidPositions>)
 
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(
+        () =>
+          usePortfolioState(
+            () => false,
+            () => false,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
       await waitFor(() => {
-        expect(result.current.selectedTokens).toHaveLength(1)
+        expect(result.selectedTokens).toHaveLength(1)
       })
 
       // Initial: notional 100, totalNotional 1000, percentage 10% => target 100
-      expect(result.current.selectedTokens[0].targetNotional).toBe(100)
-      expect(result.current.selectedTokens[0].deltaInsufficient).toBe(false)
+      expect(result.selectedTokens[0].targetNotional).toBe(100)
+      expect(result.selectedTokens[0].deltaInsufficient).toBe(false)
 
       // Change leverage to 2x => targetNotional becomes 2000
       // Percentage stays fixed (100%); targetNotional = 100% * 2000 = 2000
-      await act(async () => {
-        result.current.handleCrossAccountLeverageChange(2)
-      })
+      result.handleCrossAccountLeverageChange(2)
 
       await waitFor(() => {
-        const token = result.current.selectedTokens[0]
+        const token = result.selectedTokens[0]
         // Percentage fixed at 100%; targetNotional = 100% * 2000 = 2000
         expect(token.targetNotional).toBe(2000)
         expect(token.currentNotional).toBe(100)
@@ -2092,13 +2389,20 @@ describe("usePortfolioState", () => {
         isLoading: false,
       } as unknown as ReturnType<typeof useHyperliquidPositions>)
 
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(
+        () =>
+          usePortfolioState(
+            () => false,
+            () => false,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
       await waitFor(() => {
-        expect(result.current.selectedTokens).toHaveLength(1)
-        const token = result.current.selectedTokens[0]
+        expect(result.selectedTokens).toHaveLength(1)
+        const token = result.selectedTokens[0]
         // currentNotional should come from the exchange position
         expect(token.currentNotional).toBe(250)
         // targetNotional = (percentage / 100) * displayNotional
@@ -2134,28 +2438,27 @@ describe("usePortfolioState", () => {
         isLoading: false,
       } as unknown as ReturnType<typeof useHyperliquidPositions>)
 
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(
+        () =>
+          usePortfolioState(
+            () => false,
+            () => false,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
       // Add a token and set leverage first (empty positions => leverage 0)
-      await act(async () => {
-        result.current.handleAddToken("BTC/USDC:USDC")
-      })
+      result.handleAddToken("BTC/USDC:USDC")
 
-      await act(async () => {
-        result.current.handleCrossAccountLeverageChange(2)
-      })
+      result.handleCrossAccountLeverageChange(2)
 
       // Set percentage to 100% (required to avoid "sum below 100%" block)
-      await act(async () => {
-        result.current.handleWeightChange("BTC/USDC:USDC", 100)
-      })
+      result.handleWeightChange("BTC/USDC:USDC", 100)
 
       // Call handleOpenPositions
-      await act(async () => {
-        result.current.handleOpenPositions()
-      })
+      result.handleOpenPositions()
 
       // With 2x leverage, totalNotional = 2000
       // 100% of $2000 = $2000 USD
@@ -2192,21 +2495,22 @@ describe("usePortfolioState", () => {
         isLoading: false,
       } as ReturnType<typeof useHyperliquidAccountSummary>)
 
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(
+        () =>
+          usePortfolioState(
+            () => false,
+            () => false,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
-      await act(async () => {
-        result.current.handleAddToken("BTC/USDC:USDC")
-      })
+      result.handleAddToken("BTC/USDC:USDC")
 
-      await act(async () => {
-        result.current.handleWeightChange("BTC/USDC:USDC", 50)
-      })
+      result.handleWeightChange("BTC/USDC:USDC", 50)
 
-      await act(async () => {
-        result.current.handleOpenPositions()
-      })
+      result.handleOpenPositions()
 
       expect(mockMutate).not.toHaveBeenCalled()
     })
@@ -2228,13 +2532,18 @@ describe("usePortfolioState", () => {
         isLoading: false,
       } as ReturnType<typeof useHyperliquidAccountSummary>)
 
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(
+        () =>
+          usePortfolioState(
+            () => false,
+            () => false,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
-      await act(async () => {
-        result.current.handleOpenPositions()
-      })
+      result.handleOpenPositions()
 
       expect(mockMutate).not.toHaveBeenCalled()
     })
@@ -2261,21 +2570,22 @@ describe("usePortfolioState", () => {
         isLoading: false,
       } as unknown as ReturnType<typeof useHyperliquidPositions>)
 
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(
+        () =>
+          usePortfolioState(
+            () => false,
+            () => false,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
-      await act(async () => {
-        result.current.handleAddToken("BTC/USDC:USDC")
-      })
+      result.handleAddToken("BTC/USDC:USDC")
 
-      await act(async () => {
-        result.current.handleWeightChange("BTC/USDC:USDC", 50)
-      })
+      result.handleWeightChange("BTC/USDC:USDC", 50)
 
-      await act(async () => {
-        result.current.handleOpenPositions()
-      })
+      result.handleOpenPositions()
 
       expect(mockMutate).not.toHaveBeenCalled()
     })
@@ -2302,32 +2612,27 @@ describe("usePortfolioState", () => {
         isLoading: false,
       } as unknown as ReturnType<typeof useHyperliquidPositions>)
 
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(
+        () =>
+          usePortfolioState(
+            () => false,
+            () => false,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
-      await act(async () => {
-        result.current.handleAddToken("BTC/USDC:USDC")
-      })
+      result.handleAddToken("BTC/USDC:USDC")
 
-      await act(async () => {
-        result.current.handleCrossAccountLeverageChange(1)
-      })
+      result.handleCrossAccountLeverageChange(1)
 
       // Set 25% (should be converted to 0.25 for API); need ~100% total so add second token
-      await act(async () => {
-        result.current.handleAddToken("ETH/USDC:USDC")
-      })
-      await act(async () => {
-        result.current.handleWeightChange("BTC/USDC:USDC", 25)
-      })
-      await act(async () => {
-        result.current.handleWeightChange("ETH/USDC:USDC", 75)
-      })
+      result.handleAddToken("ETH/USDC:USDC")
+      result.handleWeightChange("BTC/USDC:USDC", 25)
+      result.handleWeightChange("ETH/USDC:USDC", 75)
 
-      await act(async () => {
-        result.current.handleOpenPositions()
-      })
+      result.handleOpenPositions()
 
       expect(mockMutate).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -2378,24 +2683,29 @@ describe("usePortfolioState", () => {
         isLoading: false,
       } as unknown as ReturnType<typeof useHyperliquidPositions>)
 
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(
+        () =>
+          usePortfolioState(
+            () => false,
+            () => false,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
       await waitFor(() => {
-        expect(result.current.selectedTokens).toHaveLength(1)
+        expect(result.selectedTokens).toHaveLength(1)
       })
 
       // Reduce leverage from 3x to 1x
-      await act(async () => {
-        result.current.handleCrossAccountLeverageChange(1)
-      })
+      result.handleCrossAccountLeverageChange(1)
 
       await waitFor(() => {
         // With 1x leverage on $100 account, target is $100
         // Current is $300, delta is $200 reduction (> MIN_ORDER_SIZE)
-        expect(result.current.totalNotional).toBe(100)
-        const token = result.current.selectedTokens[0]
+        expect(result.totalNotional).toBe(100)
+        const token = result.selectedTokens[0]
         // deltaInsufficient should be false since delta > MIN_ORDER_SIZE
         expect(token.deltaInsufficient).toBe(false)
       })
@@ -2432,26 +2742,29 @@ describe("usePortfolioState", () => {
         isLoading: false,
       } as unknown as ReturnType<typeof useHyperliquidPositions>)
 
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(
+        () =>
+          usePortfolioState(
+            () => false,
+            () => false,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
       await waitFor(() => {
-        expect(result.current.selectedTokens).toHaveLength(1)
+        expect(result.selectedTokens).toHaveLength(1)
       })
 
       // Set leverage 1 so targetNotional = 1000
-      await act(async () => {
-        result.current.handleCrossAccountLeverageChange(1)
-      })
+      result.handleCrossAccountLeverageChange(1)
 
       // Adjust to exactly 10% (target $100, delta of $5 from current $105)
-      await act(async () => {
-        result.current.handleWeightChange("BTC/USDC:USDC", 10)
-      })
+      result.handleWeightChange("BTC/USDC:USDC", 10)
 
       await waitFor(() => {
-        const token = result.current.selectedTokens[0]
+        const token = result.selectedTokens[0]
         // Delta is $5 (105 - 100), below MIN_ORDER_SIZE
         expect(token.deltaInsufficient).toBe(true)
       })
@@ -2479,21 +2792,24 @@ describe("usePortfolioState", () => {
         isLoading: false,
       } as unknown as ReturnType<typeof useHyperliquidPositions>)
 
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(
+        () =>
+          usePortfolioState(
+            () => false,
+            () => false,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
-      await act(async () => {
-        result.current.handleAddToken("BTC/USDC:USDC")
-      })
+      result.handleAddToken("BTC/USDC:USDC")
 
       // Try to set leverage to 10x, should be clamped to 3x
-      await act(async () => {
-        result.current.handleLeverageChange("BTC/USDC:USDC", 10)
-      })
+      result.handleLeverageChange("BTC/USDC:USDC", 10)
 
       await waitFor(() => {
-        const token = result.current.selectedTokens.find(
+        const token = result.selectedTokens.find(
           t => t.symbol === "BTC/USDC:USDC",
         )
         expect(token?.leverage).toBe(3) // Clamped to maxLeverage
@@ -2523,29 +2839,47 @@ describe("usePortfolioState", () => {
         isLoading: false,
       } as unknown as ReturnType<typeof useHyperliquidPositions>)
 
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(
+        () =>
+          usePortfolioState(
+            () => false,
+            () => false,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
-      expect(result.current.leverageLimitsMap["BTC/USDC:USDC"]).toBe(5)
-      expect(result.current.leverageLimitsMap["ETH/USDC:USDC"]).toBe(3)
+      expect(result.leverageLimitsMap["BTC/USDC:USDC"]).toBe(5)
+      expect(result.leverageLimitsMap["ETH/USDC:USDC"]).toBe(3)
     })
   })
 
   describe("precise mode", () => {
     it("accepts isPrecise parameter", () => {
       const { result: resultFalse } = renderHook(
-        () => usePortfolioState(false),
+        () =>
+          usePortfolioState(
+            () => false,
+            () => false,
+          ),
         {
           wrapper: createWrapper(),
         },
       )
-      const { result: resultTrue } = renderHook(() => usePortfolioState(true), {
-        wrapper: createWrapper(),
-      })
+      const { result: resultTrue } = renderHook(
+        () =>
+          usePortfolioState(
+            () => true,
+            () => false,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
-      expect(resultFalse.current).toBeDefined()
-      expect(resultTrue.current).toBeDefined()
+      expect(resultFalse).toBeDefined()
+      expect(resultTrue).toBeDefined()
     })
 
     it("when precise is OFF, shows error for positions with changes < $11 on submit", async () => {
@@ -2578,36 +2912,35 @@ describe("usePortfolioState", () => {
         isLoading: false,
       } as unknown as ReturnType<typeof useHyperliquidPositions>)
 
-      const { result } = renderHook(() => usePortfolioState(false, false), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(
+        () =>
+          usePortfolioState(
+            () => false,
+            () => false,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
       await waitFor(() => {
-        expect(result.current.selectedTokens).toHaveLength(2)
+        expect(result.selectedTokens).toHaveLength(2)
       })
 
-      await act(async () => {
-        result.current.handleCrossAccountLeverageChange(1)
-      })
+      result.handleCrossAccountLeverageChange(1)
 
-      await act(async () => {
-        result.current.handleWeightChange("BTC/USDC:USDC", 30.5)
-      })
-      await act(async () => {
-        result.current.handleWeightChange("ETH/USDC:USDC", 69.5)
-      })
+      result.handleWeightChange("BTC/USDC:USDC", 30.5)
+      result.handleWeightChange("ETH/USDC:USDC", 69.5)
 
       // Try to rebalance - should set error message instead of calling mutate
-      await act(async () => {
-        result.current.handleOpenPositions()
-      })
+      result.handleOpenPositions()
 
       // Should not call mutate (blocked by validation)
       expect(mockMutate).not.toHaveBeenCalled()
 
       // Should have error message on token
       await waitFor(() => {
-        const token = result.current.selectedTokens.find(
+        const token = result.selectedTokens.find(
           t => t.symbol === "BTC/USDC:USDC",
         )
         expect(token?.message ?? "").toContain("below minimum")
@@ -2644,29 +2977,28 @@ describe("usePortfolioState", () => {
         isLoading: false,
       } as unknown as ReturnType<typeof useHyperliquidPositions>)
 
-      const { result } = renderHook(() => usePortfolioState(true, false), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(
+        () =>
+          usePortfolioState(
+            () => true,
+            () => false,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
       await waitFor(() => {
-        expect(result.current.selectedTokens).toHaveLength(2)
+        expect(result.selectedTokens).toHaveLength(2)
       })
 
-      await act(async () => {
-        result.current.handleCrossAccountLeverageChange(1)
-      })
+      result.handleCrossAccountLeverageChange(1)
 
-      await act(async () => {
-        result.current.handleWeightChange("BTC/USDC:USDC", 30.5)
-      })
-      await act(async () => {
-        result.current.handleWeightChange("ETH/USDC:USDC", 69.5)
-      })
+      result.handleWeightChange("BTC/USDC:USDC", 30.5)
+      result.handleWeightChange("ETH/USDC:USDC", 69.5)
 
       // Try to rebalance - should call mutate with precise: true
-      await act(async () => {
-        result.current.handleOpenPositions()
-      })
+      result.handleOpenPositions()
 
       // Should call mutate with precise flag
       await waitFor(() => {
@@ -2708,29 +3040,28 @@ describe("usePortfolioState", () => {
         isLoading: false,
       } as unknown as ReturnType<typeof useHyperliquidPositions>)
 
-      const { result } = renderHook(() => usePortfolioState(undefined, false), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(
+        () =>
+          usePortfolioState(
+            () => false,
+            () => false,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
       await waitFor(() => {
-        expect(result.current.selectedTokens).toHaveLength(2)
+        expect(result.selectedTokens).toHaveLength(2)
       })
 
-      await act(async () => {
-        result.current.handleCrossAccountLeverageChange(1)
-      })
+      result.handleCrossAccountLeverageChange(1)
 
-      await act(async () => {
-        result.current.handleWeightChange("BTC/USDC:USDC", 31.5)
-      })
-      await act(async () => {
-        result.current.handleWeightChange("ETH/USDC:USDC", 68.5)
-      })
+      result.handleWeightChange("BTC/USDC:USDC", 31.5)
+      result.handleWeightChange("ETH/USDC:USDC", 68.5)
 
       // Submit
-      await act(async () => {
-        result.current.handleOpenPositions()
-      })
+      result.handleOpenPositions()
 
       // Should call mutate with precise: false (default)
       await waitFor(() => {
@@ -2772,33 +3103,29 @@ describe("usePortfolioState", () => {
       } as unknown as ReturnType<typeof useHyperliquidPositions>)
 
       const { result: resultFalse } = renderHook(
-        () => usePortfolioState(false, false),
+        () =>
+          usePortfolioState(
+            () => false,
+            () => false,
+          ),
         { wrapper: createWrapper() },
       )
 
       await waitFor(() => {
-        expect(resultFalse.current.selectedTokens).toHaveLength(2)
+        expect(resultFalse.selectedTokens).toHaveLength(2)
       })
 
-      await act(async () => {
-        resultFalse.current.handleCrossAccountLeverageChange(1)
-      })
+      resultFalse.handleCrossAccountLeverageChange(1)
 
-      await act(async () => {
-        resultFalse.current.handleWeightChange("BTC/USDC:USDC", 30.5)
-      })
-      await act(async () => {
-        resultFalse.current.handleWeightChange("ETH/USDC:USDC", 69.5)
-      })
+      resultFalse.handleWeightChange("BTC/USDC:USDC", 30.5)
+      resultFalse.handleWeightChange("ETH/USDC:USDC", 69.5)
 
-      await act(async () => {
-        resultFalse.current.handleOpenPositions()
-      })
+      resultFalse.handleOpenPositions()
 
       // With precise: false, small change should be blocked
       expect(mockMutate).not.toHaveBeenCalled()
       await waitFor(() => {
-        const msg = resultFalse.current.selectedTokens[0].message ?? ""
+        const msg = resultFalse.selectedTokens[0].message ?? ""
         expect(msg).toContain("below minimum")
       })
 
@@ -2806,28 +3133,24 @@ describe("usePortfolioState", () => {
       mockMutate.mockClear()
 
       const { result: resultTrue } = renderHook(
-        () => usePortfolioState(true, false),
+        () =>
+          usePortfolioState(
+            () => true,
+            () => false,
+          ),
         { wrapper: createWrapper() },
       )
 
       await waitFor(() => {
-        expect(resultTrue.current.selectedTokens).toHaveLength(2)
+        expect(resultTrue.selectedTokens).toHaveLength(2)
       })
 
-      await act(async () => {
-        resultTrue.current.handleCrossAccountLeverageChange(1)
-      })
+      resultTrue.handleCrossAccountLeverageChange(1)
 
-      await act(async () => {
-        resultTrue.current.handleWeightChange("BTC/USDC:USDC", 30.5)
-      })
-      await act(async () => {
-        resultTrue.current.handleWeightChange("ETH/USDC:USDC", 69.5)
-      })
+      resultTrue.handleWeightChange("BTC/USDC:USDC", 30.5)
+      resultTrue.handleWeightChange("ETH/USDC:USDC", 69.5)
 
-      await act(async () => {
-        resultTrue.current.handleOpenPositions()
-      })
+      resultTrue.handleOpenPositions()
 
       // With precise: true, small change should be allowed
       await waitFor(() => {
@@ -2869,43 +3192,42 @@ describe("usePortfolioState", () => {
       } as unknown as ReturnType<typeof useHyperliquidPositions>)
 
       // isWeightRedistribution: false so changing one token doesn't affect the other
-      const { result } = renderHook(() => usePortfolioState(false, false), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(
+        () =>
+          usePortfolioState(
+            () => false,
+            () => false,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
       await waitFor(() => {
-        expect(result.current.selectedTokens).toHaveLength(2)
+        expect(result.selectedTokens).toHaveLength(2)
       })
 
-      await act(async () => {
-        result.current.handleCrossAccountLeverageChange(1)
-      })
+      result.handleCrossAccountLeverageChange(1)
 
       // BTC: small change ($5), ETH: rest to reach 100%
       // 30.5% of 1000 = $305 (delta $5), 69.5% = $695 (delta $495)
-      await act(async () => {
-        result.current.handleWeightChange("BTC/USDC:USDC", 30.5) // $5 change
-      })
+      result.handleWeightChange("BTC/USDC:USDC", 30.5) // $5 change
 
-      await act(async () => {
-        result.current.handleWeightChange("ETH/USDC:USDC", 69.5) // large change
-      })
+      result.handleWeightChange("ETH/USDC:USDC", 69.5) // large change
 
-      await act(async () => {
-        result.current.handleOpenPositions()
-      })
+      result.handleOpenPositions()
 
       // Should not submit because BTC has small change
       expect(mockMutate).not.toHaveBeenCalled()
 
       // BTC should have error message
-      const btcToken = result.current.selectedTokens.find(
+      const btcToken = result.selectedTokens.find(
         t => t.symbol === "BTC/USDC:USDC",
       )
       expect(btcToken?.message ?? "").toContain("below minimum")
 
       // ETH should NOT have error message (its change is large enough, $495)
-      const ethToken = result.current.selectedTokens.find(
+      const ethToken = result.selectedTokens.find(
         t => t.symbol === "ETH/USDC:USDC",
       )
       expect(ethToken?.message ?? "").not.toContain("below minimum")
@@ -2931,20 +3253,27 @@ describe("usePortfolioState", () => {
         isLoading: false,
       } as unknown as ReturnType<typeof useHyperliquidPositions>)
 
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(
+        () =>
+          usePortfolioState(
+            () => false,
+            () => false,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
       await waitFor(() => {
-        expect(result.current.selectedTokens).toHaveLength(1)
+        expect(result.selectedTokens).toHaveLength(1)
       })
 
       // Verify token is untouched (loaded from exchange, not modified)
-      expect(result.current.selectedTokens[0].status).toBe("untouched")
-      expect(result.current.selectedTokens[0].notional).toBe(8)
+      expect(result.selectedTokens[0].status).toBe("untouched")
+      expect(result.selectedTokens[0].notional).toBe(8)
 
       // Should NOT have blocking reason for position below minimum
-      const belowMinimumReason = result.current.blockingReasons.find(reason =>
+      const belowMinimumReason = result.blockingReasons.find(reason =>
         reason.includes("below minimum"),
       )
       expect(belowMinimumReason).toBeUndefined()
@@ -2960,39 +3289,38 @@ describe("usePortfolioState", () => {
         data: 100,
       } as unknown as ReturnType<typeof useHyperliquidBalance>)
 
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(
+        () =>
+          usePortfolioState(
+            () => false,
+            () => false,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
       // Set budget
-      await act(async () => {
-        result.current.handleCrossAccountLeverageChange(1)
-      })
+      result.handleCrossAccountLeverageChange(1)
 
       // Add a token - it will get MIN_USD ($11) as lockedUsd by default
-      await act(async () => {
-        result.current.handleAddToken("BTC/USDC:USDC")
-      })
+      result.handleAddToken("BTC/USDC:USDC")
 
       await waitFor(() => {
-        expect(result.current.selectedTokens).toHaveLength(1)
+        expect(result.selectedTokens).toHaveLength(1)
       })
 
       // Force lockedUsd below minimum by using slider
-      await act(async () => {
-        result.current.handleWeightChange("BTC/USDC:USDC", 5) // 5% of 100 = $5
-      })
+      result.handleWeightChange("BTC/USDC:USDC", 5) // 5% of 100 = $5
 
       await waitFor(() => {
         // Token should be idle (new, not from exchange)
-        expect(result.current.selectedTokens[0].status).toBe("idle")
+        expect(result.selectedTokens[0].status).toBe("idle")
       })
 
       // The value is clamped to MIN_USD, so it won't actually go below
       // This is expected behavior - the slider enforces minimum
-      expect(result.current.selectedTokens[0].lockedUsd).toBeGreaterThanOrEqual(
-        MIN_USD,
-      )
+      expect(result.selectedTokens[0].lockedUsd).toBeGreaterThanOrEqual(MIN_USD)
     })
 
     it("blocks submission when modified position is set below minimum", async () => {
@@ -3012,26 +3340,31 @@ describe("usePortfolioState", () => {
         isLoading: false,
       } as unknown as ReturnType<typeof useHyperliquidPositions>)
 
-      const { result } = renderHook(() => usePortfolioState(), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(
+        () =>
+          usePortfolioState(
+            () => false,
+            () => false,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
       await waitFor(() => {
-        expect(result.current.selectedTokens).toHaveLength(1)
-        expect(result.current.selectedTokens[0].status).toBe("untouched")
+        expect(result.selectedTokens).toHaveLength(1)
+        expect(result.selectedTokens[0].status).toBe("untouched")
       })
 
       // Modify the position by changing leverage (makes it "modified")
-      await act(async () => {
-        result.current.handleLeverageChange("BTC/USDC:USDC", 2)
-      })
+      result.handleLeverageChange("BTC/USDC:USDC", 2)
 
       await waitFor(() => {
-        expect(result.current.selectedTokens[0].status).toBe("modified")
+        expect(result.selectedTokens[0].status).toBe("modified")
       })
 
       // Position value ($500) is still above minimum, so no blocking
-      const belowMinimumReason = result.current.blockingReasons.find(reason =>
+      const belowMinimumReason = result.blockingReasons.find(reason =>
         reason.includes("below minimum"),
       )
       expect(belowMinimumReason).toBeUndefined()
@@ -3062,24 +3395,29 @@ describe("usePortfolioState", () => {
       } as unknown as ReturnType<typeof useHyperliquidPositions>)
 
       // With isWeightRedistribution: false, changing ETH doesn't affect BTC
-      const { result } = renderHook(() => usePortfolioState(false, false), {
-        wrapper: createWrapper(),
-      })
+      const { result } = renderHook(
+        () =>
+          usePortfolioState(
+            () => false,
+            () => false,
+          ),
+        {
+          wrapper: createWrapper(),
+        },
+      )
 
       await waitFor(() => {
-        expect(result.current.selectedTokens).toHaveLength(2)
+        expect(result.selectedTokens).toHaveLength(2)
       })
 
       // Modify ETH position (large change to pass MIN_CHANGE_DELTA check)
-      await act(async () => {
-        result.current.handleWeightChange("ETH/USDC:USDC", 80) // Change from 99% to 80%
-      })
+      result.handleWeightChange("ETH/USDC:USDC", 80) // Change from 99% to 80%
 
       await waitFor(() => {
-        const btc = result.current.selectedTokens.find(
+        const btc = result.selectedTokens.find(
           t => t.symbol === "BTC/USDC:USDC",
         )
-        const eth = result.current.selectedTokens.find(
+        const eth = result.selectedTokens.find(
           t => t.symbol === "ETH/USDC:USDC",
         )
         expect(btc?.status).toBe("untouched")
@@ -3087,7 +3425,7 @@ describe("usePortfolioState", () => {
       })
 
       // BTC is below minimum but untouched - should NOT block
-      const belowMinimumReason = result.current.blockingReasons.find(reason =>
+      const belowMinimumReason = result.blockingReasons.find(reason =>
         reason.includes("below minimum"),
       )
       expect(belowMinimumReason).toBeUndefined()

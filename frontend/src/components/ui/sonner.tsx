@@ -1,17 +1,20 @@
+import { splitProps } from "solid-js"
 import { useTheme } from "@/hooks/useTheme"
-import { Toaster as Sonner } from "sonner"
+import { Toaster as Sonner, type ToasterProps } from "solid-sonner"
 
-type ToasterProps = React.ComponentProps<typeof Sonner>
+import { cn } from "@/lib/cn"
 
-const Toaster = ({ ...props }: ToasterProps) => {
+const Toaster = (props: ToasterProps) => {
   const { theme } = useTheme()
+
+  const [local, rest] = splitProps(props, ["theme", "class", "toastOptions"])
 
   return (
     <Sonner
-      theme={theme as ToasterProps["theme"]}
-      className="toaster group"
+      theme={local.theme ?? (theme() as "light" | "dark" | "system")}
+      class={cn("toaster group", local.class)}
       toastOptions={{
-        classNames: {
+        classes: {
           toast:
             "group toast group-[.toaster]:bg-background group-[.toaster]:text-foreground group-[.toaster]:border-border group-[.toaster]:shadow-lg",
           description: "group-[.toast]:text-muted-foreground",
@@ -20,8 +23,9 @@ const Toaster = ({ ...props }: ToasterProps) => {
           cancelButton:
             "group-[.toast]:bg-muted group-[.toast]:text-muted-foreground",
         },
+        ...local.toastOptions,
       }}
-      {...props}
+      {...rest}
     />
   )
 }

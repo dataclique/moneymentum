@@ -170,7 +170,7 @@ jobs:
           ssh "root@$host_ip" 'systemctl stop staging || true; systemctl reset-failed staging || true; rm -f /run/moneymentum/staging.ready'
 
       - name: Deploy staging
-        run: nix run .#deployNixos -- --skip-checks && nix run .#deployService -- staging --skip-checks
+        run: nix run .#deployNixos && nix run .#deployService -- staging
 
       - name: Cleanup SSH
         if: always()

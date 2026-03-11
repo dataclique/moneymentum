@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react"
+import { createSignal, createEffect, Show } from "solid-js"
 import { getDirection } from "../utils/keys"
 
 type EditState = "editing" | "viewing"
@@ -15,34 +15,30 @@ const MAX_LEVERAGE = 5
 const SMALL_STEP = 0.1
 const LARGE_STEP = 0.5
 
-export const LeverageControl = ({
-  leverage,
-  effectiveLeverage,
-  onLeverageChange,
-  isActive,
-}: LeverageControlProps) => {
-  const [editState, setEditState] = useState<EditState>("viewing")
-  const [editValue, setEditValue] = useState("")
-  const inputRef = useRef<HTMLInputElement>(null)
+export const LeverageControl = (props: LeverageControlProps) => {
+  const [editState, setEditState] = createSignal<EditState>("viewing")
+  const [editValue, setEditValue] = createSignal("")
+  let inputRef: HTMLInputElement | undefined
 
-  useEffect(() => {
-    if (editState === "editing" && inputRef.current) {
-      inputRef.current.focus()
-      inputRef.current.select()
+  createEffect(() => {
+    if (editState() === "editing" && inputRef) {
+      inputRef.focus()
+      inputRef.select()
     }
-  }, [editState])
+  })
 
   const startEdit = () => {
-    setEditValue(leverage.toFixed(1))
+    setEditValue(props.leverage.toFixed(1))
     setEditState("editing")
   }
 
   const commitEdit = () => {
-    const parsed = parseFloat(editValue)
+    if (editState() !== "editing") return
+    const parsed = parseFloat(editValue())
     if (!isNaN(parsed)) {
       const clamped = Math.max(MIN_LEVERAGE, Math.min(MAX_LEVERAGE, parsed))
       const rounded = Math.round(clamped * 10) / 10
-      onLeverageChange(rounded)
+      props.onLeverageChange(rounded)
     }
     setEditState("viewing")
   }
@@ -51,22 +47,21 @@ export const LeverageControl = ({
     setEditState("viewing")
   }
 
-  const handleKeyDown = (event: React.KeyboardEvent) => {
-    if (isActive === false) return
-    if (editState === "editing") return
+  const handleKeyDown = (event: KeyboardEvent) => {
+    if (props.isActive === false) return
+    if (editState() === "editing") return
 
     const step = event.shiftKey ? LARGE_STEP : SMALL_STEP
     const direction = getDirection(event.key)
 
-    // h/l/arrows or [/] for leverage adjustment
     if (direction === "right" || event.key === "]") {
       event.preventDefault()
       event.stopPropagation()
       const newValue = Math.min(
         MAX_LEVERAGE,
-        Math.round((leverage + step) * 10) / 10,
+        Math.round((props.leverage + step) * 10) / 10,
       )
-      onLeverageChange(newValue)
+      props.onLeverageChange(newValue)
       return
     }
 
@@ -75,9 +70,9 @@ export const LeverageControl = ({
       event.stopPropagation()
       const newValue = Math.max(
         MIN_LEVERAGE,
-        Math.round((leverage - step) * 10) / 10,
+        Math.round((props.leverage - step) * 10) / 10,
       )
-      onLeverageChange(newValue)
+      props.onLeverageChange(newValue)
       return
     }
 
@@ -88,12 +83,14 @@ export const LeverageControl = ({
     }
   }
 
-  const handleInputKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+  const handleInputKeyDown = (event: KeyboardEvent) => {
     if (event.key === "Enter") {
       event.preventDefault()
+      event.stopPropagation()
       commitEdit()
     } else if (event.key === "Escape") {
       event.preventDefault()
+      event.stopPropagation()
       cancelEdit()
     }
   }
@@ -103,43 +100,48 @@ export const LeverageControl = ({
       data-testid="leverage-control"
       tabIndex={0}
       onKeyDown={handleKeyDown}
-      className="flex items-center gap-2 px-2 py-1.5 border-b border-border/30 focus:outline-none focus:ring-1 focus:ring-primary/50"
+      class="flex items-center gap-2 px-2 py-1.5 border-b border-border/30 focus:outline-none focus:ring-1 focus:ring-primary/50"
     >
-      <span className="text-muted-foreground">Leverage</span>
+      <span class="text-muted-foreground">Leverage</span>
       <input
         type="range"
         min="0.1"
         max="5"
         step="0.1"
-        value={leverage}
-        onChange={e => {
-          onLeverageChange(parseFloat(e.target.value))
+        value={props.leverage}
+        onInput={event => {
+          props.onLeverageChange(parseFloat(event.currentTarget.value))
         }}
-        className="flex-1 h-1 bg-muted rounded-full appearance-none cursor-pointer accent-primary"
+        class="flex-1 h-1 bg-muted rounded-full appearance-none cursor-pointer accent-primary"
         tabIndex={-1}
       />
-      {editState === "editing" ? (
+      <Show
+        when={editState() === "editing"}
+        fallback={
+          <button
+            type="button"
+            class="font-mono w-12 text-right cursor-pointer hover:text-primary bg-transparent border-none text-inherit"
+            onClick={startEdit}
+            data-testid="leverage-display"
+            aria-label={`Edit leverage, currently ${props.effectiveLeverage.toFixed(2)}x`}
+          >
+            {props.effectiveLeverage.toFixed(2)}x
+          </button>
+        }
+      >
         <input
           ref={inputRef}
           type="text"
-          value={editValue}
-          onChange={e => {
-            setEditValue(e.target.value)
+          value={editValue()}
+          onInput={event => {
+            setEditValue(event.currentTarget.value)
           }}
           onKeyDown={handleInputKeyDown}
           onBlur={commitEdit}
-          className="font-mono w-12 text-right bg-muted border border-primary rounded px-1 focus:outline-none"
+          class="font-mono w-12 text-right bg-muted border border-primary rounded px-1 focus:outline-none"
           data-testid="leverage-input"
         />
-      ) : (
-        <span
-          className="font-mono w-12 text-right cursor-pointer hover:text-primary"
-          onClick={startEdit}
-          data-testid="leverage-display"
-        >
-          {effectiveLeverage.toFixed(2)}x
-        </span>
-      )}
+      </Show>
     </div>
   )
 }

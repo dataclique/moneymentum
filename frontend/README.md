@@ -1,7 +1,7 @@
 # Moneymentum Frontend
 
-React + TypeScript trading dashboard built with Vite, TailwindCSS 4, and Radix
-UI.
+SolidJS + TypeScript trading dashboard built with Vite, TailwindCSS 4, and
+Kobalte UI (shadcn-solid).
 
 ## Development
 

@@ -1,5 +1,5 @@
-import * as React from "react"
-import { ChevronDownIcon } from "lucide-react"
+import { createSignal, createUniqueId, type JSX } from "solid-js"
+import { ChevronDown } from "lucide-solid"
 
 import { Button } from "@/components/ui/button"
 import { Calendar } from "@/components/ui/calendar"
@@ -18,60 +18,53 @@ interface Calendar22Props {
   maxDate?: Date
 }
 
-export const Calendar22 = ({
-  label,
-  selected,
-  onChange,
-  minDate,
-  maxDate,
-}: Calendar22Props) => {
-  const [open, setOpen] = React.useState(false)
+const normalizeToDay = (date: Date) =>
+  new Date(date.getFullYear(), date.getMonth(), date.getDate())
 
-  const disabledDays: ({ before: Date } | { after: Date })[] = []
-  if (minDate) {
-    disabledDays.push({ before: minDate })
-  }
-  if (maxDate) {
-    disabledDays.push({ after: maxDate })
-  }
+export const Calendar22 = (props: Calendar22Props): JSX.Element => {
+  const pickerId = createUniqueId()
+  const [open, setOpen] = createSignal(false)
+
+  const disabledDays = () => [
+    ...(props.minDate ? [{ before: props.minDate }] : []),
+    ...(props.maxDate ? [{ after: props.maxDate }] : []),
+  ]
+
+  const normalizedSelected = () =>
+    props.selected ? normalizeToDay(props.selected) : undefined
 
   return (
-    <div className="flex flex-col gap-3">
-      <Label htmlFor="date" className="px-1">
-        {label}
+    <div class="flex flex-col gap-3">
+      <Label for={pickerId} class="px-1">
+        {props.label}
       </Label>
-      <Popover open={open} onOpenChange={setOpen}>
-        <PopoverTrigger asChild>
-          <Button
-            variant="outline"
-            id="date"
-            className="w-48 justify-between font-normal"
-          >
-            {selected
-              ? selected.toLocaleDateString("ru-RU", { timeZone: "UTC" })
-              : "Select date"}
-            <ChevronDownIcon />
-          </Button>
+      <Popover open={open()} onOpenChange={setOpen} placement="bottom-start">
+        <PopoverTrigger
+          as={Button}
+          variant="outline"
+          id={pickerId}
+          class="w-48 justify-between font-normal"
+        >
+          {(() => {
+            const selected = normalizedSelected()
+            return selected
+              ? selected.toLocaleDateString("ru-RU")
+              : "Select date"
+          })()}
+          <ChevronDown />
         </PopoverTrigger>
-        <PopoverContent className="w-auto overflow-hidden p-0" align="start">
+        <PopoverContent class="w-auto overflow-hidden p-0">
           <Calendar
             mode="single"
-            selected={selected ?? undefined}
+            selected={normalizedSelected()}
             captionLayout="dropdown"
-            startMonth={minDate}
-            endMonth={maxDate}
+            startMonth={props.minDate}
+            endMonth={props.maxDate}
             onSelect={date => {
-              if (date) {
-                const utcDate = new Date(
-                  Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()),
-                )
-                onChange?.(utcDate)
-              } else {
-                onChange?.(null)
-              }
+              props.onChange?.(date ? normalizeToDay(date) : null)
               setOpen(false)
             }}
-            disabled={disabledDays}
+            disabled={disabledDays()}
           />
         </PopoverContent>
       </Popover>

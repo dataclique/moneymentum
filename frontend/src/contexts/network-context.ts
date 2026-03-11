@@ -1,8 +1,8 @@
-import { createContext } from "react"
+import { createContext, type Accessor, type Setter } from "solid-js"
 
 export interface NetworkContextType {
-  isNetworkSwitching: boolean
-  setIsNetworkSwitching: (value: boolean) => void
+  isNetworkSwitching: Accessor<boolean>
+  setIsNetworkSwitching: Setter<boolean>
 }
 
 export const NetworkContext = createContext<NetworkContextType | undefined>(

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { renderHook, act } from "@testing-library/react"
+import { renderHook } from "@solidjs/testing-library"
 import { useScreenerConfig } from "./useScreenerConfig"
 
 interface TestAsset {
@@ -42,10 +42,10 @@ describe("useScreenerConfig", () => {
   describe("sorting", () => {
     it("sorts by sharpe descending by default", () => {
       const { result } = renderHook(() =>
-        useScreenerConfig({ assets: mockAssets }),
+        useScreenerConfig({ assets: () => mockAssets }),
       )
 
-      const sorted = result.current.sortedAssets
+      const sorted = result.sortedAssets
       expect(sorted[0].ticker).toBe("BTC")
       expect(sorted[1].ticker).toBe("ETH")
       expect(sorted[2].ticker).toBe("SOL")
@@ -53,85 +53,69 @@ describe("useScreenerConfig", () => {
 
     it("sorts by column ascending when clicked", () => {
       const { result } = renderHook(() =>
-        useScreenerConfig({ assets: mockAssets }),
+        useScreenerConfig({ assets: () => mockAssets }),
       )
 
-      act(() => {
-        result.current.setSortColumn("beta")
-      })
+      result.setSortColumn("beta")
 
-      const sorted = result.current.sortedAssets
-      expect(sorted[0].ticker).toBe("BTC") // beta 1.2
-      expect(sorted[1].ticker).toBe("ETH") // beta 1.4
-      expect(sorted[2].ticker).toBe("SOL") // beta 1.8
+      const sorted = result.sortedAssets
+      expect(sorted[0].ticker).toBe("BTC")
+      expect(sorted[1].ticker).toBe("ETH")
+      expect(sorted[2].ticker).toBe("SOL")
     })
 
     it("toggles sort direction when same column clicked again", () => {
       const { result } = renderHook(() =>
-        useScreenerConfig({ assets: mockAssets }),
+        useScreenerConfig({ assets: () => mockAssets }),
       )
 
-      // First click - ascending for beta
-      act(() => {
-        result.current.setSortColumn("beta")
-      })
-      expect(result.current.sortDirection).toBe("asc")
+      result.setSortColumn("beta")
+      expect(result.sortDirection).toBe("asc")
 
-      // Second click - descending
-      act(() => {
-        result.current.setSortColumn("beta")
-      })
-      expect(result.current.sortDirection).toBe("desc")
+      result.setSortColumn("beta")
+      expect(result.sortDirection).toBe("desc")
 
-      const sorted = result.current.sortedAssets
-      expect(sorted[0].ticker).toBe("SOL") // beta 1.8
-      expect(sorted[1].ticker).toBe("ETH") // beta 1.4
-      expect(sorted[2].ticker).toBe("BTC") // beta 1.2
+      const sorted = result.sortedAssets
+      expect(sorted[0].ticker).toBe("SOL")
+      expect(sorted[1].ticker).toBe("ETH")
+      expect(sorted[2].ticker).toBe("BTC")
     })
 
     it("resets to ascending when different column selected", () => {
       const { result } = renderHook(() =>
-        useScreenerConfig({ assets: mockAssets }),
+        useScreenerConfig({ assets: () => mockAssets }),
       )
 
-      act(() => {
-        result.current.setSortColumn("sharpe")
-        result.current.setSortColumn("sharpe") // toggle to desc
-      })
-      expect(result.current.sortDirection).toBe("desc")
+      result.setSortColumn("sharpe")
+      result.setSortColumn("sharpe")
+      expect(result.sortDirection).toBe("desc")
 
-      act(() => {
-        result.current.setSortColumn("volatility")
-      })
-      expect(result.current.sortDirection).toBe("asc")
-      expect(result.current.sortColumn).toBe("volatility")
+      result.setSortColumn("volatility")
+      expect(result.sortDirection).toBe("asc")
+      expect(result.sortColumn).toBe("volatility")
     })
   })
 
   describe("filtering", () => {
     it("filters assets by search query (case insensitive)", () => {
       const { result } = renderHook(() =>
-        useScreenerConfig({ assets: mockAssets }),
+        useScreenerConfig({ assets: () => mockAssets }),
       )
 
-      act(() => {
-        result.current.setSearchQuery("btc")
-      })
+      result.setSearchQuery("btc")
 
-      expect(result.current.sortedAssets).toHaveLength(1)
-      expect(result.current.sortedAssets[0].ticker).toBe("BTC")
+      expect(result.sortedAssets).toHaveLength(1)
+      expect(result.sortedAssets[0].ticker).toBe("BTC")
     })
 
     it("returns all assets when search query is empty", () => {
       const { result } = renderHook(() =>
-        useScreenerConfig({ assets: mockAssets }),
+        useScreenerConfig({ assets: () => mockAssets }),
       )
 
-      act(() => {
-        result.current.setSearchQuery("")
-      })
+      result.setSearchQuery("")
 
-      expect(result.current.sortedAssets).toHaveLength(3)
+      expect(result.sortedAssets).toHaveLength(3)
     })
 
     it("applies both filter and sort", () => {
@@ -147,124 +131,108 @@ describe("useScreenerConfig", () => {
         },
       ]
 
-      const { result } = renderHook(() => useScreenerConfig({ assets }))
+      const { result } = renderHook(() =>
+        useScreenerConfig({ assets: () => assets }),
+      )
 
-      act(() => {
-        result.current.setSearchQuery("eth")
-        result.current.setSortColumn("sharpe")
-      })
+      result.setSearchQuery("eth")
+      result.setSortColumn("sharpe")
 
-      expect(result.current.sortedAssets).toHaveLength(2)
-      expect(result.current.sortedAssets[0].ticker).toBe("ETHFI") // sharpe 0.5
-      expect(result.current.sortedAssets[1].ticker).toBe("ETH") // sharpe 1.2
+      expect(result.sortedAssets).toHaveLength(2)
+      expect(result.sortedAssets[0].ticker).toBe("ETHFI")
+      expect(result.sortedAssets[1].ticker).toBe("ETH")
     })
   })
 
   describe("expansion", () => {
     it("starts with no expanded underlyings", () => {
       const { result } = renderHook(() =>
-        useScreenerConfig({ assets: mockAssets }),
+        useScreenerConfig({ assets: () => mockAssets }),
       )
 
-      expect(result.current.isExpanded("BTC")).toBe(false)
-      expect(result.current.isExpanded("ETH")).toBe(false)
+      expect(result.isExpanded("BTC")).toBe(false)
+      expect(result.isExpanded("ETH")).toBe(false)
     })
 
     it("expands underlying when toggled", () => {
       const { result } = renderHook(() =>
-        useScreenerConfig({ assets: mockAssets }),
+        useScreenerConfig({ assets: () => mockAssets }),
       )
 
-      act(() => {
-        result.current.toggleExpanded("BTC")
-      })
+      result.toggleExpanded("BTC")
 
-      expect(result.current.isExpanded("BTC")).toBe(true)
-      expect(result.current.isExpanded("ETH")).toBe(false)
+      expect(result.isExpanded("BTC")).toBe(true)
+      expect(result.isExpanded("ETH")).toBe(false)
     })
 
     it("collapses expanded underlying when toggled again", () => {
       const { result } = renderHook(() =>
-        useScreenerConfig({ assets: mockAssets }),
+        useScreenerConfig({ assets: () => mockAssets }),
       )
 
-      act(() => {
-        result.current.toggleExpanded("BTC")
-        result.current.toggleExpanded("BTC")
-      })
+      result.toggleExpanded("BTC")
+      result.toggleExpanded("BTC")
 
-      expect(result.current.isExpanded("BTC")).toBe(false)
+      expect(result.isExpanded("BTC")).toBe(false)
     })
 
     it("allows multiple underlyings to be expanded", () => {
       const { result } = renderHook(() =>
-        useScreenerConfig({ assets: mockAssets }),
+        useScreenerConfig({ assets: () => mockAssets }),
       )
 
-      act(() => {
-        result.current.toggleExpanded("BTC")
-        result.current.toggleExpanded("ETH")
-      })
+      result.toggleExpanded("BTC")
+      result.toggleExpanded("ETH")
 
-      expect(result.current.isExpanded("BTC")).toBe(true)
-      expect(result.current.isExpanded("ETH")).toBe(true)
+      expect(result.isExpanded("BTC")).toBe(true)
+      expect(result.isExpanded("ETH")).toBe(true)
     })
 
     it("collapses all when collapseAll is called", () => {
       const { result } = renderHook(() =>
-        useScreenerConfig({ assets: mockAssets }),
+        useScreenerConfig({ assets: () => mockAssets }),
       )
 
-      act(() => {
-        result.current.toggleExpanded("BTC")
-        result.current.toggleExpanded("ETH")
-        result.current.collapseAll()
-      })
+      result.toggleExpanded("BTC")
+      result.toggleExpanded("ETH")
+      result.collapseAll()
 
-      expect(result.current.isExpanded("BTC")).toBe(false)
-      expect(result.current.isExpanded("ETH")).toBe(false)
+      expect(result.isExpanded("BTC")).toBe(false)
+      expect(result.isExpanded("ETH")).toBe(false)
     })
   })
 
   describe("visible columns", () => {
     it("has default visible columns", () => {
       const { result } = renderHook(() =>
-        useScreenerConfig({ assets: mockAssets }),
+        useScreenerConfig({ assets: () => mockAssets }),
       )
 
-      expect(result.current.visibleColumns).toContain("sharpe")
+      expect(result.visibleColumns).toContain("sharpe")
     })
 
     it("toggles column visibility", () => {
       const { result } = renderHook(() =>
-        useScreenerConfig({ assets: mockAssets }),
+        useScreenerConfig({ assets: () => mockAssets }),
       )
 
-      const initialHasSortino =
-        result.current.visibleColumns.includes("sortino")
+      const initialHasSortino = result.visibleColumns.includes("sortino")
 
-      act(() => {
-        result.current.toggleColumn("sortino")
-      })
+      result.toggleColumn("sortino")
 
-      expect(result.current.visibleColumns.includes("sortino")).toBe(
-        !initialHasSortino,
-      )
+      expect(result.visibleColumns.includes("sortino")).toBe(!initialHasSortino)
     })
 
     it("always keeps at least one column visible", () => {
       const { result } = renderHook(() =>
-        useScreenerConfig({ assets: mockAssets }),
+        useScreenerConfig({ assets: () => mockAssets }),
       )
 
-      // Try to hide all columns
-      act(() => {
-        for (const col of result.current.visibleColumns) {
-          result.current.toggleColumn(col)
-        }
-      })
+      for (const col of result.visibleColumns) {
+        result.toggleColumn(col)
+      }
 
-      expect(result.current.visibleColumns.length).toBeGreaterThanOrEqual(1)
+      expect(result.visibleColumns.length).toBeGreaterThanOrEqual(1)
     })
   })
 })

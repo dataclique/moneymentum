@@ -1,5 +1,5 @@
-import { useQuery } from "@tanstack/react-query"
-import { useEffect } from "react"
+import { useQuery } from "@tanstack/solid-query"
+import { createEffect, on } from "solid-js"
 import type { TokenAllocation } from "./usePortfolioState"
 
 const BETA_BENCHMARK = "BTC"
@@ -51,11 +51,15 @@ interface BetaResponse {
 const fetchBeta = async (
   weights: Record<string, number>,
   benchmark: string,
+  signal?: AbortSignal,
 ): Promise<BetaResponse> => {
   const res = await fetch(`${import.meta.env.BASE_URL}api/beta`, {
     method: "POST",
-    // Abort the request if the backend is unresponsive for too long.
-    signal: AbortSignal.timeout(10_000),
+    // Abort the request if the backend is unresponsive for too long, or if
+    // TanStack Query cancels it (e.g. query key changed while in-flight).
+    signal: signal
+      ? AbortSignal.any([signal, AbortSignal.timeout(10_000)])
+      : AbortSignal.timeout(10_000),
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ weights, benchmark }),
   })
@@ -63,33 +67,41 @@ const fetchBeta = async (
   return res.json() as Promise<BetaResponse>
 }
 
-export const useBeta = (tokens: TokenAllocation[]) => {
-  const weights = weightsFromTokens(tokens)
-  const weightsKey = weightsQueryKey(weights)
-  const hasTokens = tokens.length > 0 && Object.keys(weights).length > 0
+export const useBeta = (tokens: () => TokenAllocation[]) => {
+  const weights = () => weightsFromTokens(tokens())
+  const weightsKey = () => weightsQueryKey(weights())
+  const hasTokens = () =>
+    tokens().length > 0 && Object.keys(weights()).length > 0
 
-  const query = useQuery({
-    queryKey: ["beta", weightsKey, BETA_BENCHMARK] as const,
-    queryFn: () => fetchBeta(weights, BETA_BENCHMARK),
-    enabled: hasTokens,
+  const query = useQuery(() => ({
+    queryKey: ["beta", weightsKey(), BETA_BENCHMARK] as const,
+    queryFn: ctx => fetchBeta(weights(), BETA_BENCHMARK, ctx.signal),
+    enabled: hasTokens(),
     // Retry a couple of times on transient failures.
     retry: 2,
-  })
+  }))
 
   // Log failures to aid debugging in dev without changing UI behavior.
-  useEffect(() => {
-    if (query.error) {
-      console.error("Failed to fetch portfolio beta", {
-        error: query.error,
-        weightsKey,
-        benchmark: BETA_BENCHMARK,
-      })
-    }
-  }, [query.error, weightsKey])
+  createEffect(
+    on(
+      () => query.error,
+      error => {
+        if (error && import.meta.env.DEV) {
+          console.error("Failed to fetch portfolio beta", error)
+        }
+      },
+    ),
+  )
 
   return {
-    beta: query.data?.beta ?? null,
-    isLoading: query.isLoading,
-    error: query.error,
+    get beta() {
+      return query.data?.beta ?? null
+    },
+    get isLoading() {
+      return query.isLoading
+    },
+    get error() {
+      return query.error
+    },
   }
 }

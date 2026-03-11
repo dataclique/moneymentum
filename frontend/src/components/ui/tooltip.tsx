@@ -1,32 +1,37 @@
-import * as React from "react"
-import * as TooltipPrimitive from "@radix-ui/react-tooltip"
-import { clsx } from "clsx"
-import { twMerge } from "tailwind-merge"
+import type { Component, ValidComponent } from "solid-js"
+import { splitProps, type ParentProps } from "solid-js"
 
-const TooltipProvider = TooltipPrimitive.Provider
+import type { PolymorphicProps } from "@kobalte/core/polymorphic"
+import * as TooltipPrimitive from "@kobalte/core/tooltip"
 
-const Tooltip = TooltipPrimitive.Root
+import { cn } from "@/lib/cn"
 
 const TooltipTrigger = TooltipPrimitive.Trigger
 
-const TooltipContent = React.forwardRef<
-  React.ComponentRef<typeof TooltipPrimitive.Content>,
-  React.ComponentPropsWithoutRef<typeof TooltipPrimitive.Content>
->(({ className, sideOffset = 4, ...props }, ref) => (
-  <TooltipPrimitive.Portal>
-    <TooltipPrimitive.Content
-      ref={ref}
-      sideOffset={sideOffset}
-      className={twMerge(
-        clsx(
-          "z-50 overflow-hidden rounded-md bg-primary px-3 py-1.5 text-xs text-primary-foreground animate-in fade-in-0 zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 origin-[--radix-tooltip-content-transform-origin]",
-          className,
-        ),
-      )}
-      {...props}
-    />
-  </TooltipPrimitive.Portal>
-))
-TooltipContent.displayName = TooltipPrimitive.Content.displayName
+const Tooltip: Component<TooltipPrimitive.TooltipRootProps> = props => {
+  return <TooltipPrimitive.Root gutter={4} {...props} />
+}
+
+const TooltipProvider = (props: ParentProps) => <>{props.children}</>
+
+type TooltipContentProps<T extends ValidComponent = "div"> =
+  TooltipPrimitive.TooltipContentProps<T> & { class?: string | undefined }
+
+const TooltipContent = <T extends ValidComponent = "div">(
+  props: PolymorphicProps<T, TooltipContentProps<T>>,
+) => {
+  const [local, others] = splitProps(props as TooltipContentProps<T>, ["class"])
+  return (
+    <TooltipPrimitive.Portal>
+      <TooltipPrimitive.Content
+        class={cn(
+          "z-50 origin-[var(--kb-tooltip-content-transform-origin)] overflow-hidden rounded-md bg-primary px-3 py-1.5 text-xs text-primary-foreground data-[expanded]:animate-in data-[expanded]:fade-in-0 data-[expanded]:zoom-in-95 data-[closed]:animate-out data-[closed]:fade-out-0 data-[closed]:zoom-out-95",
+          local.class,
+        )}
+        {...others}
+      />
+    </TooltipPrimitive.Portal>
+  )
+}
 
 export { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider }

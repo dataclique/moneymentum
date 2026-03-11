@@ -1,73 +1,43 @@
-import { Link, Route, Routes, useLocation } from "react-router-dom"
-import { clsx } from "clsx"
-import { twMerge } from "tailwind-merge"
-import MainPage from "./pages/MainPage"
-import TokenPage from "./pages/TokenPage"
-import PortfolioPage from "./pages/Portfolio"
-import PrototypePage from "./pages/Prototype"
-import { useNetwork } from "@/hooks/useNetwork"
-import { useWallet } from "@/hooks/useWallet"
+import { ErrorBoundary } from "solid-js"
+import type { RouteSectionProps } from "@solidjs/router"
 
-const NotFoundPage = () => (
-  <div className="flex flex-1 flex-col items-center justify-center gap-4">
-    <h2 className="text-2xl font-semibold">Page not found</h2>
-    <p className="text-sm text-muted-foreground">
-      The page you are looking for does not exist.
-    </p>
-    <Link
-      to="/"
-      className="inline-flex items-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+const ErrorFallback = (props: { error: Error; reset: () => void }) => (
+  <div class="flex h-screen flex-col items-center justify-center gap-4 bg-background text-foreground">
+    <div class="text-destructive text-lg font-medium">Something went wrong</div>
+    <div class="text-sm text-muted-foreground max-w-md text-center">
+      An unexpected error occurred. Try refreshing the page or click retry.
+    </div>
+    <pre class="text-xs text-muted-foreground bg-muted rounded p-3 max-w-lg overflow-auto">
+      {props.error.message}
+    </pre>
+    <button
+      type="button"
+      onClick={() => {
+        props.reset()
+      }}
+      class="rounded-md border px-4 py-2 text-sm hover:bg-muted transition-colors"
     >
-      Go home
-    </Link>
+      Retry
+    </button>
   </div>
 )
 
-const App = () => {
-  const { isNetworkSwitching } = useNetwork()
-  const { networkMode } = useWallet()
-  const location = useLocation()
-  // const isPortfolioPage = location.pathname === "/portfolio"
-  const isPrototypePage = location.pathname.startsWith("/prototype")
+const renderFallback = (error: Error, reset: () => void) => (
+  <ErrorFallback error={error} reset={reset} />
+)
 
-  // Prototype page has its own full-screen layout
-  if (isPrototypePage) {
-    return (
-      <Routes>
-        <Route path="/prototype/*" element={<PrototypePage />} />
-      </Routes>
-    )
-  }
-
+export const AppLayout = (props: RouteSectionProps) => {
   return (
-    <div
-      className={twMerge(
-        clsx(
-          "flex h-screen flex-col overflow-hidden bg-background text-foreground text-[11px]",
-          isNetworkSwitching && "pointer-events-none opacity-80",
-        ),
-      )}
-    >
-      {/* <header className="flex w-full items-center justify-between border-b border-border px-4 py-2 pl-28 pr-28">
-        <h1 className="text-lg font-semibold">Moneymentum</h1>
-        <div className="flex items-center gap-4">
-          <WalletHeader autoOpen={isPortfolioPage} />
-          <ModeToggle />
-        </div>
-        {isNetworkSwitching && (
-          <div className="container mx-auto mt-2 text-center text-sm text-muted-foreground">
-            Switching network... All data will reload automatically
-          </div>
-        )}
-      </header> */}
-      <Routes>
-        <Route path="/" element={<PortfolioPage key={networkMode} />} />
-        <Route path="/dashboard" element={<MainPage />} />
-        <Route path="/token/:ticker" element={<TokenPage timeframe="1h" />} />
-        <Route path="*" element={<NotFoundPage />} />
-      </Routes>
-    </div>
+    <ErrorBoundary fallback={renderFallback}>
+      <div class="flex h-screen flex-col overflow-hidden bg-background text-foreground text-[11px]">
+        {props.children}
+      </div>
+    </ErrorBoundary>
   )
 }
 
-export default App
+export const FullscreenLayout = (props: RouteSectionProps) => {
+  return (
+    <ErrorBoundary fallback={renderFallback}>{props.children}</ErrorBoundary>
+  )
+}

@@ -1,117 +1,121 @@
-import * as React from "react"
+import { splitProps, type JSX } from "solid-js"
 import { clsx } from "clsx"
 import { twMerge } from "tailwind-merge"
 
-const Table = ({ className, ...props }: React.ComponentProps<"table">) => {
+const Table = (props: JSX.HTMLAttributes<HTMLTableElement>) => {
+  const [local, rest] = splitProps(props, ["class"])
+
   return (
-    <div
-      data-slot="table-container"
-      className="relative w-full overflow-x-auto"
-    >
+    <div data-slot="table-container" class="relative w-full overflow-x-auto">
       <table
         data-slot="table"
-        className={twMerge(clsx("w-full caption-bottom text-sm", className))}
-        {...props}
+        class={twMerge(clsx("w-full caption-bottom text-sm", local.class))}
+        {...rest}
       />
     </div>
   )
 }
 
-const TableHeader = ({
-  className,
-  ...props
-}: React.ComponentProps<"thead">) => {
+const TableHeader = (props: JSX.HTMLAttributes<HTMLTableSectionElement>) => {
+  const [local, rest] = splitProps(props, ["class"])
+
   return (
     <thead
       data-slot="table-header"
-      className={twMerge(clsx("[&_tr]:border-b", className))}
-      {...props}
+      class={twMerge(clsx("[&_tr]:border-b", local.class))}
+      {...rest}
     />
   )
 }
 
-const TableBody = ({ className, ...props }: React.ComponentProps<"tbody">) => {
+const TableBody = (props: JSX.HTMLAttributes<HTMLTableSectionElement>) => {
+  const [local, rest] = splitProps(props, ["class"])
+
   return (
     <tbody
       data-slot="table-body"
-      className={twMerge(clsx("[&_tr:last-child]:border-0", className))}
-      {...props}
+      class={twMerge(clsx("[&_tr:last-child]:border-0", local.class))}
+      {...rest}
     />
   )
 }
 
-const TableFooter = ({
-  className,
-  ...props
-}: React.ComponentProps<"tfoot">) => {
+const TableFooter = (props: JSX.HTMLAttributes<HTMLTableSectionElement>) => {
+  const [local, rest] = splitProps(props, ["class"])
+
   return (
     <tfoot
       data-slot="table-footer"
-      className={twMerge(
+      class={twMerge(
         clsx(
           "bg-muted/50 border-t font-medium [&>tr]:last:border-b-0",
-          className,
+          local.class,
         ),
       )}
-      {...props}
+      {...rest}
     />
   )
 }
 
-const TableRow = ({ className, ...props }: React.ComponentProps<"tr">) => {
+const TableRow = (props: JSX.HTMLAttributes<HTMLTableRowElement>) => {
+  const [local, rest] = splitProps(props, ["class"])
+
   return (
     <tr
       data-slot="table-row"
-      className={twMerge(
+      class={twMerge(
         clsx(
           "hover:bg-muted/50 data-[state=selected]:bg-muted border-b transition-colors",
-          className,
+          local.class,
         ),
       )}
-      {...props}
+      {...rest}
     />
   )
 }
 
-const TableHead = ({ className, ...props }: React.ComponentProps<"th">) => {
+const TableHead = (props: JSX.ThHTMLAttributes<HTMLTableCellElement>) => {
+  const [local, rest] = splitProps(props, ["class"])
+
   return (
     <th
       data-slot="table-head"
-      className={twMerge(
+      class={twMerge(
         clsx(
           "text-foreground h-10 px-2 text-left align-middle font-medium whitespace-nowrap [&:has([role=checkbox])]:pr-0 [&>[role=checkbox]]:translate-y-[2px]",
-          className,
+          local.class,
         ),
       )}
-      {...props}
+      {...rest}
     />
   )
 }
 
-const TableCell = ({ className, ...props }: React.ComponentProps<"td">) => {
+const TableCell = (props: JSX.TdHTMLAttributes<HTMLTableCellElement>) => {
+  const [local, rest] = splitProps(props, ["class"])
+
   return (
     <td
       data-slot="table-cell"
-      className={twMerge(
+      class={twMerge(
         clsx(
           "p-2 align-middle whitespace-nowrap [&:has([role=checkbox])]:pr-0 [&>[role=checkbox]]:translate-y-[2px]",
-          className,
+          local.class,
         ),
       )}
-      {...props}
+      {...rest}
     />
   )
 }
 
-const TableCaption = ({
-  className,
-  ...props
-}: React.ComponentProps<"caption">) => {
+const TableCaption = (props: JSX.HTMLAttributes<HTMLTableCaptionElement>) => {
+  const [local, rest] = splitProps(props, ["class"])
+
   return (
     <caption
       data-slot="table-caption"
-      className={twMerge(clsx("text-muted-foreground mt-4 text-sm", className))}
-      {...props}
+      class={twMerge(clsx("text-muted-foreground mt-4 text-sm", local.class))}
+      {...rest}
     />
   )
 }

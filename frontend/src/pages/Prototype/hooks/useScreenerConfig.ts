@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from "react"
+import { createSignal, createMemo } from "solid-js"
 
 type SortDirection = "asc" | "desc"
 
@@ -19,7 +19,7 @@ interface Asset {
 }
 
 interface UseScreenerConfigOptions<T extends Asset> {
-  assets: T[]
+  assets: () => T[]
 }
 
 const DEFAULT_VISIBLE_COLUMNS: ScreenerColumn[] = ["sharpe"]
@@ -43,63 +43,58 @@ export const ALL_SCREENER_COLUMNS: ScreenerColumn[] = [
 export const useScreenerConfig = <T extends Asset>({
   assets,
 }: UseScreenerConfigOptions<T>) => {
-  const [sortColumn, setSortColumnState] = useState<ScreenerColumn>("sharpe")
-  const [sortDirection, setSortDirection] = useState<SortDirection>("desc")
-  const [searchQuery, setSearchQuery] = useState("")
-  const [expandedUnderlyings, setExpandedUnderlyings] = useState<Set<string>>(
-    new Set(),
-  )
-  const [visibleColumns, setVisibleColumns] = useState<ScreenerColumn[]>(
+  const [sortColumn, setSortColumnState] =
+    createSignal<ScreenerColumn>("sharpe")
+  const [sortDirection, setSortDirection] = createSignal<SortDirection>("desc")
+  const [searchQuery, setSearchQuery] = createSignal("")
+  const [expandedUnderlyings, setExpandedUnderlyings] = createSignal<
+    Set<string>
+  >(new Set())
+  const [visibleColumns, setVisibleColumns] = createSignal<ScreenerColumn[]>(
     DEFAULT_VISIBLE_COLUMNS,
   )
 
-  const setSortColumn = useCallback(
-    (column: ScreenerColumn) => {
-      if (column === sortColumn) {
-        setSortDirection(prev => (prev === "asc" ? "desc" : "asc"))
-      } else {
-        setSortColumnState(column)
-        setSortDirection("asc")
-      }
-    },
-    [sortColumn],
-  )
+  const setSortColumn = (column: ScreenerColumn) => {
+    if (column === sortColumn()) {
+      setSortDirection(prev => (prev === "asc" ? "desc" : "asc"))
+    } else {
+      setSortColumnState(column)
+      setSortDirection("asc")
+    }
+  }
 
-  const sortedAssets = useMemo(() => {
+  const sortedAssets = createMemo(() => {
+    const query = searchQuery().trim()
+    const currentAssets = assets()
     const filtered =
-      searchQuery.trim() === ""
-        ? assets
-        : assets.filter(a =>
-            a.ticker.toLowerCase().includes(searchQuery.toLowerCase()),
+      query === ""
+        ? currentAssets
+        : currentAssets.filter(a =>
+            a.ticker.toLowerCase().includes(query.toLowerCase()),
           )
 
-    return [...filtered].sort((a, b) => {
-      const aValue = a[sortColumn]
-      const bValue = b[sortColumn]
-      const multiplier = sortDirection === "asc" ? 1 : -1
-      return (aValue - bValue) * multiplier
-    })
-  }, [assets, searchQuery, sortColumn, sortDirection])
+    const col = sortColumn()
+    const multiplier = sortDirection() === "asc" ? 1 : -1
+    return [...filtered].sort((a, b) => (a[col] - b[col]) * multiplier)
+  })
 
-  const isExpanded = useCallback(
-    (underlying: string): boolean => expandedUnderlyings.has(underlying),
-    [expandedUnderlyings],
-  )
+  const isExpanded = (underlying: string): boolean =>
+    expandedUnderlyings().has(underlying)
 
-  const toggleExpanded = useCallback((underlying: string) => {
+  const toggleExpanded = (underlying: string) => {
     setExpandedUnderlyings(prev => {
       const hasUnderlying = prev.has(underlying)
       return hasUnderlying
         ? new Set([...prev].filter(u => u !== underlying))
         : new Set([...prev, underlying])
     })
-  }, [])
+  }
 
-  const collapseAll = useCallback(() => {
-    setExpandedUnderlyings(new Set())
-  }, [])
+  const collapseAll = () => {
+    setExpandedUnderlyings(() => new Set<string>())
+  }
 
-  const toggleColumn = useCallback((column: ScreenerColumn) => {
+  const toggleColumn = (column: ScreenerColumn) => {
     setVisibleColumns(prev => {
       const hasColumn = prev.includes(column)
       if (hasColumn && prev.length === 1) {
@@ -107,33 +102,29 @@ export const useScreenerConfig = <T extends Asset>({
       }
       return hasColumn ? prev.filter(c => c !== column) : [...prev, column]
     })
-  }, [])
+  }
 
-  return useMemo(
-    () => ({
-      sortColumn,
-      sortDirection,
-      setSortColumn,
-      searchQuery,
-      setSearchQuery,
-      sortedAssets,
-      isExpanded,
-      toggleExpanded,
-      collapseAll,
-      visibleColumns,
-      toggleColumn,
-    }),
-    [
-      sortColumn,
-      sortDirection,
-      setSortColumn,
-      searchQuery,
-      sortedAssets,
-      isExpanded,
-      toggleExpanded,
-      collapseAll,
-      visibleColumns,
-      toggleColumn,
-    ],
-  )
+  return {
+    get sortColumn() {
+      return sortColumn()
+    },
+    get sortDirection() {
+      return sortDirection()
+    },
+    setSortColumn,
+    get searchQuery() {
+      return searchQuery()
+    },
+    setSearchQuery,
+    get sortedAssets() {
+      return sortedAssets()
+    },
+    isExpanded,
+    toggleExpanded,
+    collapseAll,
+    get visibleColumns() {
+      return visibleColumns()
+    },
+    toggleColumn,
+  }
 }

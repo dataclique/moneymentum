@@ -15,7 +15,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
-import { render, screen, waitFor, cleanup } from "@testing-library/react"
+import { render, screen, waitFor, cleanup } from "@solidjs/testing-library"
 import userEvent from "@testing-library/user-event"
 import PrototypePage from "./index"
 
@@ -56,7 +56,7 @@ describe("FULL KEYBOARD WORKFLOW - No Mouse Allowed", () => {
    * THE MAIN TEST - This describes the exact workflow that must work
    */
   it("complete trading workflow using only keyboard", async () => {
-    render(<PrototypePage />)
+    render(() => <PrototypePage />)
 
     // === STEP 1: Focus positions panel with '2' key ===
     // This auto-selects the first underlying (BTC)
@@ -126,7 +126,7 @@ describe("FULL KEYBOARD WORKFLOW - No Mouse Allowed", () => {
 
   describe("seamless panel navigation", () => {
     it("navigates from positions to staged changes when pressing down at bottom", async () => {
-      render(<PrototypePage />)
+      render(() => <PrototypePage />)
 
       // Focus positions
       await user.keyboard("2")
@@ -146,7 +146,7 @@ describe("FULL KEYBOARD WORKFLOW - No Mouse Allowed", () => {
     })
 
     it("navigates from staged changes back to positions when pressing up", async () => {
-      render(<PrototypePage />)
+      render(() => <PrototypePage />)
 
       // Focus staged changes
       await user.keyboard("4")
@@ -172,7 +172,7 @@ describe("FULL KEYBOARD WORKFLOW - No Mouse Allowed", () => {
 
   describe("vim/arrow key parity", () => {
     it("arrow keys work for list navigation (up/down)", async () => {
-      render(<PrototypePage />)
+      render(() => <PrototypePage />)
 
       // Focus positions panel
       await user.keyboard("2")
@@ -188,7 +188,7 @@ describe("FULL KEYBOARD WORKFLOW - No Mouse Allowed", () => {
     })
 
     it("arrow keys work for panel switching (left/right)", async () => {
-      render(<PrototypePage />)
+      render(() => <PrototypePage />)
 
       // Focus positions panel first
       await user.keyboard("2")
@@ -219,7 +219,7 @@ describe("FULL KEYBOARD WORKFLOW - No Mouse Allowed", () => {
     })
 
     it("h/l keys work for leverage adjustment when leverage control is focused", async () => {
-      render(<PrototypePage />)
+      render(() => <PrototypePage />)
 
       // Focus staged changes (which focuses leverage control)
       await user.keyboard("4")
@@ -247,7 +247,7 @@ describe("FULL KEYBOARD WORKFLOW - No Mouse Allowed", () => {
 
   describe("leverage adjustment", () => {
     it("'[' decreases leverage globally without focus", async () => {
-      render(<PrototypePage />)
+      render(() => <PrototypePage />)
 
       // Focus screener (NOT leverage control)
       await user.keyboard("1")
@@ -264,7 +264,7 @@ describe("FULL KEYBOARD WORKFLOW - No Mouse Allowed", () => {
     })
 
     it("']' increases leverage globally without focus", async () => {
-      render(<PrototypePage />)
+      render(() => <PrototypePage />)
 
       // Focus positions (NOT leverage control)
       await user.keyboard("2")
@@ -281,7 +281,7 @@ describe("FULL KEYBOARD WORKFLOW - No Mouse Allowed", () => {
     })
 
     it("']' increases leverage when staged changes is focused", async () => {
-      render(<PrototypePage />)
+      render(() => <PrototypePage />)
 
       // Focus staged changes panel with '4'
       await user.keyboard("4")
@@ -298,7 +298,7 @@ describe("FULL KEYBOARD WORKFLOW - No Mouse Allowed", () => {
     })
 
     it("'[' decreases leverage when staged changes is focused", async () => {
-      render(<PrototypePage />)
+      render(() => <PrototypePage />)
 
       // First increase leverage so we have room to decrease
       await user.keyboard("{]}")
@@ -321,7 +321,7 @@ describe("FULL KEYBOARD WORKFLOW - No Mouse Allowed", () => {
 
   describe("trade execution", () => {
     it("'x' executes staged trades", async () => {
-      render(<PrototypePage />)
+      render(() => <PrototypePage />)
 
       // Stage a trade by changing leverage (which generates staged trades)
       await user.keyboard("]") // Increase leverage
@@ -343,7 +343,7 @@ describe("FULL KEYBOARD WORKFLOW - No Mouse Allowed", () => {
 
   describe("weight editing", () => {
     it("'w' starts weight edit when instrument is selected", async () => {
-      render(<PrototypePage />)
+      render(() => <PrototypePage />)
 
       // Navigate to instrument (BTC starts expanded by default)
       await user.keyboard("2") // Focus positions, auto-selects BTC
@@ -360,7 +360,7 @@ describe("FULL KEYBOARD WORKFLOW - No Mouse Allowed", () => {
     })
 
     it("'n' starts notional edit when instrument is selected", async () => {
-      render(<PrototypePage />)
+      render(() => <PrototypePage />)
 
       // Navigate to instrument (BTC starts expanded by default)
       await user.keyboard("2") // Focus positions, auto-selects BTC
@@ -382,7 +382,7 @@ describe("FULL KEYBOARD WORKFLOW - No Mouse Allowed", () => {
    */
   describe("panel focus switching", () => {
     it("can focus screener with '1' after focusing staged changes with '4'", async () => {
-      render(<PrototypePage />)
+      render(() => <PrototypePage />)
 
       // Focus staged changes panel with '4'
       await user.keyboard("4")
@@ -404,7 +404,7 @@ describe("FULL KEYBOARD WORKFLOW - No Mouse Allowed", () => {
     })
 
     it("can focus positions with '2' after focusing staged changes with '4'", async () => {
-      render(<PrototypePage />)
+      render(() => <PrototypePage />)
 
       // Focus staged changes panel with '4'
       await user.keyboard("4")
@@ -423,7 +423,7 @@ describe("FULL KEYBOARD WORKFLOW - No Mouse Allowed", () => {
     })
 
     it("can focus performance with '3' after focusing staged changes with '4'", async () => {
-      render(<PrototypePage />)
+      render(() => <PrototypePage />)
 
       // Focus staged changes panel with '4'
       await user.keyboard("4")
@@ -440,7 +440,7 @@ describe("FULL KEYBOARD WORKFLOW - No Mouse Allowed", () => {
     })
 
     it("can switch from any panel to any other panel using number keys", async () => {
-      render(<PrototypePage />)
+      render(() => <PrototypePage />)
 
       const expectPanelFocused = async (
         panelName: string,
@@ -451,7 +451,6 @@ describe("FULL KEYBOARD WORKFLOW - No Mouse Allowed", () => {
         if (shouldBeFocused) {
           expect(panel).toBeInTheDocument()
         } else {
-          // Panel might still have a ring from being a border, check for ring-primary
           const primaryPanel = header.closest("[class*='ring-primary']")
           expect(primaryPanel).toBeNull()
         }
@@ -487,7 +486,7 @@ describe("FULL KEYBOARD WORKFLOW - No Mouse Allowed", () => {
     })
 
     it("factor config panel ('f') does not interfere with panel focus", async () => {
-      render(<PrototypePage />)
+      render(() => <PrototypePage />)
 
       // Focus positions first
       await user.keyboard("2")
@@ -522,7 +521,7 @@ describe("FULL KEYBOARD WORKFLOW - No Mouse Allowed", () => {
     })
 
     it("escape clears staged changes focus", async () => {
-      render(<PrototypePage />)
+      render(() => <PrototypePage />)
 
       // Focus staged changes
       await user.keyboard("4")
@@ -542,7 +541,7 @@ describe("FULL KEYBOARD WORKFLOW - No Mouse Allowed", () => {
     })
 
     it("escape clears performance panel focus", async () => {
-      render(<PrototypePage />)
+      render(() => <PrototypePage />)
 
       // Focus performance
       await user.keyboard("3")
@@ -562,7 +561,7 @@ describe("FULL KEYBOARD WORKFLOW - No Mouse Allowed", () => {
     })
 
     it("clicking positions panel clears staged changes focus", async () => {
-      render(<PrototypePage />)
+      render(() => <PrototypePage />)
 
       // Focus staged changes with keyboard
       await user.keyboard("4")
@@ -588,7 +587,7 @@ describe("FULL KEYBOARD WORKFLOW - No Mouse Allowed", () => {
     })
 
     it("clicking screener panel clears staged changes focus", async () => {
-      render(<PrototypePage />)
+      render(() => <PrototypePage />)
 
       // Focus staged changes with keyboard
       await user.keyboard("4")
@@ -614,7 +613,7 @@ describe("FULL KEYBOARD WORKFLOW - No Mouse Allowed", () => {
     })
 
     it("clicking positions panel clears performance focus", async () => {
-      render(<PrototypePage />)
+      render(() => <PrototypePage />)
 
       // Focus performance with keyboard
       await user.keyboard("3")
@@ -644,7 +643,7 @@ describe("FULL KEYBOARD WORKFLOW - No Mouse Allowed", () => {
 
   describe("focus management - no event leakage", () => {
     it("leverage control stops responding after pressing 2 to exit staged changes", async () => {
-      render(<PrototypePage />)
+      render(() => <PrototypePage />)
 
       const leverageControl = screen.getByTestId("leverage-control")
 
@@ -677,7 +676,7 @@ describe("FULL KEYBOARD WORKFLOW - No Mouse Allowed", () => {
     })
 
     it("leverage control stops responding after pressing 1 to exit staged changes", async () => {
-      render(<PrototypePage />)
+      render(() => <PrototypePage />)
 
       const leverageControl = screen.getByTestId("leverage-control")
 
@@ -706,7 +705,7 @@ describe("FULL KEYBOARD WORKFLOW - No Mouse Allowed", () => {
     })
 
     it("leverage control stops responding after pressing 3 to exit staged changes", async () => {
-      render(<PrototypePage />)
+      render(() => <PrototypePage />)
 
       const leverageControl = screen.getByTestId("leverage-control")
 
@@ -732,7 +731,7 @@ describe("FULL KEYBOARD WORKFLOW - No Mouse Allowed", () => {
     })
 
     it("leverage control stops responding after pressing k/up to exit staged changes", async () => {
-      render(<PrototypePage />)
+      render(() => <PrototypePage />)
 
       const leverageControl = screen.getByTestId("leverage-control")
 
@@ -760,7 +759,7 @@ describe("FULL KEYBOARD WORKFLOW - No Mouse Allowed", () => {
     })
 
     it("h/l keys in positions panel do not double-trigger leverage changes", async () => {
-      render(<PrototypePage />)
+      render(() => <PrototypePage />)
 
       // Focus positions panel
       await user.keyboard("2")
@@ -783,7 +782,7 @@ describe("FULL KEYBOARD WORKFLOW - No Mouse Allowed", () => {
     })
 
     it("switching panels rapidly does not cause stuck focus", async () => {
-      render(<PrototypePage />)
+      render(() => <PrototypePage />)
 
       // Rapidly switch between panels
       await user.keyboard("4") // staged

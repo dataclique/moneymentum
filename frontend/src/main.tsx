@@ -14,6 +14,8 @@ const MainPage = lazy(() => import("./pages/MainPage"))
 const PrototypePage = lazy(() => import("./pages/Prototype"))
 const TokenPage = lazy(() => import("./pages/TokenPage"))
 
+const NotFound = () => <div>Page not found</div>
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
@@ -44,6 +46,7 @@ render(
                 <Route path="/dashboard" component={MainPage} />
                 <Route path="/token/:ticker" component={TokenPage} />
               </Route>
+              <Route path="*404" component={NotFound} />
             </Router>
           </WalletProvider>
         </NetworkProvider>

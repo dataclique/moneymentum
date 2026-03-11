@@ -32,6 +32,7 @@ import { WalletHeader } from "@/components/wallet-header"
 interface PositionsPanelProps {
   tokens: TokenAllocation[]
   isLoading: boolean
+  fundingIsLoading: boolean
   displayNotional: number
   leverageLimitsMap: Record<string, number | undefined>
   _isRebalancing?: boolean
@@ -55,6 +56,7 @@ const PositionsTableRow = (props: {
   displayNotional: number
   maxLeverage: number | undefined
   isPrecise: boolean
+  fundingIsLoading: boolean
   onRemove: (symbol: string) => void
   onUndoRemove: (symbol: string) => void
   onSideChange: (symbol: string, side: OrderSide) => void
@@ -322,7 +324,12 @@ const PositionsTableRow = (props: {
           fundingClassName(),
         )}
       >
-        {fundingDisplay()}
+        <Show
+          when={!props.fundingIsLoading}
+          fallback={<Skeleton class="h-3 w-[64px] inline-block align-middle" />}
+        >
+          {fundingDisplay()}
+        </Show>
       </td>
       <td class="px-2 py-1 text-right font-mono text-[11px] text-muted-foreground">
         0
@@ -435,6 +442,7 @@ export const PositionsPanel = (props: PositionsPanelProps): JSX.Element => {
                           displayNotional={props.displayNotional}
                           maxLeverage={props.leverageLimitsMap[token.symbol]}
                           isPrecise={props.isPrecise}
+                          fundingIsLoading={props.fundingIsLoading}
                           onRemove={props.onRemove}
                           onUndoRemove={props.onUndoRemove}
                           onSideChange={props.onSideChange}

@@ -155,8 +155,7 @@ export const useHyperliquidFundingRates = () => {
     queryKey: [...QUERY_KEYS.fundingRates, networkMode()],
     queryFn: async () => {
       const c = client()
-      if (!c) throw new Error("Wallet not connected")
-      return c.getFundingRates()
+      return c!.getFundingRates()
     },
     enabled: isConnected() && client() !== null,
     staleTime: DATA_STALE_TIME_MS,

@@ -159,6 +159,7 @@ const PortfolioPage = () => {
         <ScreenerPanel
           symbols={screenerSymbols()}
           isLoading={tickersQuery.isLoading}
+          fundingIsLoading={fundingRatesQuery.isLoading}
           selectedSymbols={selectedSymbolsSet()}
           onAddSymbol={portfolio.handleAddToken}
           fundingRatesByBaseSymbol={fundingRatesByBaseSymbol()}
@@ -170,6 +171,7 @@ const PortfolioPage = () => {
               <PositionsPanel
                 tokens={portfolio.selectedTokens}
                 isLoading={portfolio.isPositionsLoading}
+                fundingIsLoading={fundingRatesQuery.isLoading}
                 displayNotional={portfolio.displayNotional}
                 leverageLimitsMap={portfolio.leverageLimitsMap}
                 _isRebalancing={portfolio.isRebalancing}

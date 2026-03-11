@@ -6,6 +6,7 @@ import { cn } from "@/lib/cn"
 interface ScreenerPanelProps {
   symbols: string[]
   isLoading: boolean
+  fundingIsLoading: boolean
   selectedSymbols: Set<string>
   onAddSymbol: (symbol: string) => void
   fundingRatesByBaseSymbol?: Record<string, number>
@@ -49,7 +50,7 @@ export const ScreenerPanel = (props: ScreenerPanelProps) => {
       </div>
       <div class="flex-1 min-h-0 overflow-auto scrollbar-hide">
         <Show
-          when={!props.isLoading}
+          when={!props.isLoading && !props.fundingIsLoading}
           fallback={
             <div class="p-2 space-y-1">
               <For each={Array.from({ length: 12 })}>

@@ -71,15 +71,11 @@ export const RiskPanel = () => {
         <div class="grid grid-cols-2 gap-x-4 gap-y-1">
           <div class="flex justify-between">
             <span class="text-muted-foreground">VaR 95%</span>
-            <span class="text-red-400 font-mono">
-              {mockRiskMetrics.var95}
-            </span>
+            <span class="text-red-400 font-mono">{mockRiskMetrics.var95}</span>
           </div>
           <div class="flex justify-between">
             <span class="text-muted-foreground">VaR 99%</span>
-            <span class="text-red-400 font-mono">
-              {mockRiskMetrics.var99}
-            </span>
+            <span class="text-red-400 font-mono">{mockRiskMetrics.var99}</span>
           </div>
           <div class="flex justify-between">
             <span class="text-muted-foreground">Diversification</span>

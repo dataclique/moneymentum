@@ -239,9 +239,7 @@ export const WalletHeader = (props: WalletHeaderProps) => {
               ? formatPublicKey(currentAccountAddress())
               : "No wallet configured"}
           </DropdownMenuTrigger>
-          <DropdownMenuContent
-            class="w-[260px] p-3 text-[11px] leading-snug"
-          >
+          <DropdownMenuContent class="w-[260px] p-3 text-[11px] leading-snug">
             <div class="flex flex-col gap-3">
               <div class="flex items-start justify-between gap-2">
                 <div class="min-w-0 flex-1">

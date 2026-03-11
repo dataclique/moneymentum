@@ -231,7 +231,8 @@ export const StagedTradesPanel = (props: StagedTradesPanelProps) => {
                 <div class="flex justify-between">
                   <span class="text-muted-foreground">Momentum</span>
                   <span class="font-mono">
-                    {projected().factorChanges.momentum.current.toFixed(2)} -&gt;{" "}
+                    {projected().factorChanges.momentum.current.toFixed(2)}{" "}
+                    -&gt;{" "}
                     <span
                       class={
                         Math.abs(projected().factorChanges.momentum.delta) >
@@ -249,7 +250,8 @@ export const StagedTradesPanel = (props: StagedTradesPanelProps) => {
                 <div class="flex justify-between">
                   <span class="text-muted-foreground">Volatility</span>
                   <span class="font-mono">
-                    {projected().factorChanges.volatility.current.toFixed(2)} -&gt;{" "}
+                    {projected().factorChanges.volatility.current.toFixed(2)}{" "}
+                    -&gt;{" "}
                     <span
                       class={
                         Math.abs(projected().factorChanges.volatility.delta) >

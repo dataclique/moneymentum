@@ -99,7 +99,7 @@ export const StagedChangesPanel = (props: StagedChangesPanelProps) => {
               const nextWeight = stagedTrade.newWeight ?? prevWeight
               const weightDelta = nextWeight - prevWeight
 
-              const arrow = weightDelta > 0 ? "^" : weightDelta < 0 ? "v" : "->"
+              const arrow = weightDelta > 0 ? "↑" : weightDelta < 0 ? "↓" : "→"
               const deltaClass =
                 weightDelta > 0
                   ? "text-emerald-500"
@@ -185,7 +185,7 @@ export const StagedChangesPanel = (props: StagedChangesPanelProps) => {
                     fallback={formatUsdPrecise(props.targetNotional ?? 0)}
                   >
                     {formatUsdPrecise(props.initialTotalNotional ?? 0)}{" "}
-                    <span class="text-muted-foreground">-&gt;</span>{" "}
+                    <span class="text-muted-foreground">→</span>{" "}
                     <span
                       class={
                         (props.targetNotional ?? 0) >=
@@ -212,7 +212,7 @@ export const StagedChangesPanel = (props: StagedChangesPanelProps) => {
                     fallback={`${(props.crossAccountLeverage ?? 0).toFixed(2)}x`}
                   >
                     {initialLeverage()?.toFixed(2)}x{" "}
-                    <span class="text-muted-foreground">-&gt;</span>{" "}
+                    <span class="text-muted-foreground">→</span>{" "}
                     <span class="text-yellow-500">
                       {(currentLeverage() ?? 0).toFixed(2)}x
                     </span>

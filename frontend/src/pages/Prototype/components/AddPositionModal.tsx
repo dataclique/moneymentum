@@ -73,10 +73,14 @@ export const AddPositionModal = ({
     if (!selectedInstrument) return
 
     const numericValue = parseFloat(sizeValue) || 0
+    const navLeverageProduct = nav * currentLeverage
+    const hasValidDenominator = navLeverageProduct !== 0
     const weight =
       sizeMode === "weight"
         ? numericValue / 100
-        : numericValue / (nav * currentLeverage)
+        : hasValidDenominator
+          ? numericValue / navLeverageProduct
+          : 0
 
     onAddPosition({
       symbol: selectedInstrument.symbol,
@@ -140,15 +144,22 @@ export const AddPositionModal = ({
 
   if (!isOpen) return null
 
+  const navLeverageProduct = nav * currentLeverage
+  const hasValidDenominator = navLeverageProduct !== 0
+
   const computedWeight =
     sizeMode === "weight"
       ? (parseFloat(sizeValue) || 0) / 100
-      : (parseFloat(sizeValue) || 0) / (nav * currentLeverage)
+      : hasValidDenominator
+        ? (parseFloat(sizeValue) || 0) / navLeverageProduct
+        : 0
 
   const computedNotional =
     sizeMode === "notional"
       ? parseFloat(sizeValue) || 0
-      : ((parseFloat(sizeValue) || 0) / 100) * nav * currentLeverage
+      : hasValidDenominator
+        ? ((parseFloat(sizeValue) || 0) / 100) * navLeverageProduct
+        : 0
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">

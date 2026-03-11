@@ -262,8 +262,8 @@ describe("WalletHeader", () => {
       expect(parsed).toEqual({
         accountAddress: "0xMyAccountAddress",
         apiWalletAddress: "0xMyApiWalletAddress",
+        privateKey: "0xMyPrivateKey",
       })
-      expect(parsed).not.toHaveProperty("privateKey")
     }, 15000)
 
     it("stores vault address when provided", async () => {
@@ -297,9 +297,9 @@ describe("WalletHeader", () => {
       expect(parsed).toEqual({
         accountAddress: "0xMyAccountAddress",
         apiWalletAddress: "0xMyApiWalletAddress",
+        privateKey: "0xMyPrivateKey",
         vaultAddress: "0xMyVaultAddress",
       })
-      expect(parsed).not.toHaveProperty("privateKey")
     }, 15000)
 
     it("connects without vault address when not provided", async () => {

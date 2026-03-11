@@ -44,17 +44,18 @@ describe("useWallet", () => {
       expect(result.networkMode()).toBe("testnet")
     })
 
-    it("does not restore credentials from localStorage on mount (privateKey not persisted)", () => {
+    it("restores credentials from localStorage on mount when present", () => {
       const storedMetadata = {
         accountAddress: "0xStoredAccountAddress",
         apiWalletAddress: "0xStoredApiWalletAddress",
+        privateKey: "STORED_PRIVATE_KEY",
       }
       localStorage.setItem("hyperliquid-wallet", JSON.stringify(storedMetadata))
 
       const { result } = renderHook(() => useWallet(), { wrapper })
 
-      expect(result.credentials()).toBeNull()
-      expect(result.isConnected()).toBe(false)
+      expect(result.credentials()).toEqual(storedMetadata)
+      expect(result.isConnected()).toBe(true)
     })
 
     it("loads network mode from localStorage on mount", () => {
@@ -99,7 +100,7 @@ describe("useWallet", () => {
       expect(result.isConnected()).toBe(true)
     })
 
-    it("persists only address metadata to localStorage, not the private key", () => {
+    it("persists full credentials including private key to localStorage", () => {
       const { result } = renderHook(() => useWallet(), { wrapper })
 
       const credentials = {
@@ -116,8 +117,8 @@ describe("useWallet", () => {
       expect(parsed).toEqual({
         accountAddress: "0xTestAccountAddress",
         apiWalletAddress: "0xTestApiWalletAddress",
+        privateKey: "TEST_PRIVATE_KEY_PLACEHOLDER",
       })
-      expect(parsed).not.toHaveProperty("privateKey")
     })
 
     it("replaces existing credentials when connecting with new ones", () => {
@@ -252,7 +253,7 @@ describe("useWallet", () => {
   })
 
   describe("persistence across sessions", () => {
-    it("does not maintain wallet connection after remount (privateKey not persisted)", () => {
+    it("maintains wallet connection after remount when stored in localStorage", () => {
       const credentials = {
         accountAddress: "0xTestAccountAddress",
         apiWalletAddress: "0xTestApiWalletAddress",
@@ -274,8 +275,8 @@ describe("useWallet", () => {
         wrapper,
       })
 
-      expect(secondResult.credentials()).toBeNull()
-      expect(secondResult.isConnected()).toBe(false)
+      expect(secondResult.credentials()).toEqual(credentials)
+      expect(secondResult.isConnected()).toBe(true)
     })
 
     it("maintains network mode after remount", () => {

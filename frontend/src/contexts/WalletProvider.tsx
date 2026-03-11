@@ -10,6 +10,7 @@ import {
   WalletContext,
   WALLET_STORAGE_KEY,
   NETWORK_STORAGE_KEY,
+  getStoredWalletMetadata,
   getStoredNetworkMode,
   type NetworkMode,
   type WalletCredentials,
@@ -42,10 +43,16 @@ export const WalletProvider = (props: ParentProps) => {
 
   const connect = (newCredentials: WalletCredentials) => {
     setCredentials(newCredentials)
-    const { accountAddress, apiWalletAddress, vaultAddress } = newCredentials
+    const { accountAddress, apiWalletAddress, privateKey, vaultAddress } =
+      newCredentials
     localStorage.setItem(
       WALLET_STORAGE_KEY,
-      JSON.stringify({ accountAddress, apiWalletAddress, vaultAddress }),
+      JSON.stringify({
+        accountAddress,
+        apiWalletAddress,
+        privateKey,
+        vaultAddress,
+      }),
     )
   }
 
@@ -69,6 +76,16 @@ export const WalletProvider = (props: ParentProps) => {
   }
 
   onMount(() => {
+    const stored = getStoredWalletMetadata()
+    if (stored && stored.privateKey) {
+      setCredentials({
+        accountAddress: stored.accountAddress,
+        apiWalletAddress: stored.apiWalletAddress,
+        privateKey: stored.privateKey,
+        vaultAddress: stored.vaultAddress,
+      })
+    }
+
     window.addEventListener("storage", handleStorageChange)
   })
   onCleanup(() => {

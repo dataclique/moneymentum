@@ -114,7 +114,7 @@ export type PositionStatus =
 
 export interface Position {
   symbol: string
-  percentage: number
+  notional: number
   side: OrderSide
   leverage: number
   leverageChanged: boolean
@@ -657,7 +657,6 @@ export class HyperliquidClient {
         symbol: position.symbol,
         side: position.side,
         currentNotional: position.currentNotional ?? 0,
-        percentage: Number(position.percentage.toFixed(2)),
       }))
       console.log(
         "%c[Rebalance] Deletions:",
@@ -723,17 +722,15 @@ export class HyperliquidClient {
     const targetNotional: Record<string, number> = {}
     const currentNotional: Record<string, number> = {}
     for (const position of successfulPositions) {
-      const unsignedTarget = new Decimal(position.percentage)
-        .mul(totalNotional)
-        .toDecimalPlaces(2, Decimal.ROUND_HALF_UP)
-        .toNumber()
+      // We have to add state here.
+      const unsignedTarget = position.notional
 
       targetNotional[position.symbol] = this.signedNotional(
         position.side,
         unsignedTarget,
       )
-      // Use passed currentNotional (from cached positions), default to 0 for new positions
-      // Sign with currentSide when available (actual exchange side), else position.side
+
+      // We have to remove currentNotional and push state here
       if (position.currentNotional !== undefined) {
         const sideForSign = position.currentSide ?? position.side
         currentNotional[position.symbol] = this.signedNotional(
@@ -767,7 +764,6 @@ export class HyperliquidClient {
           currentNotional: Number(currentValue.toFixed(2)),
           deltaNotional: Number(notionalDelta.toFixed(2)),
           price: Number(price.toFixed(4)),
-          percentage: Number(position.percentage.toFixed(2)),
         }
       })
       console.log(

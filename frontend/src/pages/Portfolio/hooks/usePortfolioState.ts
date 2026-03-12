@@ -10,7 +10,6 @@ import {
 } from "@/hooks/useTrading"
 import { useWallet } from "@/hooks/useWallet"
 
-const STORAGE_KEY_PREFIX = "portfolio-allocation-state"
 export const MIN_USD = 11
 export const MIN_CHANGE_DELTA = 11.0 // Minimum change in USD to trigger a rebalance
 // Allow sum of weights slightly above 100% due to rounding (e.g. 33.33 + 33.33 + 33.34 = 100.00)
@@ -28,12 +27,12 @@ export type AllocationStatus =
 
 export interface TokenAllocation {
   symbol: string
-  percentage: number
+  percentage?: number
   side: OrderSide
   leverage: number
   status: AllocationStatus
   message?: string | null
-  notional?: number
+  notional: number
   lockedUsd?: number
   previousPercentage?: number
   previousNotional?: number
@@ -41,19 +40,6 @@ export interface TokenAllocation {
   targetNotional?: number
   currentNotional?: number
   deltaInsufficient?: boolean
-}
-
-interface StoredPortfolioState {
-  crossAccountLeverage: number
-  tokens: Array<{
-    symbol: string
-    percentage: number
-    side: OrderSide
-    lockedUsd?: number
-    leverage: number
-    status: string
-    notional?: number
-  }>
 }
 
 const MAX_CROSS_ACCOUNT_LEVERAGE = 5
@@ -73,21 +59,6 @@ const getTokenUsdAllocation = (
       .toNumber()
   }
   return 0
-}
-
-const getStorageKey = (networkMode: string) =>
-  `${STORAGE_KEY_PREFIX}-${networkMode}`
-
-const getStoredPortfolio = (
-  networkMode: string,
-): StoredPortfolioState | null => {
-  const stored = localStorage.getItem(getStorageKey(networkMode))
-  if (!stored) return null
-  try {
-    return JSON.parse(stored) as StoredPortfolioState
-  } catch {
-    return null
-  }
 }
 
 // Calculate total notional from active (non-deleted) tokens
@@ -219,9 +190,6 @@ export const usePortfolioState = (
   // Mutations
   const rebalancePositionsMutation = useRebalanceHyperliquidPositions()
 
-  const [storedDataSnapshot, setStoredDataSnapshot] =
-    createSignal<StoredPortfolioState | null>(getStoredPortfolio(networkMode()))
-
   const [crossAccountLeverage, setCrossAccountLeverage] = createSignal(
     DEFAULT_CROSS_ACCOUNT_LEVERAGE,
   )
@@ -229,32 +197,13 @@ export const usePortfolioState = (
     createSignal<number | null>(null)
 
   const [selectedTokens, setSelectedTokens] = createSignal<TokenAllocation[]>(
-    untrack(
-      () =>
-        storedDataSnapshot()?.tokens.map(token => {
-          const locked =
-            token.lockedUsd === undefined || token.lockedUsd < MIN_USD
-              ? MIN_USD
-              : token.lockedUsd
-          const notional = token.notional ?? locked
-          return {
-            ...token,
-            leverage: token.leverage || 1,
-            lockedUsd: locked,
-            notional,
-            status: "untouched" as const,
-            message: null,
-          }
-        }) ?? [],
-    ),
+    [],
   )
   const [isRebalancingUi, setIsRebalancingUi] = createSignal(false)
   const [initialPortfolio, setInitialPortfolio] = createSignal<
     TokenAllocation[]
   >([])
   const [positionsLoadedFromExchange, setPositionsLoadedFromExchange] =
-    createSignal(false)
-  const [hasHydratedFromStorage, setHasHydratedFromStorage] =
     createSignal(false)
 
   // Track previous connection state for disconnect cleanup
@@ -275,11 +224,6 @@ export const usePortfolioState = (
     setCrossAccountLeverage(DEFAULT_CROSS_ACCOUNT_LEVERAGE)
     setInitialCrossAccountLeverage(null)
     setPositionsLoadedFromExchange(false)
-    setHasHydratedFromStorage(false)
-
-    const key = getStorageKey(networkMode())
-    localStorage.removeItem(key)
-    setStoredDataSnapshot(null)
   })
 
   // Derive accountValue from account summary
@@ -295,35 +239,6 @@ export const usePortfolioState = (
       .toNumber(),
   )
 
-  const persistStateToLocalStorage = (
-    leverageVal: number,
-    tokens: TokenAllocation[],
-  ) => {
-    const payload = {
-      crossAccountLeverage: leverageVal,
-      tokens: tokens.map(
-        ({
-          symbol,
-          percentage,
-          side,
-          lockedUsd,
-          leverage,
-          status,
-          notional,
-        }) => ({
-          symbol,
-          percentage,
-          side,
-          lockedUsd: lockedUsd ?? undefined,
-          leverage,
-          status,
-          notional: notional ?? undefined,
-        }),
-      ),
-    }
-    localStorage.setItem(getStorageKey(networkMode()), JSON.stringify(payload))
-  }
-
   // Mutable ref kept in sync with crossAccountLeverage signal via createEffect.
   // Avoids stale closures in callbacks that read leverage without re-subscribing.
   let latestCrossAccountLeverage = untrack(crossAccountLeverage)
@@ -338,11 +253,9 @@ export const usePortfolioState = (
       | TokenAllocation[]
       | ((prev: TokenAllocation[]) => TokenAllocation[]),
   ) => {
-    setSelectedTokens(prev => {
-      const newTokens = typeof updater === "function" ? updater(prev) : updater
-      persistStateToLocalStorage(latestCrossAccountLeverage, newTokens)
-      return newTokens
-    })
+    setSelectedTokens(prev =>
+      typeof updater === "function" ? updater(prev) : updater,
+    )
   }
 
   // Helper: recalculate percentages from notionals and update leverage
@@ -359,8 +272,7 @@ export const usePortfolioState = (
     return updatedTokens
   }
 
-  // Wait for positionsQuery data and positive accountValue, then merge exchange positions
-  // with storedDataSnapshot and recalculate percentages/leverage
+  // Wait for positionsQuery data and positive accountValue, then initialize from exchange positions
   createEffect(() => {
     if (positionsLoadedFromExchange()) {
       return
@@ -402,82 +314,8 @@ export const usePortfolioState = (
     // Always set initialPortfolio from exchange (source of truth for what exists on exchange)
     setInitialPortfolio(exchangeTokens)
 
-    const snapshot = storedDataSnapshot()
-    if (snapshot && snapshot.tokens.length > 0 && !hasHydratedFromStorage()) {
-      // Merge localStorage with exchange positions
-      const storedSymbols = new Set(snapshot.tokens.map(t => t.symbol))
-
-      // Start with localStorage tokens (preserving user's customizations)
-      const mergedTokens: TokenAllocation[] = snapshot.tokens.map(token => {
-        const exchangeToken = exchangeTokens.find(
-          t => t.symbol === token.symbol,
-        )
-        if (exchangeToken) {
-          // Token exists on exchange - use exchange notional
-          return {
-            ...token,
-            leverage: token.leverage || 1,
-            notional: exchangeToken.notional,
-            lockedUsd: exchangeToken.notional,
-            status: "untouched" as const,
-            message: null,
-          }
-        }
-        // Token only in localStorage - set notional from stored value or MIN_USD
-        const rawStored =
-          token.notional !== undefined && token.notional > 0
-            ? token.notional
-            : token.lockedUsd !== undefined && token.lockedUsd >= MIN_USD
-              ? token.lockedUsd
-              : MIN_USD
-        const storedNotional = rawStored
-        return {
-          ...token,
-          leverage: token.leverage || 1,
-          notional: storedNotional,
-          lockedUsd: storedNotional,
-          status: "untouched" as const,
-          message: null,
-        }
-      })
-
-      // Add exchange positions that are NOT in localStorage
-      for (const exchangeToken of exchangeTokens) {
-        if (!storedSymbols.has(exchangeToken.symbol)) {
-          mergedTokens.push(exchangeToken)
-        }
-      }
-
-      // Recalculate percentages and leverage for all tokens
-      const {
-        tokens: tokensWithPercentages,
-        totalNotional: fullTotalNotional,
-      } = recalculateFromNotionals(mergedTokens)
-
-      if (accountValue() > 0) {
-        // crossAccountLeverage reflects the merged (current) portfolio,
-        // but initialCrossAccountLeverage must stay tied to the pure
-        // exchange snapshot (initialLeverage) so that leverage deltas
-        // in the staged panel are measured vs. actual exchange state.
-        const mergedLeverage = calcLeverage(fullTotalNotional, accountValue())
-        setCrossAccountLeverage(mergedLeverage)
-        setInitialCrossAccountLeverage(initialLeverage)
-      }
-
-      setSelectedTokens(tokensWithPercentages)
-      // Baseline portfolio = only tokens that exist on exchange (for comparison)
-      const initialPortfolioTokens = exchangeTokens.map(exchangeToken => {
-        const mergedToken = tokensWithPercentages.find(
-          t => t.symbol === exchangeToken.symbol,
-        )
-        return mergedToken ?? exchangeToken
-      })
-      setInitialPortfolio(initialPortfolioTokens)
-      setHasHydratedFromStorage(true)
-    } else if (exchangeTokens.length > 0) {
-      // No localStorage data, use exchange positions
+    if (exchangeTokens.length > 0) {
       setSelectedTokens(exchangeTokens)
-      // Baseline portfolio = what the user sees initially in the UI
       setInitialPortfolio(exchangeTokens)
     }
 

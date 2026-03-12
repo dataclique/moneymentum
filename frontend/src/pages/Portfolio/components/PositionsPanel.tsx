@@ -51,6 +51,7 @@ const getSideBadgeClass = (side: OrderSide) =>
     ? "bg-green-500/20 text-green-500"
     : "bg-red-500/20 text-red-500"
 
+// TODO: move to separate component
 const PositionsTableRow = (props: {
   token: TokenAllocation
   displayNotional: number
@@ -64,18 +65,27 @@ const PositionsTableRow = (props: {
   onNotionalChange: (symbol: string, notional: number) => void
   onWeightChange: (symbol: string, percentage: number) => void
   fundingRate?: number
+  totalNotional: number
 }): JSX.Element => {
   const usdAmount = () =>
     props.displayNotional > 0
-      ? new Decimal(props.token.percentage)
+      ? new Decimal(props.token.percentage ?? 0)
           .div(100)
           .mul(props.displayNotional)
           .toDecimalPlaces(2, Decimal.ROUND_HALF_UP)
           .toFixed(2)
       : "0.00"
+
+  const percentage = () =>
+    new Decimal(props.token.notional)
+      .div(props.totalNotional)
+      .mul(100)
+      .toFixed(2)
+
   const [weightInput, setWeightInput] = createSignal(
     untrack(() => String(props.token.percentage)),
   )
+
   const [notionalInput, setNotionalInput] = createSignal(
     untrack(() => (props.token.notional ?? parseFloat(usdAmount())).toFixed(2)),
   )
@@ -211,7 +221,7 @@ const PositionsTableRow = (props: {
       <td class="px-2 py-1 text-right">
         <input
           type="number"
-          value={weightInput()}
+          value={percentage()}
           onInput={inputEvent => {
             const raw = inputEvent.currentTarget.value
             setWeightInput(raw)
@@ -450,6 +460,7 @@ export const PositionsPanel = (props: PositionsPanelProps): JSX.Element => {
                           onNotionalChange={props.onNotionalChange}
                           onWeightChange={props.onWeightChange}
                           fundingRate={fundingRate}
+                          totalNotional={props.displayNotional}
                         />
                       )
                     }}

@@ -135,7 +135,6 @@ export interface CurrentPosition {
 export interface OrderResult {
   symbol: string
   side: OrderSide
-  percentage: number
   status: "working" | "filled" | "failed"
   message?: string | null
 }
@@ -502,7 +501,6 @@ export class HyperliquidClient {
         return {
           symbol,
           side: position.side,
-          percentage: 0,
           status: "filled",
           message: "Position already closed.",
         }
@@ -532,14 +530,12 @@ export class HyperliquidClient {
       return {
         symbol,
         side: position.side,
-        percentage: 0,
         status: "filled",
       }
     } catch (error) {
       return {
         symbol,
         side: position.side,
-        percentage: position.percentage,
         status: "failed",
         message: error instanceof Error ? error.message : String(error),
       }
@@ -550,7 +546,6 @@ export class HyperliquidClient {
     symbol: string,
     price: number,
     notionalDelta: number,
-    percentage: number,
   ): Promise<OrderResult> {
     const side: OrderSide = notionalDelta > 0 ? "buy" : "sell"
     const usdAmount = Math.abs(notionalDelta)
@@ -560,7 +555,6 @@ export class HyperliquidClient {
       return {
         symbol,
         side,
-        percentage,
         status: "filled",
         message: `No action taken: change ($${usdAmount.toFixed(2)}) is below minimum order size ($${String(MIN_ORDER_VALUE)}).`,
       }
@@ -582,14 +576,12 @@ export class HyperliquidClient {
       return {
         symbol,
         side,
-        percentage,
         status: "filled",
       }
     } catch (error) {
       return {
         symbol,
         side,
-        percentage,
         status: "failed",
         message: error instanceof Error ? error.message : String(error),
       }
@@ -603,14 +595,12 @@ export class HyperliquidClient {
     usdAmount: number,
     closeSide: OrderSide,
     _targetSide: OrderSide,
-    percentage: number,
   ): Promise<OrderResult> {
     const coinAmount = usdAmount / price
     if (coinAmount <= 0) {
       return {
         symbol,
         side: closeSide,
-        percentage,
         status: "filled",
         message: "No close needed: amount is zero.",
       }
@@ -632,12 +622,11 @@ export class HyperliquidClient {
         },
       )
 
-      return { symbol, side: closeSide, percentage, status: "filled" }
+      return { symbol, side: closeSide, status: "filled" }
     } catch (error) {
       return {
         symbol,
         side: closeSide,
-        percentage,
         status: "failed",
         message: error instanceof Error ? error.message : String(error),
       }
@@ -716,7 +705,6 @@ export class HyperliquidClient {
           results.push({
             symbol: position.symbol,
             side: position.side,
-            percentage: position.percentage,
             status: "failed",
             message:
               result.reason instanceof Error
@@ -764,6 +752,7 @@ export class HyperliquidClient {
       : {}
 
     if (successfulPositions.length > 0) {
+      // TODO: in separate function
       const orderPreview = successfulPositions.map(position => {
         const symbol = position.symbol
         const price = prices[symbol]
@@ -821,7 +810,7 @@ export class HyperliquidClient {
     currentNotional: Record<string, number>,
     precise: boolean,
   ): Promise<OrderResult[]> {
-    const { symbol, side, percentage } = position
+    const { symbol, side } = position
     const notionalDelta = targetValue - currentValue
 
     // Negligible change
@@ -830,7 +819,6 @@ export class HyperliquidClient {
         {
           symbol,
           side,
-          percentage,
           status: "filled",
           message: "No action taken: change is negligible.",
         },
@@ -852,12 +840,7 @@ export class HyperliquidClient {
     }
 
     // Normal order
-    const result = await this.placeOrder(
-      symbol,
-      price,
-      notionalDelta,
-      percentage,
-    )
+    const result = await this.placeOrder(symbol, price, notionalDelta)
     return [result]
   }
 
@@ -869,7 +852,7 @@ export class HyperliquidClient {
     currentPosition: CurrentPosition | undefined,
     currentNotionalAbs: number,
   ): Promise<OrderResult[]> {
-    const { symbol, side: targetSide, percentage } = position
+    const { symbol, side: targetSide } = position
 
     // New position - open exactly $11
     if (!currentPosition) {
@@ -877,7 +860,6 @@ export class HyperliquidClient {
         symbol,
         price,
         targetSide === "buy" ? MIN_ORDER_VALUE : -MIN_ORDER_VALUE,
-        percentage,
       )
       return [result]
     }
@@ -894,7 +876,6 @@ export class HyperliquidClient {
         currentNotionalAbs,
         closeSide,
         targetSide,
-        percentage,
       )
 
       const targetNotionalAbs = Math.abs(targetValue)
@@ -903,7 +884,6 @@ export class HyperliquidClient {
         symbol,
         price,
         targetSide === "buy" ? openAmount : -openAmount,
-        percentage,
       )
 
       return [closeResult, openResult]
@@ -921,7 +901,6 @@ export class HyperliquidClient {
       return this.handlePreciseModeIncreasing(
         symbol,
         price,
-        percentage,
         targetSide,
         closeSide,
         currentNotionalAbsValue,
@@ -933,7 +912,6 @@ export class HyperliquidClient {
     return this.handlePreciseModeDecreasing(
       symbol,
       price,
-      percentage,
       targetSide,
       closeSide,
       currentNotionalAbsValue,
@@ -945,7 +923,6 @@ export class HyperliquidClient {
   private async handlePreciseModeIncreasing(
     symbol: string,
     price: number,
-    percentage: number,
     targetSide: OrderSide,
     closeSide: OrderSide,
     currentNotionalAbs: number,
@@ -964,7 +941,6 @@ export class HyperliquidClient {
         actualCloseAmount,
         closeSide,
         targetSide,
-        percentage,
       )
 
       const openNotional =
@@ -975,12 +951,7 @@ export class HyperliquidClient {
           : targetSide === "buy"
             ? MIN_ORDER_VALUE
             : -MIN_ORDER_VALUE
-      const openResult = await this.placeOrder(
-        symbol,
-        price,
-        openNotional,
-        percentage,
-      )
+      const openResult = await this.placeOrder(symbol, price, openNotional)
 
       return [closeResult, openResult]
     }
@@ -992,16 +963,10 @@ export class HyperliquidClient {
       closeAmount,
       closeSide,
       targetSide,
-      percentage,
     )
 
     const openNotional = targetSide === "buy" ? openAmount : -openAmount
-    const openResult = await this.placeOrder(
-      symbol,
-      price,
-      openNotional,
-      percentage,
-    )
+    const openResult = await this.placeOrder(symbol, price, openNotional)
 
     return [closeResult, openResult]
   }
@@ -1009,7 +974,6 @@ export class HyperliquidClient {
   private async handlePreciseModeDecreasing(
     symbol: string,
     price: number,
-    percentage: number,
     targetSide: OrderSide,
     closeSide: OrderSide,
     currentNotionalAbs: number,
@@ -1030,13 +994,11 @@ export class HyperliquidClient {
               actualCloseAmount,
               closeSide,
               targetSide,
-              percentage,
             )
           : await this.placeOrder(
               symbol,
               price,
               closeSide === "buy" ? actualCloseAmount : -actualCloseAmount,
-              percentage,
             )
 
       // Only open if target >= $11
@@ -1045,7 +1007,6 @@ export class HyperliquidClient {
           symbol,
           price,
           targetSide === "buy" ? targetNotionalAbs : -targetNotionalAbs,
-          percentage,
         )
         return [closeResult, openResult]
       }
@@ -1055,20 +1016,10 @@ export class HyperliquidClient {
 
     // Normal decreasing: close ($11 + |delta|), open $11
     const closeNotional = closeSide === "buy" ? closeAmount : -closeAmount
-    const closeResult = await this.placeOrder(
-      symbol,
-      price,
-      closeNotional,
-      percentage,
-    )
+    const closeResult = await this.placeOrder(symbol, price, closeNotional)
 
     const openNotional = targetSide === "buy" ? openAmount : -openAmount
-    const openResult = await this.placeOrder(
-      symbol,
-      price,
-      openNotional,
-      percentage,
-    )
+    const openResult = await this.placeOrder(symbol, price, openNotional)
 
     return [closeResult, openResult]
   }

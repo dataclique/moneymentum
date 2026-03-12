@@ -9,6 +9,7 @@ import {
   type OrderResult,
 } from "@/hooks/useTrading"
 import { useWallet } from "@/hooks/useWallet"
+import { createStore } from "solid-js/store"
 
 export const MIN_USD = 11
 export const MIN_CHANGE_DELTA = 11.0 // Minimum change in USD to trigger a rebalance
@@ -20,7 +21,7 @@ const roundNotional = (n: number): number =>
 
 export type AllocationStatus =
   | OrderResult["status"]
-  | "idle"
+  | "idle" //TODO: what is this status?
   | "untouched"
   | "deleted"
   | "modified"
@@ -40,6 +41,17 @@ export interface TokenAllocation {
   targetNotional?: number
   currentNotional?: number
   deltaInsufficient?: boolean
+}
+
+export interface CurrentPortfolioInterface {
+  symbol: string
+  side: OrderSide
+  leverage: number
+  notional: number
+}
+
+export interface TargetPortfolioInterface extends CurrentPortfolioInterface {
+  status: AllocationStatus
 }
 
 const MAX_CROSS_ACCOUNT_LEVERAGE = 5
@@ -130,52 +142,6 @@ const recalculateFromWeights = (
     }
   })
 
-// Proportionally redistribute weights when one token's weight changes
-// The delta is distributed proportionally among other active tokens
-const redistributeWeights = (
-  tokens: TokenAllocation[],
-  changedSymbol: string,
-  newPercentage: number,
-  totalNotional: number,
-): TokenAllocation[] => {
-  const changedToken = tokens.find(t => t.symbol === changedSymbol)
-  if (!changedToken) return tokens
-
-  const oldPercentage = changedToken.percentage
-  const delta = newPercentage - oldPercentage
-
-  // Sum of other active tokens' percentages
-  const otherActiveTokens = tokens.filter(
-    t => t.symbol !== changedSymbol && t.status !== "deleted",
-  )
-  const otherTotalPercent = otherActiveTokens.reduce(
-    (sum, t) => sum + t.percentage,
-    0,
-  )
-
-  return tokens.map(t => {
-    if (t.symbol === changedSymbol) {
-      return {
-        ...t,
-        percentage: parseFloat(newPercentage.toFixed(2)),
-        notional: calcNotional(newPercentage, totalNotional),
-      }
-    }
-    if (t.status === "deleted") return t
-
-    // Proportionally adjust other tokens' weights
-    // Each token absorbs a share of the delta proportional to its weight
-    const proportion =
-      otherTotalPercent > 0 ? t.percentage / otherTotalPercent : 0
-    const adjustedPercentage = Math.max(0, t.percentage - delta * proportion)
-    return {
-      ...t,
-      percentage: parseFloat(adjustedPercentage.toFixed(2)),
-      notional: calcNotional(adjustedPercentage, totalNotional),
-    }
-  })
-}
-
 export const usePortfolioState = (
   isPrecise: () => boolean,
   isWeightRedistribution: () => boolean,
@@ -200,14 +166,119 @@ export const usePortfolioState = (
     [],
   )
   const [isRebalancingUi, setIsRebalancingUi] = createSignal(false)
-  const [initialPortfolio, setInitialPortfolio] = createSignal<
-    TokenAllocation[]
-  >([])
+  const [currentPortfolio, setCurrentPortfolio] = createStore<
+    Record<string, CurrentPortfolioInterface>
+  >({})
+  // symbol -> its parameters in targetPortfolio
+  const [targetPortfolio, setTargetPortfolio] = createStore<
+    Record<string, TargetPortfolioInterface>
+  >({})
+
   const [positionsLoadedFromExchange, setPositionsLoadedFromExchange] =
     createSignal(false)
 
   // Track previous connection state for disconnect cleanup
   let wasConnected = isConnected()
+
+  const redistributeWeights = (
+    changedSymbol: string,
+    newPercentage: number,
+    totalNotional: number,
+  ) => {
+    const active = activeSymbols()
+
+    if (totalNotional <= 0 || !active.includes(changedSymbol)) return
+
+    const clampedNew = Math.max(0, Math.min(100, newPercentage))
+
+    const oldNotional = targetPortfolio[changedSymbol].notional
+    const oldPercent = (oldNotional / totalNotional) * 100
+    const delta = clampedNew - oldPercent
+
+    const otherActiveSymbols = active.filter(s => s !== changedSymbol)
+
+    const otherTotalPercent = active
+      .filter(s => s !== changedSymbol)
+      .reduce(
+        (sum, s) => sum + (targetPortfolio[s].notional / totalNotional) * 100,
+        0,
+      )
+
+    const updates: Record<string, any> = {}
+
+    updates[changedSymbol] = {
+      ...targetPortfolio[changedSymbol],
+      notional: (clampedNew / 100) * totalNotional,
+    }
+
+    let remainingPercent = 100 - clampedNew
+
+    otherActiveSymbols.forEach((symbol, index) => {
+      let nextPercent: number
+
+      if (index === otherActiveSymbols.length - 1) {
+        nextPercent = Math.max(0, remainingPercent)
+      } else {
+        const currentPercent =
+          (targetPortfolio[symbol].notional / totalNotional) * 100
+
+        const proportion =
+          otherTotalPercent > 0
+            ? currentPercent / otherTotalPercent
+            : 1 / otherActiveSymbols.length
+
+        nextPercent = Math.max(0, currentPercent - delta * proportion)
+        remainingPercent -= nextPercent
+      }
+
+      updates[symbol] = {
+        ...targetPortfolio[symbol],
+        notional: (nextPercent / 100) * totalNotional,
+      }
+    })
+
+    setTargetPortfolio(updates)
+  }
+
+  // Derived: total notional of target portfolio (sum of per-symbol target notionals)
+  // const targetTotalNotional = createMemo(() =>
+  //   Object.values(targetPortfolio)
+  //     .filter(position => position.status !== 'deleted')
+  //     .reduce((sum, position) => sum + position.notional, 0),
+  // )
+
+  const activeSymbols = createMemo(() =>
+    Object.keys(targetPortfolio).filter(
+      s => targetPortfolio[s].status !== "deleted",
+    ),
+  )
+
+  // TODO: use in future to close positions
+  const closingSymbols = createMemo(() =>
+    Object.keys(targetPortfolio).filter(
+      s => targetPortfolio[s].status === "deleted",
+    ),
+  )
+
+  const targetTotalNotional = createMemo(() => {
+    return activeSymbols().reduce(
+      (sum, s) => sum + (targetPortfolio[s].notional || 0),
+      0,
+    )
+  })
+
+  function getTargetPortfolio(): Record<string, TargetPortfolioInterface> {
+    // console.table(
+    //   Object.values(targetPortfolio).map(position => ({
+    //     symbol: position.symbol,
+    //     side: position.side,
+    //     leverage: position.leverage,
+    //     status: position.status,
+    //     notional: position.notional,
+    //   })),
+    // )
+    return targetPortfolio
+  }
 
   // createEffect: disconnect cleanup - detect falling edge from connected to disconnected
   createEffect(() => {
@@ -220,7 +291,7 @@ export const usePortfolioState = (
     }
 
     setSelectedTokens([])
-    setInitialPortfolio([])
+    setCurrentPortfolio([])
     setCrossAccountLeverage(DEFAULT_CROSS_ACCOUNT_LEVERAGE)
     setInitialCrossAccountLeverage(null)
     setPositionsLoadedFromExchange(false)
@@ -297,27 +368,30 @@ export const usePortfolioState = (
     const initialLeverage = calcLeverage(totalExchangeNotional, accountValue())
     setCrossAccountLeverage(initialLeverage)
 
-    // Map exchange positions to TokenAllocation with calculated percentages
-    const exchangeTokens: TokenAllocation[] = positionsData.positions.map(
-      pos => ({
+    // Map exchange positions to CurrentPortfolioInterface
+    const exchangeTokens: CurrentPortfolioInterface[] =
+      positionsData.positions.map(pos => ({
         symbol: pos.symbol,
-        percentage: calcPercentage(pos.notional, totalExchangeNotional),
         side: pos.side,
         leverage: pos.leverage || 1,
-        status: "untouched" as const,
-        message: null,
         notional: pos.notional,
-        lockedUsd: pos.notional,
-      }),
+      }))
+
+    // Always set currentPortfolio from exchange (source of truth for what exists on exchange)
+    setCurrentPortfolio(
+      Object.fromEntries(
+        exchangeTokens.map(token => [token.symbol, token]),
+      ) as Record<string, CurrentPortfolioInterface>,
     )
 
-    // Always set initialPortfolio from exchange (source of truth for what exists on exchange)
-    setInitialPortfolio(exchangeTokens)
-
-    if (exchangeTokens.length > 0) {
-      setSelectedTokens(exchangeTokens)
-      setInitialPortfolio(exchangeTokens)
-    }
+    setTargetPortfolio(
+      Object.fromEntries(
+        exchangeTokens.map(token => [
+          token.symbol,
+          { ...token, status: "untouched" as const },
+        ]),
+      ) as Record<string, TargetPortfolioInterface>,
+    )
 
     setPositionsLoadedFromExchange(true)
   })
@@ -325,7 +399,7 @@ export const usePortfolioState = (
   const tokensWithComputedStatus = createMemo(() => {
     // If no exchange data to compare against, treat "untouched" tokens as "idle"
     // so they can be submitted for rebalancing
-    if (initialPortfolio().length === 0) {
+    if (Object.keys(currentPortfolio).length === 0) {
       return selectedTokens().map(token =>
         token.status === "untouched"
           ? { ...token, status: "idle" as const }
@@ -334,9 +408,7 @@ export const usePortfolioState = (
     }
 
     return selectedTokens().map(currentToken => {
-      const initialToken = initialPortfolio().find(
-        it => it.symbol === currentToken.symbol,
-      )
+      const initialToken = currentPortfolio[currentToken.symbol]
 
       const shouldComputeStatus =
         initialToken &&
@@ -381,11 +453,14 @@ export const usePortfolioState = (
   // Total notional = sum of all position notionals (actual exchange positions)
   // Must be calculated before tokensWithDeltaTracking since it's used there
   const totalNotional = createMemo(() =>
-    activeTokens().reduce((sum, token) => sum + (token.notional ?? 0), 0),
+    activeTokens().reduce((sum, token) => sum + token.notional, 0),
   )
 
-  const initialTotalNotional = createMemo(() =>
-    initialPortfolio().reduce((sum, token) => sum + (token.notional ?? 0), 0),
+  const currentTotalNotional = createMemo(() =>
+    Object.values(currentPortfolio).reduce(
+      (sum, token) => sum + token.notional,
+      0,
+    ),
   )
 
   const hasPendingDeletions = createMemo(() =>
@@ -431,10 +506,8 @@ export const usePortfolioState = (
       if (token.status === "deleted") return token
 
       // Current notional from exchange (what exists on exchange now)
-      // Look up from initialPortfolio to get the actual exchange position
-      const exchangePosition = initialPortfolio().find(
-        p => p.symbol === token.symbol,
-      )
+      // Look up from currentPortfolio map by symbol
+      const exchangePosition = currentPortfolio[token.symbol]
       const currentNotional = exchangePosition?.notional ?? 0
 
       // Target notional based on percentage and fixed target total (accountValue * leverage)
@@ -487,15 +560,16 @@ export const usePortfolioState = (
 
   const stagedTrades = createMemo(() => {
     // Before we have any exchange data, don't show staged trades at all.
-    if (!positionsLoadedFromExchange() && initialPortfolio().length === 0) {
+    if (
+      !positionsLoadedFromExchange() &&
+      Object.keys(currentPortfolio).length === 0
+    ) {
       return lastKnownStagedTrades
     }
 
     const trades = tokensWithDeltaTracking()
       .map(token => {
-        const initialToken = initialPortfolio().find(
-          initial => initial.symbol === token.symbol,
-        )
+        const initialToken = currentPortfolio[token.symbol]
         const inInitial = initialToken !== undefined
 
         // Deleted tokens:
@@ -711,146 +785,77 @@ export const usePortfolioState = (
   }
 
   const handleRemoveToken = (symbol: string) => {
-    // solid/reactivity warns that a reactive closure is passed to a non-tracked scope.
-    // False positive: setSelectedTokensAndPersist is a synchronous wrapper around a signal setter.
-    // initialPortfolio() is read-only contextual data used to decide remove-vs-soft-delete logic.
-    // eslint-disable-next-line solid/reactivity
-    setSelectedTokensAndPersist(prev => {
-      const token = prev.find(t => t.symbol === symbol)
-      if (!token) return prev
-
-      // Only tokens from initialPortfolio (loaded from exchange) need the "undo" flow
-      // Newly added tokens should be removed completely
-      const existsOnExchange = initialPortfolio().some(
-        it => it.symbol === symbol,
-      )
-
-      if (existsOnExchange) {
-        // For existing exchange positions: keep token (for undo), zero notional and weight.
-        // Then recalculate weights from notionals and update leverage.
-        const tokensWithDeleted = prev.map(token =>
-          token.symbol === symbol
-            ? {
-                ...token,
-                status: "deleted" as const,
-                previousPercentage: token.percentage,
-                previousNotional: token.notional,
-                percentage: 0,
-                notional: 0,
-                message: null,
-              }
-            : token,
-        )
-        return updateByNotionalChange(tokensWithDeleted)
-      }
-
-      // For newly added tokens (not on exchange): remove from list.
-      // Then recalculate weights from notionals and update leverage.
-      const remainingTokens = prev.filter(t => t.symbol !== symbol)
-      return updateByNotionalChange(remainingTokens)
-    })
+    setTargetPortfolio(symbol, "status", "deleted")
   }
 
   const handleUndoRemoveToken = (symbol: string) => {
-    // solid/reactivity warns that a reactive closure is passed to a non-tracked scope.
-    // False positive: setSelectedTokensAndPersist is a synchronous wrapper around a signal setter.
-    // No external signal reads here -- all data comes from prev.
-    // eslint-disable-next-line solid/reactivity
-    setSelectedTokensAndPersist(prev => {
-      const tokenToRestore = prev.find(t => t.symbol === symbol)
-      if (!tokenToRestore) return prev
+    //TODO: make it as function like `checkIsModified`
+    //Now no logic to set `modified` status, let's check this working later
+    let currentNotional = currentPortfolio[symbol].notional
+    let currentSide = currentPortfolio[symbol].side
+    let currentLeverage = currentPortfolio[symbol].leverage
+    let targetNotional = targetPortfolio[symbol].notional
+    let targetSide = targetPortfolio[symbol].side
+    let targetLeverage = targetPortfolio[symbol].leverage
 
-      const restoredNotional =
-        tokenToRestore.previousNotional ?? tokenToRestore.lockedUsd ?? MIN_USD
-      const hasExchangeNotional =
-        tokenToRestore.previousNotional !== undefined &&
-        tokenToRestore.previousNotional > 0
+    if (
+      currentNotional !== targetNotional ||
+      currentSide !== targetSide ||
+      currentLeverage !== targetLeverage
+    ) {
+      setTargetPortfolio(symbol, "status", "modified")
+      return
+    }
 
-      // Restore token's notional and let updateByNotionalChange
-      // recompute totalNotional, leverage and weights for all tokens
-      const restoredPercent = tokenToRestore.previousPercentage ?? 0
-      const tokensWithRestored = prev.map(token =>
-        token.symbol === symbol
-          ? {
-              ...token,
-              status: hasExchangeNotional
-                ? ("untouched" as const)
-                : ("idle" as const),
-              percentage: restoredPercent,
-              previousPercentage: undefined,
-              notional: restoredNotional,
-            }
-          : token,
-      )
-
-      return updateByNotionalChange(tokensWithRestored)
-    })
+    setTargetPortfolio(symbol, "status", "untouched")
   }
 
   const handleSideChange = (symbol: string, side: OrderSide) => {
-    setSelectedTokensAndPersist(prev =>
-      prev.map(token => (token.symbol === symbol ? { ...token, side } : token)),
-    )
+    setTargetPortfolio(symbol, "side", side)
   }
 
   const handleLeverageChange = (symbol: string, leverage: number) => {
     const maxLeverage = leverageLimitsMap()[symbol] || 1
     const newLeverage = Math.max(1, Math.min(leverage, maxLeverage))
-    setSelectedTokensAndPersist(prev =>
-      prev.map(token =>
-        token.symbol === symbol ? { ...token, leverage: newLeverage } : token,
-      ),
-    )
+
+    setTargetPortfolio(symbol, "leverage", newLeverage)
   }
 
   const handleNotionalChange = (symbol: string, newNotional: number) => {
-    if (Number.isNaN(newNotional) || newNotional < 0) return
-
-    // eslint-disable-next-line solid/reactivity
-    setSelectedTokensAndPersist(prev => {
-      // Update notional for the target token
-      const tokensWithUpdatedNotional = prev.map(token =>
-        token.symbol === symbol
-          ? {
-              ...token,
-              notional: newNotional,
-              lockedUsd: undefined,
-              message: null,
-            }
-          : token,
-      )
-      return updateByNotionalChange(tokensWithUpdatedNotional)
-    })
+    setTargetPortfolio(symbol, "notional", newNotional)
   }
 
-  const handleWeightChange = (symbol: string, newPercentage: number) => {
-    if (Number.isNaN(newPercentage) || newPercentage < 0) return
+  const handleWeightChange = (changedSymbol: string, newPercentage: number) => {
+    if (isWeightRedistribution()) {
+      redistributeWeights(changedSymbol, newPercentage, targetTotalNotional())
+      return
+    }
 
-    // eslint-disable-next-line solid/reactivity
-    setSelectedTokensAndPersist(prev => {
-      const clampedPercentage = Math.min(100, newPercentage)
+    // setSelectedTokensAndPersist(prev => {
+    //   const clampedPercentage = Math.min(100, newPercentage)
 
-      if (isWeightRedistribution()) {
-        return redistributeWeights(
-          prev,
-          symbol,
-          clampedPercentage,
-          targetNotional(),
-        )
-      }
+    //   if (isWeightRedistribution()) {
+    //     return redistributeWeights(
+    //       prev,
+    //       symbol,
+    //       clampedPercentage,
+    //       targetNotional(),
+    //     )
+    //   }
 
-      // No redistribution: total notional is fixed (targetNotional = accountValue * leverage).
-      // Update only the changed token's notional. Other tokens unchanged.
-      return prev.map(t =>
-        t.symbol === symbol
-          ? {
-              ...t,
-              percentage: parseFloat(clampedPercentage.toFixed(2)),
-              notional: calcNotional(clampedPercentage, targetNotional()),
-            }
-          : t,
-      )
-    })
+    //   // TODO: make this working
+    //   // No redistribution: total notional is fixed (targetNotional = accountValue * leverage).
+    //   // Update only the changed token's notional. Other tokens unchanged.
+    //   return prev.map(t =>
+    //     t.symbol === symbol
+    //       ? {
+    //           ...t,
+    //           percentage: parseFloat(clampedPercentage.toFixed(2)),
+    //           notional: calcNotional(clampedPercentage, targetNotional()),
+    //         }
+    //       : t,
+    //   )
+    // })
   }
 
   // When leverage changes: totalNotional = leverage * accountValue
@@ -889,9 +894,7 @@ export const usePortfolioState = (
           }
 
           const targetValue = getTokenUsdAllocation(token, targetNotional())
-          const initialToken = initialPortfolio().find(
-            it => it.symbol === token.symbol,
-          )
+          const initialToken = currentPortfolio[token.symbol]
 
           if (!initialToken) {
             // New position - check if target value is at least MIN_CHANGE_DELTA
@@ -929,7 +932,7 @@ export const usePortfolioState = (
             if (!hasSmallChange) return token
 
             const targetValue = getTokenUsdAllocation(token, targetNotional())
-            const initialToken = initialPortfolio().find(
+            const initialToken = currentPortfolio().find(
               it => it.symbol === token.symbol,
             )
             const currentValue = initialToken
@@ -962,9 +965,7 @@ export const usePortfolioState = (
 
     // Only send tokens that actually changed compared to the initial portfolio state
     const tokensForApi = tokensWithDerivedPercentages().filter(token => {
-      const inInitial = initialPortfolio().find(
-        it => it.symbol === token.symbol,
-      )
+      const inInitial = currentPortfolio[token.symbol]
       return token.status !== "untouched" || !inInitial
     })
 
@@ -978,9 +979,7 @@ export const usePortfolioState = (
       crossAccountLeverage: crossAccountLeverage(),
       precise: isPrecise(),
       positions: tokensWithDeltaTracking().map(token => {
-        const exchangePosition = initialPortfolio().find(
-          p => p.symbol === token.symbol,
-        )
+        const exchangePosition = currentPortfolio[token.symbol]
         return {
           symbol: token.symbol,
           side: token.side,
@@ -1088,7 +1087,7 @@ export const usePortfolioState = (
   })
 
   const handleResetToInitial = () => {
-    if (initialPortfolio().length === 0) {
+    if (currentPortfolio().length === 0) {
       return
     }
 
@@ -1098,7 +1097,7 @@ export const usePortfolioState = (
     setCrossAccountLeverage(baseLeverage)
     latestCrossAccountLeverage = baseLeverage
     // Compute the reset value eagerly so the setter callback has no reactive reads
-    const resetTokens = updateByNotionalChange(initialPortfolio())
+    const resetTokens = updateByNotionalChange(currentPortfolio())
     setSelectedTokensAndPersist(resetTokens)
   }
 
@@ -1140,8 +1139,14 @@ export const usePortfolioState = (
     get targetNotional() {
       return targetNotional()
     },
+    get targetTotalNotional() {
+      return targetTotalNotional()
+    },
     get showTargetOfTotal() {
       return showTargetOfTotal()
+    },
+    get targetPortfolio() {
+      return getTargetPortfolio()
     },
     get selectedTokens() {
       return tokensWithDeltaTracking()
@@ -1170,8 +1175,9 @@ export const usePortfolioState = (
     get netExposure() {
       return netExposure()
     },
+    //TODO: rename
     get initialTotalNotional() {
-      return initialTotalNotional()
+      return currentTotalNotional()
     },
     get stagedTrades() {
       return stagedTrades()

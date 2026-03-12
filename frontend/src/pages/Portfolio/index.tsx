@@ -23,7 +23,7 @@ import {
   useHyperliquidFundingRates,
 } from "@/hooks/useTrading"
 import { ScreenerPanel } from "@/pages/Portfolio/components/ScreenerPanel"
-import { PositionsPanel } from "@/pages/Portfolio/components/PositionsPanel"
+import { PositionsPanel } from "@/pages/Portfolio/components/PositionsPanel/PositionsPanel"
 import { PerformancePanel } from "@/pages/Portfolio/components/PerformancePanel"
 import { StagedChangesPanel } from "@/pages/Portfolio/components/StagedChangesPanel"
 import { FactorsPanel } from "@/pages/Portfolio/components/FactorsPanel"
@@ -59,6 +59,8 @@ const PortfolioPage = () => {
   })
 
   const portfolio = usePortfolioState(isPrecise, isWeightRedistribution)
+
+  console.log("portfolio in PortfolioPage", portfolio.selectedTokens)
 
   const betaResult = useBeta(() => portfolio.activeTokens)
 
@@ -122,7 +124,7 @@ const PortfolioPage = () => {
           <div class="flex gap-1.5">
             <span class="text-muted-foreground">Notional</span>
             <span class="font-mono">
-              ${portfolio.targetNotional.toFixed(2)}
+              ${portfolio.targetTotalNotional.toFixed(2)}
             </span>
           </div>
           <span class="text-muted-foreground">
@@ -169,7 +171,7 @@ const PortfolioPage = () => {
           <div class="shrink-0 basis-[600px] flex flex-col overflow-hidden">
             <div class="flex gap-1 min-h-0 min-w-0 flex-1">
               <PositionsPanel
-                tokens={portfolio.selectedTokens}
+                positions={portfolio.targetPortfolio}
                 isLoading={portfolio.isPositionsLoading}
                 fundingIsLoading={fundingRatesQuery.isLoading}
                 displayNotional={portfolio.displayNotional}
@@ -183,6 +185,7 @@ const PortfolioPage = () => {
                 onNotionalChange={portfolio.handleNotionalChange}
                 onWeightChange={portfolio.handleWeightChange}
                 fundingRatesByBaseSymbol={fundingRatesByBaseSymbol()}
+                targetTotalNotional={portfolio.targetTotalNotional}
               />
             </div>
             <Show when={portfolio.blockingReasons.length > 0}>

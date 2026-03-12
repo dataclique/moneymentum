@@ -26,6 +26,28 @@ const queryClient = new QueryClient({
   },
 })
 
+// In dev, surface uncaught errors and unhandled rejections explicitly in the console.
+if (import.meta.env.DEV && typeof window !== "undefined") {
+  window.addEventListener("error", event => {
+    // Some browsers may not populate event.error; fall back to message.
+    // eslint-disable-next-line no-console
+    console.error("[Global error]", {
+      message: event.message,
+      error: event.error,
+      filename: event.filename,
+      lineno: event.lineno,
+      colno: event.colno,
+    })
+  })
+
+  window.addEventListener("unhandledrejection", event => {
+    // eslint-disable-next-line no-console
+    console.error("[Unhandled promise rejection]", {
+      reason: event.reason,
+    })
+  })
+}
+
 const rootElement = document.getElementById("root")
 if (!rootElement) {
   throw new Error("Root element not found")

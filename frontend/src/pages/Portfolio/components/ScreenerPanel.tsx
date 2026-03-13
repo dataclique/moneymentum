@@ -5,7 +5,7 @@ import { cn } from "@/lib/cn"
 
 interface ScreenerPanelProps {
   symbols: string[]
-  fundingIsLoading: boolean
+  fundingIsLoading: boolean //TODO: make it easier
   activeSymbols: Set<string>
   onAddSymbol: (symbol: string) => void
   fundingRatesByBaseSymbol?: Record<string, number>

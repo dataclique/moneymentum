@@ -35,7 +35,6 @@ const WEIGHT_REDISTRIBUTION_STORAGE_KEY = "portfolio-weight-redistribution"
 const LEVERAGE_MIN = 0.001
 const LEVERAGE_MAX = 5
 const LEVERAGE_STEP = 0.1
-const DEFAULT_LEVERAGE = 1
 
 const PortfolioPage = () => {
   const { isNetworkSwitching } = useNetwork()
@@ -46,11 +45,10 @@ const PortfolioPage = () => {
     localStorage.getItem(WEIGHT_REDISTRIBUTION_STORAGE_KEY) !== "false",
   )
 
-  // createEffect: side-effect persisting signal to localStorage
   createEffect(() => {
     localStorage.setItem(PRECISE_TOGGLE_STORAGE_KEY, String(isPrecise()))
   })
-  // createEffect: side-effect persisting signal to localStorage
+
   createEffect(() => {
     localStorage.setItem(
       WEIGHT_REDISTRIBUTION_STORAGE_KEY,
@@ -75,9 +73,13 @@ const PortfolioPage = () => {
   const [leverageInput, setLeverageInput] = createSignal(
     portfolio.crossAccountLeverage.toFixed(2),
   )
+  // TODO: make empty leverage as 1.00x
+  // Maybe it's better to make component with this functionality and use here and in PositionsPanel
+  // const [isLeverageInputFocused, setIsLeverageInputFocused] =
+  //   createSignal(false)
+
   const [isLeverageInputFocused, setIsLeverageInputFocused] =
     createSignal(false)
-
   createEffect(() => {
     if (!isLeverageInputFocused()) {
       setLeverageInput(portfolio.crossAccountLeverage.toFixed(2))
@@ -94,20 +96,20 @@ const PortfolioPage = () => {
     }
   }
 
-  const handleLeverageBlur = () => {
-    setIsLeverageInputFocused(false)
-    const raw = leverageInput()
-    if (raw === "") {
-      const fallback = portfolio.initialCrossAccountLeverage ?? DEFAULT_LEVERAGE
-      portfolio.handleCrossAccountLeverageChange(fallback)
-      return
-    }
-    const value = parseFloat(raw)
-    if (!Number.isNaN(value)) {
-      const clamped = Math.max(LEVERAGE_MIN, Math.min(LEVERAGE_MAX, value))
-      portfolio.handleCrossAccountLeverageChange(clamped)
-    }
-  }
+  // const handleLeverageBlur = () => {
+  //   setIsLeverageInputFocused(false)
+  //   const raw = leverageInput()
+  //   if (raw === "") {
+  //     const fallback = portfolio.initialCrossAccountLeverage ?? DEFAULT_LEVERAGE
+  //     portfolio.handleCrossAccountLeverageChange(fallback)
+  //     return
+  //   }
+  //   const value = parseFloat(raw)
+  //   if (!Number.isNaN(value)) {
+  //     const clamped = Math.max(LEVERAGE_MIN, Math.min(LEVERAGE_MAX, value))
+  //     portfolio.handleCrossAccountLeverageChange(clamped)
+  //   }
+  // }
 
   return (
     <>
@@ -207,6 +209,7 @@ const PortfolioPage = () => {
                       Leverage
                     </span>
                     <Show
+                      // TODO: we can make not isBalanceLoading logic
                       when={!portfolio.isBalanceLoading}
                       fallback={<Skeleton class="h-4 w-full" />}
                     >
@@ -225,14 +228,17 @@ const PortfolioPage = () => {
                       <input
                         type="number"
                         value={leverageInput()}
+                        onFocus={() => setIsLeverageInputFocused(true)}
+                        onBlur={() => {
+                          setIsLeverageInputFocused(false)
+                          setLeverageInput(
+                            portfolio.crossAccountLeverage.toFixed(2),
+                          )
+                        }}
                         onInput={leverageInputChangeEvent => {
                           applyLeverageInput(
                             leverageInputChangeEvent.currentTarget.value,
                           )
-                        }}
-                        onBlur={handleLeverageBlur}
-                        onFocus={() => {
-                          setIsLeverageInputFocused(true)
                         }}
                         min={LEVERAGE_MIN}
                         max={LEVERAGE_MAX}
@@ -297,7 +303,7 @@ const PortfolioPage = () => {
                   onRebalance={portfolio.handleOpenPositions}
                   isRebalancing={portfolio.isRebalancing}
                   disableSubmit={portfolio.disableSubmit}
-                  onClearAll={portfolio.handleResetToInitial}
+                  // onClearAll={portfolio.handleResetToInitial}
                 />
               </div>
               <div class="flex-[0_0_25%] min-w-0">

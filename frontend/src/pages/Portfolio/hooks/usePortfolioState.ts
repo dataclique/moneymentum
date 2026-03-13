@@ -33,23 +33,6 @@ export type AllocationStatus =
   | "deleted"
   | "modified"
 
-export interface TokenAllocation {
-  symbol: string
-  percentage?: number
-  side: OrderSide
-  leverage: number
-  status: AllocationStatus
-  message?: string | null
-  notional: number
-  lockedUsd?: number
-  previousPercentage?: number
-  previousNotional?: number
-  // Delta tracking for UI display
-  targetNotional?: number
-  currentNotional?: number
-  deltaInsufficient?: boolean
-}
-
 export interface CurrentPortfolioInterface {
   symbol: string
   side: OrderSide
@@ -64,44 +47,7 @@ export interface TargetPortfolioInterface extends CurrentPortfolioInterface {
 const MAX_CROSS_ACCOUNT_LEVERAGE = 5
 const DEFAULT_CROSS_ACCOUNT_LEVERAGE = 1
 
-// Calculate total notional from active (non-deleted) tokens
-const calcTotalNotional = (tokens: TokenAllocation[]): number =>
-  tokens
-    .reduce((sum, t) => {
-      if (t.status === "deleted") return sum
-      return sum.plus(t.notional ?? 0)
-    }, new Decimal(0))
-    .toDecimalPlaces(2, Decimal.ROUND_HALF_UP)
-    .toNumber()
-
-// Calculate percentage from notional and total
-const calcPercentage = (notional: number, totalNotional: number): number => {
-  if (totalNotional <= 0) return 0
-  return new Decimal(notional)
-    .div(totalNotional)
-    .mul(100)
-    .toDecimalPlaces(2, Decimal.ROUND_HALF_UP)
-    .toNumber()
-}
-
-// Recalculate percentages for all tokens based on their notional values
-// Returns updated tokens and the total notional. Notionals are rounded to 2 decimals.
-const recalculateFromNotionals = (
-  tokens: TokenAllocation[],
-): { tokens: TokenAllocation[]; totalNotional: number } => {
-  const totalNotional = calcTotalNotional(tokens)
-  const updatedTokens = tokens.map(t => {
-    if (t.status === "deleted" || t.notional === undefined) return t
-    return {
-      ...t,
-      notional: t.notional,
-      percentage: calcPercentage(t.notional, totalNotional),
-    }
-  })
-  return { tokens: updatedTokens, totalNotional }
-}
-
-// Calculate leverage from total notional and account value
+// TODO: review this function
 const calcLeverage = (totalNotional: number, accountValue: number): number => {
   if (accountValue <= 0) return 1
   const leverage = new Decimal(totalNotional)
@@ -130,9 +76,6 @@ export const usePortfolioState = (
   const [currentCrossAccountLeverage, setCurrentCrossAccountLeverage] =
     createSignal(DEFAULT_CROSS_ACCOUNT_LEVERAGE)
 
-  const [selectedTokens, setSelectedTokens] = createSignal<TokenAllocation[]>(
-    [],
-  )
   const [isRebalancingUi, setIsRebalancingUi] = createSignal(false)
   const [currentPortfolio, setCurrentPortfolio] = createStore<
     Record<string, CurrentPortfolioInterface>
@@ -349,147 +292,7 @@ export const usePortfolioState = (
     setPositionsLoadedFromExchange(true)
   })
 
-  const tokensWithComputedStatus = createMemo(() => {
-    // If no exchange data to compare against, treat "untouched" tokens as "idle"
-    // so they can be submitted for rebalancing
-    if (Object.keys(currentPortfolio).length === 0) {
-      return selectedTokens().map(token =>
-        token.status === "untouched"
-          ? { ...token, status: "idle" as const }
-          : token,
-      )
-    }
-
-    return selectedTokens().map(currentToken => {
-      const initialToken = currentPortfolio[currentToken.symbol]
-
-      const shouldComputeStatus =
-        initialToken &&
-        (currentToken.status === "idle" ||
-          currentToken.status === "untouched" ||
-          currentToken.status === "modified")
-
-      if (!shouldComputeStatus) {
-        // Token doesn't exist in initial portfolio - treat as new (idle)
-        if (!initialToken && currentToken.status === "untouched") {
-          return { ...currentToken, status: "idle" as const }
-        }
-        return currentToken
-      }
-
-      // Compare notional values and other properties to determine if modified
-      // Notional comparison is the source of truth for position changes
-      const notionalDelta = Math.abs(
-        (currentToken.notional ?? 0) - (initialToken.notional ?? 0),
-      )
-      const isModified =
-        notionalDelta > 0.01 ||
-        currentToken.side !== initialToken.side ||
-        currentToken.leverage !== initialToken.leverage
-
-      const computedStatus: "modified" | "untouched" = isModified
-        ? "modified"
-        : "untouched"
-
-      if (currentToken.status !== computedStatus) {
-        return { ...currentToken, status: computedStatus }
-      }
-
-      return currentToken
-    })
-  })
-
-  const activeTokens = createMemo(() =>
-    tokensWithComputedStatus().filter(t => t.status !== "deleted"),
-  )
-
-  // Total notional = sum of all position notionals (actual exchange positions)
-  // Must be calculated before tokensWithDeltaTracking since it's used there
-  const totalNotional = createMemo(() =>
-    activeTokens().reduce((sum, token) => sum + token.notional, 0),
-  )
-
-  const hasPendingDeletions = createMemo(() =>
-    tokensWithComputedStatus().some(t => t.status === "deleted"),
-  )
-
-  const requiredNotionalForTokens = () => activeTokens().length * MIN_USD
-  const notionalIsPositive = () => targetNotional() > 0
-  const notionalBelowMinimum = () =>
-    activeTokens().length > 0 &&
-    notionalIsPositive() &&
-    targetNotional() < MIN_USD
-  const insufficientNotionalForTokens = () =>
-    activeTokens().length > 0 &&
-    notionalIsPositive() &&
-    requiredNotionalForTokens() > targetNotional()
-
-  // displayNotional is targetNotional, falling back to a minimum if needed for UI
-  const displayNotional = createMemo(() => {
-    if (targetNotional() > 0) {
-      return targetNotional()
-    }
-    if (activeTokens().length === 0) {
-      return 0
-    }
-    return Math.max(requiredNotionalForTokens(), MIN_USD)
-  })
-
-  const minPercentOfNotional = () =>
-    displayNotional() > 0
-      ? Math.min(100, (MIN_USD / displayNotional()) * 100)
-      : 0
-  const minPercentFloor = () =>
-    displayNotional() >= MIN_USD ? minPercentOfNotional() : 0
-
-  // Percentages (weights) are fixed - they only change when user adjusts the slider
-  // or when initially loaded from exchange. They do NOT change when leverage changes.
-  const tokensWithDerivedPercentages = tokensWithComputedStatus
-
-  // Compute delta tracking for each token to show when adjustments are too small
-  const tokensWithDeltaTracking = createMemo(() => {
-    return tokensWithDerivedPercentages().map(token => {
-      if (token.status === "deleted") return token
-
-      // Current notional from exchange (what exists on exchange now)
-      // Look up from currentPortfolio map by symbol
-      const exchangePosition = currentPortfolio[token.symbol]
-      const currentNotional = exchangePosition?.notional ?? 0
-
-      // Target notional based on percentage and fixed target total (accountValue * leverage)
-      const computedTargetNotional =
-        targetNotional() > 0
-          ? new Decimal(token.percentage)
-              .div(100)
-              .mul(targetNotional())
-              .toDecimalPlaces(2, Decimal.ROUND_HALF_UP)
-              .toNumber()
-          : 0
-
-      // Check if the delta is too small to execute
-      const delta = new Decimal(computedTargetNotional)
-        .minus(currentNotional)
-        .abs()
-        .toDecimalPlaces(2, Decimal.ROUND_HALF_UP)
-        .toNumber()
-      // Delta is insufficient if:
-      // 1. There's a difference (not exactly matching)
-      // 2. The difference is below the minimum order size
-      // 3. This is a modification (not a new position or deletion)
-      const isExistingPosition = currentNotional > 0
-      const hasChanges = delta > 0.01 // Small tolerance for floating point
-      const deltaInsufficient =
-        isExistingPosition && hasChanges && delta < MIN_CHANGE_DELTA
-
-      return {
-        ...token,
-        targetNotional: computedTargetNotional,
-        currentNotional,
-        deltaInsufficient,
-      }
-    })
-  })
-
+  //TODO: review this type
   type StagedTradeItem = {
     underlying: string
     side: OrderSide
@@ -536,13 +339,6 @@ export const usePortfolioState = (
     return trades
   })
 
-  const derivedActiveTokens = createMemo(() =>
-    tokensWithDeltaTracking().filter(t => t.status !== "deleted"),
-  )
-  const derivedTotalPercent = () =>
-    derivedActiveTokens().reduce((acc, token) => acc + token.percentage, 0)
-  const derivedRemainingPercent = () => Math.max(0, 100 - derivedTotalPercent())
-
   const leverageLimitsMap = createMemo(() => {
     const map: Record<string, number> = {}
     const limitsData = leverageLimitsQuery.data
@@ -553,70 +349,55 @@ export const usePortfolioState = (
     return map
   })
 
-  const tokensBelowMinimum = createMemo(() => {
-    if (targetNotional() <= 0) return []
-    return derivedActiveTokens()
-      .filter(token => {
-        const usdValue = getTokenUsdAllocation(token, targetNotional())
-        if (token.status === "untouched") {
-          return false
-        }
-        return usdValue > 0 && usdValue < MIN_USD
-      })
-      .map(token => ({
-        symbol: token.symbol,
-        usdValue: getTokenUsdAllocation(token, targetNotional()),
-      }))
-  })
+  //TODO: move back validation logic to the component
+  // const hasPositionsBelowMinimum = () => tokensBelowMinimum().length > 0
+  // const hasTotalPercentExceeded = () =>
+  //   derivedTotalPercent() > 100 + MAX_TOTAL_PERCENT_TOLERANCE
+  // const hasTotalPercentBelow = () =>
+  //   derivedTotalPercent() < 100 - MAX_TOTAL_PERCENT_TOLERANCE
+  // const showTargetOfTotal = () =>
+  //   Math.abs(derivedTotalPercent() - 100) > MAX_TOTAL_PERCENT_TOLERANCE
+  // const hasBlockingNotionalIssue = () =>
+  //   notionalBelowMinimum() ||
+  //   insufficientNotionalForTokens() ||
+  //   hasPositionsBelowMinimum() ||
+  //   hasTotalPercentExceeded() ||
+  //   hasTotalPercentBelow()
 
-  const hasPositionsBelowMinimum = () => tokensBelowMinimum().length > 0
-  const hasTotalPercentExceeded = () =>
-    derivedTotalPercent() > 100 + MAX_TOTAL_PERCENT_TOLERANCE
-  const hasTotalPercentBelow = () =>
-    derivedTotalPercent() < 100 - MAX_TOTAL_PERCENT_TOLERANCE
-  const showTargetOfTotal = () =>
-    Math.abs(derivedTotalPercent() - 100) > MAX_TOTAL_PERCENT_TOLERANCE
-  const hasBlockingNotionalIssue = () =>
-    notionalBelowMinimum() ||
-    insufficientNotionalForTokens() ||
-    hasPositionsBelowMinimum() ||
-    hasTotalPercentExceeded() ||
-    hasTotalPercentBelow()
-
-  const blockingReasons = createMemo(() => {
-    const reasons: string[] = []
-    if (notionalBelowMinimum()) {
-      reasons.push(
-        "Minimum total notional is $11. Increase leverage or add funds.",
-      )
-    }
-    if (insufficientNotionalForTokens()) {
-      reasons.push(
-        `Not enough notional for all positions. Need at least $${String(requiredNotionalForTokens())}.`,
-      )
-    }
-    if (hasPositionsBelowMinimum()) {
-      const tokensList = tokensBelowMinimum()
-        .map(t => `${t.symbol} ($${t.usdValue.toFixed(2)})`)
-        .join(", ")
-      reasons.push(
-        `Each position must be at least $${String(MIN_USD)}. Positions below minimum: ${tokensList}`,
-      )
-    }
-    if (hasTotalPercentExceeded()) {
-      const excessPercent = (derivedTotalPercent() - 100).toFixed(1)
-      reasons.push(
-        `Sum of weights exceeds 100% by ${excessPercent}%. Reduce allocations.`,
-      )
-    }
-    if (hasTotalPercentBelow()) {
-      const deficitPercent = (100 - derivedTotalPercent()).toFixed(1)
-      reasons.push(
-        `Sum of weights is below 100% by ${deficitPercent}%. Add allocations.`,
-      )
-    }
-    return reasons
-  })
+  // const blockingReasons = createMemo(() => {
+  //   const reasons: string[] = []
+  //   if (notionalBelowMinimum()) {
+  //     reasons.push(
+  //       "Minimum total notional is $11. Increase leverage or add funds.",
+  //     )
+  //   }
+  //   if (insufficientNotionalForTokens()) {
+  //     reasons.push(
+  //       `Not enough notional for all positions. Need at least $${String(requiredNotionalForTokens())}.`,
+  //     )
+  //   }
+  //   if (hasPositionsBelowMinimum()) {
+  //     const tokensList = tokensBelowMinimum()
+  //       .map(t => `${t.symbol} ($${t.usdValue.toFixed(2)})`)
+  //       .join(", ")
+  //     reasons.push(
+  //       `Each position must be at least $${String(MIN_USD)}. Positions below minimum: ${tokensList}`,
+  //     )
+  //   }
+  //   if (hasTotalPercentExceeded()) {
+  //     const excessPercent = (derivedTotalPercent() - 100).toFixed(1)
+  //     reasons.push(
+  //       `Sum of weights exceeds 100% by ${excessPercent}%. Reduce allocations.`,
+  //     )
+  //   }
+  //   if (hasTotalPercentBelow()) {
+  //     const deficitPercent = (100 - derivedTotalPercent()).toFixed(1)
+  //     reasons.push(
+  //       `Sum of weights is below 100% by ${deficitPercent}%. Add allocations.`,
+  //     )
+  //   }
+  //   return reasons
+  // })
 
   const handleAddToken = (symbol: string) => {
     if (symbol in targetPortfolio) return
@@ -707,19 +488,7 @@ export const usePortfolioState = (
       return
     }
 
-    // setSelectedTokensAndPersist(prev => {
-    //   const clampedPercentage = Math.min(100, newPercentage)
-
-    //   if (isWeightRedistribution()) {
-    //     return redistributeWeights(
-    //       prev,
-    //       symbol,
-    //       clampedPercentage,
-    //       targetNotional(),
-    //     )
-    //   }
-
-    //   // TODO: make this working
+    // TODO: make this working
     //   // No redistribution: total notional is fixed (targetNotional = accountValue * leverage).
     //   // Update only the changed token's notional. Other tokens unchanged.
     //   return prev.map(t =>
@@ -776,232 +545,232 @@ export const usePortfolioState = (
     })
   }
 
-  const handleOpenPositions = () => {
-    if (
-      !tokensWithDeltaTracking().length ||
-      accountValue() <= 0 ||
-      hasBlockingNotionalIssue() ||
-      (derivedTotalPercent() <= 0 && !hasPendingDeletions()) ||
-      rebalancePositionsMutation.isPending
-    ) {
-      return
-    }
+  // const handleOpenPositions = () => {
+  //   if (
+  //     !tokensWithDeltaTracking().length ||
+  //     accountValue() <= 0 ||
+  //     hasBlockingNotionalIssue() ||
+  //     (derivedTotalPercent() <= 0 && !hasPendingDeletions()) ||
+  //     rebalancePositionsMutation.isPending
+  //   ) {
+  //     return
+  //   }
 
-    // Check for positions with changes less than $11 (only if precise is off)
-    if (!isPrecise()) {
-      const tokensWithSmallChangesOnSubmit =
-        tokensWithDerivedPercentages().filter(token => {
-          // Only check tokens that would be modified (not deleted, not untouched)
-          if (token.status === "deleted" || token.status === "untouched") {
-            return false
-          }
+  //   // Check for positions with changes less than $11 (only if precise is off)
+  //   if (!isPrecise()) {
+  //     const tokensWithSmallChangesOnSubmit =
+  //       tokensWithDerivedPercentages().filter(token => {
+  //         // Only check tokens that would be modified (not deleted, not untouched)
+  //         if (token.status === "deleted" || token.status === "untouched") {
+  //           return false
+  //         }
 
-          const targetValue = getTokenUsdAllocation(token, targetNotional())
-          const initialToken = currentPortfolio[token.symbol]
+  //         const targetValue = getTokenUsdAllocation(token, targetNotional())
+  //         const initialToken = currentPortfolio[token.symbol]
 
-          if (!initialToken) {
-            // New position - check if target value is at least MIN_CHANGE_DELTA
-            return targetValue > 0 && targetValue < MIN_CHANGE_DELTA
-          }
+  //         if (!initialToken) {
+  //           // New position - check if target value is at least MIN_CHANGE_DELTA
+  //           return targetValue > 0 && targetValue < MIN_CHANGE_DELTA
+  //         }
 
-          // Existing position - check if change delta is too small
-          const currentValue = getTokenUsdAllocation(
-            initialToken,
-            targetNotional(),
-          )
-          const delta = Math.abs(targetValue - currentValue)
+  //         // Existing position - check if change delta is too small
+  //         const currentValue = getTokenUsdAllocation(
+  //           initialToken,
+  //           targetNotional(),
+  //         )
+  //         const delta = Math.abs(targetValue - currentValue)
 
-          // Also check if side or leverage changed (those would require action)
-          const sideChanged = token.side !== initialToken.side
-          const leverageChanged = token.leverage !== initialToken.leverage
+  //         // Also check if side or leverage changed (those would require action)
+  //         const sideChanged = token.side !== initialToken.side
+  //         const leverageChanged = token.leverage !== initialToken.leverage
 
-          // If side or leverage changed, we need to act regardless of delta
-          if (sideChanged || leverageChanged) {
-            return false
-          }
+  //         // If side or leverage changed, we need to act regardless of delta
+  //         if (sideChanged || leverageChanged) {
+  //           return false
+  //         }
 
-          // If delta is too small, mark as error
-          return delta > 0 && delta < MIN_CHANGE_DELTA
-        })
+  //         // If delta is too small, mark as error
+  //         return delta > 0 && delta < MIN_CHANGE_DELTA
+  //       })
 
-      // If there are positions with small changes, set error messages and return
-      if (tokensWithSmallChangesOnSubmit.length > 0) {
-        // eslint-disable-next-line solid/reactivity
-        setSelectedTokensAndPersist(prev =>
-          prev.map(token => {
-            const hasSmallChange = tokensWithSmallChangesOnSubmit.some(
-              t => t.symbol === token.symbol,
-            )
-            if (!hasSmallChange) return token
+  //     // If there are positions with small changes, set error messages and return
+  //     if (tokensWithSmallChangesOnSubmit.length > 0) {
+  //       // eslint-disable-next-line solid/reactivity
+  //       setSelectedTokensAndPersist(prev =>
+  //         prev.map(token => {
+  //           const hasSmallChange = tokensWithSmallChangesOnSubmit.some(
+  //             t => t.symbol === token.symbol,
+  //           )
+  //           if (!hasSmallChange) return token
 
-            const targetValue = getTokenUsdAllocation(token, targetNotional())
-            const initialToken = currentPortfolio().find(
-              it => it.symbol === token.symbol,
-            )
-            const currentValue = initialToken
-              ? getTokenUsdAllocation(initialToken, targetNotional())
-              : 0
-            const delta = Math.abs(targetValue - currentValue)
+  //           const targetValue = getTokenUsdAllocation(token, targetNotional())
+  //           const initialToken = currentPortfolio().find(
+  //             it => it.symbol === token.symbol,
+  //           )
+  //           const currentValue = initialToken
+  //             ? getTokenUsdAllocation(initialToken, targetNotional())
+  //             : 0
+  //           const delta = Math.abs(targetValue - currentValue)
 
-            if (currentValue === 0) {
-              return {
-                ...token,
-                message: `New position value ($${targetValue.toFixed(2)}) is below minimum change of $${MIN_CHANGE_DELTA.toFixed(2)}`,
-              }
-            }
-            return {
-              ...token,
-              message: `Change ($${delta.toFixed(2)}) is below minimum of $${MIN_CHANGE_DELTA.toFixed(2)}. Use precise mode to open this position.`,
-            }
-          }),
-        )
-        return
-      }
-    }
+  //           if (currentValue === 0) {
+  //             return {
+  //               ...token,
+  //               message: `New position value ($${targetValue.toFixed(2)}) is below minimum change of $${MIN_CHANGE_DELTA.toFixed(2)}`,
+  //             }
+  //           }
+  //           return {
+  //             ...token,
+  //             message: `Change ($${delta.toFixed(2)}) is below minimum of $${MIN_CHANGE_DELTA.toFixed(2)}. Use precise mode to open this position.`,
+  //           }
+  //         }),
+  //       )
+  //       return
+  //     }
+  //   }
 
-    const mapStatusForApi = (
-      status: AllocationStatus,
-    ): "untouched" | "modified" | "idle" | "deleted" | "working" => {
-      if (status === "filled" || status === "failed") return "idle"
-      return status
-    }
+  //   const mapStatusForApi = (
+  //     status: AllocationStatus,
+  //   ): "untouched" | "modified" | "idle" | "deleted" | "working" => {
+  //     if (status === "filled" || status === "failed") return "idle"
+  //     return status
+  //   }
 
-    // Only send tokens that actually changed compared to the initial portfolio state
-    const tokensForApi = tokensWithDerivedPercentages().filter(token => {
-      const inInitial = currentPortfolio[token.symbol]
-      return token.status !== "untouched" || !inInitial
-    })
+  //   // Only send tokens that actually changed compared to the initial portfolio state
+  //   const tokensForApi = tokensWithDerivedPercentages().filter(token => {
+  //     const inInitial = currentPortfolio[token.symbol]
+  //     return token.status !== "untouched" || !inInitial
+  //   })
 
-    // Nothing to do: no modifications, creations, or deletions
-    if (!tokensForApi.length) {
-      return
-    }
+  //   // Nothing to do: no modifications, creations, or deletions
+  //   if (!tokensForApi.length) {
+  //     return
+  //   }
 
-    const payload = {
-      accountValue: accountValue(),
-      targetCrossAccountLeverage: targetCrossAccountLeverage(),
-      precise: isPrecise(),
-      positions: tokensWithDeltaTracking().map(token => {
-        const exchangePosition = currentPortfolio[token.symbol]
-        return {
-          symbol: token.symbol,
-          side: token.side,
-          leverage: token.leverage,
-          leverageChanged: exchangePosition
-            ? token.leverage !== exchangePosition.leverage
-            : true,
-          currentNotional: exchangePosition?.notional,
-          currentSide: exchangePosition?.side,
-          percentage: new Decimal(token.percentage)
-            .div(100)
-            .toDecimalPlaces(6, Decimal.ROUND_HALF_UP)
-            .toNumber(),
-          status: mapStatusForApi(token.status),
-        }
-      }),
-    }
+  //   const payload = {
+  //     accountValue: accountValue(),
+  //     targetCrossAccountLeverage: targetCrossAccountLeverage(),
+  //     precise: isPrecise(),
+  //     positions: tokensWithDeltaTracking().map(token => {
+  //       const exchangePosition = currentPortfolio[token.symbol]
+  //       return {
+  //         symbol: token.symbol,
+  //         side: token.side,
+  //         leverage: token.leverage,
+  //         leverageChanged: exchangePosition
+  //           ? token.leverage !== exchangePosition.leverage
+  //           : true,
+  //         currentNotional: exchangePosition?.notional,
+  //         currentSide: exchangePosition?.side,
+  //         percentage: new Decimal(token.percentage)
+  //           .div(100)
+  //           .toDecimalPlaces(6, Decimal.ROUND_HALF_UP)
+  //           .toNumber(),
+  //         status: mapStatusForApi(token.status),
+  //       }
+  //     }),
+  //   }
 
-    // Mark UI as rebalancing for the full lifecycle (including delayed refetch)
-    setIsRebalancingUi(true)
+  //   // Mark UI as rebalancing for the full lifecycle (including delayed refetch)
+  //   setIsRebalancingUi(true)
 
-    setSelectedTokensAndPersist(prev =>
-      prev.map(token => {
-        const isInPayload = tokensForApi.some(t => t.symbol === token.symbol)
-        if (!isInPayload) {
-          return token
-        }
+  //   setSelectedTokensAndPersist(prev =>
+  //     prev.map(token => {
+  //       const isInPayload = tokensForApi.some(t => t.symbol === token.symbol)
+  //       if (!isInPayload) {
+  //         return token
+  //       }
 
-        return {
-          ...token,
-          status: token.status === "deleted" ? "deleted" : "working",
-          message: null,
-        }
-      }),
-    )
+  //       return {
+  //         ...token,
+  //         status: token.status === "deleted" ? "deleted" : "working",
+  //         message: null,
+  //       }
+  //     }),
+  //   )
 
-    rebalancePositionsMutation.mutate(payload, {
-      onSuccess: () => {
-        // After we receive final order statuses, treat the exchange as source of truth:
-        // 1. Allow positions effect to re-run by clearing the "loaded" flag
-        // 2. Poll positions for a short window to observe the post-fill portfolio
-        setPositionsLoadedFromExchange(false)
+  //   rebalancePositionsMutation.mutate(payload, {
+  //     onSuccess: () => {
+  //       // After we receive final order statuses, treat the exchange as source of truth:
+  //       // 1. Allow positions effect to re-run by clearing the "loaded" flag
+  //       // 2. Poll positions for a short window to observe the post-fill portfolio
+  //       setPositionsLoadedFromExchange(false)
 
-        // Kick off polling: short interval (1s) up to a max window (~7s).
-        // UI "rebalancing" flag will be cleared by a separate effect once
-        // stagedTrades have been reduced to an empty set.
-        const pollStart = Date.now()
-        const pollIntervalMs = 1_000
-        const pollTimeoutMs = 7_000
+  //       // Kick off polling: short interval (1s) up to a max window (~7s).
+  //       // UI "rebalancing" flag will be cleared by a separate effect once
+  //       // stagedTrades have been reduced to an empty set.
+  //       const pollStart = Date.now()
+  //       const pollIntervalMs = 1_000
+  //       const pollTimeoutMs = 7_000
 
-        const pollPositions = () => {
-          const elapsed = Date.now() - pollStart
-          if (elapsed > pollTimeoutMs) {
-            return
-          }
+  //       const pollPositions = () => {
+  //         const elapsed = Date.now() - pollStart
+  //         if (elapsed > pollTimeoutMs) {
+  //           return
+  //         }
 
-          void positionsQuery.refetch().then(() => {
-            setTimeout(pollPositions, pollIntervalMs)
-          })
-        }
+  //         void positionsQuery.refetch().then(() => {
+  //           setTimeout(pollPositions, pollIntervalMs)
+  //         })
+  //       }
 
-        // Prime account summary once, then begin polling positions
-        void accountSummaryQuery.refetch()
-        setTimeout(pollPositions, pollIntervalMs)
-      },
-      onError: error => {
-        console.error("[Rebalance] Mutation onError", {
-          error: error.message,
-        })
+  //       // Prime account summary once, then begin polling positions
+  //       void accountSummaryQuery.refetch()
+  //       setTimeout(pollPositions, pollIntervalMs)
+  //     },
+  //     onError: error => {
+  //       console.error("[Rebalance] Mutation onError", {
+  //         error: error.message,
+  //       })
 
-        const symbolMatch = error.message.match(/([A-Z0-9-]+\/[A-Z]+:[A-Z]+)/)
-        const failedSymbol = symbolMatch ? symbolMatch[0] : null
+  //       const symbolMatch = error.message.match(/([A-Z0-9-]+\/[A-Z]+:[A-Z]+)/)
+  //       const failedSymbol = symbolMatch ? symbolMatch[0] : null
 
-        setSelectedTokensAndPersist(prev =>
-          prev.map(token => {
-            if (failedSymbol) {
-              if (token.symbol === failedSymbol) {
-                return {
-                  ...token,
-                  status: "failed",
-                  message: error.message,
-                }
-              }
-              return { ...token, status: "idle", message: null }
-            }
-            return {
-              ...token,
-              status: "failed",
-              message: error.message,
-            }
-          }),
-        )
+  //       setSelectedTokensAndPersist(prev =>
+  //         prev.map(token => {
+  //           if (failedSymbol) {
+  //             if (token.symbol === failedSymbol) {
+  //               return {
+  //                 ...token,
+  //                 status: "failed",
+  //                 message: error.message,
+  //               }
+  //             }
+  //             return { ...token, status: "idle", message: null }
+  //           }
+  //           return {
+  //             ...token,
+  //             status: "failed",
+  //             message: error.message,
+  //           }
+  //         }),
+  //       )
 
-        setIsRebalancingUi(false)
-      },
-    })
-  }
+  //       setIsRebalancingUi(false)
+  //     },
+  //   })
+  // }
 
-  const netExposure = createMemo(() => {
-    const target = targetNotional()
-    return derivedActiveTokens().reduce((acc, token) => {
-      const usdValue = getTokenUsdAllocation(token, target)
-      return acc + (token.side === "buy" ? usdValue : -usdValue)
-    }, 0)
-  })
+  // const netExposure = createMemo(() => {
+  //   const target = targetNotional()
+  //   return derivedActiveTokens().reduce((acc, token) => {
+  //     const usdValue = getTokenUsdAllocation(token, target)
+  //     return acc + (token.side === "buy" ? usdValue : -usdValue)
+  //   }, 0)
+  // })
 
-  const disableSubmit = () =>
-    !tokensWithDeltaTracking().length ||
-    accountValue() <= 0 ||
-    isRebalancingUi() ||
-    (derivedTotalPercent() <= 0 && !hasPendingDeletions()) ||
-    hasBlockingNotionalIssue()
+  // const disableSubmit = () =>
+  //   !tokensWithDeltaTracking().length ||
+  //   accountValue() <= 0 ||
+  //   isRebalancingUi() ||
+  //   (derivedTotalPercent() <= 0 && !hasPendingDeletions()) ||
+  //   hasBlockingNotionalIssue()
 
-  // createEffect: clear rebalancing UI state once staged trades are empty
-  createEffect(() => {
-    if (!isRebalancingUi() || !positionsLoadedFromExchange()) {
-      return
-    }
-  })
+  // // createEffect: clear rebalancing UI state once staged trades are empty
+  // createEffect(() => {
+  //   if (!isRebalancingUi() || !positionsLoadedFromExchange()) {
+  //     return
+  //   }
+  // })
 
   return {
     // State (all getters for consistent consumer API -- access as properties, not function calls)
@@ -1014,12 +783,6 @@ export const usePortfolioState = (
     get currentCrossAccountLeverage() {
       return currentCrossAccountLeverage()
     },
-    get totalNotional() {
-      return totalNotional()
-    },
-    get displayNotional() {
-      return displayNotional()
-    },
     get targetNotional() {
       return targetNotional()
     },
@@ -1029,47 +792,17 @@ export const usePortfolioState = (
     get targetTotalNotional() {
       return targetTotalNotional()
     },
-    get showTargetOfTotal() {
-      return showTargetOfTotal()
-    },
     get targetPortfolio() {
       return getTargetPortfolio()
     },
     get getActiveSymbols() {
       return activeSymbols()
     },
-    get selectedTokens() {
-      return tokensWithDeltaTracking()
-    },
-    get activeTokens() {
-      return derivedActiveTokens()
-    },
-    get minPercentFloor() {
-      return minPercentFloor()
-    },
-    get totalPercent() {
-      return derivedTotalPercent()
-    },
-    get remainingPercent() {
-      return derivedRemainingPercent()
-    },
-    get hasPendingDeletions() {
-      return hasPendingDeletions()
-    },
-    get blockingReasons() {
-      return blockingReasons()
-    },
     get leverageLimitsMap() {
       return leverageLimitsMap()
     },
-    get netExposure() {
-      return netExposure()
-    },
     get stagedTrades() {
       return stagedTrades()
-    },
-    get disableSubmit() {
-      return disableSubmit()
     },
     get isRebalancing() {
       return isRebalancingUi()
@@ -1095,7 +828,7 @@ export const usePortfolioState = (
     handleNotionalChange,
     handleWeightChange,
     handleCrossAccountLeverageChange,
-    handleOpenPositions,
+    // handleOpenPositions,
     handleResetToCurrent,
   }
 }

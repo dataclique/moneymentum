@@ -19,11 +19,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/cn"
 import type { OrderSide } from "@/hooks/useTrading"
-import {
-  type TokenAllocation,
-  MIN_CHANGE_DELTA,
-  MIN_USD,
-} from "../../hooks/usePortfolioState"
+import { MIN_CHANGE_DELTA, MIN_USD } from "../../hooks/usePortfolioState"
 import { useWallet } from "@/hooks/useWallet"
 import { WalletHeader } from "@/components/wallet-header"
 import { LeverageDialog } from "./LeverageDialog"
@@ -34,7 +30,6 @@ interface PositionsPanelProps {
   positions: Record<string, TargetPortfolioInterface>
   isLoading: boolean
   fundingIsLoading: boolean
-  displayNotional: number
   leverageLimitsMap: Record<string, number | undefined>
   _isRebalancing?: boolean
   isPrecise: boolean
@@ -56,7 +51,6 @@ const getSideBadgeClass = (side: OrderSide) =>
 // TODO: move to separate component
 export const PositionsPanelRow = (props: {
   position: TargetPortfolioInterface
-  displayNotional: number
   maxLeverage: number
   isPrecise: boolean
   fundingIsLoading: boolean

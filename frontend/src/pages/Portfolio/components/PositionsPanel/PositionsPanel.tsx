@@ -43,7 +43,6 @@ interface PositionsPanelProps {
   positions: Record<string, TargetPortfolioInterface>
   isLoading: boolean
   fundingIsLoading: boolean
-  displayNotional: number
   leverageLimitsMap: Record<string, number>
   _isRebalancing?: boolean
   isPrecise: boolean
@@ -130,7 +129,6 @@ export const PositionsPanel = (props: PositionsPanelProps): JSX.Element => {
                       return (
                         <PositionsPanelRow
                           position={position()}
-                          displayNotional={props.displayNotional}
                           maxLeverage={
                             props.leverageLimitsMap[position().symbol]
                           } //TODO: check for new reactivity and fetching logic

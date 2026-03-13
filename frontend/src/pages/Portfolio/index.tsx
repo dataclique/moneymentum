@@ -17,7 +17,7 @@ import { WalletHeader } from "@/components/wallet-header"
 import { ModeToggle } from "@/components/ui/mode-toggle"
 
 import { usePortfolioState } from "./hooks/usePortfolioState"
-import { useBeta } from "./hooks/useBeta"
+// import { useBeta } from "./hooks/useBeta"
 import {
   useHyperliquidTickers,
   useHyperliquidFundingRates,
@@ -61,9 +61,7 @@ const PortfolioPage = () => {
     () => new Set(Object.keys(portfolio.targetPortfolio)),
   )
 
-  console.log("portfolio in PortfolioPage", portfolio.selectedTokens)
-
-  const betaResult = useBeta(() => portfolio.activeTokens)
+  // const betaResult = useBeta(() => portfolio.activeTokens)
 
   const tickersQuery = useHyperliquidTickers()
   const fundingRatesQuery = useHyperliquidFundingRates()
@@ -175,7 +173,6 @@ const PortfolioPage = () => {
                 positions={portfolio.targetPortfolio}
                 isLoading={portfolio.isPositionsLoading}
                 fundingIsLoading={fundingRatesQuery.isLoading}
-                displayNotional={portfolio.displayNotional}
                 leverageLimitsMap={portfolio.leverageLimitsMap}
                 _isRebalancing={portfolio.isRebalancing}
                 isPrecise={isPrecise()}
@@ -189,7 +186,7 @@ const PortfolioPage = () => {
                 targetTotalNotional={portfolio.targetTotalNotional}
               />
             </div>
-            <Show when={portfolio.blockingReasons.length > 0}>
+            {/* <Show when={portfolio.blockingReasons.length > 0}>
               <Card class="shrink-0">
                 <CardContent class="space-y-2 text-sm text-rose-400 py-3">
                   <For each={portfolio.blockingReasons}>
@@ -197,7 +194,7 @@ const PortfolioPage = () => {
                   </For>
                 </CardContent>
               </Card>
-            </Show>
+            </Show> */}
 
             {/* Footer */}
             <div class="sticky bottom-0 bg-background/80 backdrop-blur mt-auto">
@@ -309,10 +306,10 @@ const PortfolioPage = () => {
                 />
               </div>
               <div class="flex-[0_0_25%] min-w-0">
-                <FactorsPanel
+                {/* <FactorsPanel
                   beta={betaResult.beta}
                   isBetaLoading={betaResult.isLoading}
-                />
+                /> */}
               </div>
               <div class="flex-1 min-w-0">
                 <RiskPanel />

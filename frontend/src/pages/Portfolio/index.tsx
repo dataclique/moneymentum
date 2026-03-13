@@ -59,6 +59,9 @@ const PortfolioPage = () => {
   })
 
   const portfolio = usePortfolioState(isPrecise, isWeightRedistribution)
+  const activeSymbolsSet = createMemo(
+    () => new Set(Object.keys(portfolio.targetPortfolio)),
+  )
 
   console.log("portfolio in PortfolioPage", portfolio.selectedTokens)
 
@@ -67,9 +70,6 @@ const PortfolioPage = () => {
   const tickersQuery = useHyperliquidTickers()
   const fundingRatesQuery = useHyperliquidFundingRates()
   const screenerSymbols = () => tickersQuery.data ?? []
-  const selectedSymbolsSet = createMemo(
-    () => new Set(portfolio.selectedTokens.map(token => token.symbol)),
-  )
   const fundingRatesByBaseSymbol = () => fundingRatesQuery.data ?? {}
 
   const [leverageInput, setLeverageInput] = createSignal(
@@ -160,9 +160,8 @@ const PortfolioPage = () => {
       >
         <ScreenerPanel
           symbols={screenerSymbols()}
-          isLoading={tickersQuery.isLoading}
+          activeSymbols={activeSymbolsSet()}
           fundingIsLoading={fundingRatesQuery.isLoading}
-          selectedSymbols={selectedSymbolsSet()}
           onAddSymbol={portfolio.handleAddToken}
           fundingRatesByBaseSymbol={fundingRatesByBaseSymbol()}
         />

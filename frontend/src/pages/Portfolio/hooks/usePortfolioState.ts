@@ -9,7 +9,7 @@ import {
   type OrderResult,
 } from "@/hooks/useTrading"
 import { useWallet } from "@/hooks/useWallet"
-import { createStore } from "solid-js/store"
+import { createStore, produce } from "solid-js/store"
 
 export const MIN_USD = 11
 export const MIN_CHANGE_DELTA = 11.0 // Minimum change in USD to trigger a rebalance
@@ -21,6 +21,7 @@ const roundNotional = (n: number): number =>
 
 export type AllocationStatus =
   | OrderResult["status"]
+  | "new"
   | "idle" //TODO: what is this status?
   | "untouched"
   | "deleted"
@@ -729,62 +730,27 @@ export const usePortfolioState = (
   })
 
   const handleAddToken = (symbol: string) => {
-    // solid/reactivity warns that a reactive closure is passed to a non-tracked scope.
-    // The rule exists to prevent signal reads from being ignored outside reactive contexts.
-    // Here it's a false positive: setSelectedTokensAndPersist wraps setSelectedTokens (a signal
-    // setter), so the callback runs synchronously during a state update, not in a detached scope.
-    // The only signal read inside (leverageLimitsMap()) is read-only contextual data, not the
-    // state being updated.
-    // eslint-disable-next-line solid/reactivity
-    setSelectedTokensAndPersist(prev => {
-      const existingToken = prev.find(token => token.symbol === symbol)
+    if (symbol in targetPortfolio) return
 
-      if (existingToken) {
-        if (existingToken.status !== "deleted") return prev
-
-        const restoredNotional = roundNotional(
-          existingToken.previousNotional ?? existingToken.notional ?? MIN_USD,
-        )
-        const restoredValue =
-          existingToken.previousNotional ?? existingToken.notional
-        const hasExchangeNotional =
-          restoredValue !== undefined && restoredValue > 0
-
-        const tokensWithRestored = prev.map(token =>
-          token.symbol === symbol
-            ? {
-                ...token,
-                status: hasExchangeNotional
-                  ? ("untouched" as const)
-                  : ("idle" as const),
-                previousPercentage: undefined,
-                notional: restoredNotional,
-              }
-            : token,
-        )
-        return updateByNotionalChange(tokensWithRestored)
-      }
-
-      const maxLeverageForSymbol = leverageLimitsMap()[symbol] || 1
-      const initialNotional = MIN_USD
-      const tokensWithNew: TokenAllocation[] = [
-        ...prev,
-        {
-          symbol,
-          percentage: 0, // Will be recalculated from notional
-          side: "buy" as const,
-          leverage: maxLeverageForSymbol,
-          status: "idle" as const,
-          message: null,
-          notional: initialNotional,
-          lockedUsd: initialNotional,
-        },
-      ]
-      return updateByNotionalChange(tokensWithNew)
+    setTargetPortfolio(symbol, {
+      symbol,
+      side: "buy",
+      leverage: leverageLimitsMap()[symbol] || 1,
+      notional: MIN_USD,
+      status: "new",
     })
   }
 
   const handleRemoveToken = (symbol: string) => {
+    if (targetPortfolio[symbol]?.status === "new") {
+      setTargetPortfolio(
+        produce(state => {
+          delete state[symbol]
+        }),
+      )
+      return
+    }
+
     setTargetPortfolio(symbol, "status", "deleted")
   }
 
@@ -1147,6 +1113,9 @@ export const usePortfolioState = (
     },
     get targetPortfolio() {
       return getTargetPortfolio()
+    },
+    get getActiveSymbols() {
+      return activeSymbols()
     },
     get selectedTokens() {
       return tokensWithDeltaTracking()

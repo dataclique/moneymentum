@@ -19,10 +19,10 @@ export interface StagedTrade {
 
 interface StagedChangesPanelProps {
   stagedTrades?: StagedTrade[]
-  initialTotalNotional?: number
-  targetNotional?: number
-  initialCrossAccountLeverage?: number | null
-  crossAccountLeverage?: number
+  currentTotalNotional: number
+  targetTotalNotional: number
+  currentCrossAccountLeverage: number
+  targetCrossAccountLeverage: number
   onRebalance?: () => void
   isRebalancing?: boolean
   disableSubmit?: boolean
@@ -48,19 +48,22 @@ const NOTIONAL_EPSILON_USD = 0.1
 export const StagedChangesPanel = (props: StagedChangesPanelProps) => {
   const stagedTrades = () => props.stagedTrades ?? []
   const hasStaged = () => stagedTrades().length > 0
+
   const isRebalancing = () => props.isRebalancing ?? false
   const disableSubmit = () => props.disableSubmit ?? false
+
   const shouldShowNotionalArrow = () =>
-    props.initialTotalNotional !== undefined &&
-    props.targetNotional !== undefined &&
-    Math.abs(props.targetNotional - props.initialTotalNotional) >=
+    props.currentTotalNotional &&
+    props.targetTotalNotional &&
+    Math.abs(props.targetTotalNotional - props.currentTotalNotional) >=
       NOTIONAL_EPSILON_USD
-  const initialLeverage = () => props.initialCrossAccountLeverage
-  const currentLeverage = () => props.crossAccountLeverage
+
+  const currentLeverage = () => props.currentCrossAccountLeverage
+  const targetLeverage = () => props.targetCrossAccountLeverage
   const shouldShowLeverageArrow = () =>
-    initialLeverage() !== null &&
-    currentLeverage() !== undefined &&
-    initialLeverage() !== currentLeverage()
+    currentLeverage() &&
+    targetLeverage() &&
+    currentLeverage() !== targetLeverage()
 
   return (
     <div class="flex-1 border border-border rounded flex flex-col min-w-0">
@@ -174,27 +177,23 @@ export const StagedChangesPanel = (props: StagedChangesPanelProps) => {
               <span class="text-muted-foreground">Notional</span>
               <span class="font-mono">
                 <Show
-                  when={
-                    props.initialTotalNotional !== undefined &&
-                    props.targetNotional !== undefined
-                  }
+                  when={props.currentTotalNotional && props.targetTotalNotional}
                   fallback="--"
                 >
                   <Show
                     when={shouldShowNotionalArrow()}
-                    fallback={formatUsdPrecise(props.targetNotional ?? 0)}
+                    fallback={formatUsdPrecise(props.targetTotalNotional)}
                   >
-                    {formatUsdPrecise(props.initialTotalNotional ?? 0)}{" "}
+                    {formatUsdPrecise(props.currentTotalNotional)}{" "}
                     <span class="text-muted-foreground">→</span>{" "}
                     <span
                       class={
-                        (props.targetNotional ?? 0) >=
-                        (props.initialTotalNotional ?? 0)
+                        props.targetTotalNotional >= props.currentTotalNotional
                           ? "text-green-500"
                           : "text-red-500"
                       }
                     >
-                      {formatUsdPrecise(props.targetNotional ?? 0)}
+                      {formatUsdPrecise(props.targetTotalNotional)}
                     </span>
                   </Show>
                 </Show>
@@ -203,18 +202,15 @@ export const StagedChangesPanel = (props: StagedChangesPanelProps) => {
             <div class="flex justify-between flex-col">
               <span class="text-muted-foreground">Leverage</span>
               <span class="font-mono">
-                <Show
-                  when={props.crossAccountLeverage !== undefined}
-                  fallback="--"
-                >
+                <Show when={props.targetCrossAccountLeverage} fallback="--">
                   <Show
                     when={shouldShowLeverageArrow()}
-                    fallback={`${(props.crossAccountLeverage ?? 0).toFixed(2)}x`}
+                    fallback={`${props.targetCrossAccountLeverage.toFixed(2)}x`}
                   >
-                    {initialLeverage()?.toFixed(2)}x{" "}
+                    {currentLeverage()?.toFixed(2)}x{" "}
                     <span class="text-muted-foreground">→</span>{" "}
                     <span class="text-yellow-500">
-                      {(currentLeverage() ?? 0).toFixed(2)}x
+                      {(targetLeverage() ?? 0).toFixed(2)}x
                     </span>
                   </Show>
                 </Show>

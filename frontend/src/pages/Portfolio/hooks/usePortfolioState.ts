@@ -15,7 +15,7 @@ import {
   type OrderResult,
 } from "@/hooks/useTrading"
 import { useWallet } from "@/hooks/useWallet"
-import { createStore, produce } from "solid-js/store"
+import { createStore, produce, reconcile } from "solid-js/store"
 
 export const MIN_USD = 11
 export const MIN_CHANGE_DELTA = 11.0 // Minimum change in USD to trigger a rebalance
@@ -125,11 +125,10 @@ export const usePortfolioState = (
   // Mutations
   const rebalancePositionsMutation = useRebalanceHyperliquidPositions()
 
-  const [crossAccountLeverage, setCrossAccountLeverage] = createSignal(
-    DEFAULT_CROSS_ACCOUNT_LEVERAGE,
-  )
-  const [initialCrossAccountLeverage, setInitialCrossAccountLeverage] =
-    createSignal<number | null>(null)
+  const [targetCrossAccountLeverage, setTargetCrossAccountLeverage] =
+    createSignal(DEFAULT_CROSS_ACCOUNT_LEVERAGE)
+  const [currentCrossAccountLeverage, setCurrentCrossAccountLeverage] =
+    createSignal(DEFAULT_CROSS_ACCOUNT_LEVERAGE)
 
   const [selectedTokens, setSelectedTokens] = createSignal<TokenAllocation[]>(
     [],
@@ -212,9 +211,20 @@ export const usePortfolioState = (
   )
 
   const [targetTotalNotional, setTargetTotalNotional] = createSignal(0)
+  const [currentTotalNotional, setCurrentTotalNotional] = createSignal(0)
 
+  // Keep displayed target leverage in sync with planned target notional.
   createEffect(() => {
-    setCrossAccountLeverage(calcLeverage(targetTotalNotional(), accountValue()))
+    setTargetCrossAccountLeverage(
+      calcLeverage(targetTotalNotional(), accountValue()),
+    )
+  })
+
+  // Keep displayed current leverage in sync with current notional on the exchange.
+  createEffect(() => {
+    setCurrentCrossAccountLeverage(
+      calcLeverage(currentTotalNotional(), accountValue()),
+    )
   })
 
   // const currentLeverage = createMemo(() => {
@@ -247,8 +257,8 @@ export const usePortfolioState = (
 
     setSelectedTokens([])
     setCurrentPortfolio({})
-    setCrossAccountLeverage(DEFAULT_CROSS_ACCOUNT_LEVERAGE)
-    setInitialCrossAccountLeverage(null)
+    setTargetCrossAccountLeverage(DEFAULT_CROSS_ACCOUNT_LEVERAGE)
+    setCurrentCrossAccountLeverage(DEFAULT_CROSS_ACCOUNT_LEVERAGE)
     setPositionsLoadedFromExchange(false)
   })
 
@@ -257,21 +267,21 @@ export const usePortfolioState = (
     () => accountSummaryQuery.data?.accountValue ?? 0,
   )
 
-  // Compute targetNotional = accountValue * crossAccountLeverage (used for percentage calculations)
+  // Compute targetNotional = accountValue * targetCrossAccountLeverage (used for percentage calculations)
   const targetNotional = createMemo(() =>
     new Decimal(accountValue())
-      .mul(crossAccountLeverage())
+      .mul(targetCrossAccountLeverage())
       .toDecimalPlaces(2, Decimal.ROUND_HALF_UP)
       .toNumber(),
   )
 
-  // Mutable ref kept in sync with crossAccountLeverage signal via createEffect.
+  // Mutable ref kept in sync with targetCrossAccountLeverage signal via createEffect.
   // Avoids stale closures in callbacks that read leverage without re-subscribing.
-  let latestCrossAccountLeverage = untrack(crossAccountLeverage)
+  let latestCrossAccountLeverage = untrack(targetCrossAccountLeverage)
 
   // createEffect: sync mutable ref with signal so downstream functions read current value
   createEffect(() => {
-    latestCrossAccountLeverage = crossAccountLeverage()
+    latestCrossAccountLeverage = targetCrossAccountLeverage()
   })
 
   const setSelectedTokensAndPersist = (
@@ -331,8 +341,10 @@ export const usePortfolioState = (
     // Calculate leverage from the formula: leverage = totalNotional / accountValue
     const initialLeverage = calcLeverage(totalExchangeNotional, accountValue())
     console.log("initialLeverage", initialLeverage)
-    setCrossAccountLeverage(initialLeverage)
     setTargetTotalNotional(totalExchangeNotional)
+    setCurrentTotalNotional(totalExchangeNotional)
+    setTargetCrossAccountLeverage(initialLeverage)
+    setCurrentCrossAccountLeverage(initialLeverage)
 
     setPositionsLoadedFromExchange(true)
   })
@@ -395,13 +407,6 @@ export const usePortfolioState = (
   // Must be calculated before tokensWithDeltaTracking since it's used there
   const totalNotional = createMemo(() =>
     activeTokens().reduce((sum, token) => sum + token.notional, 0),
-  )
-
-  const currentTotalNotional = createMemo(() =>
-    Object.values(currentPortfolio).reduce(
-      (sum, token) => sum + token.notional,
-      0,
-    ),
   )
 
   const hasPendingDeletions = createMemo(() =>
@@ -486,105 +491,49 @@ export const usePortfolioState = (
   })
 
   type StagedTradeItem = {
-    id: string
     underlying: string
     side: OrderSide
     notional: number
     previousWeight?: number
     newWeight?: number
     status: AllocationStatus
-    message: string | null
   }
 
-  // Retain last known staged trades to prevent flickering during position reloads
-  let lastKnownStagedTrades: StagedTradeItem[] = []
-
   const stagedTrades = createMemo(() => {
-    // Before we have any exchange data, don't show staged trades at all.
-    if (
-      !positionsLoadedFromExchange() &&
-      Object.keys(currentPortfolio).length === 0
-    ) {
-      return lastKnownStagedTrades
+    const trades: StagedTradeItem[] = []
+    const allSymbols = new Set([
+      ...Object.keys(currentPortfolio),
+      ...Object.keys(targetPortfolio),
+    ])
+
+    for (const symbol of allSymbols) {
+      const current = currentPortfolio[symbol]
+      const target = targetPortfolio[symbol]
+
+      const curNotional = current?.notional || 0
+      const curSide = current?.side || "buy"
+
+      const isDeleted = target?.status === "deleted"
+      const tarNotional = isDeleted ? 0 : target?.notional || 0
+      const tarSide = target?.side || curSide
+
+      const currentSigned = curSide === "buy" ? curNotional : -curNotional
+      const targetSigned = tarSide === "buy" ? tarNotional : -tarNotional
+
+      const diff = targetSigned - currentSigned
+
+      if (Math.abs(diff) > 0.01) {
+        trades.push({
+          underlying: symbol,
+          side: diff > 0 ? "buy" : "sell",
+          notional: Math.abs(diff),
+          previousWeight: curNotional / (currentTotalNotional() || 1),
+          newWeight: tarNotional / (targetTotalNotional() || 1),
+          status: target?.status || "modified",
+        })
+      }
     }
-
-    const trades = tokensWithDeltaTracking()
-      .map(token => {
-        const initialToken = currentPortfolio[token.symbol]
-        const inInitial = initialToken !== undefined
-
-        // Deleted tokens:
-        // - if they existed on the exchange (inInitial), this is a full close
-        //   of the current position: notional = currentNotional, side = opposite
-        // - if they are purely local (newly added then removed), we skip them
-        if (token.status === "deleted") {
-          if (!initialToken) {
-            return null
-          }
-
-          const previousNotional = initialToken.notional ?? 0
-          const previousWeight = initialToken.percentage / 100
-
-          const closeSide: OrderSide =
-            initialToken.side === "buy" ? "sell" : "buy"
-
-          return {
-            id: token.symbol,
-            underlying: token.symbol,
-            side: closeSide,
-            notional: previousNotional,
-            previousWeight,
-            newWeight: 0,
-            status: token.status,
-            message: token.message ?? null,
-          }
-        }
-
-        const shouldInclude =
-          token.status === "modified" ||
-          token.status === "working" ||
-          token.status === "failed" ||
-          // Newly created positions (no initial snapshot)
-          !inInitial
-
-        if (!shouldInclude) {
-          return null
-        }
-
-        const previousWeight = initialToken
-          ? initialToken.percentage / 100
-          : undefined
-        const newWeight = token.percentage / 100
-
-        const previousNotional = token.currentNotional ?? 0
-        const targetNotionalForToken =
-          token.targetNotional ?? token.notional ?? 0
-        const notionalDelta = Math.abs(
-          targetNotionalForToken - previousNotional,
-        )
-
-        return {
-          id: token.symbol,
-          underlying: token.symbol,
-          side: token.side,
-          notional: notionalDelta,
-          previousWeight,
-          newWeight,
-          status: token.status,
-          message: token.message ?? null,
-        }
-      })
-      .filter((trade): trade is NonNullable<typeof trade> => trade !== null)
-
-    // When exchange positions are fully loaded, update the retained snapshot.
-    if (positionsLoadedFromExchange()) {
-      lastKnownStagedTrades = trades
-      return trades
-    }
-
-    // While a reload is in progress, keep showing the last known staged trades
-    // instead of clearing the panel.
-    return lastKnownStagedTrades
+    return trades
   })
 
   const derivedActiveTokens = createMemo(() =>
@@ -791,16 +740,13 @@ export const usePortfolioState = (
     const newTotal = accountValue() * newLeverage
     const oldTotal = targetTotalNotional()
 
-    // Чтобы не делить на ноль, если портфель был пустой
     if (oldTotal === 0) {
       setTargetTotalNotional(newTotal)
       return
     }
 
-    // Коэффициент изменения (например, увеличили плечо в 1.5 раза)
     const multiplier = newTotal / oldTotal
 
-    // Массово обновляем ношиналы всех позиций
     setTargetPortfolio(
       produce(state => {
         for (const symbol in state) {
@@ -812,6 +758,22 @@ export const usePortfolioState = (
     )
 
     setTargetTotalNotional(newTotal)
+  }
+
+  const handleResetToCurrent = () => {
+    const currentTokens = Object.values(currentPortfolio)
+    const nextTarget = Object.fromEntries(
+      currentTokens.map(token => [
+        token.symbol,
+        { ...token, status: "untouched" as const },
+      ]),
+    )
+
+    batch(() => {
+      setTargetPortfolio(reconcile(nextTarget))
+
+      setTargetTotalNotional(currentTotalNotional())
+    })
   }
 
   const handleOpenPositions = () => {
@@ -917,7 +879,7 @@ export const usePortfolioState = (
 
     const payload = {
       accountValue: accountValue(),
-      crossAccountLeverage: crossAccountLeverage(),
+      targetCrossAccountLeverage: targetCrossAccountLeverage(),
       precise: isPrecise(),
       positions: tokensWithDeltaTracking().map(token => {
         const exchangePosition = currentPortfolio[token.symbol]
@@ -1039,10 +1001,6 @@ export const usePortfolioState = (
     if (!isRebalancingUi() || !positionsLoadedFromExchange()) {
       return
     }
-
-    if (stagedTrades().length === 0) {
-      setIsRebalancingUi(false)
-    }
   })
 
   return {
@@ -1050,11 +1008,11 @@ export const usePortfolioState = (
     get accountValue() {
       return accountValue()
     },
-    get crossAccountLeverage() {
-      return crossAccountLeverage()
+    get targetCrossAccountLeverage() {
+      return targetCrossAccountLeverage()
     },
-    get initialCrossAccountLeverage() {
-      return initialCrossAccountLeverage()
+    get currentCrossAccountLeverage() {
+      return currentCrossAccountLeverage()
     },
     get totalNotional() {
       return totalNotional()
@@ -1064,6 +1022,9 @@ export const usePortfolioState = (
     },
     get targetNotional() {
       return targetNotional()
+    },
+    get currentTotalNotional() {
+      return currentTotalNotional()
     },
     get targetTotalNotional() {
       return targetTotalNotional()
@@ -1104,10 +1065,6 @@ export const usePortfolioState = (
     get netExposure() {
       return netExposure()
     },
-    //TODO: rename
-    get initialTotalNotional() {
-      return currentTotalNotional()
-    },
     get stagedTrades() {
       return stagedTrades()
     },
@@ -1139,5 +1096,6 @@ export const usePortfolioState = (
     handleWeightChange,
     handleCrossAccountLeverageChange,
     handleOpenPositions,
+    handleResetToCurrent,
   }
 }

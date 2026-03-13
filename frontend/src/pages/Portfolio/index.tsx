@@ -71,7 +71,7 @@ const PortfolioPage = () => {
   const fundingRatesByBaseSymbol = () => fundingRatesQuery.data ?? {}
 
   const [leverageInput, setLeverageInput] = createSignal(
-    portfolio.crossAccountLeverage.toFixed(2),
+    portfolio.targetCrossAccountLeverage.toFixed(2),
   )
   // TODO: make empty leverage as 1.00x
   // Maybe it's better to make component with this functionality and use here and in PositionsPanel
@@ -82,7 +82,7 @@ const PortfolioPage = () => {
     createSignal(false)
   createEffect(() => {
     if (!isLeverageInputFocused()) {
-      setLeverageInput(portfolio.crossAccountLeverage.toFixed(2))
+      setLeverageInput(portfolio.targetCrossAccountLeverage.toFixed(2))
     }
   })
 
@@ -214,7 +214,7 @@ const PortfolioPage = () => {
                       fallback={<Skeleton class="h-4 w-full" />}
                     >
                       <Slider
-                        value={[portfolio.crossAccountLeverage]}
+                        value={[portfolio.targetCrossAccountLeverage]}
                         onChange={([selectedLeverage]) => {
                           portfolio.handleCrossAccountLeverageChange(
                             selectedLeverage,
@@ -232,7 +232,7 @@ const PortfolioPage = () => {
                         onBlur={() => {
                           setIsLeverageInputFocused(false)
                           setLeverageInput(
-                            portfolio.crossAccountLeverage.toFixed(2),
+                            portfolio.targetCrossAccountLeverage.toFixed(2),
                           )
                         }}
                         onInput={leverageInputChangeEvent => {
@@ -294,16 +294,18 @@ const PortfolioPage = () => {
               <div class="flex flex-[0_0_40%] min-w-0">
                 <StagedChangesPanel
                   stagedTrades={portfolio.stagedTrades}
-                  initialTotalNotional={portfolio.initialTotalNotional}
-                  targetNotional={portfolio.targetNotional}
-                  initialCrossAccountLeverage={
-                    portfolio.initialCrossAccountLeverage
+                  currentTotalNotional={portfolio.currentTotalNotional}
+                  targetTotalNotional={portfolio.targetTotalNotional}
+                  currentCrossAccountLeverage={
+                    portfolio.currentCrossAccountLeverage
                   }
-                  crossAccountLeverage={portfolio.crossAccountLeverage}
+                  targetCrossAccountLeverage={
+                    portfolio.targetCrossAccountLeverage
+                  }
                   onRebalance={portfolio.handleOpenPositions}
                   isRebalancing={portfolio.isRebalancing}
                   disableSubmit={portfolio.disableSubmit}
-                  // onClearAll={portfolio.handleResetToInitial}
+                  onClearAll={portfolio.handleResetToCurrent}
                 />
               </div>
               <div class="flex-[0_0_25%] min-w-0">

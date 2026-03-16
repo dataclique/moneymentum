@@ -26,7 +26,7 @@ import { ScreenerPanel } from "@/pages/Portfolio/components/ScreenerPanel"
 import { PositionsPanel } from "@/pages/Portfolio/components/PositionsPanel/PositionsPanel"
 import { PerformancePanel } from "@/pages/Portfolio/components/PerformancePanel"
 import { StagedChangesPanel } from "@/pages/Portfolio/components/StagedChangesPanel"
-import { FactorsPanel } from "@/pages/Portfolio/components/FactorsPanel"
+// import { FactorsPanel } from "@/pages/Portfolio/components/FactorsPanel"
 import { RiskPanel } from "@/pages/Portfolio/components/RiskPanel"
 
 const PRECISE_TOGGLE_STORAGE_KEY = "portfolio-precise-toggle"
@@ -170,7 +170,9 @@ const PortfolioPage = () => {
           <div class="shrink-0 basis-[600px] flex flex-col overflow-hidden">
             <div class="flex gap-1 min-h-0 min-w-0 flex-1">
               <PositionsPanel
-                positions={portfolio.targetPortfolio}
+                currentPortfolio={portfolio.currentPortfolio}
+                targetPortfolio={portfolio.targetPortfolio}
+                deletedArchive={portfolio.deletedArchive}
                 isLoading={portfolio.isPositionsLoading}
                 fundingIsLoading={fundingRatesQuery.isLoading}
                 leverageLimitsMap={portfolio.leverageLimitsMap}
@@ -299,7 +301,7 @@ const PortfolioPage = () => {
                   targetCrossAccountLeverage={
                     portfolio.targetCrossAccountLeverage
                   }
-                  onRebalance={portfolio.handleOpenPositions}
+                  onRebalance={portfolio.handleRebalancePositions}
                   isRebalancing={portfolio.isRebalancing}
                   disableSubmit={portfolio.disableSubmit}
                   onClearAll={portfolio.handleResetToCurrent}

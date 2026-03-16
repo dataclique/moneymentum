@@ -107,7 +107,7 @@ export const TokenCard = (props: TokenCardProps) => {
           props.token.status === "filled" && "border-l-4 border-emerald-500",
           props.token.status === "working" && "border-l-4",
           props.token.status === "failed" && "border-l-4 border-rose-500",
-          props.token.status === "untouched" && "border-l-4 border-blue-500/50",
+          props.token.status === "synced" && "border-l-4 border-blue-500/50",
           props.token.status === "modified" && "border-l-4 border-transparent",
           props.token.status === "deleted" && "border-l-4",
         ),
@@ -257,7 +257,7 @@ export const TokenCard = (props: TokenCardProps) => {
                 props.token.deltaInsufficient === true &&
                 props.token.status === "modified"
               const showSmallPositionWarning = () =>
-                props.token.status !== "untouched" &&
+                props.token.status !== "synced" &&
                 props.token.status !== "deleted" &&
                 tv() > 0 &&
                 tv() < MIN_USD

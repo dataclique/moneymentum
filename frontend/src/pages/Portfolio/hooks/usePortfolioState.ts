@@ -14,9 +14,17 @@ import {
   type OrderSide,
   type OrderResult,
 } from "@/hooks/useTrading"
+import {
+  buildApiPayload,
+  diffPortfolios,
+  // type Portfolio as DiffPortfolio,
+  // type PortfolioPosition as DiffPortfolioPosition,
+} from "./portfolioRebalancer"
 import { useWallet } from "@/hooks/useWallet"
 import { createStore, produce, reconcile } from "solid-js/store"
 
+// TODO: need only one constant
+// TODO: maybe move all constants in project to the separate file
 export const MIN_USD = 11
 export const MIN_CHANGE_DELTA = 11.0 // Minimum change in USD to trigger a rebalance
 // Allow sum of weights slightly above 100% due to rounding (e.g. 33.33 + 33.33 + 33.34 = 100.00)
@@ -25,24 +33,25 @@ const MAX_TOTAL_PERCENT_TOLERANCE = 0.1
 const roundNotional = (n: number): number =>
   new Decimal(n).toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber()
 
+// TODO: no more needed statuses. Now every status computes locally in components
 export type AllocationStatus =
   | OrderResult["status"]
-  | "new"
+  | "added" // Position added by the user
   | "idle" //TODO: what is this status?
-  | "untouched"
-  | "deleted"
-  | "modified"
+  | "synced" // Positions synced with the exchange
+  | "deleted" // Position setted to be deleted
+  | "modified" // Position modified by the user (not synced with the exchange)
 
-export interface CurrentPortfolioInterface {
+export interface PortfolioInterface {
   symbol: string
   side: OrderSide
   leverage: number
   notional: number
 }
 
-export interface TargetPortfolioInterface extends CurrentPortfolioInterface {
-  status: AllocationStatus
-}
+// export interface TargetPortfolioInterface extends CurrentPortfolioInterface {
+//   status: AllocationStatus
+// }
 
 const MAX_CROSS_ACCOUNT_LEVERAGE = 5
 const DEFAULT_CROSS_ACCOUNT_LEVERAGE = 1
@@ -71,19 +80,34 @@ export const usePortfolioState = (
   // Mutations
   const rebalancePositionsMutation = useRebalanceHyperliquidPositions()
 
-  const [targetCrossAccountLeverage, setTargetCrossAccountLeverage] =
-    createSignal(DEFAULT_CROSS_ACCOUNT_LEVERAGE)
+  ///////////////////////////
+  ///////START HERE//////////
+  ///////////////////////////
+
+  const [currentPortfolio, setCurrentPortfolio] = createStore<
+    Record<string, PortfolioInterface>
+  >({})
+  const [targetPortfolio, setTargetPortfolio] = createStore<
+    Record<string, PortfolioInterface>
+  >({})
+
+  const [deletedArchive, setDeletedArchive] = createStore<
+    Record<string, PortfolioInterface>
+  >({})
+
   const [currentCrossAccountLeverage, setCurrentCrossAccountLeverage] =
     createSignal(DEFAULT_CROSS_ACCOUNT_LEVERAGE)
+  const [targetCrossAccountLeverage, setTargetCrossAccountLeverage] =
+    createSignal(DEFAULT_CROSS_ACCOUNT_LEVERAGE)
+
+  const [currentTotalNotional, setCurrentTotalNotional] = createSignal(0)
+  const [targetTotalNotional, setTargetTotalNotional] = createSignal(0)
+
+  ///////////////////////////
+  ///////END HERE//////////
+  ///////////////////////////
 
   const [isRebalancingUi, setIsRebalancingUi] = createSignal(false)
-  const [currentPortfolio, setCurrentPortfolio] = createStore<
-    Record<string, CurrentPortfolioInterface>
-  >({})
-  // symbol -> its parameters in targetPortfolio
-  const [targetPortfolio, setTargetPortfolio] = createStore<
-    Record<string, TargetPortfolioInterface>
-  >({})
 
   const [positionsLoadedFromExchange, setPositionsLoadedFromExchange] =
     createSignal(false)
@@ -96,11 +120,12 @@ export const usePortfolioState = (
     newPercentage: number,
     totalNotional: number,
   ) => {
-    const active = activeSymbols() // Предполагаем, это список ключей без "deleted"
-    if (totalNotional <= 0 || !active.includes(changedSymbol)) return
+    const symbols = Object.keys(targetPortfolio)
+
+    if (totalNotional <= 0 || !symbols.includes(changedSymbol)) return
 
     const clampedNew = Math.max(0, Math.min(100, newPercentage))
-    const otherSymbols = active.filter(s => s !== changedSymbol)
+    const otherSymbols = symbols.filter(s => s !== changedSymbol)
 
     // 1. Считаем текущий суммарный процент остальных весов
     const otherTotalPercent = otherSymbols.reduce((sum, s) => {
@@ -140,21 +165,12 @@ export const usePortfolioState = (
     })
   }
 
-  const activeSymbols = createMemo(() =>
+  //TODO: check only new symbol, because if we have old 10.99$ buton is disabled
+  const symbolsBelowMinimum = createMemo(() =>
     Object.keys(targetPortfolio).filter(
-      s => targetPortfolio[s].status !== "deleted",
+      s => targetPortfolio[s].notional < MIN_USD,
     ),
   )
-
-  // TODO: use in future to close positions
-  const closingSymbols = createMemo(() =>
-    Object.keys(targetPortfolio).filter(
-      s => targetPortfolio[s].status === "deleted",
-    ),
-  )
-
-  const [targetTotalNotional, setTargetTotalNotional] = createSignal(0)
-  const [currentTotalNotional, setCurrentTotalNotional] = createSignal(0)
 
   // Keep displayed target leverage in sync with planned target notional.
   createEffect(() => {
@@ -175,7 +191,20 @@ export const usePortfolioState = (
   //   return targetTotalNotional() / accountValue();
   // });
 
-  function getTargetPortfolio(): Record<string, TargetPortfolioInterface> {
+  function getCurrentPortfolio(): Record<string, PortfolioInterface> {
+    // console.table(
+    //   Object.values(currentPortfolio).map(position => ({
+    //     symbol: position.symbol,
+    //     side: position.side,
+    //     leverage: position.leverage,
+    //     status: position.status,
+    //     notional: position.notional,
+    //   })),
+    // )
+    return currentPortfolio
+  }
+
+  function getTargetPortfolio(): Record<string, PortfolioInterface> {
     // console.table(
     //   Object.values(targetPortfolio).map(position => ({
     //     symbol: position.symbol,
@@ -258,28 +287,23 @@ export const usePortfolioState = (
       0,
     )
 
-    const exchangeTokens: CurrentPortfolioInterface[] =
-      positionsData.positions.map(pos => ({
+    const exchangeTokens: PortfolioInterface[] = positionsData.positions.map(
+      pos => ({
         symbol: pos.symbol,
         side: pos.side,
         leverage: pos.leverage || 1,
         notional: pos.notional,
-      }))
-
-    setCurrentPortfolio(
-      Object.fromEntries(
-        exchangeTokens.map(token => [token.symbol, token]),
-      ) as Record<string, CurrentPortfolioInterface>,
+      }),
     )
 
-    setTargetPortfolio(
-      Object.fromEntries(
-        exchangeTokens.map(token => [
-          token.symbol,
-          { ...token, status: "untouched" as const },
-        ]),
-      ) as Record<string, TargetPortfolioInterface>,
-    )
+    const portfolioMap = Object.fromEntries(
+      exchangeTokens.map(token => [token.symbol, token]),
+    ) as Record<string, PortfolioInterface>
+
+    setCurrentPortfolio(portfolioMap)
+
+    // Create a FULLY independent copy for the target
+    setTargetPortfolio(structuredClone(portfolioMap))
 
     // Calculate leverage from the formula: leverage = totalNotional / accountValue
     const initialLeverage = calcLeverage(totalExchangeNotional, accountValue())
@@ -299,44 +323,36 @@ export const usePortfolioState = (
     notional: number
     previousWeight?: number
     newWeight?: number
-    status: AllocationStatus
+    // status: AllocationStatus
+  }
+
+  const actions = createMemo(() =>
+    diffPortfolios(currentPortfolio, targetPortfolio),
+  )
+
+  const getSignedNotional = (side: OrderSide, notional: number): number => {
+    return side === "buy" ? notional : -notional
   }
 
   const stagedTrades = createMemo(() => {
-    const trades: StagedTradeItem[] = []
-    const allSymbols = new Set([
-      ...Object.keys(currentPortfolio),
-      ...Object.keys(targetPortfolio),
-    ])
+    return actions().map(action => {
+      const symbol = action.symbol
+      const c = currentPortfolio[symbol]
+      const t = targetPortfolio[symbol]
 
-    for (const symbol of allSymbols) {
-      const current = currentPortfolio[symbol]
-      const target = targetPortfolio[symbol]
+      const delta =
+        action.kind === "close"
+          ? -getSignedNotional(c.side, c.notional)
+          : action.notional
 
-      const curNotional = current?.notional || 0
-      const curSide = current?.side || "buy"
-
-      const isDeleted = target?.status === "deleted"
-      const tarNotional = isDeleted ? 0 : target?.notional || 0
-      const tarSide = target?.side || curSide
-
-      const currentSigned = curSide === "buy" ? curNotional : -curNotional
-      const targetSigned = tarSide === "buy" ? tarNotional : -tarNotional
-
-      const diff = targetSigned - currentSigned
-
-      if (Math.abs(diff) > 0.01) {
-        trades.push({
-          underlying: symbol,
-          side: diff > 0 ? "buy" : "sell",
-          notional: Math.abs(diff),
-          previousWeight: curNotional / (currentTotalNotional() || 1),
-          newWeight: tarNotional / (targetTotalNotional() || 1),
-          status: target?.status || "modified",
-        })
+      return {
+        underlying: symbol,
+        side: delta > 0 ? "buy" : "sell",
+        notional: Math.abs(delta),
+        previousWeight: (c?.notional || 0) / (currentTotalNotional() || 1),
+        newWeight: (t?.notional || 0) / (targetTotalNotional() || 1),
       }
-    }
-    return trades
+    })
   })
 
   const leverageLimitsMap = createMemo(() => {
@@ -350,54 +366,38 @@ export const usePortfolioState = (
   })
 
   //TODO: move back validation logic to the component
-  // const hasPositionsBelowMinimum = () => tokensBelowMinimum().length > 0
+  const hasPositionsBelowMinimum = () => symbolsBelowMinimum().length > 0
+
+  //TODO: add this ater, when non precise mode is implemented
   // const hasTotalPercentExceeded = () =>
-  //   derivedTotalPercent() > 100 + MAX_TOTAL_PERCENT_TOLERANCE
+  //   totalTargetPortfolioPercent() > 100 + MAX_TOTAL_PERCENT_TOLERANCE
   // const hasTotalPercentBelow = () =>
   //   derivedTotalPercent() < 100 - MAX_TOTAL_PERCENT_TOLERANCE
   // const showTargetOfTotal = () =>
   //   Math.abs(derivedTotalPercent() - 100) > MAX_TOTAL_PERCENT_TOLERANCE
-  // const hasBlockingNotionalIssue = () =>
-  //   notionalBelowMinimum() ||
-  //   insufficientNotionalForTokens() ||
-  //   hasPositionsBelowMinimum() ||
-  //   hasTotalPercentExceeded() ||
-  //   hasTotalPercentBelow()
 
-  // const blockingReasons = createMemo(() => {
-  //   const reasons: string[] = []
-  //   if (notionalBelowMinimum()) {
-  //     reasons.push(
-  //       "Minimum total notional is $11. Increase leverage or add funds.",
-  //     )
-  //   }
-  //   if (insufficientNotionalForTokens()) {
-  //     reasons.push(
-  //       `Not enough notional for all positions. Need at least $${String(requiredNotionalForTokens())}.`,
-  //     )
-  //   }
-  //   if (hasPositionsBelowMinimum()) {
-  //     const tokensList = tokensBelowMinimum()
-  //       .map(t => `${t.symbol} ($${t.usdValue.toFixed(2)})`)
-  //       .join(", ")
-  //     reasons.push(
-  //       `Each position must be at least $${String(MIN_USD)}. Positions below minimum: ${tokensList}`,
-  //     )
-  //   }
-  //   if (hasTotalPercentExceeded()) {
-  //     const excessPercent = (derivedTotalPercent() - 100).toFixed(1)
-  //     reasons.push(
-  //       `Sum of weights exceeds 100% by ${excessPercent}%. Reduce allocations.`,
-  //     )
-  //   }
-  //   if (hasTotalPercentBelow()) {
-  //     const deficitPercent = (100 - derivedTotalPercent()).toFixed(1)
-  //     reasons.push(
-  //       `Sum of weights is below 100% by ${deficitPercent}%. Add allocations.`,
-  //     )
-  //   }
-  //   return reasons
-  // })
+  const blockingReasons = createMemo(() => {
+    const reasons: string[] = []
+    if (hasPositionsBelowMinimum()) {
+      const symbolsList = symbolsBelowMinimum()
+        .map(s => `${s} ($${targetPortfolio[s].notional.toFixed(2)})`)
+        .join(", ")
+      return `Each position must be at least $${String(MIN_USD)}. Positions below minimum: ${symbolsList}`
+    }
+    //   if (hasTotalPercentExceeded()) {
+    //     const excessPercent = (derivedTotalPercent() - 100).toFixed(1)
+    //     reasons.push(
+    //       `Sum of weights exceeds 100% by ${excessPercent}%. Reduce allocations.`,
+    //     )
+    //   }
+    //   if (hasTotalPercentBelow()) {
+    //     const deficitPercent = (100 - derivedTotalPercent()).toFixed(1)
+    //     reasons.push(
+    //       `Sum of weights is below 100% by ${deficitPercent}%. Add allocations.`,
+    //     )
+    //   }
+    return reasons
+  })
 
   const handleAddToken = (symbol: string) => {
     if (symbol in targetPortfolio) return
@@ -408,7 +408,6 @@ export const usePortfolioState = (
         side: "buy",
         leverage: leverageLimitsMap()[symbol] || 1,
         notional: MIN_USD,
-        status: "new",
       })
 
       setTargetTotalNotional(prev => prev + MIN_USD)
@@ -416,45 +415,43 @@ export const usePortfolioState = (
   }
 
   const handleRemoveToken = (symbol: string) => {
-    const position = targetPortfolio[symbol]
-    if (!position) return
+    const targetPosition = targetPortfolio[symbol]
+    if (!targetPosition) return
+
+    const isPresentInCurrentPortfolio = !!currentPortfolio[symbol]
 
     batch(() => {
-      if (position.status === "new") {
-        const removedNotional = position.notional
-        setTargetPortfolio(
-          produce(state => {
-            delete state[symbol]
-          }),
-        )
-        setTargetTotalNotional(prev => Math.max(0, prev - removedNotional))
-      } else {
-        setTargetPortfolio(symbol, "status", "deleted")
-        setTargetTotalNotional(prev => Math.max(0, prev - position.notional))
+      if (isPresentInCurrentPortfolio) {
+        setDeletedArchive(symbol, { ...targetPosition })
       }
+
+      setTargetPortfolio(
+        produce(state => {
+          delete state[symbol]
+        }),
+      )
+      setTargetTotalNotional(prev =>
+        Math.max(0, prev - targetPosition.notional),
+      )
     })
   }
 
   const handleUndoRemoveToken = (symbol: string) => {
-    const position = targetPortfolio[symbol]
-    if (!position) return
+    const archivedPosition = deletedArchive[symbol]
+    const currentPosition = currentPortfolio[symbol]
+
+    const positionToRestore = archivedPosition || currentPosition
+
+    if (!positionToRestore) return
 
     batch(() => {
-      setTargetTotalNotional(prev => prev + position.notional)
+      setTargetPortfolio(symbol, { ...positionToRestore })
+      setTargetTotalNotional(prev => prev + positionToRestore.notional)
 
-      //TODO: make it as function like `checkIsModified`
-      //Now no logic to set `modified` status, let's check this working later
-      const current = currentPortfolio[symbol]
-
-      const isModified =
-        current.notional !== position.notional ||
-        current.side !== position.side ||
-        current.leverage !== position.leverage
-
-      setTargetPortfolio(
-        symbol,
-        "status",
-        isModified ? "modified" : "untouched",
+      setDeletedArchive(
+        produce(state => {
+          delete state[symbol]
+        }),
       )
     })
   }
@@ -534,7 +531,7 @@ export const usePortfolioState = (
     const nextTarget = Object.fromEntries(
       currentTokens.map(token => [
         token.symbol,
-        { ...token, status: "untouched" as const },
+        { ...token, status: "synced" as const },
       ]),
     )
 
@@ -545,210 +542,25 @@ export const usePortfolioState = (
     })
   }
 
-  // const handleOpenPositions = () => {
-  //   if (
-  //     !tokensWithDeltaTracking().length ||
-  //     accountValue() <= 0 ||
-  //     hasBlockingNotionalIssue() ||
-  //     (derivedTotalPercent() <= 0 && !hasPendingDeletions()) ||
-  //     rebalancePositionsMutation.isPending
-  //   ) {
-  //     return
-  //   }
+  const handleRebalancePositions = () => {
+    const apiPayload = buildApiPayload(
+      currentPortfolio,
+      targetPortfolio,
+      isPrecise(),
+    )
 
-  //   // Check for positions with changes less than $11 (only if precise is off)
-  //   if (!isPrecise()) {
-  //     const tokensWithSmallChangesOnSubmit =
-  //       tokensWithDerivedPercentages().filter(token => {
-  //         // Only check tokens that would be modified (not deleted, not untouched)
-  //         if (token.status === "deleted" || token.status === "untouched") {
-  //           return false
-  //         }
+    console.log(apiPayload)
 
-  //         const targetValue = getTokenUsdAllocation(token, targetNotional())
-  //         const initialToken = currentPortfolio[token.symbol]
+    rebalancePositionsMutation.mutate(apiPayload)
 
-  //         if (!initialToken) {
-  //           // New position - check if target value is at least MIN_CHANGE_DELTA
-  //           return targetValue > 0 && targetValue < MIN_CHANGE_DELTA
-  //         }
+    // Nothing to do: no modifications, creations, or deletions
+    // if (!payload.positions.length) {
+    //   return
+    // }
 
-  //         // Existing position - check if change delta is too small
-  //         const currentValue = getTokenUsdAllocation(
-  //           initialToken,
-  //           targetNotional(),
-  //         )
-  //         const delta = Math.abs(targetValue - currentValue)
-
-  //         // Also check if side or leverage changed (those would require action)
-  //         const sideChanged = token.side !== initialToken.side
-  //         const leverageChanged = token.leverage !== initialToken.leverage
-
-  //         // If side or leverage changed, we need to act regardless of delta
-  //         if (sideChanged || leverageChanged) {
-  //           return false
-  //         }
-
-  //         // If delta is too small, mark as error
-  //         return delta > 0 && delta < MIN_CHANGE_DELTA
-  //       })
-
-  //     // If there are positions with small changes, set error messages and return
-  //     if (tokensWithSmallChangesOnSubmit.length > 0) {
-  //       // eslint-disable-next-line solid/reactivity
-  //       setSelectedTokensAndPersist(prev =>
-  //         prev.map(token => {
-  //           const hasSmallChange = tokensWithSmallChangesOnSubmit.some(
-  //             t => t.symbol === token.symbol,
-  //           )
-  //           if (!hasSmallChange) return token
-
-  //           const targetValue = getTokenUsdAllocation(token, targetNotional())
-  //           const initialToken = currentPortfolio().find(
-  //             it => it.symbol === token.symbol,
-  //           )
-  //           const currentValue = initialToken
-  //             ? getTokenUsdAllocation(initialToken, targetNotional())
-  //             : 0
-  //           const delta = Math.abs(targetValue - currentValue)
-
-  //           if (currentValue === 0) {
-  //             return {
-  //               ...token,
-  //               message: `New position value ($${targetValue.toFixed(2)}) is below minimum change of $${MIN_CHANGE_DELTA.toFixed(2)}`,
-  //             }
-  //           }
-  //           return {
-  //             ...token,
-  //             message: `Change ($${delta.toFixed(2)}) is below minimum of $${MIN_CHANGE_DELTA.toFixed(2)}. Use precise mode to open this position.`,
-  //           }
-  //         }),
-  //       )
-  //       return
-  //     }
-  //   }
-
-  //   const mapStatusForApi = (
-  //     status: AllocationStatus,
-  //   ): "untouched" | "modified" | "idle" | "deleted" | "working" => {
-  //     if (status === "filled" || status === "failed") return "idle"
-  //     return status
-  //   }
-
-  //   // Only send tokens that actually changed compared to the initial portfolio state
-  //   const tokensForApi = tokensWithDerivedPercentages().filter(token => {
-  //     const inInitial = currentPortfolio[token.symbol]
-  //     return token.status !== "untouched" || !inInitial
-  //   })
-
-  //   // Nothing to do: no modifications, creations, or deletions
-  //   if (!tokensForApi.length) {
-  //     return
-  //   }
-
-  //   const payload = {
-  //     accountValue: accountValue(),
-  //     targetCrossAccountLeverage: targetCrossAccountLeverage(),
-  //     precise: isPrecise(),
-  //     positions: tokensWithDeltaTracking().map(token => {
-  //       const exchangePosition = currentPortfolio[token.symbol]
-  //       return {
-  //         symbol: token.symbol,
-  //         side: token.side,
-  //         leverage: token.leverage,
-  //         leverageChanged: exchangePosition
-  //           ? token.leverage !== exchangePosition.leverage
-  //           : true,
-  //         currentNotional: exchangePosition?.notional,
-  //         currentSide: exchangePosition?.side,
-  //         percentage: new Decimal(token.percentage)
-  //           .div(100)
-  //           .toDecimalPlaces(6, Decimal.ROUND_HALF_UP)
-  //           .toNumber(),
-  //         status: mapStatusForApi(token.status),
-  //       }
-  //     }),
-  //   }
-
-  //   // Mark UI as rebalancing for the full lifecycle (including delayed refetch)
-  //   setIsRebalancingUi(true)
-
-  //   setSelectedTokensAndPersist(prev =>
-  //     prev.map(token => {
-  //       const isInPayload = tokensForApi.some(t => t.symbol === token.symbol)
-  //       if (!isInPayload) {
-  //         return token
-  //       }
-
-  //       return {
-  //         ...token,
-  //         status: token.status === "deleted" ? "deleted" : "working",
-  //         message: null,
-  //       }
-  //     }),
-  //   )
-
-  //   rebalancePositionsMutation.mutate(payload, {
-  //     onSuccess: () => {
-  //       // After we receive final order statuses, treat the exchange as source of truth:
-  //       // 1. Allow positions effect to re-run by clearing the "loaded" flag
-  //       // 2. Poll positions for a short window to observe the post-fill portfolio
-  //       setPositionsLoadedFromExchange(false)
-
-  //       // Kick off polling: short interval (1s) up to a max window (~7s).
-  //       // UI "rebalancing" flag will be cleared by a separate effect once
-  //       // stagedTrades have been reduced to an empty set.
-  //       const pollStart = Date.now()
-  //       const pollIntervalMs = 1_000
-  //       const pollTimeoutMs = 7_000
-
-  //       const pollPositions = () => {
-  //         const elapsed = Date.now() - pollStart
-  //         if (elapsed > pollTimeoutMs) {
-  //           return
-  //         }
-
-  //         void positionsQuery.refetch().then(() => {
-  //           setTimeout(pollPositions, pollIntervalMs)
-  //         })
-  //       }
-
-  //       // Prime account summary once, then begin polling positions
-  //       void accountSummaryQuery.refetch()
-  //       setTimeout(pollPositions, pollIntervalMs)
-  //     },
-  //     onError: error => {
-  //       console.error("[Rebalance] Mutation onError", {
-  //         error: error.message,
-  //       })
-
-  //       const symbolMatch = error.message.match(/([A-Z0-9-]+\/[A-Z]+:[A-Z]+)/)
-  //       const failedSymbol = symbolMatch ? symbolMatch[0] : null
-
-  //       setSelectedTokensAndPersist(prev =>
-  //         prev.map(token => {
-  //           if (failedSymbol) {
-  //             if (token.symbol === failedSymbol) {
-  //               return {
-  //                 ...token,
-  //                 status: "failed",
-  //                 message: error.message,
-  //               }
-  //             }
-  //             return { ...token, status: "idle", message: null }
-  //           }
-  //           return {
-  //             ...token,
-  //             status: "failed",
-  //             message: error.message,
-  //           }
-  //         }),
-  //       )
-
-  //       setIsRebalancingUi(false)
-  //     },
-  //   })
-  // }
+    // Mark UI as rebalancing for the full lifecycle (including delayed refetch)
+    setIsRebalancingUi(true)
+  }
 
   // const netExposure = createMemo(() => {
   //   const target = targetNotional()
@@ -758,12 +570,15 @@ export const usePortfolioState = (
   //   }, 0)
   // })
 
-  // const disableSubmit = () =>
-  //   !tokensWithDeltaTracking().length ||
-  //   accountValue() <= 0 ||
-  //   isRebalancingUi() ||
-  //   (derivedTotalPercent() <= 0 && !hasPendingDeletions()) ||
-  //   hasBlockingNotionalIssue()
+  const hasBlockingNotionalIssue = () => hasPositionsBelowMinimum()
+  // ||
+  // hasTotalPercentExceeded() ||
+  // hasTotalPercentBelow()
+
+  const disableSubmit = () =>
+    !Object.keys(targetPortfolio).length ||
+    // isRebalancingUi() || //TODO: make sure this working
+    hasBlockingNotionalIssue()
 
   // // createEffect: clear rebalancing UI state once staged trades are empty
   // createEffect(() => {
@@ -792,11 +607,14 @@ export const usePortfolioState = (
     get targetTotalNotional() {
       return targetTotalNotional()
     },
-    get targetPortfolio() {
-      return getTargetPortfolio()
+    get currentPortfolio() {
+      return currentPortfolio
     },
-    get getActiveSymbols() {
-      return activeSymbols()
+    get targetPortfolio() {
+      return targetPortfolio
+    },
+    get deletedArchive() {
+      return deletedArchive
     },
     get leverageLimitsMap() {
       return leverageLimitsMap()
@@ -806,6 +624,10 @@ export const usePortfolioState = (
     },
     get isRebalancing() {
       return isRebalancingUi()
+    },
+
+    get disableSubmit() {
+      return disableSubmit()
     },
 
     // Loading states
@@ -828,7 +650,7 @@ export const usePortfolioState = (
     handleNotionalChange,
     handleWeightChange,
     handleCrossAccountLeverageChange,
-    // handleOpenPositions,
+    handleRebalancePositions,
     handleResetToCurrent,
   }
 }

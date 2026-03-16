@@ -8,6 +8,7 @@ import type {
   LeverageLimit,
   OrderSide,
 } from "@/services/hyperliquid-client"
+import type { RebalanceAction } from "@/pages/Portfolio/hooks/portfolioRebalancer"
 
 export type { OrderSide, OrderResult, CurrentPosition, LeverageLimit }
 
@@ -163,19 +164,8 @@ export const useHyperliquidFundingRates = () => {
 }
 
 export interface RebalanceParams {
-  accountValue: number
-  crossAccountLeverage: number
   precise: boolean
-  positions: Array<{
-    symbol: string
-    percentage: number
-    side: "buy" | "sell"
-    leverage: number
-    leverageChanged: boolean
-    currentNotional?: number
-    currentSide?: "buy" | "sell"
-    status: "untouched" | "modified" | "idle" | "deleted" | "working"
-  }>
+  actions: RebalanceAction[]
 }
 
 export const useRebalanceHyperliquidPositions = () => {
@@ -187,35 +177,7 @@ export const useRebalanceHyperliquidPositions = () => {
       const c = client()
       if (!c) throw new Error("Wallet not connected")
 
-      const positions: Position[] = params.positions.map(pos => ({
-        symbol: pos.symbol,
-        percentage: pos.percentage,
-        side: pos.side,
-        leverage: pos.leverage,
-        leverageChanged: pos.leverageChanged,
-        currentNotional: pos.currentNotional,
-        currentSide: pos.currentSide,
-        status: pos.status === "working" ? "idle" : pos.status,
-      }))
-
-      console.table(
-        positions.map(position => ({
-          symbol: position.symbol,
-          percentage: position.percentage,
-          side: position.side,
-          leverage: position.leverage,
-          leverageChanged: position.leverageChanged,
-          currentNotional: position.currentNotional ?? "--",
-          status: position.status,
-        })),
-      )
-
-      const results = await c.rebalancePositions(
-        positions,
-        params.accountValue,
-        params.crossAccountLeverage,
-        params.precise,
-      )
+      const results = await c.rebalancePositions(params.actions, params.precise)
 
       return { orders: results }
     },

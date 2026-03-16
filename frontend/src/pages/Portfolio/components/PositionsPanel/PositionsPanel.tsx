@@ -36,11 +36,13 @@ import {
 import { useWallet } from "@/hooks/useWallet"
 import { WalletHeader } from "@/components/wallet-header"
 
-import { type TargetPortfolioInterface } from "../../hooks/usePortfolioState"
+import { type PortfolioInterface } from "../../hooks/usePortfolioState"
 import { PositionsPanelRow } from "./PositionsPanelRow"
 
 interface PositionsPanelProps {
-  positions: Record<string, TargetPortfolioInterface>
+  currentPortfolio: Record<string, PortfolioInterface>
+  targetPortfolio: Record<string, PortfolioInterface>
+  deletedArchive: Record<string, PortfolioInterface>
   isLoading: boolean
   fundingIsLoading: boolean
   leverageLimitsMap: Record<string, number>
@@ -58,8 +60,18 @@ interface PositionsPanelProps {
 
 export const PositionsPanel = (props: PositionsPanelProps): JSX.Element => {
   const { isConnected } = useWallet()
-  const positionsCount = createMemo(() => Object.keys(props.positions).length)
-  const symbols = createMemo(() => Object.keys(props.positions))
+  const positionsCount = createMemo(
+    () => Object.keys(props.targetPortfolio).length,
+  )
+
+  const allSymbols = createMemo(() => {
+    return [
+      ...new Set([
+        ...Object.keys(props.currentPortfolio),
+        ...Object.keys(props.targetPortfolio),
+      ]),
+    ]
+  })
 
   return (
     <div class="flex flex-col rounded border border-border min-h-0 max-h-[calc(100vh-4rem)] w-full max-w-[600px] shrink-0">
@@ -122,16 +134,50 @@ export const PositionsPanel = (props: PositionsPanelProps): JSX.Element => {
                   </tr>
                 </thead>
                 <tbody>
-                  <For each={symbols()}>
+                  <For each={allSymbols()}>
                     {symbol => {
-                      const position = () => props.positions[symbol]
+                      //TODO: do we actually need changed, unchanged, new, closing statuses?
+                      // maybe only closing for view logic?
+
+                      const status = createMemo(() => {
+                        const target = props.targetPortfolio[symbol]
+                        const current = props.currentPortfolio[symbol]
+
+                        if (!current && target) return "new"
+                        if (current && !target) return "closing"
+                        if (current && target) {
+                          const isChanged =
+                            current.notional !== target.notional ||
+                            current.side !== target.side ||
+                            current.leverage !== target.leverage
+                          return isChanged ? "changed" : "unchanged"
+                        }
+                        return "unchanged"
+                      })
+
+                      const displayPosition = createMemo(() => {
+                        // 1. Если позиция есть в таргете — берем её
+                        if (props.targetPortfolio[symbol]) {
+                          return props.targetPortfolio[symbol]
+                        }
+
+                        // 2. Если позиции нет в таргете, но она есть в архиве (нажали X) — берем из архива
+                        if (props.deletedArchive[symbol]) {
+                          return props.deletedArchive[symbol]
+                        }
+
+                        // 3. Если нет ни там, ни там (но есть в current) — берем из current
+                        return { ...props.currentPortfolio[symbol] }
+                      })
+
+                      console.log(displayPosition())
 
                       return (
                         <PositionsPanelRow
-                          position={position()}
-                          maxLeverage={
-                            props.leverageLimitsMap[position().symbol]
-                          } //TODO: check for new reactivity and fetching logic
+                          symbol={symbol}
+                          position={displayPosition}
+                          status={status()}
+                          maxLeverage={props.leverageLimitsMap[symbol]} //TODO: check for new reactivity and fetching logic
                           isPrecise={props.isPrecise}
                           fundingIsLoading={props.fundingIsLoading}
                           onRemove={props.onRemove}

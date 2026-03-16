@@ -7,14 +7,14 @@ import type { AllocationStatus } from "../hooks/usePortfolioState"
 type Side = "buy" | "sell"
 
 export interface StagedTrade {
-  id: string
+  // id: string
   underlying: string
   side: Side
   notional: number
   previousWeight?: number
   newWeight?: number
-  status: AllocationStatus
-  message: string | null
+  // status: AllocationStatus
+  // message: string | null
 }
 
 interface StagedChangesPanelProps {
@@ -25,7 +25,7 @@ interface StagedChangesPanelProps {
   targetCrossAccountLeverage: number
   onRebalance?: () => void
   isRebalancing?: boolean
-  disableSubmit?: boolean
+  disableSubmit: boolean
   onClearAll?: () => void
 }
 
@@ -48,6 +48,8 @@ const NOTIONAL_EPSILON_USD = 0.1
 export const StagedChangesPanel = (props: StagedChangesPanelProps) => {
   const stagedTrades = () => props.stagedTrades ?? []
   const hasStaged = () => stagedTrades().length > 0
+
+  console.log(stagedTrades())
 
   const isRebalancing = () => props.isRebalancing ?? false
   const disableSubmit = () => props.disableSubmit ?? false
@@ -114,12 +116,12 @@ export const StagedChangesPanel = (props: StagedChangesPanelProps) => {
                 <div
                   class={cn(
                     STAGED_ROW_GRID_TEMPLATE,
-                    (stagedTrade.status === "working" ||
-                      stagedTrade.status === "deleted") &&
-                      isRebalancing() &&
-                      "bg-yellow-500/10 border-yellow-500/40",
-                    stagedTrade.status === "failed" &&
-                      "bg-red-500/5 border-red-500/40",
+                    // (stagedTrade.status === "working" ||
+                    //   stagedTrade.status === "deleted") &&
+                    //   isRebalancing() &&
+                    //   "bg-yellow-500/10 border-yellow-500/40",
+                    // stagedTrade.status === "failed" &&
+                    //   "bg-red-500/5 border-red-500/40",
                   )}
                 >
                   <span
@@ -152,7 +154,7 @@ export const StagedChangesPanel = (props: StagedChangesPanelProps) => {
                   <span class="font-mono text-muted-foreground justify-self-end w-full text-right">
                     {formatUsdPrecise(stagedTrade.notional)}
                   </span>
-                  <Show
+                  {/* <Show
                     when={
                       stagedTrade.status === "failed" &&
                       stagedTrade.message !== null
@@ -161,7 +163,7 @@ export const StagedChangesPanel = (props: StagedChangesPanelProps) => {
                     <span class="ml-2 text-[9px] text-red-400 truncate max-w-[140px]">
                       {stagedTrade.message}
                     </span>
-                  </Show>
+                  </Show> */}
                 </div>
               )
             }}
@@ -233,16 +235,18 @@ export const StagedChangesPanel = (props: StagedChangesPanelProps) => {
             props.onRebalance()
           }}
           disabled={
-            !props.onRebalance ||
-            disableSubmit() ||
-            isRebalancing() ||
-            !hasStaged()
+            // !props.onRebalance ||
+            disableSubmit()
+            // ||
+            // isRebalancing() ||
+            // !hasStaged()
           }
           aria-disabled={
-            !props.onRebalance ||
-            disableSubmit() ||
-            isRebalancing() ||
-            !hasStaged()
+            // !props.onRebalance ||
+            disableSubmit()
+            // ||
+            // isRebalancing() ||
+            // !hasStaged()
           }
         >
           <Send class="h-3 w-3" />

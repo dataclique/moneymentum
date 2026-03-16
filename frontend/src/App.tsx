@@ -2,12 +2,7 @@ import { ErrorBoundary } from "solid-js"
 import type { RouteSectionProps } from "@solidjs/router"
 
 const ErrorFallback = (props: { error: Error; reset: () => void }) => {
-  // Log full error details to the console so debugging is easier in dev tools.
-  console.error("[App ErrorBoundary] Caught error", {
-    error: props.error,
-    message: props.error.message,
-    stack: props.error.stack,
-  })
+  console.error(props.error)
 
   return (
     <div class="flex h-screen flex-col items-center justify-center gap-4 bg-background text-foreground">
@@ -17,7 +12,7 @@ const ErrorFallback = (props: { error: Error; reset: () => void }) => {
       <div class="text-sm text-muted-foreground max-w-md text-center">
         An unexpected error occurred. Try refreshing the page or click retry.
       </div>
-      <pre class="text-[20px] text-muted-foreground bg-muted rounded p-3 overflow-auto">
+      <pre class="text-[16px] text-muted-foreground bg-muted rounded p-3 overflow-auto">
         {props.error.stack ?? props.error.message}
       </pre>
       <button

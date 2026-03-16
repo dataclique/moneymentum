@@ -1,6 +1,7 @@
 import ccxt from "ccxt"
 import Decimal from "decimal.js"
 import type { NetworkMode, WalletCredentials } from "@/contexts/wallet-context"
+import type { RebalanceAction } from "@/pages/Portfolio/hooks/portfolioRebalancer"
 
 const MARKETS_CACHE_KEY = "hyperliquid_markets_cache"
 const MARKETS_CACHE_TTL_MS = 24 * 60 * 60 * 1000
@@ -106,7 +107,7 @@ export const preloadMarkets = async (
 
 export type OrderSide = "buy" | "sell"
 export type PositionStatus =
-  | "untouched"
+  | "synced"
   | "modified"
   | "deleted"
   | "idle"
@@ -448,28 +449,6 @@ export class HyperliquidClient {
     return result
   }
 
-  private async fetchSymbolPrices(
-    symbols: string[],
-  ): Promise<Record<string, number>> {
-    if (symbols.length === 0) return {}
-
-    const prices: Record<string, number> = {}
-
-    const tickers = await this.exchange.fetchTickers(symbols)
-
-    for (const symbol of symbols) {
-      const lastPrice = tickers[symbol].last
-      if (lastPrice === undefined || lastPrice <= 0) {
-        throw new Error(
-          `Could not fetch price for ${symbol}. The asset may be untradeable or delisted.`,
-        )
-      }
-      prices[symbol] = lastPrice
-    }
-
-    return prices
-  }
-
   private signedNotional(side: OrderSide, notional: number): number {
     return side === "buy" ? notional : -notional
   }
@@ -482,60 +461,54 @@ export class HyperliquidClient {
     return this.vaultAddress ? { vaultAddress: this.vaultAddress } : undefined
   }
 
-  private async closePosition(position: Position): Promise<OrderResult> {
-    const symbol = position.symbol
+  // export interface Position {
+  //   symbol: string
+  //   notional: number
+  //   side: OrderSide
+  //   leverage: number
+  //   leverageChanged: boolean
+  //   currentNotional?: number
+  //   currentSide?: OrderSide
+  //   status: PositionStatus
+  // }
 
+  //TODO: fix return type and how we handle it
+  private async closePosition(
+    symbol: string,
+    price: number,
+    currentPosition: any,
+  ): Promise<OrderResult> {
     try {
-      const ticker = await this.exchange.fetchTicker(symbol)
-      const currentPrice = ticker.last
+      // if (!currentPosition) {
+      //   console.log("no current position")
+      //   results.push({
+      //     symbol,
+      //     side: currentPosition.side,
+      //     status: "failed",
+      //     message: "Position not found"
+      //   })
+      //   continue
+      // }
 
-      if (currentPrice === undefined) {
-        throw new Error(`Could not fetch price for ${symbol} to close position`)
-      }
-
-      const positions = await this.exchange.fetchPositions([symbol])
-      if (
-        !positions.length ||
-        parseFloat(String(positions[0].contracts)) === 0
-      ) {
-        return {
-          symbol,
-          side: position.side,
-          status: "filled",
-          message: "Position already closed.",
-        }
-      }
-
-      const fetchedPosition = positions[0]
-      const side: OrderSide = fetchedPosition.side === "long" ? "sell" : "buy"
-      const amount = parseFloat(String(fetchedPosition.contracts))
-
-      const slippagePrice =
-        side === "buy"
-          ? currentPrice * (1 + SLIPPAGE)
-          : currentPrice * (1 - SLIPPAGE)
+      console.log("Closing position", symbol, price, currentPosition)
+      const side: OrderSide = currentPosition.side === "long" ? "sell" : "buy"
+      //TODO: verify what is going on here
+      const amount = parseFloat(String(currentPosition.contracts))
 
       await this.exchange.createOrder(
         symbol,
         "market",
         side,
         amount,
-        slippagePrice,
-        {
-          reduceOnly: true,
-          ...this.vaultParams,
-        },
+        side === "buy" ? price * (1 + SLIPPAGE) : price * (1 - SLIPPAGE),
+        { reduceOnly: true, ...this.vaultParams },
       )
 
-      return {
-        symbol,
-        side: position.side,
-        status: "filled",
-      }
+      return { symbol, side: side, status: "filled" }
     } catch (error) {
       return {
         symbol,
-        side: position.side,
+        side: "sell", // или closeSide, если вынесешь наружу
         status: "failed",
         message: error instanceof Error ? error.message : String(error),
       }
@@ -634,206 +607,115 @@ export class HyperliquidClient {
   }
 
   async rebalancePositions(
-    positions: Position[],
-    accountValue: number,
-    crossAccountLeverage: number = 1,
+    actions: RebalanceAction[],
     precise: boolean = false,
   ): Promise<OrderResult[]> {
-    if (accountValue <= 0) {
-      throw new Error("Account value must be positive")
-    }
-
+    console.log("Rebalancing positions", actions, precise)
     // Pre-load markets once so subsequent ccxt calls don't re-fetch them
     await this.exchange.loadMarkets()
-
-    const totalNotional = accountValue * crossAccountLeverage
-
     const results: OrderResult[] = []
+    const allSymbols = actions.map(a => a.symbol)
 
-    // 1. Process deletions first
-    const deletions = positions.filter(p => p.status === "deleted")
-    if (deletions.length > 0) {
-      const deletionsPreview = deletions.map(position => ({
-        symbol: position.symbol,
-        side: position.side,
-        currentNotional: position.currentNotional ?? 0,
-      }))
-      console.log(
-        "%c[Rebalance] Deletions:",
-        "background: purple; color: white; padding: 2px 6px; border-radius: 3px",
-      )
-      console.table(deletionsPreview)
-    }
-    for (const position of deletions) {
-      const closeResult = await this.closePosition(position)
-      results.push(closeResult)
-    }
+    const [tickers, allCurrentPositions] = await Promise.all([
+      this.exchange.fetchTickers(allSymbols),
+      this.exchange.fetchPositions(),
+    ])
 
-    // 2. Filter for positions that need rebalancing
-    const positionsToRebalance = positions.filter(
-      p => p.status !== "untouched" && p.status !== "deleted",
-    )
-
-    if (positionsToRebalance.length === 0) {
-      return results
-    }
-
-    // 3. Set leverages only where changed (using leverageChanged flag from hook)
-    const positionsNeedingLeverageChange = positionsToRebalance.filter(
-      p => p.leverageChanged,
-    )
-    const positionsWithUnchangedLeverage = positionsToRebalance.filter(
-      p => !p.leverageChanged,
-    )
-
-    const successfulPositions: Position[] = [...positionsWithUnchangedLeverage]
-
-    if (positionsNeedingLeverageChange.length > 0) {
-      const leverageResults = await Promise.allSettled(
-        positionsNeedingLeverageChange.map(async position => {
-          await this.setLeverage(position.symbol, position.leverage)
-          return position
-        }),
-      )
-      for (let i = 0; i < leverageResults.length; i++) {
-        const result = leverageResults[i]
-        const position = positionsNeedingLeverageChange[i]
-        if (result.status === "fulfilled") {
-          successfulPositions.push(result.value)
-        } else {
-          results.push({
-            symbol: position.symbol,
-            side: position.side,
-            status: "failed",
-            message:
-              result.reason instanceof Error
-                ? result.reason.message
-                : String(result.reason),
-          })
-        }
-      }
-    }
-
-    if (successfulPositions.length === 0) {
-      return results
-    }
-
-    // 4. Build target and current notional values
-    const targetNotional: Record<string, number> = {}
-    const currentNotional: Record<string, number> = {}
-    for (const position of successfulPositions) {
-      // We have to add state here.
-      const unsignedTarget = position.notional
-
-      targetNotional[position.symbol] = this.signedNotional(
-        position.side,
-        unsignedTarget,
-      )
-
-      // We have to remove currentNotional and push state here
-      if (position.currentNotional !== undefined) {
-        const sideForSign = position.currentSide ?? position.side
-        currentNotional[position.symbol] = this.signedNotional(
-          sideForSign,
-          position.currentNotional,
+    const prices: Record<string, number> = {}
+    for (const symbol of allSymbols) {
+      //TODO: refactor that shit
+      const lastPrice = tickers[symbol]?.last
+      if (lastPrice === undefined || lastPrice <= 0) {
+        throw new Error(
+          `Could not fetch price for ${symbol}. The asset may be untradeable or delisted.`,
         )
       }
+      prices[symbol] = lastPrice
     }
 
-    // 5. Fetch prices only (positions data already passed from cache)
-    const symbolsToRebalance = successfulPositions.map(p => p.symbol)
-    const prices = await this.fetchSymbolPrices(symbolsToRebalance)
+    const positionsMap = new Map(allCurrentPositions.map(p => [p.symbol, p]))
 
-    const currentPositionsMap: Record<string, CurrentPosition> = precise
-      ? this.buildCurrentPositionsMapFromPayload(successfulPositions)
-      : {}
-
-    if (successfulPositions.length > 0) {
-      // TODO: in separate function
-      const orderPreview = successfulPositions.map(position => {
-        const symbol = position.symbol
-        const price = prices[symbol]
-        const targetValue = targetNotional[symbol] ?? 0
-        const currentValue = currentNotional[symbol] ?? 0
-        const notionalDelta = targetValue - currentValue
-        return {
-          symbol,
-          side: position.side,
-          leverage: position.leverage,
-          targetNotional: Number(targetValue.toFixed(2)),
-          currentNotional: Number(currentValue.toFixed(2)),
-          deltaNotional: Number(notionalDelta.toFixed(2)),
-          price: Number(price.toFixed(4)),
-        }
-      })
-      console.log(
-        "%c[Rebalance] Order preview:",
-        "background: purple; color: white; padding: 2px 6px; border-radius: 3px",
-      )
-      console.table(orderPreview)
-    }
-    for (const position of successfulPositions) {
-      const symbol = position.symbol
+    for (const action of actions) {
+      const symbol = action.symbol
       const price = prices[symbol]
+      const currentPosition = positionsMap.get(symbol)
 
-      const targetValue = targetNotional[symbol] ?? 0
-      const currentValue = currentNotional[symbol] ?? 0
-      const currentPosition = currentPositionsMap[symbol]
+      // TODO: Remove symbols with no price before, no nesting
+      if (!price) {
+        сonsle.log("no price")
+        results.push({
+          symbol: action.symbol,
+          side: currentPosition.side,
+          status: "failed",
+          message: "Could not fetch price",
+        })
+        continue
+      }
 
-      const orderResults = await this.processPosition(
-        position,
-        price,
-        targetValue,
-        currentValue,
-        currentPosition,
-        currentNotional,
-        precise,
-      )
+      switch (action.kind) {
+        case "close":
+          results.push(await this.closePosition(symbol, price, currentPosition))
+          break
+        case "rebalance":
+          console.log("in rebalance")
 
-      for (const orderResult of orderResults) {
-        results.push(orderResult)
+          if (action.leverageChanged) {
+            await this.setLeverage(action.symbol, action.leverage)
+          }
+
+          if (action.notional !== 0) {
+            results.push(
+              ...(await this.processPosition(
+                action.symbol,
+                price,
+                action.notional,
+              )),
+            )
+          }
+
+          break
       }
     }
+
     return results
   }
 
   private async processPosition(
-    position: Position,
+    symbol: string,
     price: number,
-    targetValue: number,
-    currentValue: number,
-    currentPosition: CurrentPosition | undefined,
-    currentNotional: Record<string, number>,
-    precise: boolean,
+    notionalDelta: number,
+    side?: OrderSide,
+    // currentPosition: CurrentPosition | undefined,
+    // currentNotional: Record<string, number>,
+    // precise: boolean,
   ): Promise<OrderResult[]> {
-    const { symbol, side } = position
-    const notionalDelta = targetValue - currentValue
+    console.log("Processing position", symbol, price, notionalDelta, side)
+    // TODO: move this filter to portfolioRebalancer?
+    // if (Math.abs(notionalDelta) < 1.0) {
+    //   return [
+    //     {
+    //       symbol,
+    //       side,
+    //       status: "filled",
+    //       message: "No action taken: change is negligible.",
+    //     },
+    //   ]
+    // }
 
-    // Negligible change
-    if (Math.abs(notionalDelta) < 1.0) {
-      return [
-        {
-          symbol,
-          side,
-          status: "filled",
-          message: "No action taken: change is negligible.",
-        },
-      ]
-    }
-
+    // TODO: make precise mode work
     // Precise mode for small changes
-    if (precise && Math.abs(notionalDelta) < MIN_ORDER_VALUE) {
-      const currentNotionalAbs =
-        currentPosition?.notional ?? Math.abs(currentNotional[symbol] ?? 0)
-      return this.processPositionPreciseMode(
-        position,
-        price,
-        targetValue,
-        currentValue,
-        currentPosition,
-        currentNotionalAbs,
-      )
-    }
+    // if (precise && Math.abs(notionalDelta) < MIN_ORDER_VALUE) {
+    //   const currentNotionalAbs =
+    //     currentPosition?.notional ?? Math.abs(currentNotional[symbol] ?? 0)
+    //   return this.processPositionPreciseMode(
+    //     position,
+    //     price,
+    //     targetValue,
+    //     currentValue,
+    //     currentPosition,
+    //     currentNotionalAbs,
+    //   )
+    // }
 
     // Normal order
     const result = await this.placeOrder(symbol, price, notionalDelta)

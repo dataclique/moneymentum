@@ -50,7 +50,9 @@ const getSideBadgeClass = (side: OrderSide) =>
 
 // TODO: move to separate component
 export const PositionsPanelRow = (props: {
-  position: TargetPortfolioInterface
+  symbol: string
+  position: any
+  status: "new" | "unchanged" | "changed" | "closing"
   maxLeverage: number
   isPrecise: boolean
   fundingIsLoading: boolean
@@ -63,14 +65,19 @@ export const PositionsPanelRow = (props: {
   fundingRatesByBaseSymbol?: Record<string, number>
   totalNotional: number
 }): JSX.Element => {
-  const isDeleted = () => props.position.status === "deleted"
-  const notional = () => props.position.notional
+  const notional = () => props.position().notional
   const weight = createMemo(() => {
     return new Decimal(notional()).div(props.totalNotional).mul(100).toFixed(2)
   })
 
+  const isClosing = () => props.status === "closing"
+
+  console.log(props.symbol, props.status)
+  const isNew = () => props.status === "new"
+  const isChanged = () => props.status === "changed"
+
   const baseSymbol = () =>
-    props.position.symbol.split("/")[0] ?? props.position.symbol
+    props.position().symbol.split("/")[0] ?? props.position().symbol
   const fundingRate = () => props.fundingRatesByBaseSymbol?.[baseSymbol()]
 
   // const targetValue = () =>
@@ -88,7 +95,7 @@ export const PositionsPanelRow = (props: {
   const positionAdjustedFundingRate = () => {
     const rate = annualizedFundingRate()
     if (rate === null) return null
-    return props.position.side === "buy" ? -rate : rate
+    return props.position().side === "buy" ? -rate : rate
   }
   const fundingDisplay = () => {
     const rate = positionAdjustedFundingRate()
@@ -105,34 +112,36 @@ export const PositionsPanelRow = (props: {
   return (
     <tr
       class={cn(
-        "border-b border-border/30 position-row",
-        isDeleted() && "opacity-50 pointer-events-none-except-action",
+        "border-b border-border/30 position-row transition-opacity",
+        isClosing() && "opacity-50 bg-red-500/5",
+        isNew() && "bg-green-500/5",
       )}
     >
       <td class="px-2 py-1 font-medium flex flex-row gap-[4px] pointer-events-auto">
         <span class="font-medium">{baseSymbol()}</span>
         <LeverageDialog
-          symbol={props.position.symbol}
-          leverage={props.position.leverage}
+          symbol={props.position().symbol}
+          leverage={props.position().leverage}
           maxLeverage={props.maxLeverage}
-          disabled={isDeleted()}
+          disabled={isClosing()}
           onLeverageChange={props.onLeverageChange}
         />
       </td>
       <td class="px-2 py-1 pointer-events-auto">
         <select
-          value={props.position.side}
+          value={props.position().side}
           onChange={event => {
             props.onSideChange(
-              props.position.symbol,
+              props.position().symbol,
               event.currentTarget.value as OrderSide,
             )
           }}
-          disabled={isDeleted()}
+          disabled={isClosing()}
           class={cn(
             "text-[10px] font-medium px-1.5 py-0.5 rounded border-0 bg-transparent",
-            !isDeleted() && "cursor-pointer",
-            getSideBadgeClass(props.position.side),
+            !isClosing() && "cursor-pointer",
+            getSideBadgeClass(props.position().side),
+            isClosing() && "grayscale opacity-50",
           )}
         >
           <option value="buy">LONG</option>
@@ -141,8 +150,8 @@ export const PositionsPanelRow = (props: {
       </td>
       <td class="px-2 py-1 text-right pointer-events-auto">
         <Show
-          when={props.position.status !== "deleted"}
-          fallback={<span class="text-muted-foreground text-[11px]">-</span>}
+          when={!isClosing()}
+          fallback={<span class="text-rose-500 text-[10px]">→ 0%</span>}
         >
           <input
             type="number"
@@ -150,7 +159,7 @@ export const PositionsPanelRow = (props: {
             onInput={inputEvent => {
               const raw = inputEvent.currentTarget.value
               const parsed = raw === "" ? 0 : Number.parseFloat(raw)
-              props.onWeightChange(props.position.symbol, parsed)
+              props.onWeightChange(props.position().symbol, parsed)
             }}
             step={0.5}
             min={0}
@@ -168,9 +177,9 @@ export const PositionsPanelRow = (props: {
           onInput={inputEvent => {
             const raw = inputEvent.currentTarget.value
             const parsed = raw === "" ? 0 : Number.parseFloat(raw)
-            props.onNotionalChange(props.position.symbol, parsed)
+            props.onNotionalChange(props.position().symbol, parsed)
           }}
-          disabled={isDeleted()}
+          disabled={isClosing()}
           step={1}
           min={0}
           class="w-16 text-right font-mono text-[11px] rounded border border-border bg-transparent px-1 py-0.5 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
@@ -233,17 +242,14 @@ export const PositionsPanelRow = (props: {
           size="icon"
           class="h-6 w-6"
           onClick={() => {
-            if (props.position.status === "deleted") {
-              props.onUndoRemove(props.position.symbol)
+            if (isClosing()) {
+              props.onUndoRemove(props.position().symbol)
             } else {
-              props.onRemove(props.position.symbol)
+              props.onRemove(props.position().symbol)
             }
           }}
         >
-          <Show
-            when={props.position.status === "deleted"}
-            fallback={<Trash2 class="h-3 w-3" />}
-          >
+          <Show when={isClosing()} fallback={<Trash2 class="h-3 w-3" />}>
             <Undo2 class="h-3 w-3" />
           </Show>
         </Button>

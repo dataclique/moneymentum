@@ -2,19 +2,15 @@ import { For, Show } from "solid-js"
 import { cn } from "@/lib/cn"
 import { Send } from "lucide-solid"
 import { Button } from "@/components/ui/button"
-import type { AllocationStatus } from "../hooks/usePortfolioState"
 
 type Side = "buy" | "sell"
 
 export interface StagedTrade {
-  // id: string
   underlying: string
   side: Side
   notional: number
   previousWeight?: number
   newWeight?: number
-  // status: AllocationStatus
-  // message: string | null
 }
 
 interface StagedChangesPanelProps {
@@ -25,7 +21,7 @@ interface StagedChangesPanelProps {
   targetCrossAccountLeverage: number
   onRebalance?: () => void
   isRebalancing?: boolean
-  disableSubmit: boolean
+  canSubmit: boolean
   onClearAll?: () => void
 }
 
@@ -39,20 +35,20 @@ const formatUnsignedPct = (weightFraction: number): string =>
 
 const formatUsdPrecise = (value: number): string => `$${value.toFixed(2)}`
 
-// Minimum notional change to show an arrow in the notional preview.
-// Difference between initial and target notional arises because
-// initial total notional is rounded to 2 decimal places while target
-// is computed from accountValue * leverage separately.
 const NOTIONAL_EPSILON_USD = 0.1
 
 export const StagedChangesPanel = (props: StagedChangesPanelProps) => {
   const stagedTrades = () => props.stagedTrades ?? []
   const hasStaged = () => stagedTrades().length > 0
 
-  console.log(stagedTrades())
+  const isRebalanceButtonDisabled = () =>
+    !props.canSubmit || // outside reasons (validation errors)
+    !hasStaged() || // no trades - nothing to rebalance
+    props.isRebalancing
+
+  console.log("stagedTrades", stagedTrades())
 
   const isRebalancing = () => props.isRebalancing ?? false
-  const disableSubmit = () => props.disableSubmit ?? false
 
   const shouldShowNotionalArrow = () =>
     props.currentTotalNotional &&
@@ -113,17 +109,7 @@ export const StagedChangesPanel = (props: StagedChangesPanelProps) => {
                     : "text-muted-foreground"
 
               return (
-                <div
-                  class={cn(
-                    STAGED_ROW_GRID_TEMPLATE,
-                    // (stagedTrade.status === "working" ||
-                    //   stagedTrade.status === "deleted") &&
-                    //   isRebalancing() &&
-                    //   "bg-yellow-500/10 border-yellow-500/40",
-                    // stagedTrade.status === "failed" &&
-                    //   "bg-red-500/5 border-red-500/40",
-                  )}
-                >
+                <div class={cn(STAGED_ROW_GRID_TEMPLATE)}>
                   <span
                     class={cn(
                       "text-[10px] font-medium px-1 py-0.5 rounded w-[5ch] text-center",
@@ -154,16 +140,6 @@ export const StagedChangesPanel = (props: StagedChangesPanelProps) => {
                   <span class="font-mono text-muted-foreground justify-self-end w-full text-right">
                     {formatUsdPrecise(stagedTrade.notional)}
                   </span>
-                  {/* <Show
-                    when={
-                      stagedTrade.status === "failed" &&
-                      stagedTrade.message !== null
-                    }
-                  >
-                    <span class="ml-2 text-[9px] text-red-400 truncate max-w-[140px]">
-                      {stagedTrade.message}
-                    </span>
-                  </Show> */}
                 </div>
               )
             }}
@@ -227,7 +203,7 @@ export const StagedChangesPanel = (props: StagedChangesPanelProps) => {
             if (
               !props.onRebalance ||
               !hasStaged() ||
-              disableSubmit() ||
+              isRebalanceButtonDisabled() ||
               isRebalancing()
             ) {
               return
@@ -236,14 +212,14 @@ export const StagedChangesPanel = (props: StagedChangesPanelProps) => {
           }}
           disabled={
             // !props.onRebalance ||
-            disableSubmit()
+            isRebalanceButtonDisabled()
             // ||
             // isRebalancing() ||
             // !hasStaged()
           }
           aria-disabled={
             // !props.onRebalance ||
-            disableSubmit()
+            isRebalanceButtonDisabled()
             // ||
             // isRebalancing() ||
             // !hasStaged()

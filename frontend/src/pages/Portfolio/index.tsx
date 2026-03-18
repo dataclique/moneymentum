@@ -17,7 +17,7 @@ import { WalletHeader } from "@/components/wallet-header"
 import { ModeToggle } from "@/components/ui/mode-toggle"
 
 import { usePortfolioState } from "./hooks/usePortfolioState"
-// import { useBeta } from "./hooks/useBeta"
+import { useBeta } from "./hooks/useBeta"
 import {
   useHyperliquidTickers,
   useHyperliquidFundingRates,
@@ -26,7 +26,7 @@ import { ScreenerPanel } from "@/pages/Portfolio/components/ScreenerPanel"
 import { PositionsPanel } from "@/pages/Portfolio/components/PositionsPanel/PositionsPanel"
 import { PerformancePanel } from "@/pages/Portfolio/components/PerformancePanel"
 import { StagedChangesPanel } from "@/pages/Portfolio/components/StagedChangesPanel"
-// import { FactorsPanel } from "@/pages/Portfolio/components/FactorsPanel"
+import { FactorsPanel } from "@/pages/Portfolio/components/FactorsPanel"
 import { RiskPanel } from "@/pages/Portfolio/components/RiskPanel"
 
 const PRECISE_TOGGLE_STORAGE_KEY = "portfolio-precise-toggle"
@@ -61,7 +61,7 @@ const PortfolioPage = () => {
     () => new Set(Object.keys(portfolio.targetPortfolio)),
   )
 
-  // const betaResult = useBeta(() => portfolio.activeTokens)
+  const betaResult = useBeta(() => portfolio.targetPortfolio)
 
   const tickersQuery = useHyperliquidTickers()
   const fundingRatesQuery = useHyperliquidFundingRates()
@@ -303,15 +303,15 @@ const PortfolioPage = () => {
                   }
                   onRebalance={portfolio.handleRebalancePositions}
                   isRebalancing={portfolio.isRebalancing}
-                  disableSubmit={portfolio.disableSubmit}
+                  canSubmit={portfolio.canSubmit}
                   onClearAll={portfolio.handleResetToCurrent}
                 />
               </div>
               <div class="flex-[0_0_25%] min-w-0">
-                {/* <FactorsPanel
+                <FactorsPanel
                   beta={betaResult.beta}
                   isBetaLoading={betaResult.isLoading}
-                /> */}
+                />
               </div>
               <div class="flex-1 min-w-0">
                 <RiskPanel />

@@ -61,7 +61,9 @@ interface PositionsPanelProps {
 export const PositionsPanel = (props: PositionsPanelProps): JSX.Element => {
   const { isConnected } = useWallet()
   const positionsCount = createMemo(
-    () => Object.keys(props.targetPortfolio).length,
+    () =>
+      Object.keys(props.targetPortfolio).length +
+      Object.keys(props.deletedArchive).length,
   )
 
   const allSymbols = createMemo(() => {

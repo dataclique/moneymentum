@@ -53,16 +53,11 @@ export const diffPortfolios = (
   for (const symbol of allSymbols) {
     const c = current[symbol]
     const t = target[symbol]
-    console.log(symbol, "c", c)
 
     const currentSigned = c ? getSignedNotional(c.side, c.notional) : 0
     const targetSigned = t ? getSignedNotional(t.side, t.notional) : 0
 
-    console.log(symbol, "currentSigned", currentSigned)
-    console.log(symbol, "targetSigned", targetSigned)
     const delta = targetSigned - currentSigned
-
-    console.log(symbol, "delta", delta)
 
     if (c && !t) {
       actions.push({
@@ -91,8 +86,6 @@ export const diffPortfolios = (
       }
     }
   }
-
-  console.log(actions)
 
   return actions
 }

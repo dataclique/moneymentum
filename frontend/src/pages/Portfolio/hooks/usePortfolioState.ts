@@ -334,6 +334,7 @@ export const usePortfolioState = (
     return side === "buy" ? notional : -notional
   }
 
+  //Get staged trades directly for actions we will perform
   const stagedTrades = createMemo(() => {
     return actions().map(action => {
       const symbol = action.symbol
@@ -553,12 +554,6 @@ export const usePortfolioState = (
 
     rebalancePositionsMutation.mutate(apiPayload)
 
-    // Nothing to do: no modifications, creations, or deletions
-    // if (!payload.positions.length) {
-    //   return
-    // }
-
-    // Mark UI as rebalancing for the full lifecycle (including delayed refetch)
     setIsRebalancingUi(true)
   }
 
@@ -575,10 +570,15 @@ export const usePortfolioState = (
   // hasTotalPercentExceeded() ||
   // hasTotalPercentBelow()
 
-  const disableSubmit = () =>
-    !Object.keys(targetPortfolio).length ||
-    // isRebalancingUi() || //TODO: make sure this working
-    hasBlockingNotionalIssue()
+  const canSubmit = () => {
+    const isPortfolioValid =
+      Object.keys(targetPortfolio).length + Object.keys(deletedArchive).length >
+      0
+    // const isWeightsOk = totalWeight() === 1.0;
+    // const allOrdersValid = stagedTrades().every(t => t.notional >= 11);
+
+    return isPortfolioValid && !hasPositionsBelowMinimum()
+  }
 
   // // createEffect: clear rebalancing UI state once staged trades are empty
   // createEffect(() => {
@@ -626,8 +626,8 @@ export const usePortfolioState = (
       return isRebalancingUi()
     },
 
-    get disableSubmit() {
-      return disableSubmit()
+    get canSubmit() {
+      return canSubmit()
     },
 
     // Loading states

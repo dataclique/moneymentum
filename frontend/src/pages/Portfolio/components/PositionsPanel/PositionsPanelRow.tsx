@@ -72,7 +72,6 @@ export const PositionsPanelRow = (props: {
 
   const isClosing = () => props.status === "closing"
 
-  console.log(props.symbol, props.status)
   const isNew = () => props.status === "new"
   const isChanged = () => props.status === "changed"
 

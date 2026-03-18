@@ -1,0 +1,4 @@
+# TODO: configure your service
+port = 8000
+data_dir = "/mnt/data/prod"
+log_level = "info"

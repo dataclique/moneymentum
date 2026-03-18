@@ -165,11 +165,17 @@ export const usePortfolioState = (
     })
   }
 
-  //TODO: check only new symbol, because if we have old 10.99$ buton is disabled
   const symbolsBelowMinimum = createMemo(() =>
-    Object.keys(targetPortfolio).filter(
-      s => targetPortfolio[s].notional < MIN_USD,
-    ),
+    Object.keys(targetPortfolio).filter(symbol => {
+      if (targetPortfolio[symbol].notional >= MIN_USD) return false
+
+      const currentNotional = currentPortfolio[symbol]?.notional ?? 0
+      const unchanged =
+        currentNotional < MIN_USD &&
+        Math.abs(targetPortfolio[symbol].notional - currentNotional) < 0.01
+
+      return !unchanged
+    }),
   )
 
   // Keep displayed target leverage in sync with planned target notional.
@@ -185,37 +191,6 @@ export const usePortfolioState = (
       calcLeverage(currentTotalNotional(), accountValue()),
     )
   })
-
-  // const currentLeverage = createMemo(() => {
-  //   if (accountValue() === 0) return 0;
-  //   return targetTotalNotional() / accountValue();
-  // });
-
-  function getCurrentPortfolio(): Record<string, PortfolioInterface> {
-    // console.table(
-    //   Object.values(currentPortfolio).map(position => ({
-    //     symbol: position.symbol,
-    //     side: position.side,
-    //     leverage: position.leverage,
-    //     status: position.status,
-    //     notional: position.notional,
-    //   })),
-    // )
-    return currentPortfolio
-  }
-
-  function getTargetPortfolio(): Record<string, PortfolioInterface> {
-    // console.table(
-    //   Object.values(targetPortfolio).map(position => ({
-    //     symbol: position.symbol,
-    //     side: position.side,
-    //     leverage: position.leverage,
-    //     status: position.status,
-    //     notional: position.notional,
-    //   })),
-    // )
-    return targetPortfolio
-  }
 
   // createEffect: disconnect cleanup - detect falling edge from connected to disconnected
   createEffect(() => {

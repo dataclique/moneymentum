@@ -65,9 +65,29 @@ export const PositionsPanelRow = (props: {
   fundingRatesByBaseSymbol?: Record<string, number>
   totalNotional: number
 }): JSX.Element => {
-  const notional = () => props.position().notional
+  const notional = () => props.position().notional ?? 0
   const weight = createMemo(() => {
     return new Decimal(notional()).div(props.totalNotional).mul(100).toFixed(2)
+  })
+
+  const [weightInput, setWeightInput] = createSignal(weight())
+  const [isWeightFocused, setIsWeightFocused] = createSignal(false)
+
+  // createEffect: sync external weight into local input when not focused
+  createEffect(() => {
+    if (!isWeightFocused()) {
+      setWeightInput(weight())
+    }
+  })
+
+  const [notionalInput, setNotionalInput] = createSignal(notional().toFixed(2))
+  const [isNotionalFocused, setIsNotionalFocused] = createSignal(false)
+
+  // createEffect: sync external notional into local input when not focused
+  createEffect(() => {
+    if (!isNotionalFocused()) {
+      setNotionalInput(notional().toFixed(2))
+    }
   })
 
   const isClosing = () => props.status === "closing"
@@ -154,9 +174,15 @@ export const PositionsPanelRow = (props: {
         >
           <input
             type="number"
-            value={weight()}
+            value={weightInput()}
+            onFocus={() => setIsWeightFocused(true)}
+            onBlur={() => {
+              setIsWeightFocused(false)
+              setWeightInput(weight())
+            }}
             onInput={inputEvent => {
               const raw = inputEvent.currentTarget.value
+              setWeightInput(raw)
               const parsed = raw === "" ? 0 : Number.parseFloat(raw)
               props.onWeightChange(props.position().symbol, parsed)
             }}
@@ -172,9 +198,15 @@ export const PositionsPanelRow = (props: {
         <span class="text-muted-foreground text-[10px]">$</span>
         <input
           type="number"
-          value={notional().toFixed(2)}
+          value={notionalInput()}
+          onFocus={() => setIsNotionalFocused(true)}
+          onBlur={() => {
+            setIsNotionalFocused(false)
+            setNotionalInput(notional().toFixed(2))
+          }}
           onInput={inputEvent => {
             const raw = inputEvent.currentTarget.value
+            setNotionalInput(raw)
             const parsed = raw === "" ? 0 : Number.parseFloat(raw)
             props.onNotionalChange(props.position().symbol, parsed)
           }}

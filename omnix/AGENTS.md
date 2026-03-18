@@ -62,6 +62,8 @@ nixfmt **/*.nix
 - Each module should evaluate without errors in isolation
 - Library functions should produce derivations that build
 - Template projects should pass `nix flake check`
+- Consumer repos using devenv dev shells require `nix flake check --impure`
+  (devenv needs impure evaluation to resolve the working directory)
 
 ---
 

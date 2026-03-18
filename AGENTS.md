@@ -137,6 +137,9 @@ sqlx migrate run                   # Applies pending migrations
 - **Nix + Direnv**: `direnv allow` activates the dev environment
 - All dependencies managed through Nix flake - do not use pip install, bun
   install, or similar
+- **`nix flake check` requires `--impure`**: devenv-based dev shells need
+  `--impure` to resolve the working directory. Use `nix flake check --impure` or
+  just `nix flake check --no-build` to skip shell evaluation
 
 ---
 

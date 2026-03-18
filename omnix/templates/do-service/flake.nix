@@ -32,7 +32,6 @@
       deploy = let
         deployConfig = omnix.lib.mkDeploy {
           inherit self services;
-          deploy-rs = omnix.inputs.deploy-rs;
           nodeName = projectName;
           package = self.packages.x86_64-linux.default;
         };
@@ -54,7 +53,6 @@
 
         deployConfig = omnix.lib.mkDeploy {
           inherit self services;
-          deploy-rs = omnix.inputs.deploy-rs;
           nodeName = projectName;
           package = pkgs.hello; # replace with your actual package
         };

@@ -2,16 +2,16 @@
 
 let cfg = config.omnix.digitalocean;
 in {
+  imports = [
+    (modulesPath + "/virtualisation/digital-ocean-config.nix")
+    (modulesPath + "/profiles/qemu-guest.nix")
+  ];
+
   options.omnix.digitalocean = {
     enable = lib.mkEnableOption "DigitalOcean base configuration";
   };
 
   config = lib.mkIf cfg.enable {
-    imports = [
-      (modulesPath + "/virtualisation/digital-ocean-config.nix")
-      (modulesPath + "/profiles/qemu-guest.nix")
-    ];
-
     boot.loader.grub = {
       efiSupport = true;
       efiInstallAsRemovable = true;

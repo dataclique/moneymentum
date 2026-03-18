@@ -1,6 +1,8 @@
 {
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
+    omnix.url = "path:./omnix";
+
+    nixpkgs.follows = "omnix/nixpkgs";
     flake-utils.url = "github:numtide/flake-utils";
 
     git-hooks.url = "github:cachix/git-hooks.nix";
@@ -17,34 +19,34 @@
 
     crane.url = "github:ipetkov/crane";
 
-    ragenix.url = "github:yaxitech/ragenix";
-    ragenix.inputs.nixpkgs.follows = "nixpkgs";
-
-    disko.url = "github:nix-community/disko";
-    disko.inputs.nixpkgs.follows = "nixpkgs";
-
-    nixos-anywhere.url = "github:nix-community/nixos-anywhere";
-    nixos-anywhere.inputs.nixpkgs.follows = "nixpkgs";
-
-    deploy-rs.url = "github:serokell/deploy-rs";
-    deploy-rs.inputs.nixpkgs.follows = "nixpkgs";
-
     bun2nix.url = "github:nix-community/bun2nix?tag=2.0.7";
     bun2nix.inputs.nixpkgs.follows = "nixpkgs";
   };
 
-  outputs = { self, nixpkgs, flake-utils, git-hooks, devenv, rust-overlay, crane
-    , ragenix, disko, nixos-anywhere, deploy-rs, bun2nix, ... }@inputs:
-    {
+  outputs = { self, omnix, nixpkgs, flake-utils, git-hooks, devenv, rust-overlay
+    , crane, bun2nix, ... }@inputs:
+    let
+      services = import ./services.nix;
+
+      deployConfig = omnix.lib.mkDeploy {
+        inherit self services;
+        nodeName = "moneymentum";
+        package = self.packages.x86_64-linux.moneymentum;
+      };
+    in {
       nixosConfigurations.moneymentum = nixpkgs.lib.nixosSystem {
         system = "x86_64-linux";
         specialArgs = { frontend = self.packages.x86_64-linux.frontend; };
 
-        modules =
-          [ disko.nixosModules.disko ragenix.nixosModules.default ./os.nix ];
+        modules = [
+          omnix.inputs.disko.nixosModules.disko
+          omnix.inputs.ragenix.nixosModules.default
+          omnix.nixosModules.default
+          ./os.nix
+        ];
       };
 
-      deploy = (import ./deploy.nix { inherit deploy-rs self; }).config;
+      deploy = deployConfig.config;
     } // flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs {
@@ -58,21 +60,22 @@
         craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
         rustPkgs = pkgs.callPackage ./rust.nix { inherit craneLib; };
 
-        infraPkgs =
-          import ./infra { inherit pkgs ragenix nixos-anywhere system; };
+        infraPkgs = omnix.lib.mkTerraform {
+          inherit pkgs system;
+          keysFile = ./keys.nix;
+          ragenixPkg = omnix.inputs.ragenix.packages.${system}.default;
+          secretsRules = ./config/secrets.nix;
+        };
 
-        deployPkgs =
-          (import ./deploy.nix { inherit deploy-rs self; }).wrappers {
-            inherit pkgs infraPkgs;
-            localSystem = system;
-          };
+        deployPkgs = deployConfig.wrappers {
+          inherit pkgs infraPkgs;
+          localSystem = system;
+        };
 
         hooks = {
-          # Nix
           nil.enable = true;
           nixfmt-classic.enable = true;
 
-          # TypeScript
           eslint = {
             enable = true;
             files = "^frontend/.*\\.(ts|tsx|js|jsx)$";
@@ -84,10 +87,8 @@
             excludes = [ "\\.md$" ];
           };
 
-          # TOML
           taplo.enable = true;
 
-          # Markdown
           denofmt = {
             enable = true;
             name = "denofmt";
@@ -96,7 +97,6 @@
             pass_filenames = true;
           };
 
-          # Rust - custom entry to avoid git-hooks.nix/nixpkgs version mismatch
           rustfmt = {
             enable = true;
             entry = "${rustToolchain}/bin/cargo fmt --";
@@ -115,10 +115,7 @@
           stdenv.cc.cc.lib
         ];
 
-        # jdbcPath = "${pkgs.postgresql_jdbc}/share/java/postgresql-jdbc.jar";
-        # injectJdbc = " --driver-class-path ${jdbcPath} --jars ${jdbcPath}";
         env = {
-          # JDBC_PATH = jdbcPath;
           JAVA_HOME = pkgs.jdk17;
           LD_LIBRARY_PATH = "${pkgs.lib.makeLibraryPath [
             pkgs.zlib
@@ -145,11 +142,10 @@
           inherit inputs pkgs;
           modules = [
             ({ config, ... }: {
-              # https://devenv.sh/reference/options/
               packages = with pkgs;
                 deps ++ [
                   git
-                  ragenix.packages.${system}.default
+                  omnix.inputs.ragenix.packages.${system}.default
                   sqlx-cli
                   doctl
                   infraPkgs.remote
@@ -178,15 +174,11 @@
                 };
               };
 
-              # DATABASE_URL is read by sqlx for compile-time query verification
-              # and by migration tooling. The runtime config uses db_path field.
-              # PATH so git-hooks:install finds git (common macOS paths; profile has git too).
               env = env // {
                 DATABASE_URL = "sqlite:./moneymentum.db?mode=rwc";
                 PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin";
               };
 
-              # Use pre-commit instead of git-hooks
               git-hooks = { inherit hooks; };
 
               difftastic.enable = true;
@@ -224,8 +216,16 @@
           };
 
           inherit (infraPkgs)
-            tfInit tfPlan tfApply tfImport tfEditVars tfCreateVars tfRekey rekey
-            bootstrap remote;
+            tfInit tfPlan tfApply tfImport tfEditVars tfRekey remote;
+
+          bootstrap = omnix.lib.mkBootstrap {
+            inherit pkgs system;
+            keysFile = ./keys.nix;
+            configName = "moneymentum";
+            ragenixPkg = omnix.inputs.ragenix.packages.${system}.default;
+            secretsRules = ./config/secrets.nix;
+          };
+
           inherit (deployPkgs) deployNixos deployService deployAll;
         };
       });

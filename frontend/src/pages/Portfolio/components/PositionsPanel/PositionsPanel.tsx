@@ -28,11 +28,6 @@ import { Slider } from "@/components/ui/slider"
 import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/cn"
 import type { OrderSide } from "@/hooks/useTrading"
-import {
-  type TokenAllocation,
-  MIN_CHANGE_DELTA,
-  MIN_USD,
-} from "../../hooks/usePortfolioState"
 import { useWallet } from "@/hooks/useWallet"
 import { WalletHeader } from "@/components/wallet-header"
 
@@ -56,6 +51,8 @@ interface PositionsPanelProps {
   onWeightChange: (symbol: string, percentage: number) => void
   fundingRatesByBaseSymbol?: Record<string, number>
   targetTotalNotional: number
+  symbolsBelowMinimum: string[]
+  symbolsDeltaBelowMinimum: string[]
 }
 
 export const PositionsPanel = (props: PositionsPanelProps): JSX.Element => {
@@ -157,6 +154,13 @@ export const PositionsPanel = (props: PositionsPanelProps): JSX.Element => {
                         return "unchanged"
                       })
 
+                      const delta = createMemo(() => {
+                        return Math.abs(
+                          props.targetPortfolio[symbol].notional -
+                            props.currentPortfolio[symbol]?.notional,
+                        )
+                      })
+
                       const displayPosition = createMemo(() => {
                         // 1. Если позиция есть в таргете — берем её
                         if (props.targetPortfolio[symbol]) {
@@ -171,8 +175,6 @@ export const PositionsPanel = (props: PositionsPanelProps): JSX.Element => {
                         // 3. Если нет ни там, ни там (но есть в current) — берем из current
                         return { ...props.currentPortfolio[symbol] }
                       })
-
-                      console.log(displayPosition())
 
                       return (
                         <PositionsPanelRow
@@ -192,6 +194,11 @@ export const PositionsPanel = (props: PositionsPanelProps): JSX.Element => {
                             props.fundingRatesByBaseSymbol
                           }
                           totalNotional={props.targetTotalNotional}
+                          symbolsBelowMinimum={props.symbolsBelowMinimum}
+                          symbolsDeltaBelowMinimum={
+                            props.symbolsDeltaBelowMinimum
+                          }
+                          symbolDelta={delta()}
                         />
                       )
                     }}

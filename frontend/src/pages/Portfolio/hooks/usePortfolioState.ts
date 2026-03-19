@@ -26,7 +26,6 @@ import { createStore, produce, reconcile } from "solid-js/store"
 // TODO: need only one constant
 // TODO: maybe move all constants in project to the separate file
 export const MIN_USD = 11
-export const MIN_CHANGE_DELTA = 11.0 // Minimum change in USD to trigger a rebalance
 // Allow sum of weights slightly above 100% due to rounding (e.g. 33.33 + 33.33 + 33.34 = 100.00)
 const MAX_TOTAL_PERCENT_TOLERANCE = 0.1
 
@@ -175,6 +174,15 @@ export const usePortfolioState = (
         Math.abs(targetPortfolio[symbol].notional - currentNotional) < 0.01
 
       return !unchanged
+    }),
+  )
+
+  const symbolsDeltaBelowMinimum = createMemo(() =>
+    Object.keys(targetPortfolio).filter(symbol => {
+      const delta = Math.abs(
+        targetPortfolio[symbol].notional - currentPortfolio[symbol]?.notional,
+      )
+      return delta < MIN_USD && delta !== 0
     }),
   )
 
@@ -343,6 +351,8 @@ export const usePortfolioState = (
 
   //TODO: move back validation logic to the component
   const hasPositionsBelowMinimum = () => symbolsBelowMinimum().length > 0
+  const hasSymbolsDeltaBelowMinimum = () =>
+    symbolsDeltaBelowMinimum().length > 0
 
   //TODO: add this ater, when non precise mode is implemented
   // const hasTotalPercentExceeded = () =>
@@ -359,6 +369,12 @@ export const usePortfolioState = (
         .map(s => `${s} ($${targetPortfolio[s].notional.toFixed(2)})`)
         .join(", ")
       return `Each position must be at least $${String(MIN_USD)}. Positions below minimum: ${symbolsList}`
+    }
+    if (hasSymbolsDeltaBelowMinimum() && !isPrecise()) {
+      const symbolsList = symbolsDeltaBelowMinimum()
+        .map(s => `${s} ($${targetPortfolio[s].notional.toFixed(2)})`)
+        .join(", ")
+      return `Each position delta must be at least $${String(MIN_USD)}. Positions below minimum: ${symbolsList}`
     }
     //   if (hasTotalPercentExceeded()) {
     //     const excessPercent = (derivedTotalPercent() - 100).toFixed(1)
@@ -552,7 +568,11 @@ export const usePortfolioState = (
     // const isWeightsOk = totalWeight() === 1.0;
     // const allOrdersValid = stagedTrades().every(t => t.notional >= 11);
 
-    return isPortfolioValid && !hasPositionsBelowMinimum()
+    return (
+      isPortfolioValid &&
+      !hasPositionsBelowMinimum() &&
+      (isPrecise() || !hasSymbolsDeltaBelowMinimum())
+    )
   }
 
   // // createEffect: clear rebalancing UI state once staged trades are empty
@@ -603,6 +623,14 @@ export const usePortfolioState = (
 
     get canSubmit() {
       return canSubmit()
+    },
+
+    get symbolsBelowMinimum() {
+      return symbolsBelowMinimum()
+    },
+
+    get symbolsDeltaBelowMinimum() {
+      return symbolsDeltaBelowMinimum()
     },
 
     // Loading states

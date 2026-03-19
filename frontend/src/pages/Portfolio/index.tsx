@@ -186,6 +186,8 @@ const PortfolioPage = () => {
                 onWeightChange={portfolio.handleWeightChange}
                 fundingRatesByBaseSymbol={fundingRatesByBaseSymbol()}
                 targetTotalNotional={portfolio.targetTotalNotional}
+                symbolsBelowMinimum={portfolio.symbolsBelowMinimum}
+                symbolsDeltaBelowMinimum={portfolio.symbolsDeltaBelowMinimum}
               />
             </div>
             {/* <Show when={portfolio.blockingReasons.length > 0}>

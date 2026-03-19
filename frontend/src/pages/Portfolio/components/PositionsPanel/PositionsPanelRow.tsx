@@ -19,15 +19,15 @@ import {
 import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/cn"
 import type { OrderSide } from "@/hooks/useTrading"
-import { MIN_CHANGE_DELTA, MIN_USD } from "../../hooks/usePortfolioState"
+import { MIN_USD } from "../../hooks/usePortfolioState"
 import { useWallet } from "@/hooks/useWallet"
 import { WalletHeader } from "@/components/wallet-header"
 import { LeverageDialog } from "./LeverageDialog"
 
-import { type TargetPortfolioInterface } from "../../hooks/usePortfolioState"
+import { type PortfolioInterface } from "../../hooks/usePortfolioState"
 
 interface PositionsPanelProps {
-  positions: Record<string, TargetPortfolioInterface>
+  positions: Record<string, PortfolioInterface>
   isLoading: boolean
   fundingIsLoading: boolean
   leverageLimitsMap: Record<string, number | undefined>
@@ -41,6 +41,7 @@ interface PositionsPanelProps {
   onWeightChange: (symbol: string, percentage: number) => void
   fundingRatesByBaseSymbol?: Record<string, number>
   targetTotalNotional: number
+  symbolsBelowMinimum: string[]
 }
 
 const getSideBadgeClass = (side: OrderSide) =>
@@ -48,7 +49,6 @@ const getSideBadgeClass = (side: OrderSide) =>
     ? "bg-green-500/20 text-green-500"
     : "bg-red-500/20 text-red-500"
 
-// TODO: move to separate component
 export const PositionsPanelRow = (props: {
   symbol: string
   position: any
@@ -64,6 +64,9 @@ export const PositionsPanelRow = (props: {
   onWeightChange: (symbol: string, percentage: number) => void
   fundingRatesByBaseSymbol?: Record<string, number>
   totalNotional: number
+  symbolsBelowMinimum: string[]
+  symbolsDeltaBelowMinimum: string[]
+  symbolDelta: number
 }): JSX.Element => {
   const notional = () => props.position().notional ?? 0
   const weight = createMemo(() => {
@@ -126,7 +129,11 @@ export const PositionsPanelRow = (props: {
     return rate > 0 ? "text-emerald-500" : "text-rose-500"
   }
 
-  // const showWarning = () => showDeltaWarning() || showSmallPositionWarning()
+  const isBelowMinimum = () => props.symbolsBelowMinimum.includes(props.symbol)
+  const isDeltaBelowMinimum = () =>
+    props.symbolsDeltaBelowMinimum.includes(props.symbol)
+  const showWarning = () =>
+    isBelowMinimum() || (!props.isPrecise && isDeltaBelowMinimum())
 
   return (
     <tr
@@ -215,7 +222,7 @@ export const PositionsPanelRow = (props: {
           min={0}
           class="w-16 text-right font-mono text-[11px] rounded border border-border bg-transparent px-1 py-0.5 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
         />
-        {/* <TooltipProvider>
+        <TooltipProvider>
           <Tooltip>
             <TooltipTrigger
               class={cn(
@@ -226,24 +233,20 @@ export const PositionsPanelRow = (props: {
               <CircleAlert class="h-3 w-3 text-amber-500" />
             </TooltipTrigger>
             <TooltipContent class="text-xs">
-              <Show when={showDeltaWarning()}>
+              <Show when={!props.isPrecise && isDeltaBelowMinimum()}>
                 <p>
-                  Delta $
-                  {Math.abs(
-                    (props.token.targetNotional ?? 0) -
-                      (props.token.currentNotional ?? 0),
-                  ).toFixed(2)}{" "}
-                  below ${MIN_CHANGE_DELTA} minimum.
+                  Delta ${props.symbolDelta.toFixed(2)} is below ${MIN_USD}{" "}
+                  minimum.
                 </p>
               </Show>
-              <Show when={showSmallPositionWarning()}>
+              <Show when={isBelowMinimum()}>
                 <p>
-                  Position ${targetValue().toFixed(2)} below ${MIN_USD} minimum.
+                  Position ${notional().toFixed(2)} below ${MIN_USD} minimum.
                 </p>
               </Show>
             </TooltipContent>
           </Tooltip>
-        </TooltipProvider> */}
+        </TooltipProvider>
       </td>
       <td
         class={cn(

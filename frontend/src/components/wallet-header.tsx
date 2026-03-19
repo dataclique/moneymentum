@@ -31,8 +31,10 @@ const formatPublicKey = (key: string): string => {
 
 interface WalletHeaderProps {
   autoOpen?: boolean
+  handleDisconnect: () => void
 }
 
+//TOOD: make this without page reloading on network switch
 export const WalletHeader = (props: WalletHeaderProps) => {
   const { data: walletSettings, isConnected } = useWalletSettings()
   const switchNetworkMutation = useSwitchNetwork()
@@ -115,7 +117,9 @@ export const WalletHeader = (props: WalletHeaderProps) => {
     toast.success("Wallet connected")
   }
 
+  //TODO: rename
   const handleDisconnect = () => {
+    props.handleDisconnect()
     disconnect()
     setDialogOpen(false)
     setMenuOpen(false)

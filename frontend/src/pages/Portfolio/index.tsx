@@ -1,6 +1,5 @@
-import { createSignal, createEffect, createMemo, Show, For } from "solid-js"
+import { createSignal, createEffect, createMemo, Show } from "solid-js"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Slider } from "@/components/ui/slider"
 import {
@@ -71,10 +70,6 @@ const PortfolioPage = () => {
   const [leverageInput, setLeverageInput] = createSignal(
     portfolio.targetCrossAccountLeverage.toFixed(2),
   )
-  // TODO: make empty leverage as 1.00x
-  // Maybe it's better to make component with this functionality and use here and in PositionsPanel
-  // const [isLeverageInputFocused, setIsLeverageInputFocused] =
-  //   createSignal(false)
 
   const [isLeverageInputFocused, setIsLeverageInputFocused] =
     createSignal(false)
@@ -94,28 +89,13 @@ const PortfolioPage = () => {
     }
   }
 
-  // const handleLeverageBlur = () => {
-  //   setIsLeverageInputFocused(false)
-  //   const raw = leverageInput()
-  //   if (raw === "") {
-  //     const fallback = portfolio.initialCrossAccountLeverage ?? DEFAULT_LEVERAGE
-  //     portfolio.handleCrossAccountLeverageChange(fallback)
-  //     return
-  //   }
-  //   const value = parseFloat(raw)
-  //   if (!Number.isNaN(value)) {
-  //     const clamped = Math.max(LEVERAGE_MIN, Math.min(LEVERAGE_MAX, value))
-  //     portfolio.handleCrossAccountLeverageChange(clamped)
-  //   }
-  // }
-
   return (
     <>
       <header class="flex items-center justify-between px-3 py-1.5 border-b border-border shrink-0 bg-muted/30">
         <div class="flex items-center gap-5">
           <span class="font-semibold">Moneymentum</span>
           <div class="h-4 border-l border-border" />
-          <WalletHeader />
+          <WalletHeader handleDisconnect={portfolio.handleDisconnect} />
           <div class="h-4 border-l border-border" />
           <div class="flex gap-1.5">
             <span class="text-muted-foreground">NAV</span>

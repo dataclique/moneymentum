@@ -518,6 +518,17 @@ export const usePortfolioState = (
     setIsRebalancingUi(true)
   }
 
+  const handleDisconnect = () => {
+    setCurrentPortfolio({})
+    setTargetPortfolio({})
+    setDeletedArchive({})
+    // setFundingRatesByBaseSymbol({}) //TODO: also reset this
+    setCurrentCrossAccountLeverage(DEFAULT_CROSS_ACCOUNT_LEVERAGE)
+    setTargetCrossAccountLeverage(DEFAULT_CROSS_ACCOUNT_LEVERAGE)
+    setCurrentTotalNotional(0)
+    setTargetTotalNotional(0)
+  }
+
   const hasBlockingNotionalIssue = () => hasPositionsBelowMinimum()
   // ||
   // hasTotalPercentExceeded() ||
@@ -616,5 +627,6 @@ export const usePortfolioState = (
     handleCrossAccountLeverageChange,
     handleRebalancePositions,
     handleResetToCurrent,
+    handleDisconnect,
   }
 }

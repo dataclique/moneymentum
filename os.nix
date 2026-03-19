@@ -1,6 +1,16 @@
-{ pkgs, lib, frontend, ... }:
+{ pkgs, lib, ... }:
 
-let inherit (import ./keys.nix) roles;
+let
+  inherit (import ./keys.nix) roles;
+
+  hlProxy = host: {
+    proxyPass = "https://${host}/";
+    extraConfig = ''
+      proxy_ssl_server_name on;
+      proxy_set_header Host ${host};
+    '';
+  };
+
 in {
   omnix.disko.enable = true;
   omnix.digitalocean.enable = true;
@@ -8,6 +18,7 @@ in {
   omnix.base = {
     enable = true;
     sshKeys = roles.ssh;
+    stateVersion = "24.11";
     extraPackages = with pkgs; [ magic-wormhole ];
   };
 
@@ -25,69 +36,34 @@ in {
     definitions = import ./services.nix;
   };
 
-  omnix.firewall = {
+  omnix.staticSites.definitions = {
+    prod = {
+      port = 80;
+      isDefault = true;
+      extraLocations = {
+        "/api/" = { proxyPass = "http://127.0.0.1:8000/"; };
+        "/hl/" = hlProxy "api.hyperliquid.xyz";
+        "/hl-testnet/" = hlProxy "api.hyperliquid-testnet.xyz";
+      };
+    };
+
+    staging = {
+      port = 8080;
+      extraLocations = {
+        "/api/" = { proxyPass = "http://127.0.0.1:8001/"; };
+        "/hl/" = hlProxy "api.hyperliquid.xyz";
+        "/hl-testnet/" = hlProxy "api.hyperliquid-testnet.xyz";
+      };
+    };
+  };
+
+  networking.firewall = {
     enable = true;
     allowedTCPPorts = [
+      22 # SSH
       80 # Frontend (prod)
       8080 # Frontend (staging)
     ];
-  };
-
-  services.nginx = {
-    enable = true;
-
-    virtualHosts.default = {
-      default = true;
-      listen = [{
-        addr = "0.0.0.0";
-        port = 80;
-      }];
-      root = "${frontend}";
-      locations = {
-        "/".tryFiles = "$uri $uri/ /index.html";
-        "/api/" = { proxyPass = "http://127.0.0.1:8000/"; };
-        "/hl/" = {
-          proxyPass = "https://api.hyperliquid.xyz/";
-          extraConfig = ''
-            proxy_ssl_server_name on;
-            proxy_set_header Host api.hyperliquid.xyz;
-          '';
-        };
-        "/hl-testnet/" = {
-          proxyPass = "https://api.hyperliquid-testnet.xyz/";
-          extraConfig = ''
-            proxy_ssl_server_name on;
-            proxy_set_header Host api.hyperliquid-testnet.xyz;
-          '';
-        };
-      };
-    };
-
-    virtualHosts.staging = {
-      listen = [{
-        addr = "0.0.0.0";
-        port = 8080;
-      }];
-      root = "${frontend}";
-      locations = {
-        "/".tryFiles = "$uri $uri/ /index.html";
-        "/api/" = { proxyPass = "http://127.0.0.1:8001/"; };
-        "/hl/" = {
-          proxyPass = "https://api.hyperliquid.xyz/";
-          extraConfig = ''
-            proxy_ssl_server_name on;
-            proxy_set_header Host api.hyperliquid.xyz;
-          '';
-        };
-        "/hl-testnet/" = {
-          proxyPass = "https://api.hyperliquid-testnet.xyz/";
-          extraConfig = ''
-            proxy_ssl_server_name on;
-            proxy_set_header Host api.hyperliquid-testnet.xyz;
-          '';
-        };
-      };
-    };
   };
 
   systemd.services.moneymentum-ingest = {

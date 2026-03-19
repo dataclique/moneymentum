@@ -61,12 +61,10 @@ jobs:
       - uses: DeterminateSystems/magic-nix-cache-action@main
 
       - name: Lint
-        # --impure required: devenv uses impure features for caching and local state
-        run: nix develop .#frontend --impure -c bash -c "cd frontend && bun run lint"
+        run: nix develop --impure -c bash -c "cd frontend && bun run lint"
 
       - name: Test
-        # --impure required: devenv uses impure features for caching and local state
-        run: nix develop .#frontend --impure -c bash -c "cd frontend && bun run test --run"
+        run: nix develop --impure -c bash -c "cd frontend && bun run test --run"
 
       - name: Build
         run: nix build .#packages.x86_64-linux.frontend
@@ -163,6 +161,19 @@ jobs:
           echo "::add-mask::$host_ip"
           host_key=$(nix eval --raw --file keys.nix keys.host)
           echo "$host_ip $host_key" > ~/.ssh/known_hosts
+
+      - name: Wait for SSH
+        run: |
+          host_ip=$(nix run .#resolveIp)
+          retries=0
+          until ssh -o ConnectTimeout=5 "root@$host_ip" true 2>/dev/null; do
+            retries=$((retries + 1))
+            if [ "$retries" -ge 12 ]; then
+              echo "SSH not available after 1 minute" >&2
+              exit 1
+            fi
+            sleep 5
+          done
 
       - name: Reset services before deploy
         run: |

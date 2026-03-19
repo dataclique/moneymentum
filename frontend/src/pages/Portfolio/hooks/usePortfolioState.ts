@@ -23,23 +23,13 @@ import {
 import { useWallet } from "@/hooks/useWallet"
 import { createStore, produce, reconcile } from "solid-js/store"
 
-// TODO: need only one constant
 // TODO: maybe move all constants in project to the separate file
 export const MIN_USD = 11
-// Allow sum of weights slightly above 100% due to rounding (e.g. 33.33 + 33.33 + 33.34 = 100.00)
-const MAX_TOTAL_PERCENT_TOLERANCE = 0.1
+const MAX_CROSS_ACCOUNT_LEVERAGE = 5
+const DEFAULT_CROSS_ACCOUNT_LEVERAGE = 1
 
 const roundNotional = (n: number): number =>
   new Decimal(n).toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber()
-
-// TODO: no more needed statuses. Now every status computes locally in components
-export type AllocationStatus =
-  | OrderResult["status"]
-  | "added" // Position added by the user
-  | "idle" //TODO: what is this status?
-  | "synced" // Positions synced with the exchange
-  | "deleted" // Position setted to be deleted
-  | "modified" // Position modified by the user (not synced with the exchange)
 
 export interface PortfolioInterface {
   symbol: string
@@ -48,12 +38,13 @@ export interface PortfolioInterface {
   notional: number
 }
 
-// export interface TargetPortfolioInterface extends CurrentPortfolioInterface {
-//   status: AllocationStatus
-// }
-
-const MAX_CROSS_ACCOUNT_LEVERAGE = 5
-const DEFAULT_CROSS_ACCOUNT_LEVERAGE = 1
+export interface StagedTradeItem {
+  underlying: string
+  side: OrderSide
+  notional: number
+  previousWeight?: number
+  newWeight?: number
+}
 
 // TODO: review this function
 const calcLeverage = (totalNotional: number, accountValue: number): number => {
@@ -210,7 +201,6 @@ export const usePortfolioState = (
       return
     }
 
-    setSelectedTokens([])
     setCurrentPortfolio({})
     setTargetCrossAccountLeverage(DEFAULT_CROSS_ACCOUNT_LEVERAGE)
     setCurrentCrossAccountLeverage(DEFAULT_CROSS_ACCOUNT_LEVERAGE)
@@ -238,16 +228,6 @@ export const usePortfolioState = (
   createEffect(() => {
     latestCrossAccountLeverage = targetCrossAccountLeverage()
   })
-
-  const setSelectedTokensAndPersist = (
-    updater:
-      | TokenAllocation[]
-      | ((prev: TokenAllocation[]) => TokenAllocation[]),
-  ) => {
-    setSelectedTokens(prev =>
-      typeof updater === "function" ? updater(prev) : updater,
-    )
-  }
 
   // Wait for positionsQuery data and positive accountValue, then initialize from exchange positions
   createEffect(() => {
@@ -299,26 +279,17 @@ export const usePortfolioState = (
     setPositionsLoadedFromExchange(true)
   })
 
-  //TODO: review this type
-  type StagedTradeItem = {
-    underlying: string
-    side: OrderSide
-    notional: number
-    previousWeight?: number
-    newWeight?: number
-    // status: AllocationStatus
-  }
-
   const actions = createMemo(() =>
     diffPortfolios(currentPortfolio, targetPortfolio),
   )
 
+  //TODO: move this to the utils
   const getSignedNotional = (side: OrderSide, notional: number): number => {
     return side === "buy" ? notional : -notional
   }
 
   //Get staged trades directly for actions we will perform
-  const stagedTrades = createMemo(() => {
+  const stagedTrades = createMemo<StagedTradeItem[]>(() => {
     return actions().map(action => {
       const symbol = action.symbol
       const c = currentPortfolio[symbol]
@@ -349,7 +320,6 @@ export const usePortfolioState = (
     return map
   })
 
-  //TODO: move back validation logic to the component
   const hasPositionsBelowMinimum = () => symbolsBelowMinimum().length > 0
   const hasSymbolsDeltaBelowMinimum = () =>
     symbolsDeltaBelowMinimum().length > 0
@@ -463,7 +433,7 @@ export const usePortfolioState = (
     setTargetPortfolio(symbol, "notional", newNotional)
 
     const nextTotal = Object.values(targetPortfolio).reduce((sum, pos) => {
-      if (pos.status === "deleted") return sum
+      if (deletedArchive[symbol]) return sum
       return sum + (pos.notional || 0)
     }, 0)
 
@@ -508,7 +478,7 @@ export const usePortfolioState = (
     setTargetPortfolio(
       produce(state => {
         for (const symbol in state) {
-          if (state[symbol].status !== "deleted") {
+          if (!deletedArchive[symbol]) {
             state[symbol].notional *= multiplier
           }
         }
@@ -548,14 +518,6 @@ export const usePortfolioState = (
     setIsRebalancingUi(true)
   }
 
-  // const netExposure = createMemo(() => {
-  //   const target = targetNotional()
-  //   return derivedActiveTokens().reduce((acc, token) => {
-  //     const usdValue = getTokenUsdAllocation(token, target)
-  //     return acc + (token.side === "buy" ? usdValue : -usdValue)
-  //   }, 0)
-  // })
-
   const hasBlockingNotionalIssue = () => hasPositionsBelowMinimum()
   // ||
   // hasTotalPercentExceeded() ||
@@ -583,7 +545,6 @@ export const usePortfolioState = (
   // })
 
   return {
-    // State (all getters for consistent consumer API -- access as properties, not function calls)
     get accountValue() {
       return accountValue()
     },

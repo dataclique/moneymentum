@@ -2,19 +2,10 @@ import { For, Show } from "solid-js"
 import { cn } from "@/lib/cn"
 import { Send } from "lucide-solid"
 import { Button } from "@/components/ui/button"
-
-type Side = "buy" | "sell"
-
-export interface StagedTrade {
-  underlying: string
-  side: Side
-  notional: number
-  previousWeight?: number
-  newWeight?: number
-}
+import type { StagedTradeItem } from "@/pages/Portfolio/hooks/usePortfolioState"
 
 interface StagedChangesPanelProps {
-  stagedTrades?: StagedTrade[]
+  stagedTrades: StagedTradeItem[]
   currentTotalNotional: number
   targetTotalNotional: number
   currentCrossAccountLeverage: number

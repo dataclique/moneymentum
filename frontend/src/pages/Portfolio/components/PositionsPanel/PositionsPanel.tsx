@@ -156,8 +156,8 @@ export const PositionsPanel = (props: PositionsPanelProps): JSX.Element => {
 
                       const delta = createMemo(() => {
                         return Math.abs(
-                          props.targetPortfolio[symbol].notional -
-                            props.currentPortfolio[symbol]?.notional,
+                          props.targetPortfolio[symbol]?.notional ??
+                            0 - (props.currentPortfolio[symbol]?.notional ?? 0),
                         )
                       })
 

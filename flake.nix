@@ -1,8 +1,9 @@
 {
   inputs = {
-    omnix.url = "path:./omnix";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
 
-    nixpkgs.follows = "omnix/nixpkgs";
+    omnix.url = "github:data-cartel/omnix";
+    omnix.inputs.nixpkgs.follows = "nixpkgs";
     flake-utils.url = "github:numtide/flake-utils";
 
     git-hooks.url = "github:cachix/git-hooks.nix";

@@ -1,5 +1,4 @@
 import ccxt from "ccxt"
-import Decimal from "decimal.js"
 import type { NetworkMode, WalletCredentials } from "@/contexts/wallet-context"
 import type { RebalanceAction } from "@/pages/Portfolio/hooks/portfolioRebalancer"
 
@@ -478,6 +477,8 @@ export class HyperliquidClient {
     price: number,
     currentPosition: any,
   ): Promise<OrderResult> {
+    const side: OrderSide = currentPosition?.side === "long" ? "sell" : "buy"
+
     try {
       // if (!currentPosition) {
       //   console.log("no current position")
@@ -491,8 +492,7 @@ export class HyperliquidClient {
       // }
 
       console.log("Closing position", symbol, price, currentPosition)
-      const side: OrderSide = currentPosition.side === "long" ? "sell" : "buy"
-      //TODO: verify what is going on here
+      // TODO: verify what is going on here
       const amount = parseFloat(String(currentPosition.contracts))
 
       await this.exchange.createOrder(
@@ -508,7 +508,7 @@ export class HyperliquidClient {
     } catch (error) {
       return {
         symbol,
-        side: "sell", // или closeSide, если вынесешь наружу
+        side,
         status: "failed",
         message: error instanceof Error ? error.message : String(error),
       }
@@ -610,7 +610,10 @@ export class HyperliquidClient {
     actions: RebalanceAction[],
     precise: boolean = false,
   ): Promise<OrderResult[]> {
-    console.log("Rebalancing positions", actions, precise)
+    console.log("Rebalancing positions", {
+      actionsCount: actions.length,
+      precise,
+    })
     // Pre-load markets once so subsequent ccxt calls don't re-fetch them
     await this.exchange.loadMarkets()
     const results: OrderResult[] = []
@@ -641,24 +644,23 @@ export class HyperliquidClient {
       const currentPosition = positionsMap.get(symbol)
 
       // TODO: Remove symbols with no price before, no nesting
-      if (!price) {
-        сonsle.log("no price")
-        results.push({
-          symbol: action.symbol,
-          side: currentPosition.side,
-          status: "failed",
-          message: "Could not fetch price",
-        })
-        continue
-      }
+      // if (!price) {
+      //   сonsle.log("no price")
+      //   results.push({
+      //     symbol: action.symbol,
+      //     side: currentPosition.side,
+      //     status: "failed",
+      //     message: "Could not fetch price",
+      //   })
+      //   continue
+      // }
 
       switch (action.kind) {
         case "close":
           results.push(await this.closePosition(symbol, price, currentPosition))
           break
-        case "rebalance":
-          console.log("in rebalance")
 
+        case "rebalance":
           if (action.leverageChanged) {
             await this.setLeverage(action.symbol, action.leverage)
           }
@@ -674,6 +676,43 @@ export class HyperliquidClient {
           }
 
           break
+
+        case "preciseRebalance": {
+          if (action.leverageChanged) {
+            await this.setLeverage(action.symbol, action.leverage)
+          }
+
+          const fetchedSideRaw: unknown = currentPosition?.side
+          const fetchedCurrentSide: OrderSide | null =
+            fetchedSideRaw === "long"
+              ? "buy"
+              : fetchedSideRaw === "short"
+                ? "sell"
+                : null
+
+          // Use fetched current side for closer accuracy, but keep action as fallback.
+          const closeSide: OrderSide =
+            fetchedCurrentSide !== null
+              ? fetchedCurrentSide === "buy"
+                ? "sell"
+                : "buy"
+              : action.closeSide
+
+          results.push(
+            await this.closeReduceOnlyNotional(
+              symbol,
+              price,
+              action.closeUsdAmount,
+              closeSide,
+              action.targetSide,
+            ),
+          )
+
+          results.push(
+            await this.placeOrder(symbol, price, action.openNotionalDelta),
+          )
+          break
+        }
       }
     }
 
@@ -720,186 +759,6 @@ export class HyperliquidClient {
     // Normal order
     const result = await this.placeOrder(symbol, price, notionalDelta)
     return [result]
-  }
-
-  private async processPositionPreciseMode(
-    position: Position,
-    price: number,
-    targetValue: number,
-    currentValue: number,
-    currentPosition: CurrentPosition | undefined,
-    currentNotionalAbs: number,
-  ): Promise<OrderResult[]> {
-    const { symbol, side: targetSide } = position
-
-    // New position - open exactly $11
-    if (!currentPosition) {
-      const result = await this.placeOrder(
-        symbol,
-        price,
-        targetSide === "buy" ? MIN_ORDER_VALUE : -MIN_ORDER_VALUE,
-      )
-      return [result]
-    }
-
-    const currentSide = currentPosition.side
-    const sidesMatch = currentSide === targetSide
-
-    // Side changed - close entire position and open target
-    if (!sidesMatch) {
-      const closeSide: OrderSide = currentSide === "buy" ? "sell" : "buy"
-      const closeResult = await this.closeReduceOnlyNotional(
-        symbol,
-        price,
-        currentNotionalAbs,
-        closeSide,
-        targetSide,
-      )
-
-      const targetNotionalAbs = Math.abs(targetValue)
-      const openAmount = Math.max(targetNotionalAbs, MIN_ORDER_VALUE)
-      const openResult = await this.placeOrder(
-        symbol,
-        price,
-        targetSide === "buy" ? openAmount : -openAmount,
-      )
-
-      return [closeResult, openResult]
-    }
-
-    // Same side - adjust using precise mode logic
-    const currentNotionalAbsValue = Math.abs(currentValue)
-    const targetNotionalAbs = Math.abs(targetValue)
-    const notionalDelta = targetValue - currentValue
-    const deltaAbs = Math.abs(notionalDelta)
-    const isIncreasing = targetNotionalAbs > currentNotionalAbsValue
-    const closeSide: OrderSide = currentSide === "buy" ? "sell" : "buy"
-
-    if (isIncreasing) {
-      return this.handlePreciseModeIncreasing(
-        symbol,
-        price,
-        targetSide,
-        closeSide,
-        currentNotionalAbsValue,
-        targetNotionalAbs,
-        deltaAbs,
-      )
-    }
-
-    return this.handlePreciseModeDecreasing(
-      symbol,
-      price,
-      targetSide,
-      closeSide,
-      currentNotionalAbsValue,
-      targetNotionalAbs,
-      deltaAbs,
-    )
-  }
-
-  private async handlePreciseModeIncreasing(
-    symbol: string,
-    price: number,
-    targetSide: OrderSide,
-    closeSide: OrderSide,
-    currentNotionalAbs: number,
-    targetNotionalAbs: number,
-    deltaAbs: number,
-  ): Promise<OrderResult[]> {
-    const closeAmount = MIN_ORDER_VALUE
-    const openAmount = MIN_ORDER_VALUE + deltaAbs
-
-    // Close amount exceeds or equals position size - close fully and open target
-    if (closeAmount >= currentNotionalAbs) {
-      const actualCloseAmount = Math.min(closeAmount, currentNotionalAbs)
-      const closeResult = await this.closeReduceOnlyNotional(
-        symbol,
-        price,
-        actualCloseAmount,
-        closeSide,
-        targetSide,
-      )
-
-      const openNotional =
-        targetNotionalAbs >= MIN_ORDER_VALUE
-          ? targetSide === "buy"
-            ? targetNotionalAbs
-            : -targetNotionalAbs
-          : targetSide === "buy"
-            ? MIN_ORDER_VALUE
-            : -MIN_ORDER_VALUE
-      const openResult = await this.placeOrder(symbol, price, openNotional)
-
-      return [closeResult, openResult]
-    }
-
-    // Normal increasing: close $11, open ($11 + delta)
-    const closeResult = await this.closeReduceOnlyNotional(
-      symbol,
-      price,
-      closeAmount,
-      closeSide,
-      targetSide,
-    )
-
-    const openNotional = targetSide === "buy" ? openAmount : -openAmount
-    const openResult = await this.placeOrder(symbol, price, openNotional)
-
-    return [closeResult, openResult]
-  }
-
-  private async handlePreciseModeDecreasing(
-    symbol: string,
-    price: number,
-    targetSide: OrderSide,
-    closeSide: OrderSide,
-    currentNotionalAbs: number,
-    targetNotionalAbs: number,
-    deltaAbs: number,
-  ): Promise<OrderResult[]> {
-    const closeAmount = MIN_ORDER_VALUE + deltaAbs
-    const openAmount = MIN_ORDER_VALUE
-
-    // Close amount exceeds position size - close entire position
-    if (closeAmount >= currentNotionalAbs) {
-      const actualCloseAmount = Math.min(closeAmount, currentNotionalAbs)
-      const closeResult =
-        actualCloseAmount < MIN_ORDER_VALUE
-          ? await this.closeReduceOnlyNotional(
-              symbol,
-              price,
-              actualCloseAmount,
-              closeSide,
-              targetSide,
-            )
-          : await this.placeOrder(
-              symbol,
-              price,
-              closeSide === "buy" ? actualCloseAmount : -actualCloseAmount,
-            )
-
-      // Only open if target >= $11
-      if (targetNotionalAbs >= MIN_ORDER_VALUE) {
-        const openResult = await this.placeOrder(
-          symbol,
-          price,
-          targetSide === "buy" ? targetNotionalAbs : -targetNotionalAbs,
-        )
-        return [closeResult, openResult]
-      }
-
-      return [closeResult]
-    }
-
-    // Normal decreasing: close ($11 + |delta|), open $11
-    const closeNotional = closeSide === "buy" ? closeAmount : -closeAmount
-    const closeResult = await this.placeOrder(symbol, price, closeNotional)
-
-    const openNotional = targetSide === "buy" ? openAmount : -openAmount
-    const openResult = await this.placeOrder(symbol, price, openNotional)
-
-    return [closeResult, openResult]
   }
 
   getNetworkMode(): NetworkMode {

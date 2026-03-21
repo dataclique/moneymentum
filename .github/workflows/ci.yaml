@@ -115,16 +115,13 @@ jobs:
           echo "${{ secrets.SSH_KEY }}" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
 
-      - name: Resolve and mask host IP
+      - name: Deploy
         run: |
           host_ip=$(nix run .#resolveIp)
           echo "::add-mask::$host_ip"
           host_key=$(nix eval --raw --file keys.nix keys.host)
           echo "$host_ip $host_key" > ~/.ssh/known_hosts
-
-      - name: Deploy
-        # --skip-checks: CI jobs above already validate everything
-        run: nix run .#deployAll -- --skip-checks
+          nix run .#deployAll -- --skip-checks
 
       - name: Cleanup SSH
         if: always()
@@ -155,16 +152,13 @@ jobs:
           echo "${{ secrets.SSH_KEY }}" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
 
-      - name: Resolve and mask host IP
+      - name: Deploy staging
         run: |
           host_ip=$(nix run .#resolveIp)
           echo "::add-mask::$host_ip"
           host_key=$(nix eval --raw --file keys.nix keys.host)
           echo "$host_ip $host_key" > ~/.ssh/known_hosts
 
-      - name: Wait for SSH
-        run: |
-          host_ip=$(nix run .#resolveIp)
           retries=0
           until ssh -o ConnectTimeout=5 "root@$host_ip" true 2>/dev/null; do
             retries=$((retries + 1))
@@ -175,13 +169,8 @@ jobs:
             sleep 5
           done
 
-      - name: Reset services before deploy
-        run: |
-          host_ip=$(nix run .#resolveIp)
           ssh "root@$host_ip" 'systemctl stop staging || true; systemctl reset-failed staging || true; rm -f /run/moneymentum/staging.ready'
-
-      - name: Deploy staging
-        run: nix run .#deployNixos && nix run .#deployService -- staging
+          nix run .#deployNixos && nix run .#deployService -- staging
 
       - name: Cleanup SSH
         if: always()

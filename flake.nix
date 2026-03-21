@@ -174,7 +174,6 @@
 
                 env = env // {
                   DATABASE_URL = "sqlite:./moneymentum.db?mode=rwc";
-                  PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin";
                 };
 
                 git-hooks = { inherit hooks; };

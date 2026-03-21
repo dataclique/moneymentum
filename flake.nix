@@ -204,6 +204,7 @@
             resolveIp = pkgs.writeShellApplication {
               name = "resolve-ip";
               runtimeInputs = [ pkgs.rage pkgs.jq ];
+              excludeShellChecks = [ "SC2154" ];
               text = ''
                 ${infraPkgs.resolveIp}
                 echo "$host_ip"

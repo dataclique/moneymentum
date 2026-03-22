@@ -6347,6 +6347,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "timeseries"
+version = "0.1.0"
+dependencies = [
+ "polars",
+ "proptest",
+ "thiserror 2.0.18",
+ "tokio",
+ "tower",
+ "tracing",
+ "tracing-test",
+]
+
+[[package]]
 name = "tiny-keccak"
 version = "2.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"

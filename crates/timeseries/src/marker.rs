@@ -5,6 +5,7 @@ use crate::series::Observation;
 // -- Leaf markers (no type parameter) --
 
 /// Absolute price level (e.g., USD spot price of an asset).
+#[derive(Debug)]
 pub struct Price;
 
 impl Observation for Price {
@@ -14,6 +15,7 @@ impl Observation for Price {
 }
 
 /// Arithmetic (simple) return variant.
+#[derive(Debug)]
 pub struct Simple;
 
 impl Observation for Simple {
@@ -23,6 +25,7 @@ impl Observation for Simple {
 }
 
 /// Logarithmic return variant.
+#[derive(Debug)]
 pub struct Log;
 
 impl Observation for Log {
@@ -37,6 +40,7 @@ impl Observation for Log {
 ///
 /// - `Return<Simple>`: r_t = (P_t - P_{t-1}) / P_{t-1}
 /// - `Return<Log>`:    r_t = ln(P_t / P_{t-1})
+#[derive(Debug)]
 pub struct Return<Kind>(PhantomData<Kind>);
 
 impl<K: Observation> Observation for Return<K> {
@@ -49,6 +53,7 @@ impl<K: Observation> Observation for Return<K> {
 ///
 /// `Vol<Return<Simple>>` -- realized vol of simple returns.
 /// `Vol<Return<Log>>`    -- realized vol of log returns.
+#[derive(Debug)]
 pub struct Vol<Source>(PhantomData<Source>);
 
 impl<S: Observation> Observation for Vol<S> {
@@ -60,6 +65,7 @@ impl<S: Observation> Observation for Vol<S> {
 /// Drawdown from peak of a source series.
 ///
 /// dd_t = (X_t - max(X_0..X_t)) / max(X_0..X_t)
+#[derive(Debug)]
 pub struct Drawdown<Source>(PhantomData<Source>);
 
 impl<S: Observation> Observation for Drawdown<S> {
@@ -71,6 +77,7 @@ impl<S: Observation> Observation for Drawdown<S> {
 /// Standardized (z-score) observation of a source series.
 ///
 /// z = (x - mu) / sigma
+#[derive(Debug)]
 pub struct Normalized<Source>(PhantomData<Source>);
 
 impl<S: Observation> Observation for Normalized<S> {

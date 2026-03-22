@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
 
-use polars::prelude::{DataFrame, DataType, PolarsError};
+use polars::prelude::{DataFrame, DataType, IntoLazy, PolarsError, SortMultipleOptions};
 use thiserror::Error;
 use tracing::debug;
 
@@ -27,8 +27,9 @@ pub trait Observation: Send + Sync + 'static {
 /// are incompatible types -- the compiler rejects mixing them.
 ///
 /// Inner `DataFrame` has exactly two columns:
-/// - `"timestamp"` (`Datetime`)
+/// - `"timestamp"` (`Datetime`) -- guaranteed monotonically sorted
 /// - `"value"` (`Float64`)
+#[derive(Debug)]
 pub struct TimeSeries<M: Observation> {
     df: DataFrame,
     _observation: PhantomData<M>,
@@ -39,6 +40,7 @@ impl<M: Observation> TimeSeries<M> {
     ///
     /// The DataFrame must contain exactly a `"timestamp"` column with a
     /// temporal dtype and a `"value"` column with `Float64` dtype.
+    /// Rows are sorted by timestamp to guarantee monotonic ordering.
     pub fn new(df: DataFrame) -> Result<Self, SeriesError> {
         let timestamp_col = df
             .column("timestamp")
@@ -68,14 +70,22 @@ impl<M: Observation> TimeSeries<M> {
             });
         }
 
+        let sorted = df
+            .lazy()
+            .sort(
+                ["timestamp"],
+                SortMultipleOptions::default().with_maintain_order(true),
+            )
+            .collect()?;
+
         debug!(
             observation = M::label(),
-            rows = df.height(),
+            rows = sorted.height(),
             "time series constructed"
         );
 
         Ok(Self {
-            df,
+            df: sorted,
             _observation: PhantomData,
         })
     }
@@ -120,6 +130,7 @@ pub enum SeriesError {
 #[cfg(test)]
 mod tests {
     use polars::prelude::{Column, DataFrame, DataType, NamedFrom, Series, TimeUnit};
+    use tracing_test::traced_test;
 
     use super::*;
     use crate::marker::Price;
@@ -142,6 +153,7 @@ mod tests {
         DataFrame::new(vec![Column::from(timestamps), Column::from(value_series)]).unwrap()
     }
 
+    #[traced_test]
     #[test]
     fn valid_price_series_construction() {
         let df = sample_price_df(&[100.0, 101.0, 102.0]);
@@ -150,6 +162,9 @@ mod tests {
         let series = series.unwrap();
         assert_eq!(series.len(), 3);
         assert!(!series.is_empty());
+
+        assert!(logs_contain("time series constructed"));
+        assert!(logs_contain("price"));
     }
 
     #[test]
@@ -186,5 +201,31 @@ mod tests {
         let series = TimeSeries::<Price>::new(df).unwrap();
         let recovered = series.into_dataframe();
         assert_eq!(recovered.height(), original_height);
+    }
+
+    #[test]
+    fn sorts_unsorted_timestamps() {
+        let epoch_start: i64 = 1_704_067_200_000;
+        // Deliberately out of order: day 3, day 1, day 2
+        let millis = vec![epoch_start + 2 * DAY_MS, epoch_start, epoch_start + DAY_MS];
+        let timestamps = Series::new("timestamp".into(), millis)
+            .cast(&DataType::Datetime(TimeUnit::Milliseconds, None))
+            .unwrap();
+        let values = Series::new("value".into(), &[300.0, 100.0, 200.0]);
+        let df = DataFrame::new(vec![Column::from(timestamps), Column::from(values)]).unwrap();
+
+        let series = TimeSeries::<Price>::new(df).unwrap();
+        let result_values: Vec<f64> = series
+            .as_dataframe()
+            .column("value")
+            .unwrap()
+            .as_materialized_series()
+            .f64()
+            .unwrap()
+            .into_no_null_iter()
+            .collect();
+
+        // After sorting by timestamp: day 1=100, day 2=200, day 3=300
+        assert_eq!(result_values, vec![100.0, 200.0, 300.0]);
     }
 }

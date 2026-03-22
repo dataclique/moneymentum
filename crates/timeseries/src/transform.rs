@@ -1,4 +1,5 @@
 use std::future::{Ready, ready};
+use std::num::NonZeroUsize;
 use std::task::{Context, Poll};
 
 use polars::prelude::{IntoLazy, PolarsError, RollingOptionsFixedWindow, col, lit};
@@ -19,6 +20,12 @@ pub enum TransformError {
 
     #[error("insufficient observations: need at least {needed}, got {actual}")]
     InsufficientData { needed: usize, actual: usize },
+
+    #[error("zero window size")]
+    ZeroWindow,
+
+    #[error("zero variance: cannot standardize a constant series")]
+    ZeroVariance,
 }
 
 /// Computes arithmetic (simple) returns from a price series.
@@ -127,12 +134,16 @@ fn compute_log_returns(
 /// `TimeSeries<Return<Log>>`    -> `TimeSeries<Vol<Return<Log>>>`
 #[derive(Clone)]
 pub struct RollingVolatility {
-    window: usize,
+    window: NonZeroUsize,
 }
 
 impl RollingVolatility {
-    pub fn new(window: usize) -> Self {
-        Self { window }
+    /// Creates a new `RollingVolatility` with the given lookback window.
+    ///
+    /// Rejects zero -- a rolling window must cover at least one observation.
+    pub fn new(window: usize) -> Result<Self, TransformError> {
+        let window = NonZeroUsize::new(window).ok_or(TransformError::ZeroWindow)?;
+        Ok(Self { window })
     }
 }
 
@@ -146,7 +157,7 @@ impl<M: Observation> Service<TimeSeries<M>> for RollingVolatility {
     }
 
     fn call(&mut self, input: TimeSeries<M>) -> Self::Future {
-        ready(compute_rolling_vol(input, self.window))
+        ready(compute_rolling_vol(input, self.window.get()))
     }
 }
 
@@ -173,13 +184,15 @@ fn compute_rolling_vol<M: Observation>(
         }))
         .collect()?;
 
-    // Drop rows where the rolling window has not yet filled (leading nulls)
-    let offset = i64::try_from(window - 1).map_err(|err| {
+    // Drop rows where the rolling window has not yet filled (leading nulls).
+    // window is guaranteed non-zero by the smart constructor, so window - 1 is safe.
+    let leading_nulls = window - 1;
+    let offset = i64::try_from(leading_nulls).map_err(|err| {
         TransformError::Polars(PolarsError::ComputeError(
-            format!("window conversion: {err}").into(),
+            format!("offset conversion: {err}").into(),
         ))
     })?;
-    let result = with_rolling.slice(offset, row_count - window + 1);
+    let result = with_rolling.slice(offset, row_count - leading_nulls);
 
     debug!(
         window,
@@ -242,6 +255,9 @@ fn compute_drawdown(
 /// Generic over any observation type -- the output preserves provenance:
 /// `TimeSeries<Price>`          -> `TimeSeries<Normalized<Price>>`
 /// `TimeSeries<Return<Simple>>` -> `TimeSeries<Normalized<Return<Simple>>>`
+///
+/// Returns `TransformError::ZeroVariance` for constant series where
+/// standard deviation is zero.
 #[derive(Clone)]
 pub struct Normalize;
 
@@ -270,6 +286,14 @@ fn compute_zscore<M: Observation>(
     }
 
     let df = input.into_dataframe();
+
+    // Check for zero variance before dividing to avoid producing NaNs.
+    let std_val = df.column("value")?.as_materialized_series().std(1);
+
+    match std_val {
+        Some(sigma) if sigma > f64::EPSILON => {}
+        _ => return Err(TransformError::ZeroVariance),
+    }
 
     let result = df
         .lazy()
@@ -379,7 +403,7 @@ mod tests {
         let returns = return_svc.call(prices).into_inner().unwrap();
         assert_eq!(returns.len(), 5);
 
-        let mut vol_svc = RollingVolatility::new(3);
+        let mut vol_svc = RollingVolatility::new(3).unwrap();
         let vol = vol_svc.call(returns).into_inner().unwrap();
 
         assert_eq!(vol.len(), 3);
@@ -403,7 +427,7 @@ mod tests {
         let returns = return_svc.call(prices).into_inner().unwrap();
         assert_eq!(returns.len(), 5);
 
-        let mut vol_svc = RollingVolatility::new(3);
+        let mut vol_svc = RollingVolatility::new(3).unwrap();
         let vol: TimeSeries<Vol<Return<Log>>> = vol_svc.call(returns).into_inner().unwrap();
 
         assert_eq!(vol.len(), 3);
@@ -423,7 +447,7 @@ mod tests {
         let mut return_svc = SimpleReturns;
         let returns = return_svc.call(prices).into_inner().unwrap();
         // 2 returns, window=5 -> insufficient
-        let mut vol_svc = RollingVolatility::new(5);
+        let mut vol_svc = RollingVolatility::new(5).unwrap();
         let result = vol_svc.call(returns).into_inner();
         assert!(matches!(
             result,
@@ -432,6 +456,12 @@ mod tests {
                 actual: 2
             })
         ));
+    }
+
+    #[test]
+    fn rolling_volatility_rejects_zero_window() {
+        let result = RollingVolatility::new(0);
+        assert!(matches!(result, Err(TransformError::ZeroWindow)));
     }
 
     #[traced_test]
@@ -472,6 +502,17 @@ mod tests {
         assert!((values[1] - 0.0).abs() < tolerance); // mean is zero
 
         assert!(logs_contain("computed z-scores"));
+    }
+
+    #[test]
+    fn normalize_rejects_constant_series() {
+        let prices = sample_price_series(&[42.0, 42.0, 42.0]);
+        let mut service = Normalize;
+        let result = service.call(prices).into_inner();
+        assert!(
+            matches!(result, Err(TransformError::ZeroVariance)),
+            "expected ZeroVariance for constant series, got {result:?}"
+        );
     }
 
     #[traced_test]

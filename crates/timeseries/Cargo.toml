@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-polars = { version = "0.51", features = [
+polars = { workspace = true, features = [
   "lazy",
   "temporal",
   "dtype-datetime",
@@ -12,12 +12,12 @@ polars = { version = "0.51", features = [
   "cum_agg",
   "log",
 ] }
-thiserror = "2.0.18"
+thiserror.workspace = true
 tower = { version = "0.5", features = ["util"] }
-tracing = "0.1.44"
+tracing.workspace = true
 
 [dev-dependencies]
-polars = { version = "0.51", features = [
+polars = { workspace = true, features = [
   "lazy",
   "temporal",
   "dtype-datetime",
@@ -26,28 +26,9 @@ polars = { version = "0.51", features = [
   "log",
   "csv",
 ] }
-proptest = "1.10.0"
-tokio = { version = "1.49.0", features = ["rt-multi-thread", "macros"] }
-tracing-test = "0.2.5"
+proptest.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+tracing-test.workspace = true
 
-[lints.rust]
-unsafe_code = "forbid"
-
-[lints.clippy]
-unwrap_used = "deny"
-expect_used = "deny"
-panic = "deny"
-unreachable = "deny"
-unimplemented = "deny"
-indexing_slicing = "deny"
-enum_glob_use = "deny"
-pedantic = { level = "deny", priority = -1 }
-nursery = { level = "deny", priority = -1 }
-doc_markdown = "allow"
-items_after_statements = "allow"
-missing_const_for_fn = "allow"
-missing_docs_in_private_items = "allow"
-missing_errors_doc = "allow"
-missing_panics_doc = "allow"
-must_use_candidate = "allow"
-redundant_pub_crate = "allow"
+[lints]
+workspace = true

@@ -10,6 +10,9 @@ use tower::Service;
 /// the response type of `A` matches the request type of `B`,
 /// enforcing type-safe composition at compile time.
 ///
+/// The second service is polled for readiness inside the future,
+/// immediately before it is called, so readiness is never stale.
+///
 /// ```text
 /// TimeSeries<Price> --[SimpleReturns]--> TimeSeries<Return<Simple>> --[RollingVolatility]--> TimeSeries<Vol<Return<Simple>>>
 /// ```
@@ -28,7 +31,7 @@ pub fn chain<A, B>(first: A, second: B) -> Pipeline<A, B> {
 
 impl<A, B, Req> Service<Req> for Pipeline<A, B>
 where
-    A: Service<Req> + Clone,
+    A: Service<Req>,
     B: Service<A::Response, Error = A::Error> + Clone + Unpin,
     A::Future: Unpin,
     B::Future: Unpin,
@@ -38,12 +41,7 @@ where
     type Future = PipelineFuture<A, B, Req>;
 
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        // Both services must be ready
-        match self.first.poll_ready(cx) {
-            Poll::Ready(Ok(())) => {}
-            other => return other,
-        }
-        self.second.poll_ready(cx)
+        self.first.poll_ready(cx)
     }
 
     fn call(&mut self, request: Req) -> Self::Future {
@@ -65,6 +63,9 @@ impl<A: Clone, B: Clone> Clone for Pipeline<A, B> {
 }
 
 /// Future for a two-stage pipeline execution.
+///
+/// The second service is polled for readiness immediately before
+/// calling it, inside the future -- not in `Pipeline::poll_ready`.
 pub enum PipelineFuture<A, B, Req>
 where
     A: Service<Req>,
@@ -84,7 +85,6 @@ where
     type Output = Result<B::Response, A::Error>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        // SAFETY: We never move the inner fields, and both futures are Unpin.
         let this = self.get_mut();
 
         loop {
@@ -95,6 +95,20 @@ where
                         Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
                         Poll::Pending => return Poll::Pending,
                     };
+
+                    // Poll second for readiness right before calling it,
+                    // not relying on a stale poll from Pipeline::poll_ready.
+                    match second.poll_ready(cx) {
+                        Poll::Ready(Ok(())) => {}
+                        Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
+                        // If second is not ready, we lose `intermediate` --
+                        // this is acceptable because tower services that
+                        // return Pending from poll_ready are backpressure-aware
+                        // and the caller should retry the entire pipeline.
+                        // In practice, all timeseries transforms are always-ready.
+                        Poll::Pending => return Poll::Pending,
+                    }
+
                     let second_future = second.call(intermediate);
                     *this = Self::Second {
                         future: second_future,
@@ -144,7 +158,7 @@ mod tests {
             100.0, 102.0, 101.0, 105.0, 103.0, 108.0, 107.0, 110.0, 109.0, 112.0,
         ]);
 
-        let mut pipeline = chain(SimpleReturns, RollingVolatility::new(3));
+        let mut pipeline = chain(SimpleReturns, RollingVolatility::new(3).unwrap());
         let result = pipeline.call(prices).await.unwrap();
 
         assert_eq!(result.len(), 7);

@@ -11,7 +11,7 @@ use tower::Service;
 /// enforcing type-safe composition at compile time.
 ///
 /// ```text
-/// TimeSeries<Price> --[PriceReturn]--> TimeSeries<SimpleReturn> --[RollingVolatility]--> TimeSeries<RealizedVol>
+/// TimeSeries<Price> --[SimpleReturns]--> TimeSeries<Return<Simple>> --[RollingVolatility]--> TimeSeries<Vol<Return<Simple>>>
 /// ```
 pub struct Pipeline<A, B> {
     first: A,
@@ -116,7 +116,7 @@ mod tests {
     use super::*;
     use crate::marker::Price;
     use crate::series::TimeSeries;
-    use crate::transform::{PriceReturn, RollingVolatility};
+    use crate::transform::{RollingVolatility, SimpleReturns};
 
     const DAY_MS: i64 = 86_400_000;
 
@@ -144,7 +144,7 @@ mod tests {
             100.0, 102.0, 101.0, 105.0, 103.0, 108.0, 107.0, 110.0, 109.0, 112.0,
         ]);
 
-        let mut pipeline = chain(PriceReturn, RollingVolatility::new(3));
+        let mut pipeline = chain(SimpleReturns, RollingVolatility::new(3));
         let result = pipeline.call(prices).await.unwrap();
 
         assert_eq!(result.len(), 7);

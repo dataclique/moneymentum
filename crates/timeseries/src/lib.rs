@@ -3,10 +3,9 @@ pub mod pipeline;
 pub mod series;
 pub mod transform;
 
-pub use marker::{Drawdown, LogReturn, Price, RealizedVol, SimpleReturn, ZScore};
+pub use marker::{Drawdown, Log, Normalized, Price, Return, Simple, Vol};
 pub use pipeline::chain;
 pub use series::{Observation, SeriesError, TimeSeries};
 pub use transform::{
-    LogRollingVolatility, Normalize, PeakDrawdown, PriceLogReturn, PriceReturn, RollingVolatility,
-    TransformError,
+    LogReturns, Normalize, PeakDrawdown, RollingVolatility, SimpleReturns, TransformError,
 };

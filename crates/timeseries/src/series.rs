@@ -10,9 +10,14 @@ use tracing::debug;
 /// The type system enforces that transformations only accept series
 /// with the correct observation semantics -- you cannot pass a price
 /// series where a return series is expected.
+///
+/// Labels compose: `Vol<Return<Simple>>` produces `"simple return vol"`.
 pub trait Observation: Send + Sync + 'static {
-    /// Human-readable label for diagnostics and logging (e.g., "log return").
-    fn label() -> &'static str;
+    /// Human-readable label for diagnostics and logging.
+    ///
+    /// Returns `String` to support composition of nested markers
+    /// (e.g., `Vol<Return<Simple>>` -> `"simple return vol"`).
+    fn label() -> String;
 }
 
 /// A time-indexed series of observations with semantic type `M`.

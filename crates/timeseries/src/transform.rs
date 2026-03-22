@@ -6,7 +6,7 @@ use thiserror::Error;
 use tower::Service;
 use tracing::debug;
 
-use crate::marker::{Drawdown, LogReturn, Price, RealizedVol, SimpleReturn, ZScore};
+use crate::marker::{Drawdown, Log, Normalized, Price, Return, Simple, Vol};
 use crate::series::{Observation, SeriesError, TimeSeries};
 
 #[derive(Debug, Error)]
@@ -21,16 +21,16 @@ pub enum TransformError {
     InsufficientData { needed: usize, actual: usize },
 }
 
-/// Computes arithmetic returns from a price series.
+/// Computes arithmetic (simple) returns from a price series.
 ///
 /// r_t = (P_t - P_{t-1}) / P_{t-1}
 ///
 /// The first observation is dropped (no prior price to diff against).
 #[derive(Clone)]
-pub struct PriceReturn;
+pub struct SimpleReturns;
 
-impl Service<TimeSeries<Price>> for PriceReturn {
-    type Response = TimeSeries<SimpleReturn>;
+impl Service<TimeSeries<Price>> for SimpleReturns {
+    type Response = TimeSeries<Return<Simple>>;
     type Error = TransformError;
     type Future = Ready<Result<Self::Response, Self::Error>>;
 
@@ -45,7 +45,7 @@ impl Service<TimeSeries<Price>> for PriceReturn {
 
 fn compute_simple_returns(
     input: TimeSeries<Price>,
-) -> Result<TimeSeries<SimpleReturn>, TransformError> {
+) -> Result<TimeSeries<Return<Simple>>, TransformError> {
     let row_count = input.len();
     if row_count < 2 {
         return Err(TransformError::InsufficientData {
@@ -76,10 +76,10 @@ fn compute_simple_returns(
 ///
 /// The first observation is dropped (no prior price to diff against).
 #[derive(Clone)]
-pub struct PriceLogReturn;
+pub struct LogReturns;
 
-impl Service<TimeSeries<Price>> for PriceLogReturn {
-    type Response = TimeSeries<LogReturn>;
+impl Service<TimeSeries<Price>> for LogReturns {
+    type Response = TimeSeries<Return<Log>>;
     type Error = TransformError;
     type Future = Ready<Result<Self::Response, Self::Error>>;
 
@@ -92,7 +92,9 @@ impl Service<TimeSeries<Price>> for PriceLogReturn {
     }
 }
 
-fn compute_log_returns(input: TimeSeries<Price>) -> Result<TimeSeries<LogReturn>, TransformError> {
+fn compute_log_returns(
+    input: TimeSeries<Price>,
+) -> Result<TimeSeries<Return<Log>>, TransformError> {
     let row_count = input.len();
     if row_count < 2 {
         return Err(TransformError::InsufficientData {
@@ -118,7 +120,11 @@ fn compute_log_returns(input: TimeSeries<Price>) -> Result<TimeSeries<LogReturn>
 }
 
 /// Computes realized volatility as the rolling standard deviation
-/// of arithmetic returns over a fixed lookback window.
+/// over a fixed lookback window.
+///
+/// Generic over the source observation -- the output type composes:
+/// `TimeSeries<Return<Simple>>` -> `TimeSeries<Vol<Return<Simple>>>`
+/// `TimeSeries<Return<Log>>`    -> `TimeSeries<Vol<Return<Log>>>`
 #[derive(Clone)]
 pub struct RollingVolatility {
     window: usize,
@@ -130,8 +136,8 @@ impl RollingVolatility {
     }
 }
 
-impl Service<TimeSeries<SimpleReturn>> for RollingVolatility {
-    type Response = TimeSeries<RealizedVol>;
+impl<M: Observation> Service<TimeSeries<M>> for RollingVolatility {
+    type Response = TimeSeries<Vol<M>>;
     type Error = TransformError;
     type Future = Ready<Result<Self::Response, Self::Error>>;
 
@@ -139,34 +145,7 @@ impl Service<TimeSeries<SimpleReturn>> for RollingVolatility {
         Poll::Ready(Ok(()))
     }
 
-    fn call(&mut self, input: TimeSeries<SimpleReturn>) -> Self::Future {
-        ready(compute_rolling_vol(input, self.window))
-    }
-}
-
-/// Computes realized volatility as the rolling standard deviation
-/// of log returns over a fixed lookback window.
-#[derive(Clone)]
-pub struct LogRollingVolatility {
-    window: usize,
-}
-
-impl LogRollingVolatility {
-    pub fn new(window: usize) -> Self {
-        Self { window }
-    }
-}
-
-impl Service<TimeSeries<LogReturn>> for LogRollingVolatility {
-    type Response = TimeSeries<RealizedVol>;
-    type Error = TransformError;
-    type Future = Ready<Result<Self::Response, Self::Error>>;
-
-    fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Poll::Ready(Ok(()))
-    }
-
-    fn call(&mut self, input: TimeSeries<LogReturn>) -> Self::Future {
+    fn call(&mut self, input: TimeSeries<M>) -> Self::Future {
         ready(compute_rolling_vol(input, self.window))
     }
 }
@@ -174,7 +153,7 @@ impl Service<TimeSeries<LogReturn>> for LogRollingVolatility {
 fn compute_rolling_vol<M: Observation>(
     input: TimeSeries<M>,
     window: usize,
-) -> Result<TimeSeries<RealizedVol>, TransformError> {
+) -> Result<TimeSeries<Vol<M>>, TransformError> {
     let row_count = input.len();
     if row_count < window {
         return Err(TransformError::InsufficientData {
@@ -220,7 +199,7 @@ fn compute_rolling_vol<M: Observation>(
 pub struct PeakDrawdown;
 
 impl Service<TimeSeries<Price>> for PeakDrawdown {
-    type Response = TimeSeries<Drawdown>;
+    type Response = TimeSeries<Drawdown<Price>>;
     type Error = TransformError;
     type Future = Ready<Result<Self::Response, Self::Error>>;
 
@@ -233,7 +212,9 @@ impl Service<TimeSeries<Price>> for PeakDrawdown {
     }
 }
 
-fn compute_drawdown(input: TimeSeries<Price>) -> Result<TimeSeries<Drawdown>, TransformError> {
+fn compute_drawdown(
+    input: TimeSeries<Price>,
+) -> Result<TimeSeries<Drawdown<Price>>, TransformError> {
     if input.is_empty() {
         return Err(TransformError::InsufficientData {
             needed: 1,
@@ -258,12 +239,14 @@ fn compute_drawdown(input: TimeSeries<Price>) -> Result<TimeSeries<Drawdown>, Tr
 
 /// Standardizes observations to z-scores: z = (x - mu) / sigma.
 ///
-/// Generic over any observation type -- always produces `TimeSeries<ZScore>`.
+/// Generic over any observation type -- the output preserves provenance:
+/// `TimeSeries<Price>`          -> `TimeSeries<Normalized<Price>>`
+/// `TimeSeries<Return<Simple>>` -> `TimeSeries<Normalized<Return<Simple>>>`
 #[derive(Clone)]
 pub struct Normalize;
 
 impl<M: Observation> Service<TimeSeries<M>> for Normalize {
-    type Response = TimeSeries<ZScore>;
+    type Response = TimeSeries<Normalized<M>>;
     type Error = TransformError;
     type Future = Ready<Result<Self::Response, Self::Error>>;
 
@@ -278,7 +261,7 @@ impl<M: Observation> Service<TimeSeries<M>> for Normalize {
 
 fn compute_zscore<M: Observation>(
     input: TimeSeries<M>,
-) -> Result<TimeSeries<ZScore>, TransformError> {
+) -> Result<TimeSeries<Normalized<M>>, TransformError> {
     if input.len() < 2 {
         return Err(TransformError::InsufficientData {
             needed: 2,
@@ -336,10 +319,10 @@ mod tests {
 
     #[traced_test]
     #[test]
-    fn price_return_computes_arithmetic_returns() {
+    fn simple_returns_computes_arithmetic_returns() {
         let prices = sample_price_series(&[100.0, 110.0, 99.0, 115.0]);
 
-        let mut service = PriceReturn;
+        let mut service = SimpleReturns;
         let result = service.call(prices).into_inner().unwrap();
 
         assert_eq!(result.len(), 3);
@@ -355,9 +338,9 @@ mod tests {
 
     #[traced_test]
     #[test]
-    fn price_return_rejects_single_observation() {
+    fn simple_returns_rejects_single_observation() {
         let prices = sample_price_series(&[100.0]);
-        let mut service = PriceReturn;
+        let mut service = SimpleReturns;
         let result = service.call(prices).into_inner();
         assert!(matches!(
             result,
@@ -370,10 +353,10 @@ mod tests {
 
     #[traced_test]
     #[test]
-    fn price_log_return_computes_logarithmic_returns() {
+    fn log_returns_computes_logarithmic_returns() {
         let prices = sample_price_series(&[100.0, 110.0, 99.0]);
 
-        let mut service = PriceLogReturn;
+        let mut service = LogReturns;
         let result = service.call(prices).into_inner().unwrap();
 
         assert_eq!(result.len(), 2);
@@ -392,7 +375,7 @@ mod tests {
         // 6 prices -> 5 simple returns, window=3 -> 3 vol observations
         let prices = sample_price_series(&[100.0, 102.0, 101.0, 105.0, 103.0, 108.0]);
 
-        let mut return_svc = PriceReturn;
+        let mut return_svc = SimpleReturns;
         let returns = return_svc.call(prices).into_inner().unwrap();
         assert_eq!(returns.len(), 5);
 
@@ -412,9 +395,32 @@ mod tests {
 
     #[traced_test]
     #[test]
+    fn rolling_volatility_over_log_returns() {
+        // Same test but with log returns -- no separate LogRollingVolatility needed
+        let prices = sample_price_series(&[100.0, 102.0, 101.0, 105.0, 103.0, 108.0]);
+
+        let mut return_svc = LogReturns;
+        let returns = return_svc.call(prices).into_inner().unwrap();
+        assert_eq!(returns.len(), 5);
+
+        let mut vol_svc = RollingVolatility::new(3);
+        let vol: TimeSeries<Vol<Return<Log>>> = vol_svc.call(returns).into_inner().unwrap();
+
+        assert_eq!(vol.len(), 3);
+        let values = extract_values(&vol);
+
+        for value in &values {
+            assert!(*value > 0.0, "vol should be positive, got {value}");
+        }
+
+        assert!(logs_contain("computed rolling volatility"));
+    }
+
+    #[traced_test]
+    #[test]
     fn rolling_volatility_rejects_insufficient_data() {
         let prices = sample_price_series(&[100.0, 102.0, 101.0]);
-        let mut return_svc = PriceReturn;
+        let mut return_svc = SimpleReturns;
         let returns = return_svc.call(prices).into_inner().unwrap();
         // 2 returns, window=5 -> insufficient
         let mut vol_svc = RollingVolatility::new(5);
@@ -451,11 +457,11 @@ mod tests {
 
     #[traced_test]
     #[test]
-    fn normalize_produces_z_scores() {
+    fn normalize_produces_z_scores_with_provenance() {
         let prices = sample_price_series(&[100.0, 200.0, 300.0]);
 
         let mut service = Normalize;
-        let result: TimeSeries<ZScore> = service.call(prices).into_inner().unwrap();
+        let result: TimeSeries<Normalized<Price>> = service.call(prices).into_inner().unwrap();
 
         assert_eq!(result.len(), 3);
         let values = extract_values(&result);
@@ -466,5 +472,21 @@ mod tests {
         assert!((values[1] - 0.0).abs() < tolerance); // mean is zero
 
         assert!(logs_contain("computed z-scores"));
+    }
+
+    #[traced_test]
+    #[test]
+    fn composable_labels_reflect_nesting() {
+        assert_eq!(Price::label(), "price");
+        assert_eq!(<Return<Simple>>::label(), "simple return");
+        assert_eq!(<Return<Log>>::label(), "log return");
+        assert_eq!(<Vol<Return<Simple>>>::label(), "simple return vol");
+        assert_eq!(<Vol<Return<Log>>>::label(), "log return vol");
+        assert_eq!(<Normalized<Price>>::label(), "normalized price");
+        assert_eq!(
+            <Normalized<Return<Simple>>>::label(),
+            "normalized simple return"
+        );
+        assert_eq!(<Drawdown<Price>>::label(), "price drawdown");
     }
 }

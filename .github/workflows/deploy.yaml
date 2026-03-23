@@ -44,4 +44,4 @@ jobs:
 
       - name: Cleanup SSH
         if: always()
-        run: rm -rf ~/.ssh/id_ed25519
+        run: rm -rf ~/.ssh

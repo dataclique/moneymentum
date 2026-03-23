@@ -38,7 +38,6 @@
     {
       nixosConfigurations.moneymentum = nixpkgs.lib.nixosSystem {
         system = "x86_64-linux";
-        specialArgs = { frontend = self.packages.x86_64-linux.frontend; };
 
         modules =
           [ disko.nixosModules.disko ragenix.nixosModules.default ./os.nix ];

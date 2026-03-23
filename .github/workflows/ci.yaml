@@ -38,13 +38,10 @@ jobs:
 
       - uses: DeterminateSystems/magic-nix-cache-action@main
 
-      - name: Test
-        # --impure required: devenv uses impure features for caching and local state
-        run: nix develop --impure -c cargo test -q
-
-      - name: Clippy
-        # --impure required: devenv uses impure features for caching and local state
-        run: nix develop --impure -c cargo clippy
+      - name: Test + Clippy
+        # Pure derivations — no impure devShell needed. Tests run inside
+        # buildPackage (doCheck=true), clippy uses -D clippy::all.
+        run: nix build .#moneymentum .#moneymentum-clippy
 
   frontend:
     runs-on: ubuntu-latest

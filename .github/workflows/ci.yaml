@@ -68,9 +68,6 @@ jobs:
         # --impure required: devenv uses impure features for caching and local state
         run: nix develop .#frontend --impure -c bash -c "cd frontend && bun run test --run"
 
-      - name: Build
-        run: nix build .#packages.x86_64-linux.frontend
-
   # Runs in parallel with CI jobs to warm the GH Actions cache with NixOS
   # system closure paths. By the time deploy starts, most paths are cached.
   warmup:

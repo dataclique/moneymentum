@@ -1,13 +1,10 @@
-name: CI/CD
+name: CI
 
 on:
-  push:
-    branches: [master]
   pull_request:
   workflow_dispatch:
 
 permissions:
-  id-token: write
   contents: read
 
 jobs:
@@ -41,11 +38,13 @@ jobs:
 
       - uses: DeterminateSystems/magic-nix-cache-action@main
 
-      - name: Build and test
-        run: nix build .#moneymentum
+      - name: Test
+        # --impure required: devenv uses impure features for caching and local state
+        run: nix develop --impure -c cargo test -q
 
       - name: Clippy
-        run: nix build .#moneymentum-clippy
+        # --impure required: devenv uses impure features for caching and local state
+        run: nix develop --impure -c cargo clippy
 
   frontend:
     runs-on: ubuntu-latest
@@ -67,64 +66,3 @@ jobs:
       - name: Test
         # --impure required: devenv uses impure features for caching and local state
         run: nix develop .#frontend --impure -c bash -c "cd frontend && bun run test --run"
-
-  # Runs in parallel with CI jobs to warm the GH Actions cache with NixOS
-  # system closure paths. By the time deploy starts, most paths are cached.
-  warmup:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: DeterminateSystems/nix-installer-action@main
-        with:
-          extra-conf: |
-            accept-flake-config = true
-            fallback = true
-
-      - uses: DeterminateSystems/magic-nix-cache-action@main
-
-      - name: Build NixOS system closure
-        run: nix build .#nixosConfigurations.moneymentum.config.system.build.toplevel
-
-      - name: Build deploy wrappers
-        run: nix build .#deployAll .#deployNixos .#deployService
-
-  deploy:
-    if: github.ref == 'refs/heads/master'
-    needs: [hooks, backend, frontend, warmup]
-    concurrency:
-      group: deploy
-      cancel-in-progress: false
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: DeterminateSystems/nix-installer-action@main
-        with:
-          extra-conf: |
-            accept-flake-config = true
-            fallback = true
-
-      - uses: DeterminateSystems/magic-nix-cache-action@main
-
-      - name: Setup SSH
-        run: |
-          mkdir -p ~/.ssh
-          chmod 700 ~/.ssh
-          echo "${{ secrets.SSH_KEY }}" > ~/.ssh/id_ed25519
-          chmod 600 ~/.ssh/id_ed25519
-
-      - name: Resolve and mask host IP
-        run: |
-          host_ip=$(nix run .#resolveIp)
-          echo "::add-mask::$host_ip"
-          host_key=$(nix eval --raw --file keys.nix keys.host)
-          echo "$host_ip $host_key" > ~/.ssh/known_hosts
-
-      - name: Deploy
-        # --skip-checks: CI jobs above already validate everything
-        run: nix run .#deployAll -- --skip-checks
-
-      - name: Cleanup SSH
-        if: always()
-        run: rm -rf ~/.ssh/id_ed25519

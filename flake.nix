@@ -211,6 +211,7 @@
         packages = {
           default = rustPkgs.package;
           moneymentum = rustPkgs.package;
+          moneymentum-test = rustPkgs.test;
           moneymentum-clippy = rustPkgs.clippy;
 
           frontend = pkgs.callPackage ./frontend {

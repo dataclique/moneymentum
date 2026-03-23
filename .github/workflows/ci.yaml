@@ -39,9 +39,9 @@ jobs:
       - uses: DeterminateSystems/magic-nix-cache-action@main
 
       - name: Test + Clippy
-        # Pure derivations — no impure devShell needed. Tests run inside
-        # buildPackage (doCheck=true), clippy uses -D clippy::all.
-        run: nix build .#moneymentum .#moneymentum-clippy
+        # Pure derivations — no impure devShell needed. RUSTFLAGS="-D warnings"
+        # ensures any cargo warning fails the build. Clippy adds -D clippy::all.
+        run: nix build .#moneymentum-test .#moneymentum-clippy
 
   frontend:
     runs-on: ubuntu-latest

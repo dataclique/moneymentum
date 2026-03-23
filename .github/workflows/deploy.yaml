@@ -1,0 +1,48 @@
+name: Deploy
+
+on:
+  push:
+    branches: [master]
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    concurrency:
+      # Shared with staging workflow — deployAll touches staging too
+      group: deploy-production
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: DeterminateSystems/nix-installer-action@main
+        with:
+          extra-conf: |
+            accept-flake-config = true
+            fallback = true
+
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          echo "${{ secrets.SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+
+      - name: Resolve and mask host IP
+        run: |
+          host_ip=$(nix run .#resolveIp)
+          echo "::add-mask::$host_ip"
+          host_key=$(nix eval --raw --file keys.nix keys.host)
+          echo "$host_ip $host_key" > ~/.ssh/known_hosts
+
+      - name: Deploy
+        run: nix run .#deployAll
+
+      - name: Cleanup SSH
+        if: always()
+        run: rm -rf ~/.ssh

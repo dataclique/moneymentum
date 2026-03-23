@@ -1,0 +1,71 @@
+name: Staging
+
+on:
+  merge_group:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  warmup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: DeterminateSystems/nix-installer-action@main
+        with:
+          extra-conf: |
+            accept-flake-config = true
+            fallback = true
+
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+
+      - name: Build NixOS system closure
+        run: nix build .#nixosConfigurations.moneymentum.config.system.build.toplevel
+
+      - name: Build deploy wrappers
+        run: nix build .#deployAll .#deployNixos .#deployService
+
+  staging:
+    needs: [warmup]
+    concurrency:
+      group: deploy-staging
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: DeterminateSystems/nix-installer-action@main
+        with:
+          extra-conf: |
+            accept-flake-config = true
+            fallback = true
+
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          echo "${{ secrets.SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+
+      - name: Resolve and mask host IP
+        run: |
+          host_ip=$(nix run .#resolveIp)
+          echo "::add-mask::$host_ip"
+          host_key=$(nix eval --raw --file keys.nix keys.host)
+          echo "$host_ip $host_key" > ~/.ssh/known_hosts
+
+      - name: Reset services before deploy
+        run: |
+          host_ip=$(nix run .#resolveIp)
+          ssh "root@$host_ip" 'systemctl stop staging || true; systemctl reset-failed staging || true; rm -f /run/moneymentum/staging.ready'
+
+      - name: Deploy staging
+        run: nix run .#deployNixos && nix run .#deployService -- staging
+
+      - name: Cleanup SSH
+        if: always()
+        run: rm -rf ~/.ssh/id_ed25519

@@ -1,4 +1,5 @@
-import ccxt from "ccxt"
+import ccxt, { type Order, type OrderRequest } from "ccxt"
+import { pro } from "ccxt"
 import type { NetworkMode, WalletCredentials } from "@/contexts/wallet-context"
 import type { RebalanceAction } from "@/pages/Portfolio/hooks/portfolioRebalancer"
 
@@ -27,7 +28,7 @@ const applyApiProxy = (
 }
 
 const createTempExchange = (networkMode: NetworkMode): HyperliquidExchange => {
-  const HyperliquidClass = ccxt.hyperliquid as unknown as new (
+  const HyperliquidClass = pro.hyperliquid as unknown as new (
     config: Record<string, unknown>,
   ) => HyperliquidExchange
 
@@ -191,6 +192,10 @@ interface HyperliquidExchange {
     price?: number,
     params?: Record<string, unknown>,
   ) => Promise<unknown>
+  createOrdersWs: (
+    orders: OrderRequest[],
+    params?: Record<string, unknown>,
+  ) => Promise<Order[]> //TODO: fix return type and how we handle it
 }
 
 export class HyperliquidClient {
@@ -206,7 +211,7 @@ export class HyperliquidClient {
     this.networkMode = networkMode
     this.vaultAddress = credentials.vaultAddress
 
-    const HyperliquidClass = ccxt.hyperliquid as unknown as new (
+    const HyperliquidClass = pro.hyperliquid as unknown as new (
       config: Record<string, unknown>,
     ) => HyperliquidExchange
 
@@ -425,29 +430,6 @@ export class HyperliquidClient {
     return processed
   }
 
-  private buildCurrentPositionsMapFromPayload(
-    positions: Position[],
-  ): Record<string, CurrentPosition> {
-    const result: Record<string, CurrentPosition> = {}
-    for (const pos of positions) {
-      if (
-        pos.currentNotional !== undefined &&
-        pos.currentNotional > 0 &&
-        pos.currentSide !== undefined
-      ) {
-        result[pos.symbol] = {
-          symbol: pos.symbol,
-          side: pos.currentSide,
-          notional: pos.currentNotional,
-          entryPrice: 0,
-          unrealizedPnl: 0,
-          leverage: pos.leverage,
-        }
-      }
-    }
-    return result
-  }
-
   private signedNotional(side: OrderSide, notional: number): number {
     return side === "buy" ? notional : -notional
   }
@@ -460,152 +442,6 @@ export class HyperliquidClient {
     return this.vaultAddress ? { vaultAddress: this.vaultAddress } : undefined
   }
 
-  // export interface Position {
-  //   symbol: string
-  //   notional: number
-  //   side: OrderSide
-  //   leverage: number
-  //   leverageChanged: boolean
-  //   currentNotional?: number
-  //   currentSide?: OrderSide
-  //   status: PositionStatus
-  // }
-
-  //TODO: fix return type and how we handle it
-  private async closePosition(
-    symbol: string,
-    price: number,
-    currentPosition: any,
-  ): Promise<OrderResult> {
-    const side: OrderSide = currentPosition?.side === "long" ? "sell" : "buy"
-
-    try {
-      // if (!currentPosition) {
-      //   console.log("no current position")
-      //   results.push({
-      //     symbol,
-      //     side: currentPosition.side,
-      //     status: "failed",
-      //     message: "Position not found"
-      //   })
-      //   continue
-      // }
-
-      console.log("Closing position", symbol, price, currentPosition)
-      // TODO: verify what is going on here
-      const amount = parseFloat(String(currentPosition.contracts))
-
-      await this.exchange.createOrder(
-        symbol,
-        "market",
-        side,
-        amount,
-        side === "buy" ? price * (1 + SLIPPAGE) : price * (1 - SLIPPAGE),
-        { reduceOnly: true, ...this.vaultParams },
-      )
-
-      return { symbol, side: side, status: "filled" }
-    } catch (error) {
-      return {
-        symbol,
-        side,
-        status: "failed",
-        message: error instanceof Error ? error.message : String(error),
-      }
-    }
-  }
-
-  private async placeOrder(
-    symbol: string,
-    price: number,
-    notionalDelta: number,
-  ): Promise<OrderResult> {
-    const side: OrderSide = notionalDelta > 0 ? "buy" : "sell"
-    const usdAmount = Math.abs(notionalDelta)
-    const coinAmount = usdAmount / price
-
-    if (usdAmount < MIN_ORDER_VALUE) {
-      return {
-        symbol,
-        side,
-        status: "filled",
-        message: `No action taken: change ($${usdAmount.toFixed(2)}) is below minimum order size ($${String(MIN_ORDER_VALUE)}).`,
-      }
-    }
-
-    try {
-      const slippagePrice =
-        side === "buy" ? price * (1 + SLIPPAGE) : price * (1 - SLIPPAGE)
-
-      await this.exchange.createOrder(
-        symbol,
-        "market",
-        side,
-        coinAmount,
-        slippagePrice,
-        this.vaultParams,
-      )
-
-      return {
-        symbol,
-        side,
-        status: "filled",
-      }
-    } catch (error) {
-      return {
-        symbol,
-        side,
-        status: "failed",
-        message: error instanceof Error ? error.message : String(error),
-      }
-    }
-  }
-
-  /** Close a portion of position by notional (USD). Bypasses MIN_ORDER_VALUE for reduce-only. */
-  private async closeReduceOnlyNotional(
-    symbol: string,
-    price: number,
-    usdAmount: number,
-    closeSide: OrderSide,
-    _targetSide: OrderSide,
-  ): Promise<OrderResult> {
-    const coinAmount = usdAmount / price
-    if (coinAmount <= 0) {
-      return {
-        symbol,
-        side: closeSide,
-        status: "filled",
-        message: "No close needed: amount is zero.",
-      }
-    }
-
-    try {
-      const slippagePrice =
-        closeSide === "buy" ? price * (1 + SLIPPAGE) : price * (1 - SLIPPAGE)
-
-      await this.exchange.createOrder(
-        symbol,
-        "market",
-        closeSide,
-        coinAmount,
-        slippagePrice,
-        {
-          reduceOnly: true,
-          ...this.vaultParams,
-        },
-      )
-
-      return { symbol, side: closeSide, status: "filled" }
-    } catch (error) {
-      return {
-        symbol,
-        side: closeSide,
-        status: "failed",
-        message: error instanceof Error ? error.message : String(error),
-      }
-    }
-  }
-
   async rebalancePositions(
     actions: RebalanceAction[],
     precise: boolean = false,
@@ -614,151 +450,78 @@ export class HyperliquidClient {
       actionsCount: actions.length,
       precise,
     })
-    // Pre-load markets once so subsequent ccxt calls don't re-fetch them
     await this.exchange.loadMarkets()
-    const results: OrderResult[] = []
     const allSymbols = actions.map(a => a.symbol)
+
+    //TODO: maybe need separate action
+    for (const action of actions) {
+      if ("leverageChanged" in action && action.leverageChanged) {
+        await this.setLeverage(action.symbol, action.leverage)
+      }
+    }
 
     const [tickers, allCurrentPositions] = await Promise.all([
       this.exchange.fetchTickers(allSymbols),
       this.exchange.fetchPositions(),
     ])
 
-    const prices: Record<string, number> = {}
-    for (const symbol of allSymbols) {
-      //TODO: refactor that shit
-      const lastPrice = tickers[symbol]?.last
-      if (lastPrice === undefined || lastPrice <= 0) {
-        throw new Error(
-          `Could not fetch price for ${symbol}. The asset may be untradeable or delisted.`,
-        )
-      }
-      prices[symbol] = lastPrice
-    }
+    const orderRequests: any[] = actions
+      .map(action => {
+        const price = tickers[action.symbol]?.last
+        if (!price) return null
 
-    const positionsMap = new Map(allCurrentPositions.map(p => [p.symbol, p]))
+        if (action.kind === "rebalance") {
+          const side = action.notional > 0 ? "buy" : "sell"
+          const amount = Math.abs(action.notional) / price
 
-    for (const action of actions) {
-      const symbol = action.symbol
-      const price = prices[symbol]
-      const currentPosition = positionsMap.get(symbol)
-
-      // TODO: Remove symbols with no price before, no nesting
-      // if (!price) {
-      //   сonsle.log("no price")
-      //   results.push({
-      //     symbol: action.symbol,
-      //     side: currentPosition.side,
-      //     status: "failed",
-      //     message: "Could not fetch price",
-      //   })
-      //   continue
-      // }
-
-      switch (action.kind) {
-        case "close":
-          results.push(await this.closePosition(symbol, price, currentPosition))
-          break
-
-        case "rebalance":
-          if (action.leverageChanged) {
-            await this.setLeverage(action.symbol, action.leverage)
+          return {
+            symbol: action.symbol,
+            type: "market",
+            side: side,
+            amount: amount,
+            price:
+              side === "buy" ? price * (1 + SLIPPAGE) : price * (1 - SLIPPAGE),
+            params: { ...this.vaultParams },
           }
-
-          if (action.notional !== 0) {
-            results.push(
-              ...(await this.processPosition(
-                action.symbol,
-                price,
-                action.notional,
-              )),
-            )
-          }
-
-          break
-
-        case "preciseRebalance": {
-          if (action.leverageChanged) {
-            await this.setLeverage(action.symbol, action.leverage)
-          }
-
-          const fetchedSideRaw: unknown = currentPosition?.side
-          const fetchedCurrentSide: OrderSide | null =
-            fetchedSideRaw === "long"
-              ? "buy"
-              : fetchedSideRaw === "short"
-                ? "sell"
-                : null
-
-          // Use fetched current side for closer accuracy, but keep action as fallback.
-          const closeSide: OrderSide =
-            fetchedCurrentSide !== null
-              ? fetchedCurrentSide === "buy"
-                ? "sell"
-                : "buy"
-              : action.closeSide
-
-          results.push(
-            await this.closeReduceOnlyNotional(
-              symbol,
-              price,
-              action.closeUsdAmount,
-              closeSide,
-              action.targetSide,
-            ),
-          )
-
-          results.push(
-            await this.placeOrder(symbol, price, action.openNotionalDelta),
-          )
-          break
         }
-      }
-    }
 
-    return results
-  }
+        if (action.kind === "close") {
+          const pos = allCurrentPositions.find(p => p.symbol === action.symbol)
+          if (!pos) return null
 
-  private async processPosition(
-    symbol: string,
-    price: number,
-    notionalDelta: number,
-    side?: OrderSide,
-    // currentPosition: CurrentPosition | undefined,
-    // currentNotional: Record<string, number>,
-    // precise: boolean,
-  ): Promise<OrderResult[]> {
-    console.log("Processing position", symbol, price, notionalDelta, side)
-    // TODO: move this filter to portfolioRebalancer?
-    // if (Math.abs(notionalDelta) < 1.0) {
-    //   return [
-    //     {
-    //       symbol,
-    //       side,
-    //       status: "filled",
-    //       message: "No action taken: change is negligible.",
-    //     },
-    //   ]
-    // }
+          return {
+            symbol: action.symbol,
+            type: "market",
+            side: action.side === "buy" ? "sell" : "buy",
+            amount: Math.abs(parseFloat(String(pos.contracts))),
+            price:
+              action.side === "buy"
+                ? price * (1 - SLIPPAGE)
+                : price * (1 + SLIPPAGE),
+            params: { reduceOnly: true, ...this.vaultParams },
+          }
+        }
+        return null
+      })
+      .filter(Boolean)
 
-    // TODO: make precise mode work
-    // Precise mode for small changes
-    // if (precise && Math.abs(notionalDelta) < MIN_ORDER_VALUE) {
-    //   const currentNotionalAbs =
-    //     currentPosition?.notional ?? Math.abs(currentNotional[symbol] ?? 0)
-    //   return this.processPositionPreciseMode(
-    //     position,
-    //     price,
-    //     targetValue,
-    //     currentValue,
-    //     currentPosition,
-    //     currentNotionalAbs,
-    //   )
-    // }
+    if (orderRequests.length === 0) return []
 
-    // Normal order
-    const result = await this.placeOrder(symbol, price, notionalDelta)
-    return [result]
+    const orderResults = await (this.exchange as any).createOrdersWs(
+      orderRequests,
+    )
+
+    console.log("orderResults", orderResults)
+
+    return orderResults.map((res: any, index: number) => ({
+      symbol: orderRequests[index].symbol,
+      side: orderRequests[index].side,
+      status:
+        res.status === "closed" || res.status === "filled"
+          ? "filled"
+          : "working",
+      message: res.info?.error ?? null,
+    }))
   }
 
   getNetworkMode(): NetworkMode {

@@ -58,6 +58,10 @@
         craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
         rustPkgs = pkgs.callPackage ./rust.nix { inherit craneLib; };
 
+        frontendPkgs = pkgs.callPackage ./frontend {
+          bun2nix = bun2nix.packages.${system}.default;
+        };
+
         infraPkgs =
           import ./infra { inherit pkgs ragenix nixos-anywhere system; };
 
@@ -214,9 +218,9 @@
           moneymentum-test = rustPkgs.test;
           moneymentum-clippy = rustPkgs.clippy;
 
-          frontend = pkgs.callPackage ./frontend {
-            bun2nix = bun2nix.packages.${system}.default;
-          };
+          frontend = frontendPkgs.package;
+          frontend-lint = frontendPkgs.lint;
+          frontend-test = frontendPkgs.test;
 
           resolveIp = pkgs.writeShellApplication {
             name = "resolve-ip";

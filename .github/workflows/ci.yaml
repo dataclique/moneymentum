@@ -78,7 +78,7 @@ jobs:
       - uses: DeterminateSystems/magic-nix-cache-action@main
 
       - name: Lint
-        run: nix develop .#frontend --impure -c bash -c "cd frontend && bun run lint"
+        run: nix build .#frontend-lint
 
   frontend-test:
     runs-on: ubuntu-latest
@@ -94,7 +94,7 @@ jobs:
       - uses: DeterminateSystems/magic-nix-cache-action@main
 
       - name: Test
-        run: nix develop .#frontend --impure -c bash -c "cd frontend && bun run test --run"
+        run: nix build .#frontend-test
 
   frontend:
     needs: [frontend-lint, frontend-test]

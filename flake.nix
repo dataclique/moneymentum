@@ -113,6 +113,9 @@
           libffi
           gcc-unwrapped
           stdenv.cc.cc.lib
+          openssl.dev
+          pkg-config
+          sqlite.dev
         ];
 
         # jdbcPath = "${pkgs.postgresql_jdbc}/share/java/postgresql-jdbc.jar";

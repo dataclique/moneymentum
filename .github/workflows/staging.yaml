@@ -1,6 +1,7 @@
 name: Staging
 
 on:
+  pull_request:
   merge_group:
 
 permissions:
@@ -15,19 +16,27 @@ jobs:
       cancel-in-progress: false
     runs-on: ubuntu-latest
     steps:
+      - name: Skip on pull request
+        if: github.event_name == 'pull_request'
+        run: echo "Staging deploy only runs in merge queue"
+
       - uses: actions/checkout@v4
+        if: github.event_name == 'merge_group'
         with:
           fetch-depth: 0
 
       - uses: DeterminateSystems/nix-installer-action@main
+        if: github.event_name == 'merge_group'
         with:
           extra-conf: |
             accept-flake-config = true
             fallback = true
 
       - uses: DeterminateSystems/magic-nix-cache-action@main
+        if: github.event_name == 'merge_group'
 
       - name: Setup SSH
+        if: github.event_name == 'merge_group'
         run: |
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
@@ -35,6 +44,7 @@ jobs:
           chmod 600 ~/.ssh/id_ed25519
 
       - name: Resolve and mask host IP
+        if: github.event_name == 'merge_group'
         run: |
           host_ip=$(nix run .#resolveIp)
           echo "::add-mask::$host_ip"
@@ -43,10 +53,12 @@ jobs:
           echo "$host_ip $host_key" > ~/.ssh/known_hosts
 
       - name: Reset services before deploy
+        if: github.event_name == 'merge_group'
         run: |
           ssh "root@$HOST_IP" 'systemctl stop staging || true; systemctl reset-failed staging || true; rm -f /run/moneymentum/staging.ready'
 
       - name: Check for infra changes
+        if: github.event_name == 'merge_group'
         id: infra
         run: |
           base="${{ github.event.merge_group.base_sha }}"
@@ -57,12 +69,13 @@ jobs:
           fi
 
       - name: Deploy NixOS
-        if: steps.infra.outputs.changed == 'true'
+        if: github.event_name == 'merge_group' && steps.infra.outputs.changed == 'true'
         run: nix run .#deployNixos
 
       - name: Deploy staging service
+        if: github.event_name == 'merge_group'
         run: nix run .#deployService -- staging
 
       - name: Cleanup SSH
-        if: always()
+        if: always() && github.event_name == 'merge_group'
         run: rm -rf ~/.ssh

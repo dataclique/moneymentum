@@ -64,7 +64,7 @@ jobs:
     steps:
       - run: true
 
-  frontend:
+  frontend-lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -78,9 +78,26 @@ jobs:
       - uses: DeterminateSystems/magic-nix-cache-action@main
 
       - name: Lint
-        # --impure required: devenv uses impure features for caching and local state
         run: nix develop .#frontend --impure -c bash -c "cd frontend && bun run lint"
 
+  frontend-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: DeterminateSystems/nix-installer-action@main
+        with:
+          extra-conf: |
+            accept-flake-config = true
+            fallback = true
+
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+
       - name: Test
-        # --impure required: devenv uses impure features for caching and local state
         run: nix develop .#frontend --impure -c bash -c "cd frontend && bun run test --run"
+
+  frontend:
+    needs: [frontend-lint, frontend-test]
+    runs-on: ubuntu-latest
+    steps:
+      - run: true

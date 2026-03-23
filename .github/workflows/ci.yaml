@@ -58,6 +58,12 @@ jobs:
         # RUSTFLAGS="-D warnings" fails on any warning; clippy adds -D clippy::all
         run: nix build .#moneymentum-clippy
 
+  backend:
+    needs: [backend-test, backend-clippy]
+    runs-on: ubuntu-latest
+    steps:
+      - run: true
+
   frontend:
     runs-on: ubuntu-latest
     steps:

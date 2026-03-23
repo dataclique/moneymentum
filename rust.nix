@@ -94,7 +94,7 @@ let
 in {
   package = craneLib.buildPackage (commonArgs // {
     inherit cargoArtifacts;
-    doCheck = false;
+    doCheck = true;
   });
 
   # CI check derivations — lighter than buildPackage (no final link step)

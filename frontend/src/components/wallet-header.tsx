@@ -31,7 +31,7 @@ const formatPublicKey = (key: string): string => {
 
 interface WalletHeaderProps {
   autoOpen?: boolean
-  handleDisconnect: () => void
+  handleDisconnect?: () => void
 }
 
 //TOOD: make this without page reloading on network switch
@@ -119,7 +119,7 @@ export const WalletHeader = (props: WalletHeaderProps) => {
 
   //TODO: rename
   const handleDisconnect = () => {
-    props.handleDisconnect()
+    props.handleDisconnect?.()
     disconnect()
     setDialogOpen(false)
     setMenuOpen(false)

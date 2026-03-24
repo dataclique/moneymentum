@@ -1,8 +1,10 @@
-import { ErrorBoundary } from "solid-js"
+import { createEffect, ErrorBoundary } from "solid-js"
 import type { RouteSectionProps } from "@solidjs/router"
 
 const ErrorFallback = (props: { error: Error; reset: () => void }) => {
-  console.error(props.error)
+  createEffect(() => {
+    console.error(props.error)
+  })
 
   return (
     <div class="flex h-screen flex-col items-center justify-center gap-4 bg-background text-foreground">

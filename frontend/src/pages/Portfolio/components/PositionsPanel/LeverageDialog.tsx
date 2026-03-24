@@ -23,7 +23,9 @@ export const LeverageDialog = (props: LeverageDialogProps): JSX.Element => {
         }
       }
       window.addEventListener("keydown", handleEsc)
-      onCleanup(() => window.removeEventListener("keydown", handleEsc))
+      onCleanup(() => {
+        window.removeEventListener("keydown", handleEsc)
+      })
     }
   })
 
@@ -34,7 +36,9 @@ export const LeverageDialog = (props: LeverageDialogProps): JSX.Element => {
         size="sm"
         class="h-auto px-1.5 py-0 text-[10px] font-mono border border-border rounded pointer-events-auto"
         disabled={props.disabled}
-        onClick={() => setOpen(prev => !prev)}
+        onClick={() => {
+          setOpen(prev => !prev)
+        }}
       >
         {props.leverage}x
       </Button>
@@ -65,9 +69,9 @@ export const LeverageDialog = (props: LeverageDialogProps): JSX.Element => {
               </span>
               <Slider
                 value={[props.leverage]}
-                onChange={([leverage]) =>
+                onChange={([leverage]) => {
                   props.onLeverageChange(props.symbol, leverage)
-                }
+                }}
                 minValue={1}
                 maxValue={props.maxLeverage}
                 step={1}

@@ -1,11 +1,4 @@
-import {
-  createSignal,
-  createEffect,
-  Show,
-  For,
-  untrack,
-  createMemo,
-} from "solid-js"
+import { createSignal, createEffect, Show, createMemo } from "solid-js"
 import type { JSX } from "solid-js"
 import Decimal from "decimal.js"
 import { Trash2, Undo2, CircleAlert } from "lucide-solid"
@@ -20,29 +13,9 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/cn"
 import type { OrderSide } from "@/hooks/useTrading"
 import { MIN_USD } from "../../hooks/usePortfolioState"
-import { useWallet } from "@/hooks/useWallet"
-import { WalletHeader } from "@/components/wallet-header"
 import { LeverageDialog } from "./LeverageDialog"
 
 import { type PortfolioInterface } from "../../hooks/usePortfolioState"
-
-interface PositionsPanelProps {
-  positions: Record<string, PortfolioInterface>
-  isLoading: boolean
-  fundingIsLoading: boolean
-  leverageLimitsMap: Record<string, number | undefined>
-  _isRebalancing?: boolean
-  isPrecise: boolean
-  onRemove: (symbol: string) => void
-  onUndoRemove: (symbol: string) => void
-  onSideChange: (symbol: string, side: OrderSide) => void
-  onLeverageChange: (symbol: string, leverage: number) => void
-  onNotionalChange: (symbol: string, notional: number) => void
-  onWeightChange: (symbol: string, percentage: number) => void
-  fundingRatesByBaseSymbol?: Record<string, number>
-  targetTotalNotional: number
-  symbolsBelowMinimum: string[]
-}
 
 const getSideBadgeClass = (side: OrderSide) =>
   side === "buy"
@@ -51,7 +24,7 @@ const getSideBadgeClass = (side: OrderSide) =>
 
 export const PositionsPanelRow = (props: {
   symbol: string
-  position: any
+  position: () => PortfolioInterface
   status: "new" | "unchanged" | "changed" | "closing"
   maxLeverage: number
   isPrecise: boolean
@@ -68,12 +41,12 @@ export const PositionsPanelRow = (props: {
   symbolsDeltaBelowMinimum: string[]
   symbolDelta: number
 }): JSX.Element => {
-  const notional = () => props.position().notional ?? 0
+  const notional = () => props.position().notional
   const weight = createMemo(() => {
     return new Decimal(notional()).div(props.totalNotional).mul(100).toFixed(2)
   })
 
-  const [weightInput, setWeightInput] = createSignal(weight())
+  const [weightInput, setWeightInput] = createSignal("")
   const [isWeightFocused, setIsWeightFocused] = createSignal(false)
 
   // createEffect: sync external weight into local input when not focused
@@ -96,7 +69,6 @@ export const PositionsPanelRow = (props: {
   const isClosing = () => props.status === "closing"
 
   const isNew = () => props.status === "new"
-  const isChanged = () => props.status === "changed"
 
   const baseSymbol = () =>
     props.position().symbol.split("/")[0] ?? props.position().symbol
@@ -112,8 +84,10 @@ export const PositionsPanelRow = (props: {
 
   // fundingRate we got from hyperliquid API is 1 hour rate
   // to get annualized rate, we multiply by 24 (hours) and 365 (days)
-  const annualizedFundingRate = () =>
-    fundingRate() === undefined ? null : fundingRate()! * 24 * 365
+  const annualizedFundingRate = () => {
+    const rate = fundingRate()
+    return rate === undefined ? null : rate * 24 * 365
+  }
   const positionAdjustedFundingRate = () => {
     const rate = annualizedFundingRate()
     if (rate === null) return null

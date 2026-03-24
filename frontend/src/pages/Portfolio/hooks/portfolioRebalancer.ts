@@ -3,7 +3,7 @@ import { type OrderSide, type RebalanceParams } from "@/hooks/useTrading"
 import type { PortfolioInterface } from "@/pages/Portfolio/hooks/usePortfolioState"
 
 //TODO filter action by MIN_USD here (not only in UI)
-import { MIN_USD } from "@/pages/Portfolio/hooks/usePortfolioState"
+// import { MIN_USD } from "@/pages/Portfolio/hooks/usePortfolioState"
 
 export type RebalanceAction =
   | {
@@ -18,26 +18,26 @@ export type RebalanceAction =
       leverage: number
       leverageChanged: boolean
     }
-  | {
-      kind: "preciseRebalance"
-      symbol: string
-      currentNotionalAbs: number
-      currentSide: OrderSide
-      closeSide: OrderSide
+// | {
+//     kind: "preciseRebalance"
+//     symbol: string
+//     currentNotionalAbs: number
+//     currentSide: OrderSide
+//     closeSide: OrderSide
 
-      closeUsdAmount: number
+//     closeUsdAmount: number
 
-      targetNotionalAbs: number
-      targetSide: OrderSide
-      openNotionalDelta: number
+//     targetNotionalAbs: number
+//     targetSide: OrderSide
+//     openNotionalDelta: number
 
-      leverage: number
-      leverageChanged: boolean
-    }
+//     leverage: number
+//     leverageChanged: boolean
+//   }
 
 export const buildApiPayload = (
-  current: Record<string, PortfolioInterface>,
-  target: Record<string, PortfolioInterface>,
+  current: Record<string, PortfolioInterface | undefined>,
+  target: Record<string, PortfolioInterface | undefined>,
   precise: boolean,
 ): RebalanceParams => {
   const actions = diffPortfolios(current, target)
@@ -54,8 +54,8 @@ const getSignedNotional = (side: OrderSide, notional: number) =>
   side === "buy" ? notional : -notional
 
 export const diffPortfolios = (
-  current: Record<string, PortfolioInterface>,
-  target: Record<string, PortfolioInterface>,
+  current: Record<string, PortfolioInterface | undefined>,
+  target: Record<string, PortfolioInterface | undefined>,
 ): RebalanceAction[] => {
   const actions: RebalanceAction[] = []
   const allSymbols = new Set([...Object.keys(current), ...Object.keys(target)])
@@ -83,7 +83,7 @@ export const diffPortfolios = (
       continue
     }
 
-    const leverageChanged = !c || Number(c.leverage) !== Number(t.leverage)
+    const leverageChanged = c?.leverage !== t.leverage
 
     // Regular rebalance
     const NOTIONAL_EPSILON = 0.1

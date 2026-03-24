@@ -1,32 +1,6 @@
-import {
-  createSignal,
-  createEffect,
-  Show,
-  For,
-  untrack,
-  createMemo,
-} from "solid-js"
+import { Show, For, createMemo } from "solid-js"
 import type { JSX } from "solid-js"
-import Decimal from "decimal.js"
-import { Trash2, Undo2, CircleAlert } from "lucide-solid"
-import { Button } from "@/components/ui/button"
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog"
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip"
-import { Slider } from "@/components/ui/slider"
 import { Skeleton } from "@/components/ui/skeleton"
-import { cn } from "@/lib/cn"
 import type { OrderSide } from "@/hooks/useTrading"
 import { useWallet } from "@/hooks/useWallet"
 import { WalletHeader } from "@/components/wallet-header"
@@ -35,9 +9,9 @@ import { type PortfolioInterface } from "../../hooks/usePortfolioState"
 import { PositionsPanelRow } from "./PositionsPanelRow"
 
 interface PositionsPanelProps {
-  currentPortfolio: Record<string, PortfolioInterface>
-  targetPortfolio: Record<string, PortfolioInterface>
-  deletedArchive: Record<string, PortfolioInterface>
+  currentPortfolio: Record<string, PortfolioInterface | undefined>
+  targetPortfolio: Record<string, PortfolioInterface | undefined>
+  deletedArchive: Record<string, PortfolioInterface | undefined>
   isLoading: boolean
   fundingIsLoading: boolean
   leverageLimitsMap: Record<string, number>

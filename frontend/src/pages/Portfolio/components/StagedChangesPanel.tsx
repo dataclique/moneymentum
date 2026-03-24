@@ -29,15 +29,13 @@ const formatUsdPrecise = (value: number): string => `$${value.toFixed(2)}`
 const NOTIONAL_EPSILON_USD = 0.1
 
 export const StagedChangesPanel = (props: StagedChangesPanelProps) => {
-  const stagedTrades = () => props.stagedTrades ?? []
+  const stagedTrades = () => props.stagedTrades
   const hasStaged = () => stagedTrades().length > 0
 
   const isRebalanceButtonDisabled = () =>
     !props.canSubmit || // outside reasons (validation errors)
     !hasStaged() || // no trades - nothing to rebalance
     props.isRebalancing
-
-  console.log("stagedTrades", stagedTrades())
 
   const isRebalancing = () => props.isRebalancing ?? false
 
@@ -176,10 +174,10 @@ export const StagedChangesPanel = (props: StagedChangesPanelProps) => {
                     when={shouldShowLeverageArrow()}
                     fallback={`${props.targetCrossAccountLeverage.toFixed(2)}x`}
                   >
-                    {currentLeverage()?.toFixed(2)}x{" "}
+                    {currentLeverage().toFixed(2)}x{" "}
                     <span class="text-muted-foreground">→</span>{" "}
                     <span class="text-yellow-500">
-                      {(targetLeverage() ?? 0).toFixed(2)}x
+                      {targetLeverage().toFixed(2)}x
                     </span>
                   </Show>
                 </Show>

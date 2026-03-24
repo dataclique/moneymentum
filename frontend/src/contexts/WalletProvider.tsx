@@ -77,7 +77,7 @@ export const WalletProvider = (props: ParentProps) => {
 
   onMount(() => {
     const stored = getStoredWalletMetadata()
-    if (stored && stored.privateKey) {
+    if (stored?.privateKey) {
       setCredentials({
         accountAddress: stored.accountAddress,
         apiWalletAddress: stored.apiWalletAddress,

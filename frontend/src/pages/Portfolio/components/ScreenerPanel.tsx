@@ -78,11 +78,15 @@ export const ScreenerPanel = (props: ScreenerPanelProps) => {
                           ? "bg-muted/50 opacity-60 cursor-default"
                           : "hover:bg-muted/30",
                       )}
-                      onClick={() => !isSelected() && props.onAddSymbol(symbol)}
+                      onClick={() => {
+                        if (!isSelected()) {
+                          props.onAddSymbol(symbol)
+                        }
+                      }}
                     >
                       <td class="px-2 py-1 font-medium">{baseSymbol()}</td>
                       <td class="px-2 py-1 text-right font-mono text-[11px] text-muted-foreground w-[80px]">
-                        {fundingDisplay() ?? "--"}
+                        {fundingDisplay()}
                       </td>
                     </tr>
                   )

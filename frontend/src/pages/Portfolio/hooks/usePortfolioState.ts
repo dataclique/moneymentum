@@ -12,14 +12,8 @@ import {
   useHyperliquidLeverageLimits,
   useRebalanceHyperliquidPositions,
   type OrderSide,
-  type OrderResult,
 } from "@/hooks/useTrading"
-import {
-  buildApiPayload,
-  diffPortfolios,
-  // type Portfolio as DiffPortfolio,
-  // type PortfolioPosition as DiffPortfolioPosition,
-} from "./portfolioRebalancer"
+import { buildApiPayload, diffPortfolios } from "./portfolioRebalancer"
 import { useWallet } from "@/hooks/useWallet"
 import { createStore, produce, reconcile } from "solid-js/store"
 
@@ -27,9 +21,6 @@ import { createStore, produce, reconcile } from "solid-js/store"
 export const MIN_USD = 11
 const MAX_CROSS_ACCOUNT_LEVERAGE = 5
 const DEFAULT_CROSS_ACCOUNT_LEVERAGE = 1
-
-const roundNotional = (n: number): number =>
-  new Decimal(n).toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber()
 
 export interface PortfolioInterface {
   symbol: string
@@ -60,13 +51,12 @@ export const usePortfolioState = (
   isPrecise: () => boolean,
   isWeightRedistribution: () => boolean,
 ) => {
-  const { networkMode, isConnected } = useWallet()
+  const { isConnected } = useWallet()
 
   // Exchange data queries
   const accountSummaryQuery = useHyperliquidAccountSummary()
   const positionsQuery = useHyperliquidPositions()
   const leverageLimitsQuery = useHyperliquidLeverageLimits()
-
   // Mutations
   const rebalancePositionsMutation = useRebalanceHyperliquidPositions()
 
@@ -75,14 +65,15 @@ export const usePortfolioState = (
   ///////////////////////////
 
   const [currentPortfolio, setCurrentPortfolio] = createStore<
-    Record<string, PortfolioInterface>
+    Record<string, PortfolioInterface | undefined>
   >({})
+
   const [targetPortfolio, setTargetPortfolio] = createStore<
-    Record<string, PortfolioInterface>
+    Record<string, PortfolioInterface | undefined>
   >({})
 
   const [deletedArchive, setDeletedArchive] = createStore<
-    Record<string, PortfolioInterface>
+    Record<string, PortfolioInterface | undefined>
   >({})
 
   const [currentCrossAccountLeverage, setCurrentCrossAccountLeverage] =
@@ -108,40 +99,36 @@ export const usePortfolioState = (
   const redistributeWeights = (
     changedSymbol: string,
     newPercentage: number,
-    totalNotional: number,
   ) => {
-    const symbols = Object.keys(targetPortfolio)
+    const totalNotional = targetTotalNotional()
+    const portfolio = untrack(() => targetPortfolio)
+    const symbols = Object.keys(portfolio)
 
     if (totalNotional <= 0 || !symbols.includes(changedSymbol)) return
 
     const clampedNew = Math.max(0, Math.min(100, newPercentage))
     const otherSymbols = symbols.filter(s => s !== changedSymbol)
 
-    // 1. Считаем текущий суммарный процент остальных весов
     const otherTotalPercent = otherSymbols.reduce((sum, s) => {
-      const currentNotional = targetPortfolio[s]?.notional || 0
+      const pos = portfolio[s]
+      const currentNotional = pos?.notional ?? 0
       return sum + (currentNotional / totalNotional) * 100
     }, 0)
 
     batch(() => {
-      // 2. Обновляем целевой символ
       const newTargetNotional = (clampedNew / 100) * totalNotional
       setTargetPortfolio(changedSymbol, "notional", newTargetNotional)
 
-      // 3. Распределяем оставшийся процент
       const remainingPercentForOthers = 100 - clampedNew
 
       otherSymbols.forEach(symbol => {
         let nextPercent: number
 
         if (otherTotalPercent <= 0) {
-          // Если у остальных был 0%, делим остаток поровну
           nextPercent = remainingPercentForOthers / otherSymbols.length
         } else {
-          // Пропорциональное изменение:
-          // (текущий_вес / сумма_остальных_весов) * доступный_остаток
-          const currentPercent =
-            (targetPortfolio[symbol].notional / totalNotional) * 100
+          const pos = portfolio[symbol]
+          const currentPercent = ((pos?.notional ?? 0) / totalNotional) * 100
           nextPercent =
             (currentPercent / otherTotalPercent) * remainingPercentForOthers
         }
@@ -157,12 +144,14 @@ export const usePortfolioState = (
 
   const symbolsBelowMinimum = createMemo(() =>
     Object.keys(targetPortfolio).filter(symbol => {
-      if (targetPortfolio[symbol].notional >= MIN_USD) return false
-
+      const targetPosition = targetPortfolio[symbol]
       const currentNotional = currentPortfolio[symbol]?.notional ?? 0
+
+      if (!targetPosition || targetPosition.notional >= MIN_USD) return false
+
       const unchanged =
         currentNotional < MIN_USD &&
-        Math.abs(targetPortfolio[symbol].notional - currentNotional) < 0.01
+        Math.abs(targetPosition.notional - currentNotional) < 0.01
 
       return !unchanged
     }),
@@ -170,9 +159,12 @@ export const usePortfolioState = (
 
   const symbolsDeltaBelowMinimum = createMemo(() =>
     Object.keys(targetPortfolio).filter(symbol => {
-      const delta = Math.abs(
-        targetPortfolio[symbol].notional - currentPortfolio[symbol]?.notional,
-      )
+      const target = targetPortfolio[symbol]
+      if (!target) return false
+
+      const currentNotional = currentPortfolio[symbol]?.notional ?? 0
+      const delta = Math.abs(target.notional - currentNotional)
+
       return delta < MIN_USD && delta !== 0
     }),
   )
@@ -219,15 +211,6 @@ export const usePortfolioState = (
       .toDecimalPlaces(2, Decimal.ROUND_HALF_UP)
       .toNumber(),
   )
-
-  // Mutable ref kept in sync with targetCrossAccountLeverage signal via createEffect.
-  // Avoids stale closures in callbacks that read leverage without re-subscribing.
-  let latestCrossAccountLeverage = untrack(targetCrossAccountLeverage)
-
-  // createEffect: sync mutable ref with signal so downstream functions read current value
-  createEffect(() => {
-    latestCrossAccountLeverage = targetCrossAccountLeverage()
-  })
 
   // Wait for positionsQuery data and positive accountValue, then initialize from exchange positions
   createEffect(() => {
@@ -290,22 +273,36 @@ export const usePortfolioState = (
 
   //Get staged trades directly for actions we will perform
   const stagedTrades = createMemo<StagedTradeItem[]>(() => {
+    const totalCurrent = currentTotalNotional()
+    const totalTarget = targetTotalNotional()
+
     return actions().map(action => {
       const symbol = action.symbol
       const c = currentPortfolio[symbol]
       const t = targetPortfolio[symbol]
 
-      const delta =
-        action.kind === "close"
-          ? -getSignedNotional(c.side, c.notional)
-          : action.notional
+      let delta = 0
+
+      switch (action.kind) {
+        case "close":
+          if (!c) {
+            throw new Error(
+              `Close action for ${symbol} without current position`,
+            )
+          }
+          delta = -getSignedNotional(c.side, c.notional)
+          break
+        case "rebalance":
+          delta = action.notional
+          break
+      }
 
       return {
         underlying: symbol,
         side: delta > 0 ? "buy" : "sell",
         notional: Math.abs(delta),
-        previousWeight: (c?.notional || 0) / (currentTotalNotional() || 1),
-        newWeight: (t?.notional || 0) / (targetTotalNotional() || 1),
+        previousWeight: (c?.notional ?? 0) / totalCurrent,
+        newWeight: (t?.notional ?? 0) / totalTarget,
       }
     })
   })
@@ -332,34 +329,34 @@ export const usePortfolioState = (
   // const showTargetOfTotal = () =>
   //   Math.abs(derivedTotalPercent() - 100) > MAX_TOTAL_PERCENT_TOLERANCE
 
-  const blockingReasons = createMemo(() => {
-    const reasons: string[] = []
-    if (hasPositionsBelowMinimum()) {
-      const symbolsList = symbolsBelowMinimum()
-        .map(s => `${s} ($${targetPortfolio[s].notional.toFixed(2)})`)
-        .join(", ")
-      return `Each position must be at least $${String(MIN_USD)}. Positions below minimum: ${symbolsList}`
-    }
-    if (hasSymbolsDeltaBelowMinimum() && !isPrecise()) {
-      const symbolsList = symbolsDeltaBelowMinimum()
-        .map(s => `${s} ($${targetPortfolio[s].notional.toFixed(2)})`)
-        .join(", ")
-      return `Each position delta must be at least $${String(MIN_USD)}. Positions below minimum: ${symbolsList}`
-    }
-    //   if (hasTotalPercentExceeded()) {
-    //     const excessPercent = (derivedTotalPercent() - 100).toFixed(1)
-    //     reasons.push(
-    //       `Sum of weights exceeds 100% by ${excessPercent}%. Reduce allocations.`,
-    //     )
-    //   }
-    //   if (hasTotalPercentBelow()) {
-    //     const deficitPercent = (100 - derivedTotalPercent()).toFixed(1)
-    //     reasons.push(
-    //       `Sum of weights is below 100% by ${deficitPercent}%. Add allocations.`,
-    //     )
-    //   }
-    return reasons
-  })
+  // const blockingReasons = createMemo(() => {
+  //   const reasons: string[] = []
+  //   if (hasPositionsBelowMinimum()) {
+  //     const symbolsList = symbolsBelowMinimum()
+  //       .map(s => `${s} ($${targetPortfolio[s].notional.toFixed(2)})`)
+  //       .join(", ")
+  //     return `Each position must be at least $${String(MIN_USD)}. Positions below minimum: ${symbolsList}`
+  //   }
+  //   if (hasSymbolsDeltaBelowMinimum() && !isPrecise()) {
+  //     const symbolsList = symbolsDeltaBelowMinimum()
+  //       .map(s => `${s} ($${targetPortfolio[s].notional.toFixed(2)})`)
+  //       .join(", ")
+  //     return `Each position delta must be at least $${String(MIN_USD)}. Positions below minimum: ${symbolsList}`
+  //   }
+  //   if (hasTotalPercentExceeded()) {
+  //     const excessPercent = (derivedTotalPercent() - 100).toFixed(1)
+  //     reasons.push(
+  //       `Sum of weights exceeds 100% by ${excessPercent}%. Reduce allocations.`,
+  //     )
+  //   }
+  //   if (hasTotalPercentBelow()) {
+  //     const deficitPercent = (100 - derivedTotalPercent()).toFixed(1)
+  //     reasons.push(
+  //       `Sum of weights is below 100% by ${deficitPercent}%. Add allocations.`,
+  //     )
+  //   }
+  //   return reasons
+  // })
 
   const handleAddToken = (symbol: string) => {
     if (symbol in targetPortfolio) return
@@ -387,35 +384,33 @@ export const usePortfolioState = (
         setDeletedArchive(symbol, { ...targetPosition })
       }
 
-      setTargetPortfolio(
-        produce(state => {
-          delete state[symbol]
-        }),
-      )
+      setTargetPortfolio(symbol, undefined)
+
       setTargetTotalNotional(prev =>
         Math.max(0, prev - targetPosition.notional),
       )
     })
+
+    console.log("targetPortfolio", JSON.parse(JSON.stringify(targetPortfolio)))
   }
 
   const handleUndoRemoveToken = (symbol: string) => {
     const archivedPosition = deletedArchive[symbol]
     const currentPosition = currentPortfolio[symbol]
 
-    const positionToRestore = archivedPosition || currentPosition
+    const positionToRestore = archivedPosition ?? currentPosition
 
     if (!positionToRestore) return
 
     batch(() => {
       setTargetPortfolio(symbol, { ...positionToRestore })
+
       setTargetTotalNotional(prev => prev + positionToRestore.notional)
 
-      setDeletedArchive(
-        produce(state => {
-          delete state[symbol]
-        }),
-      )
+      setDeletedArchive(symbol, undefined)
     })
+
+    console.log(`Restored ${symbol}, archive cleared.`)
   }
 
   const handleSideChange = (symbol: string, side: OrderSide) => {
@@ -430,21 +425,19 @@ export const usePortfolioState = (
   }
 
   const handleNotionalChange = (symbol: string, newNotional: number) => {
+    const oldNotional = targetPortfolio[symbol]?.notional ?? 0
+    const diff = newNotional - oldNotional
+
     setTargetPortfolio(symbol, "notional", newNotional)
 
-    const nextTotal = Object.values(targetPortfolio).reduce((sum, pos) => {
-      if (deletedArchive[symbol]) return sum
-      return sum + (pos.notional || 0)
-    }, 0)
-
-    setTargetTotalNotional(nextTotal)
+    if (!deletedArchive[symbol]) {
+      setTargetTotalNotional(prev => prev + diff)
+    }
   }
 
   const handleWeightChange = (changedSymbol: string, newPercentage: number) => {
     if (isWeightRedistribution()) {
-      redistributeWeights(changedSymbol, newPercentage, targetTotalNotional())
-
-      return
+      redistributeWeights(changedSymbol, newPercentage)
     }
 
     // TODO: make this working
@@ -477,9 +470,9 @@ export const usePortfolioState = (
 
     setTargetPortfolio(
       produce(state => {
-        for (const symbol in state) {
-          if (!deletedArchive[symbol]) {
-            state[symbol].notional *= multiplier
+        for (const [symbol, pos] of Object.entries(state)) {
+          if (pos && !deletedArchive[symbol]) {
+            pos.notional *= multiplier
           }
         }
       }),
@@ -489,7 +482,10 @@ export const usePortfolioState = (
   }
 
   const handleResetToCurrent = () => {
-    const currentTokens = Object.values(currentPortfolio)
+    const currentTokens = Object.values(currentPortfolio).filter(
+      (token): token is PortfolioInterface => !!token,
+    )
+
     const nextTarget = Object.fromEntries(
       currentTokens.map(token => [
         token.symbol,
@@ -499,7 +495,6 @@ export const usePortfolioState = (
 
     batch(() => {
       setTargetPortfolio(reconcile(nextTarget))
-
       setTargetTotalNotional(currentTotalNotional())
     })
   }
@@ -528,11 +523,6 @@ export const usePortfolioState = (
     setCurrentTotalNotional(0)
     setTargetTotalNotional(0)
   }
-
-  const hasBlockingNotionalIssue = () => hasPositionsBelowMinimum()
-  // ||
-  // hasTotalPercentExceeded() ||
-  // hasTotalPercentBelow()
 
   const canSubmit = () => {
     const isPortfolioValid =

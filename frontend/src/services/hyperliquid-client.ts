@@ -1,4 +1,4 @@
-import ccxt, { type Order, type OrderRequest } from "ccxt"
+import { type Order, type OrderRequest } from "ccxt"
 import { pro } from "ccxt"
 import type { NetworkMode, WalletCredentials } from "@/contexts/wallet-context"
 import type { RebalanceAction } from "@/pages/Portfolio/hooks/portfolioRebalancer"
@@ -146,7 +146,6 @@ export interface LeverageLimit {
 }
 
 // Minimum order size on Hyperliquid is $10, but we use $11 to guarantee orders will be opened
-const MIN_ORDER_VALUE = 11.0
 const SLIPPAGE = 0.05
 
 interface HyperliquidExchange {
@@ -353,6 +352,15 @@ export class HyperliquidClient {
     return fallback
   }
 
+  private parseOrderErrorMessage(info: unknown): string | null {
+    if (typeof info !== "object" || info === null || !("error" in info)) {
+      return null
+    }
+
+    const orderError = (info as { error: unknown }).error
+    return typeof orderError === "string" ? orderError : null
+  }
+
   async listPerpTickers(): Promise<string[]> {
     const markets = await this.exchange.loadMarkets()
 
@@ -461,29 +469,29 @@ export class HyperliquidClient {
       this.exchange.fetchPositions(),
     ])
 
-    const orderRequests: any[] = actions
-      .map(action => {
-        const price = tickers[action.symbol]?.last
-        if (!price) return null
+    const orderRequests: OrderRequest[] = actions.flatMap(action => {
+      const price = tickers[action.symbol].last
+      if (!price) return []
 
-        if (action.kind === "rebalance") {
+      switch (action.kind) {
+        case "rebalance": {
           const side = action.notional > 0 ? "buy" : "sell"
           const amount = Math.abs(action.notional) / price
 
           return {
             symbol: action.symbol,
             type: "market",
-            side: side,
-            amount: amount,
+            side,
+            amount,
             price:
               side === "buy" ? price * (1 + SLIPPAGE) : price * (1 - SLIPPAGE),
             params: { ...this.vaultParams },
           }
         }
 
-        if (action.kind === "close") {
+        case "close": {
           const pos = allCurrentPositions.find(p => p.symbol === action.symbol)
-          if (!pos) return null
+          if (!pos) return []
 
           return {
             symbol: action.symbol,
@@ -497,9 +505,10 @@ export class HyperliquidClient {
             params: { reduceOnly: true, ...this.vaultParams },
           }
         }
-        return null
-      })
-      .filter(Boolean)
+        default:
+          return []
+      }
+    })
 
     if (orderRequests.length === 0) return []
 
@@ -507,14 +516,14 @@ export class HyperliquidClient {
 
     console.log("orderResults", orderResults)
 
-    return orderResults.map((res: any, index: number) => ({
+    return orderResults.map((res: Order, index: number) => ({
       symbol: orderRequests[index].symbol,
-      side: orderRequests[index].side,
+      side: (orderRequests[index].side ?? "buy") as OrderSide,
       status:
         res.status === "closed" || res.status === "filled"
           ? "filled"
           : "working",
-      message: res.info?.error ?? null,
+      message: this.parseOrderErrorMessage(res.info),
     }))
   }
 

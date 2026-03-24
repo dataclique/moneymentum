@@ -2,7 +2,6 @@ import { createMemo } from "solid-js"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/solid-query"
 import { useWallet } from "./useWallet"
 import type {
-  Position,
   OrderResult,
   CurrentPosition,
   LeverageLimit,
@@ -156,7 +155,8 @@ export const useHyperliquidFundingRates = () => {
     queryKey: [...QUERY_KEYS.fundingRates, networkMode()],
     queryFn: async () => {
       const c = client()
-      return c!.getFundingRates()
+      if (!c) throw new Error("Wallet not connected")
+      return c.getFundingRates()
     },
     enabled: isConnected() && client() !== null,
     staleTime: DATA_STALE_TIME_MS,

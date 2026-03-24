@@ -430,10 +430,6 @@ export class HyperliquidClient {
     return processed
   }
 
-  private signedNotional(side: OrderSide, notional: number): number {
-    return side === "buy" ? notional : -notional
-  }
-
   private async setLeverage(symbol: string, leverage: number): Promise<void> {
     await this.exchange.setLeverage(leverage, symbol, this.vaultParams)
   }
@@ -507,9 +503,7 @@ export class HyperliquidClient {
 
     if (orderRequests.length === 0) return []
 
-    const orderResults = await (this.exchange as any).createOrdersWs(
-      orderRequests,
-    )
+    const orderResults = await this.exchange.createOrdersWs(orderRequests)
 
     console.log("orderResults", orderResults)
 

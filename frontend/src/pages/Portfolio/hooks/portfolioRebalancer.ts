@@ -1,6 +1,8 @@
 import { type OrderSide, type RebalanceParams } from "@/hooks/useTrading"
 
 import type { PortfolioInterface } from "@/pages/Portfolio/hooks/usePortfolioState"
+
+//TODO filter action by MIN_USD here (not only in UI)
 import { MIN_USD } from "@/pages/Portfolio/hooks/usePortfolioState"
 
 export type RebalanceAction =

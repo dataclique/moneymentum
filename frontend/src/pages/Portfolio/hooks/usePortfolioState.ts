@@ -493,8 +493,6 @@ export const usePortfolioState = (
       isPrecise(),
     )
 
-    console.log(apiPayload, ["precise", "actions"])
-
     rebalancePositionsMutation.mutate(apiPayload)
 
     setIsRebalancingUi(true)

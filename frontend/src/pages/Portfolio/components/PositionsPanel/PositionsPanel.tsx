@@ -142,7 +142,13 @@ export const PositionsPanel = (props: PositionsPanelProps): JSX.Element => {
                         }
 
                         // 3. If it's neither in target nor archive (but exists in current) — use current
-                        return { ...props.currentPortfolio[symbol] }
+                        const current = props.currentPortfolio[symbol]
+                        if (!current) {
+                          throw new Error(
+                            `Symbol ${symbol} not found in any portfolio`,
+                          )
+                        }
+                        return current
                       })
 
                       return (

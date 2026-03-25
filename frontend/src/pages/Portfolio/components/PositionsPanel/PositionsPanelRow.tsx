@@ -43,6 +43,7 @@ export const PositionsPanelRow = (props: {
 }): JSX.Element => {
   const notional = () => props.position().notional
   const weight = createMemo(() => {
+    if (props.totalNotional === 0) return "0.00"
     return new Decimal(notional()).div(props.totalNotional).mul(100).toFixed(2)
   })
 

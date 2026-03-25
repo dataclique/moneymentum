@@ -448,12 +448,8 @@ export class HyperliquidClient {
 
   async rebalancePositions(
     actions: RebalanceAction[],
-    precise: boolean = false,
+    // precise: boolean = false,
   ): Promise<OrderResult[]> {
-    console.log("Rebalancing positions", {
-      actionsCount: actions.length,
-      precise,
-    })
     await this.exchange.loadMarkets()
     const allSymbols = actions.map(a => a.symbol)
 
@@ -517,8 +513,6 @@ export class HyperliquidClient {
     if (orderRequests.length === 0) return []
 
     const orderResults = await this.exchange.createOrdersWs(orderRequests)
-
-    console.log("orderResults", orderResults)
 
     return orderResults.map((res: Order, index: number) => ({
       symbol: orderRequests[index].symbol,

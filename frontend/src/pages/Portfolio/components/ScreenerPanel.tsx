@@ -20,9 +20,11 @@ export const ScreenerPanel = (props: ScreenerPanelProps) => {
     const filtered =
       query === ""
         ? props.symbols
-        : props.symbols.filter(s => s.toLowerCase().includes(query))
+        : props.symbols.filter(symbol => symbol.toLowerCase().includes(query))
 
-    return filtered.slice().sort((a, b) => a.localeCompare(b))
+    return filtered
+      .slice()
+      .sort((symbolA, symbolB) => symbolA.localeCompare(symbolB))
   })
 
   return (
@@ -58,13 +60,13 @@ export const ScreenerPanel = (props: ScreenerPanelProps) => {
           <tbody>
             <For each={sortedSymbols()}>
               {symbol => {
-                const baseSymbol = () => symbol.split("/")[0] ?? symbol
+                const baseSymbol = symbol.split("/")[0] ?? symbol
                 const isSelected = () => props.activeSymbols.has(symbol)
 
                 // Convert fundings outside with one function.
                 //use same function in PositionsPanelRow
                 const fundingDisplay = createMemo(() => {
-                  const rate = props.fundingRatesByBaseSymbol?.[baseSymbol()]
+                  const rate = props.fundingRatesByBaseSymbol?.[baseSymbol]
                   if (rate === undefined) return "—"
                   return `${(rate * 24 * 365 * 100).toFixed(2)}%`
                 })
@@ -92,7 +94,7 @@ export const ScreenerPanel = (props: ScreenerPanelProps) => {
                       }
                     }}
                   >
-                    <td class="px-2 py-1 font-medium">{baseSymbol()}</td>
+                    <td class="px-2 py-1 font-medium">{baseSymbol}</td>
                     <td class="px-2 py-1 text-right font-mono text-[11px] text-muted-foreground w-[80px]">
                       <Show
                         when={!props.fundingIsLoading}

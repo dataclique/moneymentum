@@ -3,7 +3,9 @@ import type { RouteSectionProps } from "@solidjs/router"
 
 const ErrorFallback = (props: { error: Error; reset: () => void }) => {
   createEffect(() => {
-    console.error(props.error)
+    if (import.meta.env.DEV) {
+      console.error(props.error)
+    }
   })
 
   return (

@@ -8,9 +8,13 @@ const symbolToTicker = (symbol: string): string =>
   symbol.includes("/") ? (symbol.split("/")[0] ?? symbol) : symbol
 
 const weightsFromPortfolio = (
-  portfolio: Record<string, PortfolioInterface>,
+  portfolio: Record<string, PortfolioInterface | undefined>,
 ): Record<string, number> => {
-  const totalNotional = Object.values(portfolio).reduce(
+  const positions = Object.values(portfolio).filter(
+    (position): position is PortfolioInterface => position !== undefined,
+  )
+
+  const totalNotional = positions.reduce(
     (sum, position) => sum + position.notional,
     0,
   )
@@ -19,7 +23,7 @@ const weightsFromPortfolio = (
 
   const signedWeights: Record<string, number> = {}
 
-  for (const position of Object.values(portfolio)) {
+  for (const position of positions) {
     const ticker = symbolToTicker(position.symbol)
     const signedWeight =
       (position.notional / totalNotional) * (position.side === "buy" ? 1 : -1)
@@ -51,7 +55,7 @@ const fetchBeta = async (
 }
 
 export const useBeta = (
-  portfolio: () => Record<string, PortfolioInterface>,
+  portfolio: () => Record<string, PortfolioInterface | undefined>,
 ) => {
   const weights = createMemo(() => weightsFromPortfolio(portfolio()))
 

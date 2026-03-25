@@ -1,7 +1,7 @@
-currentPortfolio: Точный слепок с биржи (ReadOnly для UI).
+currentPortfolio: Exact snapshot from the exchange (ReadOnly for UI).
 
-targetPortfolio: "Черновик" пользователя. Содержит только те позиции, которые
-пользователь хочет видеть в итоге.
+targetPortfolio: User draft. Contains only the positions the user wants to see
+at the end.
 
-deletedArchive: Буфер "мусорки". Хранит состояние позиции (её ношинал и плечо) в
-момент нажатия на "Удалить". Нужен для корректного Undo.
+deletedArchive: "Trash" buffer. Stores the position state (its notional and
+leverage) at the moment the user clicks "Delete". Needed for a correct Undo.

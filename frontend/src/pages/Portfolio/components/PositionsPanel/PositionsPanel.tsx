@@ -32,9 +32,7 @@ interface PositionsPanelProps {
 export const PositionsPanel = (props: PositionsPanelProps): JSX.Element => {
   const { isConnected } = useWallet()
   const positionsCount = createMemo(
-    () =>
-      Object.keys(props.targetPortfolio).length +
-      Object.keys(props.deletedArchive).length,
+    () => Object.keys(props.targetPortfolio).length,
   )
 
   const allSymbols = createMemo(() => {
@@ -109,9 +107,6 @@ export const PositionsPanel = (props: PositionsPanelProps): JSX.Element => {
                 <tbody>
                   <For each={allSymbols()}>
                     {symbol => {
-                      //TODO: do we actually need changed, unchanged, new, closing statuses?
-                      // maybe only closing for view logic?
-
                       const status = createMemo(() => {
                         const target = props.targetPortfolio[symbol]
                         const current = props.currentPortfolio[symbol]
@@ -136,17 +131,17 @@ export const PositionsPanel = (props: PositionsPanelProps): JSX.Element => {
                       })
 
                       const displayPosition = createMemo(() => {
-                        // 1. Если позиция есть в таргете — берем её
+                        // 1. If the position exists in the target — use it
                         if (props.targetPortfolio[symbol]) {
                           return props.targetPortfolio[symbol]
                         }
 
-                        // 2. Если позиции нет в таргете, но она есть в архиве (нажали X) — берем из архива
+                        // 2. If the position does not exist in the target, but is in the archive (user clicked X) — use the archived value
                         if (props.deletedArchive[symbol]) {
                           return props.deletedArchive[symbol]
                         }
 
-                        // 3. Если нет ни там, ни там (но есть в current) — берем из current
+                        // 3. If it's neither in target nor archive (but exists in current) — use current
                         return { ...props.currentPortfolio[symbol] }
                       })
 
@@ -155,7 +150,7 @@ export const PositionsPanel = (props: PositionsPanelProps): JSX.Element => {
                           symbol={symbol}
                           position={displayPosition}
                           status={status()}
-                          maxLeverage={props.leverageLimitsMap[symbol]} //TODO: check for new reactivity and fetching logic
+                          maxLeverage={props.leverageLimitsMap[symbol]}
                           isPrecise={props.isPrecise}
                           fundingIsLoading={props.fundingIsLoading}
                           onRemove={props.onRemove}

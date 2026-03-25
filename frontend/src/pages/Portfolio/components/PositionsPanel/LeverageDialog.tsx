@@ -15,6 +15,11 @@ interface LeverageDialogProps {
 export const LeverageDialog = (props: LeverageDialogProps): JSX.Element => {
   const [open, setOpen] = createSignal(false)
 
+  // Intentional imperative keyboard listener:
+  // when the dialog is open we attach a `window` `keydown` handler for `Escape`
+  // (`handleEsc`) and remove it via `onCleanup`. This is not derived state and
+  // alternatives like `createMemo` or `@tanstack/solid-query` were considered
+  // but are not appropriate for event subscription lifecycle.
   createEffect(() => {
     if (open()) {
       const handleEsc = (e: KeyboardEvent) => {

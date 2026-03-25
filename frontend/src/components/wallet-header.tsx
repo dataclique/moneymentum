@@ -117,8 +117,7 @@ export const WalletHeader = (props: WalletHeaderProps) => {
     toast.success("Wallet connected")
   }
 
-  //TODO: rename
-  const handleDisconnect = () => {
+  const onDisconnectClick = () => {
     props.handleDisconnect?.()
     disconnect()
     setDialogOpen(false)
@@ -279,7 +278,7 @@ export const WalletHeader = (props: WalletHeaderProps) => {
               <Button
                 type="button"
                 variant="outline"
-                onClick={handleDisconnect}
+                onClick={onDisconnectClick}
               >
                 Disconnect
               </Button>

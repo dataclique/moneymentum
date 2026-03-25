@@ -27,6 +27,7 @@ const formatUnsignedPct = (weightFraction: number): string =>
 const formatUsdPrecise = (value: number): string => `$${value.toFixed(2)}`
 
 const NOTIONAL_EPSILON_USD = 0.1
+const LEVERAGE_EPSILON = 0.001
 
 export const StagedChangesPanel = (props: StagedChangesPanelProps) => {
   const stagedTrades = () => props.stagedTrades
@@ -39,18 +40,21 @@ export const StagedChangesPanel = (props: StagedChangesPanelProps) => {
 
   const isRebalancing = () => props.isRebalancing ?? false
 
-  const shouldShowNotionalArrow = () =>
-    props.currentTotalNotional &&
-    props.targetTotalNotional &&
-    Math.abs(props.targetTotalNotional - props.currentTotalNotional) >=
-      NOTIONAL_EPSILON_USD
-
+  const currentTotalNotional = () => props.currentTotalNotional
+  const targetTotalNotional = () => props.targetTotalNotional
   const currentLeverage = () => props.currentCrossAccountLeverage
   const targetLeverage = () => props.targetCrossAccountLeverage
-  const shouldShowLeverageArrow = () =>
-    currentLeverage() &&
-    targetLeverage() &&
-    currentLeverage() !== targetLeverage()
+
+  const shouldShowNotionalArrow = () => {
+    return (
+      Math.abs(targetTotalNotional() - currentTotalNotional()) >=
+      NOTIONAL_EPSILON_USD
+    )
+  }
+
+  const shouldShowLeverageArrow = () => {
+    return Math.abs(currentLeverage() - targetLeverage()) > LEVERAGE_EPSILON
+  }
 
   return (
     <div class="flex-1 border border-border rounded flex flex-col min-w-0">
@@ -82,8 +86,7 @@ export const StagedChangesPanel = (props: StagedChangesPanelProps) => {
         <div class="overflow-auto scrollbar-hide h-full">
           <For each={stagedTrades()}>
             {stagedTrade => {
-              const baseSymbol =
-                stagedTrade.underlying.split("/")[0] ?? stagedTrade.underlying
+              const baseSymbol = stagedTrade.underlying.split("/")[0] || "???"
 
               const prevWeight = stagedTrade.previousWeight ?? 0
               const nextWeight = stagedTrade.newWeight ?? prevWeight
@@ -144,42 +147,35 @@ export const StagedChangesPanel = (props: StagedChangesPanelProps) => {
               <span class="text-muted-foreground">Notional</span>
               <span class="font-mono">
                 <Show
-                  when={props.currentTotalNotional && props.targetTotalNotional}
-                  fallback="--"
+                  when={shouldShowNotionalArrow()}
+                  fallback={formatUsdPrecise(targetTotalNotional())}
                 >
-                  <Show
-                    when={shouldShowNotionalArrow()}
-                    fallback={formatUsdPrecise(props.targetTotalNotional)}
+                  {formatUsdPrecise(currentTotalNotional())}{" "}
+                  <span class="text-muted-foreground">→</span>{" "}
+                  <span
+                    class={
+                      targetTotalNotional() >= currentTotalNotional()
+                        ? "text-green-500"
+                        : "text-red-500"
+                    }
                   >
-                    {formatUsdPrecise(props.currentTotalNotional)}{" "}
-                    <span class="text-muted-foreground">→</span>{" "}
-                    <span
-                      class={
-                        props.targetTotalNotional >= props.currentTotalNotional
-                          ? "text-green-500"
-                          : "text-red-500"
-                      }
-                    >
-                      {formatUsdPrecise(props.targetTotalNotional)}
-                    </span>
-                  </Show>
+                    {formatUsdPrecise(targetTotalNotional())}
+                  </span>
                 </Show>
               </span>
             </div>
             <div class="flex justify-between flex-col">
               <span class="text-muted-foreground">Leverage</span>
               <span class="font-mono">
-                <Show when={props.targetCrossAccountLeverage} fallback="--">
-                  <Show
-                    when={shouldShowLeverageArrow()}
-                    fallback={`${props.targetCrossAccountLeverage.toFixed(2)}x`}
-                  >
-                    {currentLeverage().toFixed(2)}x{" "}
-                    <span class="text-muted-foreground">→</span>{" "}
-                    <span class="text-yellow-500">
-                      {targetLeverage().toFixed(2)}x
-                    </span>
-                  </Show>
+                <Show
+                  when={shouldShowLeverageArrow()}
+                  fallback={`${targetLeverage().toFixed(2)}x`}
+                >
+                  {currentLeverage().toFixed(2)}x{" "}
+                  <span class="text-muted-foreground">→</span>{" "}
+                  <span class="text-yellow-500">
+                    {targetLeverage().toFixed(2)}x
+                  </span>
                 </Show>
               </span>
             </div>

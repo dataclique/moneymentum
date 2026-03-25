@@ -1,133 +1,134 @@
 # Frontend Architecture: Portfolio Rebalancer
 
-Документ описывает текущую архитектуру фронтенда как **одной основной страницы
-ребалансировки** (`Portfolio`) и ее ключевого потока исполнения.
-Ниже только фактическая информация по коду.
+This document describes the current frontend architecture as one primary rebalancing
+page (`Portfolio`) and its key execution flow.
+Below is factual information about the code.
 
-## 1) Главная модель состояния
+## 1) Main State Model
 
-Ядро находится в `frontend/src/pages/Portfolio/hooks/usePortfolioState.ts`.
+The core lives in `frontend/src/pages/Portfolio/hooks/usePortfolioState.ts`.
 
-Весь ребаланс построен на сравнении двух слепков:
+The entire rebalance is built on comparing two snapshots:
 
-- `currentPortfolio` - текущее состояние позиций, загруженное с биржи.
-- `targetPortfolio` - желаемое состояние, которое пользователь редактирует в UI.
+- `currentPortfolio` - the current positions state loaded from the exchange.
+- `targetPortfolio` - the desired positions state that the user edits in the UI.
 
-Все вычисления (валидации, staged trades, доступность submit, preview в панели)
-строятся на разнице между этими двумя структурами.
+All computations (validations, staged trades, submit availability, preview in the panel)
+are built on the difference between these two structures.
 
-## 2) Что реально происходит при изменениях в UI
+## 2) What Actually Happens When the UI Changes
 
-Базовые операции с `targetPortfolio`:
+Base operations on `targetPortfolio`:
 
-- добавить токен (`handleAddToken`);
-- удалить токен (`handleRemoveToken`);
-- вернуть удаленный (`handleUndoRemoveToken`);
-- изменить сторону, плечо, ношинал, вес.
+- add token (`handleAddToken`);
+- remove token (`handleRemoveToken`);
+- undo removed token (`handleUndoRemoveToken`);
+- change side, leverage, notional, weight.
 
-`currentPortfolio` инициализируется из биржи, затем используется как опорная
-точка, с которой сравниваются все дальнейшие изменения.
+`currentPortfolio` is initialized from the exchange and then used as the reference
+point against which all subsequent changes are compared.
 
-## 3) Проверки минимального размера
+## 3) Minimum Size Checks
 
-В коде используется `MIN_USD = 11`.
+The code uses `MIN_USD = 11`.
 
-Проверки:
+Checks:
 
-- позиция в `targetPortfolio` не должна быть меньше `11`;
-- в не-precise режиме дельта между target/current по символу не должна быть
-  меньше `11` (кроме нулевой дельты).
+- a position in `targetPortfolio` must not be smaller than `11`;
+- in non-precise mode, the per-symbol delta between target/current must not be
+  less than `11` (except for zero delta).
 
-Это влияет на `canSubmit` и блокирует ребаланс при нарушении.
+This affects `canSubmit` and blocks rebalancing when the constraints are violated.
 
-## 4) Redistribution of Weights (точное поведение)
+## 4) Redistribution of Weights (Exact Behavior)
 
-Логика в `redistributeWeights(...)` (`usePortfolioState`, блок `108-156`):
+The logic in `redistributeWeights(...)` (`usePortfolioState`, block `108-156`):
 
-1. Берется изменяемый символ и его новый процент (ограничение `0..100`).
-2. Считается суммарный процент всех остальных символов относительно
+1. Take the changed symbol and its new percentage (clamped to `0..100`).
+2. Compute the total percentage of all other symbols relative to
    `totalNotional`.
-3. Для изменяемого символа выставляется новый `notional`:
+3. For the changed symbol, set the new `notional`:
    `newTargetNotional = (newPercent / 100) * totalNotional`.
-4. Остаток `100 - newPercent` перераспределяется между остальными:
-   - если у остальных суммарный процент `0`, делится поровну;
-   - иначе пропорционально их текущим весам.
+4. Redistribute the remainder `100 - newPercent` among the others:
+   - if the others' total percentage is `0`, split it evenly;
+   - otherwise, redistribute proportionally to their current weights.
 
-Важно: в текущем коде **нет отдельного шага "докинуть остаток в последнюю
-позицию"**. Используется прямой пропорциональный пересчет каждой позиции.
+Important: in the current code there is **no separate step to "carry the remainder
+into the last position"**. Instead, it uses a direct proportional recalculation of
+each position.
 
-## 5) Архитектура ребаланса от состояния до биржи
+## 5) Rebalance Architecture: From State to Exchange
 
-Ключевая идея: между состоянием UI и реальными ордерами есть отдельный
-промежуточный слой `actions`.
+Key idea: between the UI state and the real orders there is a dedicated
+intermediate layer called `actions`.
 
-`actions` - это нормализованный "план исполнения", который не зависит от
-конкретных компонентов интерфейса. Он отвечает на вопрос:
-"какой минимальный набор действий нужен, чтобы превратить current в target".
+`actions` is a normalized "execution plan" that does not depend on specific UI
+components. It answers the question:
+"what is the minimal set of actions needed to transform current into target?"
 
 Pipeline:
 
 1. `currentPortfolio` + `targetPortfolio`.
-2. `diffPortfolios(...)` сравнивает их посимвольно.
-3. На выходе формируется массив `actions`.
-4. Этот массив используется дважды:
-   - для preview в UI (`stagedTrades` -> `StagedChangesPanel`);
-   - для фактического исполнения (payload -> mutation -> client).
+2. `diffPortfolios(...)` compares them symbol-by-symbol.
+3. An array of `actions` is produced.
+4. This array is used twice:
+   - for the UI preview (`stagedTrades` -> `StagedChangesPanel`);
+   - for actual execution (payload -> mutation -> client).
 
-Почему сейчас достаточно двух типов actions:
+Why only two `actions` types are enough right now:
 
-- `close` - символ есть в current, но отсутствует в target.  
-  Значит позицию нужно закрыть полностью.
-- `rebalance` - символ остается в портфеле, но изменилась экспозиция
-  (signed notional delta) и/или нужно поменять плечо.  
-  Значит позицию нужно докупить/сократить и при необходимости обновить leverage.
+- `close` - the symbol exists in current but not in target.
+  The position must be fully closed.
+- `rebalance` - the symbol remains in the portfolio, but the exposure changed
+  (signed notional delta) and/or leverage needs to be updated.
+  The position must be bought/sold and leverage updated if necessary.
 
-Практически все сценарии изменения целевого портфеля раскладываются в эти две
-операции:
+Nearly all target portfolio change scenarios decompose into these two operations:
 
-- удаление позиции -> `close`;
-- добавление новой позиции -> `rebalance` (из нуля в целевой размер);
-- изменение веса/сайда -> `rebalance` с нужным signed delta;
-- изменение плеча без изменения ношинала -> `rebalance` с `leverageChanged`.
+- deleting a position -> `close`;
+- adding a new position -> `rebalance` (from zero to the target size);
+- changing weight/side -> `rebalance` with the required signed delta;
+- changing leverage without changing notional -> `rebalance` with `leverageChanged`.
 
-Плюс такого слоя: UI может меняться как угодно, а контракт исполнения остается
-стабильным и предсказуемым (`actions` как единый источник для preview и execute).
+Benefit of this layer: the UI can change however it wants, while the execution
+contract remains stable and predictable (`actions` as the single source of truth for
+preview and execute).
 
-## 6) Как `actions` исполняются в `HyperliquidClient`
+## 6) How `actions` are Executed in `HyperliquidClient`
 
-Ключевой файл: `frontend/src/services/hyperliquid-client.ts`.
+Key file: `frontend/src/services/hyperliquid-client.ts`.
 
-`rebalancePositions(...)` делает следующее:
+`rebalancePositions(...)` does the following:
 
-1. Загружает markets (`loadMarkets`).
-2. Проходит по `actions` и **сначала выставляет leverage** для тех, у кого
+1. Loads markets (`loadMarkets`).
+2. Iterates over `actions` and **sets leverage first** for entries where
    `leverageChanged = true` (`setLeverage`).
-3. Параллельно получает тикеры и текущие позиции (`fetchTickers`, `fetchPositions`).
-4. Преобразует actions в биржевые market-ордера:
-   - `rebalance`: side определяется знаком `notional` (плюс = buy, минус = sell),
+3. In parallel, fetches tickers and current positions (`fetchTickers`, `fetchPositions`).
+4. Converts `actions` into exchange market orders:
+   - `rebalance`: side is determined by the sign of `notional` (plus = buy, minus = sell),
      amount = `abs(notional) / price`.
-   - `close`: ищется текущая позиция, side инвертируется, ордер отправляется с
+   - `close`: find the current position, invert the side, and send the order with
      `reduceOnly: true`.
-5. Все ордера отправляются **одним батчем** через `createOrdersWs(orderRequests)`.
-6. Ответ маппится в `OrderResult[]` для UI-слоя.
+5. Sends all orders **as one batch** via `createOrdersWs(orderRequests)`.
+6. Maps the response into `OrderResult[]` for the UI layer.
 
-То есть архитектурное решение такое: **сначала синхронизация плечей, потом
-массовая отправка ордеров одним websocket-вызовом**.
+So the architectural decision is: **synchronize leverage first, then send all orders
+in one websocket call**.
 
-## 7) Почему staged changes совпадает с реальным исполнением
+## 7) Why staged changes match real execution
 
-`StagedChangesPanel` показывает `stagedTrades`, которые напрямую derived из
-`actions`, а `actions` - из diff `currentPortfolio` vs `targetPortfolio`.
-Этот же набор `actions` уходит в `buildApiPayload` и дальше в
+`StagedChangesPanel` shows `stagedTrades`, which are directly derived from
+`actions`, while `actions` are derived from the diff `currentPortfolio` vs `targetPortfolio`.
+
+This same set of `actions` goes into `buildApiPayload` and then into
 `HyperliquidClient.rebalancePositions`.
 
-Иными словами, preview в панели и исполняемое действие опираются на один и тот
-же diff-источник.
+In other words, the panel preview and the executable action rely on the same diff source.
 
-## 8) Наблюдаемые ограничения текущей реализации
+## 8) Observed Limitations of the Current Implementation
 
-- Тип `preciseRebalance` объявлен, но в `diffPortfolios` сейчас не генерируется
-  (используются только `close` и `rebalance`).
-- В `portfolioRebalancer.ts` есть TODO по фильтрации `MIN_USD` на уровне diff
-  (не только через UI/state checks).
-- Есть `console.log` в ключевых местах pipeline.
+- `preciseRebalance` is declared, but `diffPortfolios` currently does not generate it
+  (only `close` and `rebalance` are used).
+- In `portfolioRebalancer.ts` there is a task to apply `MIN_USD` filtering at the diff layer
+  (not only via UI/state checks).
+- There is a `console.log` in key places of the pipeline.

@@ -165,6 +165,11 @@ export const PositionsPanelRow = (props: {
               const raw = inputEvent.currentTarget.value
               setWeightInput(raw)
               const parsed = raw === "" ? 0 : Number.parseFloat(raw)
+              const isValid =
+                Number.isFinite(parsed) && parsed >= 0 && parsed <= 100
+
+              if (!isValid) return
+
               props.onWeightChange(props.position().symbol, parsed)
             }}
             step={0.5}
@@ -189,6 +194,10 @@ export const PositionsPanelRow = (props: {
             const raw = inputEvent.currentTarget.value
             setNotionalInput(raw)
             const parsed = raw === "" ? 0 : Number.parseFloat(raw)
+            const isValid = Number.isFinite(parsed) && parsed >= 0
+
+            if (!isValid) return
+
             props.onNotionalChange(props.position().symbol, parsed)
           }}
           disabled={isClosing()}

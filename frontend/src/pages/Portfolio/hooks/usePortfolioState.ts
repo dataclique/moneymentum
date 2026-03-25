@@ -17,7 +17,6 @@ import { buildApiPayload, diffPortfolios } from "./portfolioRebalancer"
 import { useWallet } from "@/hooks/useWallet"
 import { createStore, produce, reconcile } from "solid-js/store"
 
-// TODO: maybe move all constants in project to the separate file
 export const MIN_USD = 11
 const MAX_CROSS_ACCOUNT_LEVERAGE = 5
 const DEFAULT_CROSS_ACCOUNT_LEVERAGE = 1
@@ -37,7 +36,6 @@ export interface StagedTradeItem {
   newWeight?: number
 }
 
-// TODO: review this function
 const calcLeverage = (totalNotional: number, accountValue: number): number => {
   if (accountValue <= 0) return 1
   const leverage = new Decimal(totalNotional)
@@ -253,7 +251,6 @@ export const usePortfolioState = (
 
     // Calculate leverage from the formula: leverage = totalNotional / accountValue
     const initialLeverage = calcLeverage(totalExchangeNotional, accountValue())
-    console.log("initialLeverage", initialLeverage)
     setTargetTotalNotional(totalExchangeNotional)
     setCurrentTotalNotional(totalExchangeNotional)
     setTargetCrossAccountLeverage(initialLeverage)
@@ -266,7 +263,6 @@ export const usePortfolioState = (
     diffPortfolios(currentPortfolio, targetPortfolio),
   )
 
-  //TODO: move this to the utils
   const getSignedNotional = (side: OrderSide, notional: number): number => {
     return side === "buy" ? notional : -notional
   }
@@ -301,8 +297,8 @@ export const usePortfolioState = (
         underlying: symbol,
         side: delta > 0 ? "buy" : "sell",
         notional: Math.abs(delta),
-        previousWeight: (c?.notional ?? 0) / totalCurrent,
-        newWeight: (t?.notional ?? 0) / totalTarget,
+        previousWeight: totalCurrent ? (c?.notional ?? 0) / totalCurrent : 0,
+        newWeight: totalTarget ? (t?.notional ?? 0) / totalTarget : 0,
       }
     })
   })
@@ -321,7 +317,6 @@ export const usePortfolioState = (
   const hasSymbolsDeltaBelowMinimum = () =>
     symbolsDeltaBelowMinimum().length > 0
 
-  //TODO: add this ater, when non precise mode is implemented
   // const hasTotalPercentExceeded = () =>
   //   totalTargetPortfolioPercent() > 100 + MAX_TOTAL_PERCENT_TOLERANCE
   // const hasTotalPercentBelow = () =>
@@ -390,8 +385,6 @@ export const usePortfolioState = (
         Math.max(0, prev - targetPosition.notional),
       )
     })
-
-    console.log("targetPortfolio", JSON.parse(JSON.stringify(targetPortfolio)))
   }
 
   const handleUndoRemoveToken = (symbol: string) => {
@@ -409,8 +402,6 @@ export const usePortfolioState = (
 
       setDeletedArchive(symbol, undefined)
     })
-
-    console.log(`Restored ${symbol}, archive cleared.`)
   }
 
   const handleSideChange = (symbol: string, side: OrderSide) => {
@@ -440,7 +431,6 @@ export const usePortfolioState = (
       redistributeWeights(changedSymbol, newPercentage)
     }
 
-    // TODO: make this working
     //   // No redistribution: total notional is fixed (targetNotional = accountValue * leverage).
     //   // Update only the changed token's notional. Other tokens unchanged.
     //   return prev.map(t =>
@@ -487,10 +477,7 @@ export const usePortfolioState = (
     )
 
     const nextTarget = Object.fromEntries(
-      currentTokens.map(token => [
-        token.symbol,
-        { ...token, status: "synced" as const },
-      ]),
+      currentTokens.map(token => [token.symbol, { ...token }]),
     )
 
     batch(() => {
@@ -517,7 +504,7 @@ export const usePortfolioState = (
     setCurrentPortfolio({})
     setTargetPortfolio({})
     setDeletedArchive({})
-    // setFundingRatesByBaseSymbol({}) //TODO: also reset this
+    // setFundingRatesByBaseSymbol({})
     setCurrentCrossAccountLeverage(DEFAULT_CROSS_ACCOUNT_LEVERAGE)
     setTargetCrossAccountLeverage(DEFAULT_CROSS_ACCOUNT_LEVERAGE)
     setCurrentTotalNotional(0)

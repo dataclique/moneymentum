@@ -194,7 +194,7 @@ interface HyperliquidExchange {
   createOrdersWs: (
     orders: OrderRequest[],
     params?: Record<string, unknown>,
-  ) => Promise<Order[]> //TODO: fix return type and how we handle it
+  ) => Promise<Order[]>
 }
 
 export class HyperliquidClient {
@@ -457,7 +457,7 @@ export class HyperliquidClient {
     await this.exchange.loadMarkets()
     const allSymbols = actions.map(a => a.symbol)
 
-    //TODO: maybe need separate action
+    // Rebalance actions may require separate handling for certain state changes.
     for (const action of actions) {
       if ("leverageChanged" in action && action.leverageChanged) {
         await this.setLeverage(action.symbol, action.leverage)
@@ -470,13 +470,17 @@ export class HyperliquidClient {
     ])
 
     const orderRequests: OrderRequest[] = actions.flatMap(action => {
-      const price = tickers[action.symbol].last
+      const ticker = tickers[action.symbol]
+      const price = ticker.last
       if (!price) return []
 
       switch (action.kind) {
         case "rebalance": {
+          if (action.notional === 0) return []
+
           const side = action.notional > 0 ? "buy" : "sell"
           const amount = Math.abs(action.notional) / price
+          if (amount <= 0) return []
 
           return {
             symbol: action.symbol,

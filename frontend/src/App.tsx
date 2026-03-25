@@ -15,7 +15,9 @@ const ErrorFallback = (props: { error: Error; reset: () => void }) => {
         An unexpected error occurred. Try refreshing the page or click retry.
       </div>
       <pre class="text-[16px] text-muted-foreground bg-muted rounded p-3 overflow-auto">
-        {props.error.stack ?? props.error.message}
+        {import.meta.env.DEV
+          ? (props.error.stack ?? props.error.message)
+          : "An unexpected error occurred."}
       </pre>
       <button
         type="button"

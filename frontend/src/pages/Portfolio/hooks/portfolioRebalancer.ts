@@ -2,7 +2,6 @@ import { type OrderSide, type RebalanceParams } from "@/hooks/useTrading"
 
 import type { PortfolioInterface } from "@/pages/Portfolio/hooks/usePortfolioState"
 
-//TODO filter action by MIN_USD here (not only in UI)
 // import { MIN_USD } from "@/pages/Portfolio/hooks/usePortfolioState"
 
 export type RebalanceAction =
@@ -48,8 +47,7 @@ export const buildApiPayload = (
  * Compute minimal set of actions needed to transform current portfolio into target.
  * Pure function: does not know about UI status flags or external APIs.
  */
-/** * Расчет знакового ношинала для математических операций.
- */
+/** Calculation of signed notional for mathematical operations. */
 const getSignedNotional = (side: OrderSide, notional: number) =>
   side === "buy" ? notional : -notional
 
@@ -100,10 +98,6 @@ export const diffPortfolios = (
       continue
     }
   }
-
-  // This function is called from Solid `createMemo` as portfolios change,
-  // so logging here provides visibility into every reactive update.
-  console.log(actions, ["diffPortfolios"])
 
   return actions
 }

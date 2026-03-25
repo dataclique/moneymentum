@@ -6,6 +6,7 @@ let
   profileBase = "/nix/var/nix/profiles/per-service";
 
   moneymentumPackage = self.packages.${system}.moneymentum;
+  frontendPackage = self.packages.${system}.frontend;
 
   services = import ./services.nix;
   enabledServices = builtins.filter (name: services.${name}.enabled)
@@ -33,10 +34,20 @@ in {
       sshUser = "root";
       user = "root";
 
-      profilesOrder = [ "system" ] ++ enabledServices;
+      profilesOrder = [ "system" "frontend" ] ++ enabledServices;
 
       profiles = {
         system.path = activate.nixos self.nixosConfigurations.moneymentum;
+
+        frontend = {
+          path = activate.custom frontendPackage ''
+            mkdir -p /var/lib/moneymentum
+            rm -rf /var/lib/moneymentum/frontend
+            cp -rL ${frontendPackage} /var/lib/moneymentum/frontend
+            nginx -s reload || true
+          '';
+          profilePath = "${profileBase}/frontend";
+        };
       } // builtins.listToAttrs (map (name: {
         inherit name;
         value = mkProfile name;

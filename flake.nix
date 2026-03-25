@@ -38,7 +38,6 @@
     {
       nixosConfigurations.moneymentum = nixpkgs.lib.nixosSystem {
         system = "x86_64-linux";
-        specialArgs = { frontend = self.packages.x86_64-linux.frontend; };
 
         modules =
           [ disko.nixosModules.disko ragenix.nixosModules.default ./os.nix ];
@@ -57,6 +56,10 @@
         rustToolchain = pkgs.rust-bin.stable.latest.default;
         craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
         rustPkgs = pkgs.callPackage ./rust.nix { inherit craneLib; };
+
+        frontendPkgs = pkgs.callPackage ./frontend {
+          bun2nix = bun2nix.packages.${system}.default;
+        };
 
         infraPkgs =
           import ./infra { inherit pkgs ragenix nixos-anywhere system; };
@@ -113,6 +116,9 @@
           libffi
           gcc-unwrapped
           stdenv.cc.cc.lib
+          openssl.dev
+          pkg-config
+          sqlite.dev
         ];
 
         # jdbcPath = "${pkgs.postgresql_jdbc}/share/java/postgresql-jdbc.jar";
@@ -208,11 +214,12 @@
         packages = {
           default = rustPkgs.package;
           moneymentum = rustPkgs.package;
+          moneymentum-test = rustPkgs.test;
           moneymentum-clippy = rustPkgs.clippy;
 
-          frontend = pkgs.callPackage ./frontend {
-            bun2nix = bun2nix.packages.${system}.default;
-          };
+          frontend = frontendPkgs.package;
+          frontend-lint = frontendPkgs.lint;
+          frontend-test = frontendPkgs.test;
 
           resolveIp = pkgs.writeShellApplication {
             name = "resolve-ip";

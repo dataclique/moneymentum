@@ -18,6 +18,22 @@ import { useWallet } from "@/hooks/useWallet"
 import { createStore, produce, reconcile } from "solid-js/store"
 
 export const MIN_USD = 11
+
+export const PRECISE_TOGGLE_STORAGE_KEY = "portfolio-precise-toggle"
+
+/** When true, changing one weight only updates that symbol; others stay fixed. */
+export const MANUAL_WEIGHT_ENTRY_STORAGE_KEY = "portfolio-manual-weight-entry"
+
+const initialPreciseFromStorage = (): boolean =>
+  typeof localStorage !== "undefined" &&
+  typeof localStorage.getItem === "function" &&
+  localStorage.getItem(PRECISE_TOGGLE_STORAGE_KEY) === "true"
+
+const initialManualWeightEntryFromStorage = (): boolean =>
+  typeof localStorage !== "undefined" &&
+  typeof localStorage.getItem === "function" &&
+  localStorage.getItem(MANUAL_WEIGHT_ENTRY_STORAGE_KEY) === "true"
+
 const MAX_CROSS_ACCOUNT_LEVERAGE = 5
 const DEFAULT_CROSS_ACCOUNT_LEVERAGE = 1
 
@@ -45,11 +61,15 @@ const calcLeverage = (totalNotional: number, accountValue: number): number => {
   return Math.min(MAX_CROSS_ACCOUNT_LEVERAGE, leverage)
 }
 
-export const usePortfolioState = (
-  isPrecise: () => boolean,
-  isWeightRedistribution: () => boolean,
-) => {
+export const usePortfolioState = () => {
   const { isConnected } = useWallet()
+
+  const [isPrecise, setPreciseSignal] = createSignal(
+    initialPreciseFromStorage(),
+  )
+  const [isManualWeightEntry, setManualWeightEntrySignal] = createSignal(
+    initialManualWeightEntryFromStorage(),
+  )
 
   // Exchange data queries
   const accountSummaryQuery = useHyperliquidAccountSummary()
@@ -427,7 +447,7 @@ export const usePortfolioState = (
   }
 
   const handleWeightChange = (changedSymbol: string, newPercentage: number) => {
-    if (isWeightRedistribution()) {
+    if (!isManualWeightEntry()) {
       redistributeWeights(changedSymbol, newPercentage)
     }
 
@@ -566,6 +586,22 @@ export const usePortfolioState = (
     },
     get isRebalancing() {
       return isRebalancingUi()
+    },
+
+    get isPrecise() {
+      return isPrecise()
+    },
+
+    setIsPrecise(value: boolean) {
+      setPreciseSignal(value)
+    },
+
+    get isManualWeightEntry() {
+      return isManualWeightEntry()
+    },
+
+    setManualWeightEntry(value: boolean) {
+      setManualWeightEntrySignal(value)
     },
 
     get canSubmit() {

@@ -15,7 +15,11 @@ import { useNetwork } from "@/hooks/useNetwork"
 import { WalletHeader } from "@/components/wallet-header"
 import { ModeToggle } from "@/components/ui/mode-toggle"
 
-import { usePortfolioState } from "./hooks/usePortfolioState"
+import {
+  MANUAL_WEIGHT_ENTRY_STORAGE_KEY,
+  PRECISE_TOGGLE_STORAGE_KEY,
+  usePortfolioState,
+} from "./hooks/usePortfolioState"
 import { useBeta } from "./hooks/useBeta"
 import {
   useHyperliquidTickers,
@@ -28,34 +32,27 @@ import { StagedChangesPanel } from "@/pages/Portfolio/components/StagedChangesPa
 import { FactorsPanel } from "@/pages/Portfolio/components/FactorsPanel"
 import { RiskPanel } from "@/pages/Portfolio/components/RiskPanel"
 
-const PRECISE_TOGGLE_STORAGE_KEY = "portfolio-precise-toggle"
-const WEIGHT_REDISTRIBUTION_STORAGE_KEY = "portfolio-weight-redistribution"
-
 const LEVERAGE_MIN = 0.001
 const LEVERAGE_MAX = 5
 const LEVERAGE_STEP = 0.1
 
 const PortfolioPage = () => {
   const { isNetworkSwitching } = useNetwork()
-  const [isPrecise, setIsPrecise] = createSignal(
-    localStorage.getItem(PRECISE_TOGGLE_STORAGE_KEY) === "true",
-  )
-  const [isWeightRedistribution, setIsWeightRedistribution] = createSignal(
-    localStorage.getItem(WEIGHT_REDISTRIBUTION_STORAGE_KEY) !== "false",
-  )
+  const portfolio = usePortfolioState()
 
   createEffect(() => {
-    localStorage.setItem(PRECISE_TOGGLE_STORAGE_KEY, String(isPrecise()))
+    localStorage.setItem(
+      PRECISE_TOGGLE_STORAGE_KEY,
+      String(portfolio.isPrecise),
+    )
   })
 
   createEffect(() => {
     localStorage.setItem(
-      WEIGHT_REDISTRIBUTION_STORAGE_KEY,
-      String(isWeightRedistribution()),
+      MANUAL_WEIGHT_ENTRY_STORAGE_KEY,
+      String(portfolio.isManualWeightEntry),
     )
   })
-
-  const portfolio = usePortfolioState(isPrecise, isWeightRedistribution)
   const activeSymbolsSet = createMemo(
     () => new Set(Object.keys(portfolio.targetPortfolio)),
   )
@@ -157,7 +154,7 @@ const PortfolioPage = () => {
                 fundingIsLoading={fundingRatesQuery.isLoading}
                 leverageLimitsMap={portfolio.leverageLimitsMap}
                 _isRebalancing={portfolio.isRebalancing}
-                isPrecise={isPrecise()}
+                isPrecise={portfolio.isPrecise}
                 onRemove={portfolio.handleRemoveToken}
                 onUndoRemove={portfolio.handleUndoRemoveToken}
                 onSideChange={portfolio.handleSideChange}
@@ -246,18 +243,18 @@ const PortfolioPage = () => {
                         >
                           <span>Precise</span>
                           <Switch
-                            checked={isPrecise()}
-                            onChange={setIsPrecise}
+                            checked={portfolio.isPrecise}
+                            onChange={portfolio.setIsPrecise}
                           />
                         </DropdownMenuItem>
                         <DropdownMenuItem
                           class="flex items-center justify-between gap-2"
                           closeOnSelect={false}
                         >
-                          <span>Redistribution of weights</span>
+                          <span>Manual weight entry</span>
                           <Switch
-                            checked={isWeightRedistribution()}
-                            onChange={setIsWeightRedistribution}
+                            checked={portfolio.isManualWeightEntry}
+                            onChange={portfolio.setManualWeightEntry}
                           />
                         </DropdownMenuItem>
                       </DropdownMenuContent>

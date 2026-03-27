@@ -98,14 +98,9 @@ describe("usePortfolioState", () => {
   })
 
   it("loads current and target portfolios from exchange positions", async () => {
-    const { result } = renderHook(
-      () =>
-        usePortfolioState(
-          () => false,
-          () => false,
-        ),
-      { wrapper: createWrapper() },
-    )
+    const { result } = renderHook(() => usePortfolioState(), {
+      wrapper: createWrapper(),
+    })
 
     await waitFor(() => {
       expect(Object.keys(result.currentPortfolio)).toHaveLength(2)
@@ -119,14 +114,9 @@ describe("usePortfolioState", () => {
   })
 
   it("adds and removes token in target portfolio", async () => {
-    const { result } = renderHook(
-      () =>
-        usePortfolioState(
-          () => false,
-          () => false,
-        ),
-      { wrapper: createWrapper() },
-    )
+    const { result } = renderHook(() => usePortfolioState(), {
+      wrapper: createWrapper(),
+    })
 
     await waitFor(() => {
       expect(Object.keys(result.targetPortfolio)).toHaveLength(2)
@@ -140,14 +130,9 @@ describe("usePortfolioState", () => {
   })
 
   it("clamps per-symbol leverage to max from leverage limits", async () => {
-    const { result } = renderHook(
-      () =>
-        usePortfolioState(
-          () => false,
-          () => false,
-        ),
-      { wrapper: createWrapper() },
-    )
+    const { result } = renderHook(() => usePortfolioState(), {
+      wrapper: createWrapper(),
+    })
 
     await waitFor(() => {
       expect(Object.keys(result.targetPortfolio)).toContain("BTC/USDC:USDC")
@@ -158,14 +143,9 @@ describe("usePortfolioState", () => {
   })
 
   it("builds staged trades from diff after target changes", async () => {
-    const { result } = renderHook(
-      () =>
-        usePortfolioState(
-          () => false,
-          () => false,
-        ),
-      { wrapper: createWrapper() },
-    )
+    const { result } = renderHook(() => usePortfolioState(), {
+      wrapper: createWrapper(),
+    })
 
     await waitFor(() => {
       expect(Object.keys(result.targetPortfolio)).toHaveLength(2)
@@ -181,14 +161,9 @@ describe("usePortfolioState", () => {
   })
 
   it("blocks submit in non-precise mode when delta is below minimum", async () => {
-    const { result } = renderHook(
-      () =>
-        usePortfolioState(
-          () => false,
-          () => false,
-        ),
-      { wrapper: createWrapper() },
-    )
+    const { result } = renderHook(() => usePortfolioState(), {
+      wrapper: createWrapper(),
+    })
 
     await waitFor(() => {
       expect(Object.keys(result.targetPortfolio)).toContain("BTC/USDC:USDC")
@@ -203,18 +178,15 @@ describe("usePortfolioState", () => {
   })
 
   it("allows submit in precise mode for small deltas", async () => {
-    const { result } = renderHook(
-      () =>
-        usePortfolioState(
-          () => true,
-          () => false,
-        ),
-      { wrapper: createWrapper() },
-    )
+    const { result } = renderHook(() => usePortfolioState(), {
+      wrapper: createWrapper(),
+    })
 
     await waitFor(() => {
       expect(Object.keys(result.targetPortfolio)).toContain("BTC/USDC:USDC")
     })
+
+    result.setIsPrecise(true)
 
     result.handleNotionalChange("BTC/USDC:USDC", 605)
     await waitFor(() => {
@@ -225,14 +197,9 @@ describe("usePortfolioState", () => {
   })
 
   it("redistributes other positions when weight redistribution is enabled", async () => {
-    const { result } = renderHook(
-      () =>
-        usePortfolioState(
-          () => false,
-          () => true,
-        ),
-      { wrapper: createWrapper() },
-    )
+    const { result } = renderHook(() => usePortfolioState(), {
+      wrapper: createWrapper(),
+    })
 
     await waitFor(() => {
       expect(Object.keys(result.targetPortfolio)).toHaveLength(2)
@@ -250,18 +217,16 @@ describe("usePortfolioState", () => {
   })
 
   it("submits rebalance with actions and precise flag", async () => {
-    const { result } = renderHook(
-      () =>
-        usePortfolioState(
-          () => true,
-          () => false,
-        ),
-      { wrapper: createWrapper() },
-    )
+    const { result } = renderHook(() => usePortfolioState(), {
+      wrapper: createWrapper(),
+    })
 
     await waitFor(() => {
       expect(Object.keys(result.targetPortfolio)).toContain("BTC/USDC:USDC")
     })
+
+    result.setIsPrecise(true)
+    result.setManualWeightEntry(true)
 
     result.handleNotionalChange("BTC/USDC:USDC", 700)
     result.handleRebalancePositions()

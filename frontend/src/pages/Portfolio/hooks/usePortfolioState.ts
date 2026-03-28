@@ -334,6 +334,23 @@ export const usePortfolioState = () => {
   })
 
   const hasPositionsBelowMinimum = () => symbolsBelowMinimum().length > 0
+  const effectiveTotalNotional = createMemo(() => {
+    return Object.values(targetPortfolio).reduce(
+      (sum, pos) => sum + (pos?.notional ?? 0),
+      0,
+    )
+  })
+
+  const targetAllocationPercent = createMemo(() => {
+    const total = targetTotalNotional()
+    if (total <= 0) return 0
+    return (100 * effectiveTotalNotional()) / total
+  })
+
+  const hasTotalWeightExceeded = createMemo(() => {
+    return targetAllocationPercent() > 100.01
+  })
+
   const hasSymbolsDeltaBelowMinimum = () =>
     symbolsDeltaBelowMinimum().length > 0
 
@@ -451,18 +468,13 @@ export const usePortfolioState = () => {
       redistributeWeights(changedSymbol, newPercentage)
     }
 
-    //   // No redistribution: total notional is fixed (targetNotional = accountValue * leverage).
-    //   // Update only the changed token's notional. Other tokens unchanged.
-    //   return prev.map(t =>
-    //     t.symbol === symbol
-    //       ? {
-    //           ...t,
-    //           percentage: parseFloat(clampedPercentage.toFixed(2)),
-    //           notional: calcNotional(clampedPercentage, targetNotional()),
-    //         }
-    //       : t,
-    //   )
-    // })
+    const totalNotional = targetTotalNotional()
+    if (totalNotional <= 0) return
+
+    const clampedPercentage = Math.max(0, Math.min(100, newPercentage))
+    const newTargetNotional = (clampedPercentage / 100) * totalNotional
+
+    setTargetPortfolio(changedSymbol, "notional", newTargetNotional)
   }
 
   // When leverage changes: totalNotional = leverage * accountValue
@@ -533,13 +545,13 @@ export const usePortfolioState = () => {
     const isPortfolioValid =
       Object.keys(targetPortfolio).length + Object.keys(deletedArchive).length >
       0
-    // const isWeightsOk = totalWeight() === 1.0;
     // const allOrdersValid = stagedTrades().every(t => t.notional >= 11);
 
     return (
       isPortfolioValid &&
       !hasPositionsBelowMinimum() &&
-      (isPrecise() || !hasSymbolsDeltaBelowMinimum())
+      (isPrecise() || !hasSymbolsDeltaBelowMinimum()) &&
+      !hasTotalWeightExceeded()
     )
   }
 
@@ -626,7 +638,12 @@ export const usePortfolioState = () => {
     get isLeverageLimitsLoading() {
       return leverageLimitsQuery.isLoading
     },
-
+    get hasTotalWeightExceeded() {
+      return hasTotalWeightExceeded()
+    },
+    get targetAllocationPercent() {
+      return targetAllocationPercent()
+    },
     // Actions
     handleAddToken,
     handleRemoveToken,

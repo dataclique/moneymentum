@@ -6,9 +6,11 @@ import { useWallet } from "@/hooks/useWallet"
 import { WalletHeader } from "@/components/wallet-header"
 
 import { type PortfolioInterface } from "../../hooks/usePortfolioState"
+import { PositionsPanelAlerts } from "./PositionsPanelAlerts"
 import { PositionsPanelRow } from "./PositionsPanelRow"
 
 interface PositionsPanelProps {
+  hasTotalWeightExceeded: boolean
   currentPortfolio: Record<string, PortfolioInterface | undefined>
   targetPortfolio: Record<string, PortfolioInterface | undefined>
   deletedArchive: Record<string, PortfolioInterface | undefined>
@@ -27,6 +29,8 @@ interface PositionsPanelProps {
   targetTotalNotional: number
   symbolsBelowMinimum: string[]
   symbolsDeltaBelowMinimum: string[]
+  /** Sum of target weights as % of targetTotalNotional. */
+  targetAllocationPercent: number
 }
 
 export const PositionsPanel = (props: PositionsPanelProps): JSX.Element => {
@@ -184,6 +188,18 @@ export const PositionsPanel = (props: PositionsPanelProps): JSX.Element => {
           </Show>
         </Show>
       </div>
+      <PositionsPanelAlerts
+        isLoading={props.isLoading}
+        isConnected={isConnected()}
+        hasPositions={positionsCount() > 0}
+        hasTotalWeightExceeded={props.hasTotalWeightExceeded}
+        targetAllocationPercent={props.targetAllocationPercent}
+        symbolsBelowMinimum={props.symbolsBelowMinimum}
+        symbolsDeltaBelowMinimum={props.symbolsDeltaBelowMinimum}
+        isPrecise={props.isPrecise}
+        targetPortfolio={props.targetPortfolio}
+        currentPortfolio={props.currentPortfolio}
+      />
     </div>
   )
 }

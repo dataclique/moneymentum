@@ -165,6 +165,8 @@ const PortfolioPage = () => {
                 targetTotalNotional={portfolio.targetTotalNotional}
                 symbolsBelowMinimum={portfolio.symbolsBelowMinimum}
                 symbolsDeltaBelowMinimum={portfolio.symbolsDeltaBelowMinimum}
+                hasTotalWeightExceeded={portfolio.hasTotalWeightExceeded}
+                targetAllocationPercent={portfolio.targetAllocationPercent}
               />
             </div>
             {/* <Show when={portfolio.blockingReasons.length > 0}>
@@ -244,7 +246,9 @@ const PortfolioPage = () => {
                           <span>Precise</span>
                           <Switch
                             checked={portfolio.isPrecise}
-                            onChange={portfolio.setIsPrecise}
+                            onChange={value => {
+                              portfolio.setIsPrecise(value)
+                            }}
                           />
                         </DropdownMenuItem>
                         <DropdownMenuItem
@@ -254,7 +258,9 @@ const PortfolioPage = () => {
                           <span>Manual weight entry</span>
                           <Switch
                             checked={portfolio.isManualWeightEntry}
-                            onChange={portfolio.setManualWeightEntry}
+                            onChange={value => {
+                              portfolio.setManualWeightEntry(value)
+                            }}
                           />
                         </DropdownMenuItem>
                       </DropdownMenuContent>

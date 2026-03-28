@@ -75,20 +75,48 @@ Pipeline:
    - for the UI preview (`stagedTrades` -> `StagedChangesPanel`);
    - for actual execution (payload -> mutation -> client).
 
-Why only two `actions` types are enough right now:
+There are three `action` kinds:
 
 - `close` - the symbol exists in current but not in target.
   The position must be fully closed.
 - `rebalance` - the symbol remains in the portfolio, but the exposure changed
   (signed notional delta) and/or leverage needs to be updated.
   The position must be bought/sold and leverage updated if necessary.
+- `preciseRebalance` - used only in **precise mode** when the signed delta is
+  real but smaller than `MIN_USD` and the position **stays on the same side**
+  (see below).
 
-Nearly all target portfolio change scenarios decompose into these two operations:
+Nearly all target portfolio change scenarios decompose like this:
 
 - deleting a position -> `close`;
 - adding a new position -> `rebalance` (from zero to the target size);
 - changing weight/side -> `rebalance` with the required signed delta;
-- changing leverage without changing notional -> `rebalance` with `leverageChanged`.
+- changing leverage without changing notional -> `rebalance` with `leverageChanged`;
+- tiny same-side tweak (precise mode, below `MIN_USD`) -> `preciseRebalance`.
+
+### Precise mode (`precise: true` in the API payload)
+
+When the user enables precise rebalancing, `diffPortfolios(..., precise: true)`
+can emit `preciseRebalance` instead of dropping sub-minimum deltas.
+
+Trigger (all must hold):
+
+- `|delta|` is above a small epsilon (`NOTIONAL_EPSILON`) so there is a real change;
+- `|delta| < MIN_USD` (11 USD);
+- current and target **same side** (no flip).
+
+`preciseRebalanceLegs(positionSide, deltaSigned)` splits the move into two USD
+legs, each at least `MIN_USD`, so both legs clear the exchange minimum:
+
+- Long (`buy`): if `deltaSigned > 0` (increase long), `closeNotional = MIN_USD`,
+  `openNotional = MIN_USD + deltaSigned`. Otherwise (reduce long),
+  `closeNotional = MIN_USD + |deltaSigned|`, `openNotional = MIN_USD`.
+- Short (`sell`): if `deltaSigned > 0`, `closeNotional = MIN_USD + deltaSigned`,
+  `openNotional = MIN_USD`. Otherwise, `closeNotional = MIN_USD`,
+  `openNotional = MIN_USD + |deltaSigned|`.
+
+The action carries `closeNotional`, `openNotional`, and `side` (target side for the
+**open** leg after the reduce-only close).
 
 Benefit of this layer: the UI can change however it wants, while the execution
 contract remains stable and predictable (`actions` as the single source of truth for
@@ -104,16 +132,41 @@ Key file: `frontend/src/services/hyperliquid-client.ts`.
 2. Iterates over `actions` and **sets leverage first** for entries where
    `leverageChanged = true` (`setLeverage`).
 3. In parallel, fetches tickers and current positions (`fetchTickers`, `fetchPositions`).
-4. Converts `actions` into exchange market orders:
-   - `rebalance`: side is determined by the sign of `notional` (plus = buy, minus = sell),
-     amount = `abs(notional) / price`.
-   - `close`: find the current position, invert the side, and send the order with
-     `reduceOnly: true`.
-5. Sends all orders **as one batch** via `createOrdersWs(orderRequests)`.
-6. Maps the response into `OrderResult[]` for the UI layer.
+4. Builds two order lists in `splitRebalanceActionsIntoPhases`:
+   - **Reduction phase** (`reduceOnly: true` where applicable): shrink or close
+     exposure first (frees margin, avoids stacking risk before unwinds).
+   - **Expansion phase** (`reduceOnly` unset): add exposure after reductions complete.
 
-So the architectural decision is: **synchronize leverage first, then send all orders
-in one websocket call**.
+5. Sends at most **two** websocket batches, in order:
+   - `createOrdersWs(reduction)` if non-empty;
+   - then `createOrdersWs(expansion)` if non-empty.
+
+6. Concatenates mapped responses into a single `OrderResult[]` for the UI
+   (reduction results first, then expansion).
+
+### How each `action` maps to a phase
+
+- **`close`**: full close using current `contracts`, side is the **closing** side
+  (opposite of the stored position side), always in the **reduction** batch with
+  `reduceOnly: true`.
+- **`rebalance`**: side from signed delta (buy if `notional > 0`, sell if `< 0`),
+  size `abs(notional) / price`. Classified with `rebalanceIsReduction`: long
+  positions reduce on negative delta, short positions reduce on positive delta.
+  Reductions go to phase 1, increases to phase 2.
+- **`preciseRebalance`**: always **two** conceptual legs:
+  - **Close leg** (phase 1): reduce-only order sized in USD notional, converted to
+    contracts at the ticker `last` price. If the close notional would leave dust
+    (approximately full position: within `$0.02` of size or `>= 99.9%` of estimated
+    position USD), the client sends a **full** close for the whole `contracts`
+    amount instead of a partial USD slice.
+  - **Open leg** (phase 2): market order in the target `side`, notional
+    `openNotional`, not reduce-only.
+
+All market orders share one slippage constant (`SLIPPAGE`) when deriving the limit
+price from `last`. Vault trading passes `vaultAddress` in params where configured.
+
+So the architectural decisions are: **leverage first**, then **two-phase execution**
+(reduction batch, then expansion batch), at most **two** `createOrdersWs` round-trips.
 
 ## 7) Why staged changes match real execution
 
@@ -127,8 +180,8 @@ In other words, the panel preview and the executable action rely on the same dif
 
 ## 8) Observed Limitations of the Current Implementation
 
-- `preciseRebalance` is declared, but `diffPortfolios` currently does not generate it
-  (only `close` and `rebalance` are used).
+- If a symbol has **no usable ticker `last`** when building orders, that action is
+  skipped silently (no order, no synthetic `OrderResult` in the current code).
 - In `portfolioRebalancer.ts` there is a task to apply `MIN_USD` filtering at the diff layer
   (not only via UI/state checks).
 - There is a `console.log` in key places of the pipeline.

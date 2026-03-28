@@ -300,7 +300,6 @@ describe("useTrading hooks", () => {
       })
 
       result.mutate({
-        precise: false,
         actions: [],
       })
 
@@ -329,7 +328,6 @@ describe("useTrading hooks", () => {
       })
 
       result.mutate({
-        precise: false,
         actions: [
           {
             kind: "rebalance",
@@ -345,24 +343,21 @@ describe("useTrading hooks", () => {
         expect(result.isSuccess).toBe(true)
       })
 
-      expect(mockMethods.rebalancePositions).toHaveBeenCalledWith(
-        [
-          {
-            kind: "rebalance",
-            symbol: "BTC/USDC:USDC",
-            notional: 120,
-            leverage: 2,
-            leverageChanged: false,
-          },
-        ],
-        false,
-      )
+      expect(mockMethods.rebalancePositions).toHaveBeenCalledWith([
+        {
+          kind: "rebalance",
+          symbol: "BTC/USDC:USDC",
+          notional: 120,
+          leverage: 2,
+          leverageChanged: false,
+        },
+      ])
 
       expect(result.data?.orders).toHaveLength(1)
       expect(result.data?.orders[0].status).toBe("filled")
     })
 
-    it("passes precise flag to client", async () => {
+    it("calls rebalancePositions with only the actions array (no separate precise arg)", async () => {
       mockMethods.rebalancePositions.mockResolvedValue([
         { symbol: "ETH/USDC:USDC", side: "sell", status: "working" },
       ])
@@ -376,7 +371,6 @@ describe("useTrading hooks", () => {
       })
 
       result.mutate({
-        precise: true,
         actions: [
           {
             kind: "close",
@@ -390,16 +384,14 @@ describe("useTrading hooks", () => {
         expect(result.isSuccess).toBe(true)
       })
 
-      expect(mockMethods.rebalancePositions).toHaveBeenCalledWith(
-        [
-          {
-            kind: "close",
-            symbol: "BTC/USDC:USDC",
-            side: "buy",
-          },
-        ],
-        true,
-      )
+      expect(mockMethods.rebalancePositions).toHaveBeenCalledWith([
+        {
+          kind: "close",
+          symbol: "BTC/USDC:USDC",
+          side: "buy",
+        },
+      ])
+      expect(mockMethods.rebalancePositions).toHaveBeenCalledTimes(1)
     })
   })
 

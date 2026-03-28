@@ -280,7 +280,7 @@ export const usePortfolioState = () => {
   })
 
   const actions = createMemo(() =>
-    diffPortfolios(currentPortfolio, targetPortfolio),
+    diffPortfolios(currentPortfolio, targetPortfolio, isPrecise()),
   )
 
   const getSignedNotional = (side: OrderSide, notional: number): number => {
@@ -310,6 +310,16 @@ export const usePortfolioState = () => {
           break
         case "rebalance":
           delta = action.notional
+          break
+        case "preciseRebalance":
+          if (!c || !t) {
+            throw new Error(
+              `Precise rebalance for ${symbol} requires current and target`,
+            )
+          }
+          delta =
+            getSignedNotional(t.side, t.notional) -
+            getSignedNotional(c.side, c.notional)
           break
       }
 
@@ -353,42 +363,6 @@ export const usePortfolioState = () => {
 
   const hasSymbolsDeltaBelowMinimum = () =>
     symbolsDeltaBelowMinimum().length > 0
-
-  // const hasTotalPercentExceeded = () =>
-  //   totalTargetPortfolioPercent() > 100 + MAX_TOTAL_PERCENT_TOLERANCE
-  // const hasTotalPercentBelow = () =>
-  //   derivedTotalPercent() < 100 - MAX_TOTAL_PERCENT_TOLERANCE
-  // const showTargetOfTotal = () =>
-  //   Math.abs(derivedTotalPercent() - 100) > MAX_TOTAL_PERCENT_TOLERANCE
-
-  // const blockingReasons = createMemo(() => {
-  //   const reasons: string[] = []
-  //   if (hasPositionsBelowMinimum()) {
-  //     const symbolsList = symbolsBelowMinimum()
-  //       .map(s => `${s} ($${targetPortfolio[s].notional.toFixed(2)})`)
-  //       .join(", ")
-  //     return `Each position must be at least $${String(MIN_USD)}. Positions below minimum: ${symbolsList}`
-  //   }
-  //   if (hasSymbolsDeltaBelowMinimum() && !isPrecise()) {
-  //     const symbolsList = symbolsDeltaBelowMinimum()
-  //       .map(s => `${s} ($${targetPortfolio[s].notional.toFixed(2)})`)
-  //       .join(", ")
-  //     return `Each position delta must be at least $${String(MIN_USD)}. Positions below minimum: ${symbolsList}`
-  //   }
-  //   if (hasTotalPercentExceeded()) {
-  //     const excessPercent = (derivedTotalPercent() - 100).toFixed(1)
-  //     reasons.push(
-  //       `Sum of weights exceeds 100% by ${excessPercent}%. Reduce allocations.`,
-  //     )
-  //   }
-  //   if (hasTotalPercentBelow()) {
-  //     const deficitPercent = (100 - derivedTotalPercent()).toFixed(1)
-  //     reasons.push(
-  //       `Sum of weights is below 100% by ${deficitPercent}%. Add allocations.`,
-  //     )
-  //   }
-  //   return reasons
-  // })
 
   const handleAddToken = (symbol: string) => {
     if (symbol in targetPortfolio) return

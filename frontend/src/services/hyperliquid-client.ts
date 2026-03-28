@@ -446,83 +446,253 @@ export class HyperliquidClient {
     return this.vaultAddress ? { vaultAddress: this.vaultAddress } : undefined
   }
 
-  async rebalancePositions(
-    actions: RebalanceAction[],
-    // precise: boolean = false,
-  ): Promise<OrderResult[]> {
-    await this.exchange.loadMarkets()
-    const allSymbols = actions.map(a => a.symbol)
+  private mapOrderResults(
+    requests: OrderRequest[],
+    responses: Order[],
+  ): OrderResult[] {
+    return requests.map((request, index): OrderResult => {
+      const res: Order | undefined =
+        index < responses.length ? responses[index] : undefined
+      if (res === undefined) {
+        return {
+          symbol: request.symbol,
+          side: (request.side ?? "buy") as OrderSide,
+          status: "working",
+          message: "order response missing",
+        }
+      }
+      return {
+        symbol: request.symbol,
+        side: (request.side ?? "buy") as OrderSide,
+        status:
+          res.status === "closed" || res.status === "filled"
+            ? "filled"
+            : "working",
+        message: this.parseOrderErrorMessage(res.info),
+      }
+    })
+  }
 
-    // Rebalance actions may require separate handling for certain state changes.
+  private positionSideIsBuy(pos: { side: string }): boolean {
+    return pos.side === "long" || pos.side === "buy"
+  }
+
+  private positionUsdApprox(
+    pos: {
+      notional?: number | string
+      contracts: number | string
+    },
+    price: number,
+  ): number {
+    const raw = pos.notional
+    if (raw !== undefined && raw !== "") {
+      const v = typeof raw === "number" ? raw : parseFloat(raw)
+      if (Number.isFinite(v) && Math.abs(v) > 0) {
+        return Math.abs(v)
+      }
+    }
+    return Math.abs(parseFloat(String(pos.contracts))) * price
+  }
+
+  /** Long: sell reduces. Short: buy (cover) reduces. */
+  private rebalanceIsReduction(
+    pos: { side: string },
+    notional: number,
+  ): boolean {
+    const long = this.positionSideIsBuy(pos)
+    if (long) return notional < 0
+    return notional > 0
+  }
+
+  private buildPreciseRebalanceOrderRequests(opts: {
+    symbol: string
+    side: OrderSide
+    closeNotional: number
+    openNotional: number
+    price: number
+    position: {
+      side: string
+      contracts: number | string
+      notional?: number | string
+    }
+  }): { closeRequest: OrderRequest | null; openRequest: OrderRequest | null } {
+    const { symbol, side, closeNotional, openNotional, price, position } = opts
+
+    const isPositionBuy = this.positionSideIsBuy(position)
+    const currentUsd = this.positionUsdApprox(position, price)
+
+    // Full close (Wipes) to avoid leaving dust
+    const closeWipes =
+      closeNotional >= currentUsd - 0.02 || closeNotional >= currentUsd * 0.999
+
+    const closeAmount = closeWipes
+      ? Math.abs(parseFloat(String(position.contracts)))
+      : closeNotional / price
+
+    const closeRequest = this.buildOrderRequest(
+      symbol,
+      isPositionBuy ? "sell" : "buy",
+      closeAmount,
+      price,
+      true,
+    )
+
+    const openRequest = this.buildOrderRequest(
+      symbol,
+      side,
+      openNotional / price,
+      price,
+      false,
+    )
+
+    return { closeRequest, openRequest }
+  }
+
+  private buildOrderRequest(
+    symbol: string,
+    side: OrderSide,
+    amount: number,
+    price: number,
+    reduceOnly: boolean,
+  ): OrderRequest | null {
+    if (amount <= 0 || !Number.isFinite(amount)) return null
+
+    return {
+      symbol,
+      type: "market",
+      side,
+      amount,
+      price: side === "buy" ? price * (1 + SLIPPAGE) : price * (1 - SLIPPAGE),
+      params: reduceOnly
+        ? { reduceOnly: true, ...this.vaultParams }
+        : { ...this.vaultParams },
+    }
+  }
+
+  private splitRebalanceActionsIntoPhases(
+    actions: RebalanceAction[],
+    tickers: Partial<
+      Record<
+        string,
+        { last?: number; bid?: number; ask?: number; info?: unknown }
+      >
+    >,
+    positions: Array<{
+      symbol: string
+      side: string
+      contracts: number | string
+      notional?: number | string
+    }>,
+  ): {
+    reduction: OrderRequest[]
+    expansion: OrderRequest[]
+  } {
+    const reduction: OrderRequest[] = []
+    const expansion: OrderRequest[] = []
+
+    for (const action of actions) {
+      const position = positions.find(p => p.symbol === action.symbol)
+      const price = tickers[action.symbol]?.last ?? undefined
+      if (price === undefined) continue
+
+      switch (action.kind) {
+        case "close": {
+          if (position === undefined) continue
+          const closingSide: OrderSide = action.side === "buy" ? "sell" : "buy"
+          const request = this.buildOrderRequest(
+            action.symbol,
+            closingSide,
+            Math.abs(parseFloat(String(position.contracts))),
+            price,
+            true,
+          )
+          if (request) reduction.push(request)
+          break
+        }
+        case "rebalance": {
+          const side = action.notional > 0 ? "buy" : "sell"
+          const amount = Math.abs(action.notional) / price
+
+          const request = this.buildOrderRequest(
+            action.symbol,
+            side,
+            amount,
+            price,
+            false,
+          )
+          if (request) {
+            const isRed = position
+              ? this.rebalanceIsReduction(position, action.notional)
+              : false
+
+            if (isRed) reduction.push(request)
+            else expansion.push(request)
+          }
+          break
+        }
+        case "preciseRebalance": {
+          if (position === undefined) continue
+
+          const { closeRequest, openRequest } =
+            this.buildPreciseRebalanceOrderRequests({
+              symbol: action.symbol,
+              side: action.side,
+              closeNotional: action.closeNotional,
+              openNotional: action.openNotional,
+              price,
+              position,
+            })
+
+          if (closeRequest) reduction.push(closeRequest)
+          if (openRequest) expansion.push(openRequest)
+          break
+        }
+        default:
+          break
+      }
+    }
+
+    return { reduction, expansion }
+  }
+
+  async rebalancePositions(actions: RebalanceAction[]): Promise<OrderResult[]> {
+    await this.exchange.loadMarkets()
+    const allSymbols = [...new Set(actions.map(action => action.symbol))]
+
     for (const action of actions) {
       if ("leverageChanged" in action && action.leverageChanged) {
         await this.setLeverage(action.symbol, action.leverage)
       }
     }
 
-    const [tickers, allCurrentPositions] = await Promise.all([
+    const [tickers, positions] = await Promise.all([
       this.exchange.fetchTickers(allSymbols),
       this.exchange.fetchPositions(),
     ])
 
-    const orderRequests: OrderRequest[] = actions.flatMap(action => {
-      const ticker = tickers[action.symbol]
-      const price = ticker.last
-      if (!price) return []
+    const { reduction, expansion } = this.splitRebalanceActionsIntoPhases(
+      actions,
+      tickers,
+      positions,
+    )
 
-      switch (action.kind) {
-        case "rebalance": {
-          if (action.notional === 0) return []
+    const results: OrderResult[] = []
 
-          const side = action.notional > 0 ? "buy" : "sell"
-          const amount = Math.abs(action.notional) / price
-          if (amount <= 0) return []
+    if (reduction.length > 0) {
+      const reductionResponses = await this.exchange.createOrdersWs(reduction)
+      const reductionResults = this.mapOrderResults(
+        reduction,
+        reductionResponses,
+      )
+      results.push(...reductionResults)
+    }
 
-          return {
-            symbol: action.symbol,
-            type: "market",
-            side,
-            amount,
-            price:
-              side === "buy" ? price * (1 + SLIPPAGE) : price * (1 - SLIPPAGE),
-            params: { ...this.vaultParams },
-          }
-        }
+    if (expansion.length > 0) {
+      const expansionResponses = await this.exchange.createOrdersWs(expansion)
+      results.push(...this.mapOrderResults(expansion, expansionResponses))
+    }
 
-        case "close": {
-          const pos = allCurrentPositions.find(p => p.symbol === action.symbol)
-          if (!pos) return []
-
-          return {
-            symbol: action.symbol,
-            type: "market",
-            side: action.side === "buy" ? "sell" : "buy",
-            amount: Math.abs(parseFloat(String(pos.contracts))),
-            price:
-              action.side === "buy"
-                ? price * (1 - SLIPPAGE)
-                : price * (1 + SLIPPAGE),
-            params: { reduceOnly: true, ...this.vaultParams },
-          }
-        }
-        default:
-          return []
-      }
-    })
-
-    if (orderRequests.length === 0) return []
-
-    const orderResults = await this.exchange.createOrdersWs(orderRequests)
-
-    return orderResults.map((res: Order, index: number) => ({
-      symbol: orderRequests[index].symbol,
-      side: (orderRequests[index].side ?? "buy") as OrderSide,
-      status:
-        res.status === "closed" || res.status === "filled"
-          ? "filled"
-          : "working",
-      message: this.parseOrderErrorMessage(res.info),
-    }))
+    return results
   }
 
   getNetworkMode(): NetworkMode {

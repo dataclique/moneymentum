@@ -164,7 +164,6 @@ export const useHyperliquidFundingRates = () => {
 }
 
 export interface RebalanceParams {
-  precise: boolean
   actions: RebalanceAction[]
 }
 
@@ -177,7 +176,7 @@ export const useRebalanceHyperliquidPositions = () => {
       const c = client()
       if (!c) throw new Error("Wallet not connected")
 
-      const results = await c.rebalancePositions(params.actions, params.precise)
+      const results = await c.rebalancePositions(params.actions)
 
       return { orders: results }
     },

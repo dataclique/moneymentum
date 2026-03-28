@@ -2,7 +2,7 @@ import { type OrderSide, type RebalanceParams } from "@/hooks/useTrading"
 
 import type { PortfolioInterface } from "@/pages/Portfolio/hooks/usePortfolioState"
 
-// import { MIN_USD } from "@/pages/Portfolio/hooks/usePortfolioState"
+import { MIN_USD } from "@/pages/Portfolio/hooks/usePortfolioState"
 
 export type RebalanceAction =
   | {
@@ -17,43 +17,57 @@ export type RebalanceAction =
       leverage: number
       leverageChanged: boolean
     }
-// | {
-//     kind: "preciseRebalance"
-//     symbol: string
-//     currentNotionalAbs: number
-//     currentSide: OrderSide
-//     closeSide: OrderSide
-
-//     closeUsdAmount: number
-
-//     targetNotionalAbs: number
-//     targetSide: OrderSide
-//     openNotionalDelta: number
-
-//     leverage: number
-//     leverageChanged: boolean
-//   }
+  | {
+      kind: "preciseRebalance"
+      symbol: string
+      /** Target side for the open leg after the reduce-only close. */
+      side: OrderSide
+      leverage: number
+      leverageChanged: boolean
+      closeNotional: number
+      openNotional: number
+    }
 
 export const buildApiPayload = (
   current: Record<string, PortfolioInterface | undefined>,
   target: Record<string, PortfolioInterface | undefined>,
   precise: boolean,
 ): RebalanceParams => {
-  const actions = diffPortfolios(current, target)
-  return { precise, actions }
+  const actions = diffPortfolios(current, target, precise)
+  return { actions }
 }
+
+const NOTIONAL_EPSILON = 0.1
+
+/** Signed delta: targetSigned - currentSigned (same convention as diffPortfolios). */
+export const preciseRebalanceLegs = (
+  positionSide: OrderSide,
+  deltaSigned: number,
+): { closeNotional: number; openNotional: number } => {
+  const m = MIN_USD
+  if (positionSide === "buy") {
+    if (deltaSigned > 0) {
+      return { closeNotional: m, openNotional: m + deltaSigned }
+    }
+    return { closeNotional: m + Math.abs(deltaSigned), openNotional: m }
+  }
+  if (deltaSigned > 0) {
+    return { closeNotional: m + deltaSigned, openNotional: m }
+  }
+  return { closeNotional: m, openNotional: m + Math.abs(deltaSigned) }
+}
+
+const getSignedNotional = (side: OrderSide, notional: number) =>
+  side === "buy" ? notional : -notional
 
 /**
  * Compute minimal set of actions needed to transform current portfolio into target.
  * Pure function: does not know about UI status flags or external APIs.
  */
-/** Calculation of signed notional for mathematical operations. */
-const getSignedNotional = (side: OrderSide, notional: number) =>
-  side === "buy" ? notional : -notional
-
 export const diffPortfolios = (
   current: Record<string, PortfolioInterface | undefined>,
   target: Record<string, PortfolioInterface | undefined>,
+  precise: boolean,
 ): RebalanceAction[] => {
   const actions: RebalanceAction[] = []
   const allSymbols = new Set([...Object.keys(current), ...Object.keys(target)])
@@ -82,21 +96,41 @@ export const diffPortfolios = (
     }
 
     const leverageChanged = c?.leverage !== t.leverage
-
-    // Regular rebalance
-    const NOTIONAL_EPSILON = 0.1
     const hasSignificantDelta = deltaAbs > NOTIONAL_EPSILON
 
-    if (hasSignificantDelta || leverageChanged) {
+    if (!hasSignificantDelta && !leverageChanged) {
+      continue
+    }
+
+    if (
+      precise &&
+      hasSignificantDelta &&
+      deltaAbs < MIN_USD &&
+      c?.side === t.side
+    ) {
+      const { closeNotional, openNotional } = preciseRebalanceLegs(
+        t.side,
+        delta,
+      )
       actions.push({
-        kind: "rebalance",
+        kind: "preciseRebalance",
         symbol,
-        notional: delta,
+        side: t.side,
         leverage: t.leverage,
         leverageChanged,
+        closeNotional,
+        openNotional,
       })
       continue
     }
+
+    actions.push({
+      kind: "rebalance",
+      symbol,
+      notional: delta,
+      leverage: t.leverage,
+      leverageChanged,
+    })
   }
 
   return actions

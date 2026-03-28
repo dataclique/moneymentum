@@ -216,7 +216,7 @@ describe("usePortfolioState", () => {
     )
   })
 
-  it("submits rebalance with actions and precise flag", async () => {
+  it("submits rebalance payload with actions; precise toggle shapes diff not the API body", async () => {
     const { result } = renderHook(() => usePortfolioState(), {
       wrapper: createWrapper(),
     })
@@ -231,16 +231,16 @@ describe("usePortfolioState", () => {
     result.handleNotionalChange("BTC/USDC:USDC", 700)
     result.handleRebalancePositions()
 
-    expect(mutate).toHaveBeenCalledWith(
-      expect.objectContaining({
-        precise: true,
-        actions: expect.arrayContaining([
-          expect.objectContaining({
-            kind: "rebalance",
-            symbol: "BTC/USDC:USDC",
-          }),
-        ]),
-      }),
-    )
+    expect(mutate).toHaveBeenCalledWith({
+      actions: [
+        expect.objectContaining({
+          kind: "rebalance",
+          symbol: "BTC/USDC:USDC",
+          notional: 100,
+          leverage: 2,
+          leverageChanged: false,
+        }),
+      ],
+    })
   })
 })

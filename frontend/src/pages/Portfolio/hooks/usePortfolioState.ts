@@ -211,7 +211,7 @@ export const usePortfolioState = () => {
       return
     }
 
-    setCurrentPortfolio({})
+    setCurrentPortfolio(reconcile({}))
     setTargetCrossAccountLeverage(DEFAULT_CROSS_ACCOUNT_LEVERAGE)
     setCurrentCrossAccountLeverage(DEFAULT_CROSS_ACCOUNT_LEVERAGE)
     setPositionsLoadedFromExchange(false)
@@ -264,10 +264,10 @@ export const usePortfolioState = () => {
       exchangeTokens.map(token => [token.symbol, token]),
     ) as Record<string, PortfolioInterface>
 
-    setCurrentPortfolio(portfolioMap)
+    setCurrentPortfolio(reconcile(portfolioMap))
 
     // Create a FULLY independent copy for the target
-    setTargetPortfolio(structuredClone(portfolioMap))
+    setTargetPortfolio(reconcile(structuredClone(portfolioMap)))
 
     // Calculate leverage from the formula: leverage = totalNotional / accountValue
     const initialLeverage = calcLeverage(totalExchangeNotional, accountValue())
@@ -366,6 +366,7 @@ export const usePortfolioState = () => {
 
   const handleAddToken = (symbol: string) => {
     if (symbol in targetPortfolio) return
+    if (deletedArchive[symbol] !== undefined) return
 
     batch(() => {
       setTargetPortfolio(symbol, {
@@ -489,6 +490,7 @@ export const usePortfolioState = () => {
     batch(() => {
       setTargetPortfolio(reconcile(nextTarget))
       setTargetTotalNotional(currentTotalNotional())
+      setDeletedArchive(reconcile({}))
     })
   }
 
@@ -505,9 +507,9 @@ export const usePortfolioState = () => {
   }
 
   const handleDisconnect = () => {
-    setCurrentPortfolio({})
-    setTargetPortfolio({})
-    setDeletedArchive({})
+    setCurrentPortfolio(reconcile({}))
+    setTargetPortfolio(reconcile({}))
+    setDeletedArchive(reconcile({}))
     // setFundingRatesByBaseSymbol({})
     setCurrentCrossAccountLeverage(DEFAULT_CROSS_ACCOUNT_LEVERAGE)
     setTargetCrossAccountLeverage(DEFAULT_CROSS_ACCOUNT_LEVERAGE)

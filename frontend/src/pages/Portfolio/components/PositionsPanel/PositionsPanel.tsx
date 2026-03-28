@@ -35,18 +35,21 @@ interface PositionsPanelProps {
 
 export const PositionsPanel = (props: PositionsPanelProps): JSX.Element => {
   const { isConnected } = useWallet()
-  const positionsCount = createMemo(
+
+  const renderableSymbols = createMemo(() => [
+    ...new Set([
+      ...Object.keys(props.currentPortfolio),
+      ...Object.keys(props.targetPortfolio),
+    ]),
+  ])
+
+  const targetPositionCount = createMemo(
     () => Object.keys(props.targetPortfolio).length,
   )
 
-  const allSymbols = createMemo(() => {
-    return [
-      ...new Set([
-        ...Object.keys(props.currentPortfolio),
-        ...Object.keys(props.targetPortfolio),
-      ]),
-    ]
-  })
+  const hasRenderablePortfolioRows = createMemo(
+    () => renderableSymbols().length > 0,
+  )
 
   return (
     <div class="flex flex-col rounded border border-border min-h-0 max-h-[calc(100vh-4rem)] w-full max-w-[600px] shrink-0">
@@ -54,8 +57,8 @@ export const PositionsPanel = (props: PositionsPanelProps): JSX.Element => {
         <div class="flex items-center gap-2">
           <span class="font-medium">POSITIONS</span>
           <span class="text-muted-foreground text-[11px]">
-            {positionsCount()} position
-            {positionsCount() !== 1 ? "s" : ""}
+            {targetPositionCount()} position
+            {targetPositionCount() !== 1 ? "s" : ""}
           </span>
         </div>
       </div>
@@ -82,7 +85,7 @@ export const PositionsPanel = (props: PositionsPanelProps): JSX.Element => {
             }
           >
             <Show
-              when={positionsCount() > 0}
+              when={hasRenderablePortfolioRows()}
               fallback={
                 <div class="p-4 text-center text-muted-foreground text-[11px]">
                   Add positions from the screener.
@@ -109,7 +112,7 @@ export const PositionsPanel = (props: PositionsPanelProps): JSX.Element => {
                   </tr>
                 </thead>
                 <tbody>
-                  <For each={allSymbols()}>
+                  <For each={renderableSymbols()}>
                     {symbol => {
                       const status = createMemo(() => {
                         const target = props.targetPortfolio[symbol]
@@ -191,7 +194,7 @@ export const PositionsPanel = (props: PositionsPanelProps): JSX.Element => {
       <PositionsPanelAlerts
         isLoading={props.isLoading}
         isConnected={isConnected()}
-        hasPositions={positionsCount() > 0}
+        hasPositions={hasRenderablePortfolioRows()}
         hasTotalWeightExceeded={props.hasTotalWeightExceeded}
         targetAllocationPercent={props.targetAllocationPercent}
         symbolsBelowMinimum={props.symbolsBelowMinimum}

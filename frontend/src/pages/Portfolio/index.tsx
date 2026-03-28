@@ -53,9 +53,18 @@ const PortfolioPage = () => {
       String(portfolio.isManualWeightEntry),
     )
   })
-  const activeSymbolsSet = createMemo(
-    () => new Set(Object.keys(portfolio.targetPortfolio)),
-  )
+  const activeSymbolsSet = createMemo(() => {
+    const set = new Set<string>()
+    for (const key of Object.keys(portfolio.targetPortfolio)) {
+      set.add(key)
+    }
+    for (const key of Object.keys(portfolio.deletedArchive)) {
+      if (portfolio.deletedArchive[key] !== undefined) {
+        set.add(key)
+      }
+    }
+    return set
+  })
 
   const betaResult = useBeta(() => portfolio.targetPortfolio)
 

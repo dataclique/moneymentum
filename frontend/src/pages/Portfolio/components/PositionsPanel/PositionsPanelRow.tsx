@@ -259,6 +259,11 @@ export const PositionsPanelRow = (props: {
           variant="ghost"
           size="icon"
           class="h-6 w-6"
+          aria-label={
+            isClosing()
+              ? `Undo remove ${props.position().symbol}`
+              : `Remove ${props.position().symbol}`
+          }
           onClick={() => {
             if (isClosing()) {
               props.onUndoRemove(props.position().symbol)

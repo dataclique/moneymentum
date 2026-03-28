@@ -1,7 +1,52 @@
 import { createEffect, ErrorBoundary } from "solid-js"
 import type { RouteSectionProps } from "@solidjs/router"
 
-const ErrorFallback = (props: { error: Error; reset: () => void }) => {
+const readErrorMessage = (error: unknown): string => {
+  if (error instanceof Error && typeof error.message === "string") {
+    return error.message
+  }
+  if (typeof error === "string") {
+    return error
+  }
+  if (
+    error !== null &&
+    typeof error === "object" &&
+    "message" in error &&
+    typeof (error as { message: unknown }).message === "string"
+  ) {
+    return (error as { message: string }).message
+  }
+  try {
+    return String(error)
+  } catch {
+    return "Unknown error"
+  }
+}
+
+const readErrorStack = (error: unknown): string | undefined => {
+  if (error instanceof Error && typeof error.stack === "string") {
+    return error.stack
+  }
+  if (
+    error !== null &&
+    typeof error === "object" &&
+    "stack" in error &&
+    typeof (error as { stack: unknown }).stack === "string"
+  ) {
+    return (error as { stack: string }).stack
+  }
+  return undefined
+}
+
+const formatErrorForDev = (error: unknown): string => {
+  const stack = readErrorStack(error)
+  if (stack !== undefined && stack.length > 0) {
+    return stack
+  }
+  return readErrorMessage(error)
+}
+
+const ErrorFallback = (props: { error: unknown; reset: () => void }) => {
   createEffect(() => {
     if (import.meta.env.DEV) {
       console.error(props.error)
@@ -18,7 +63,7 @@ const ErrorFallback = (props: { error: Error; reset: () => void }) => {
       </div>
       <pre class="text-[16px] text-muted-foreground bg-muted rounded p-3 overflow-auto">
         {import.meta.env.DEV
-          ? (props.error.stack ?? props.error.message)
+          ? formatErrorForDev(props.error)
           : "An unexpected error occurred."}
       </pre>
       <button
@@ -34,7 +79,7 @@ const ErrorFallback = (props: { error: Error; reset: () => void }) => {
   )
 }
 
-const renderFallback = (error: Error, reset: () => void) => (
+const renderFallback = (error: unknown, reset: () => void) => (
   <ErrorFallback error={error} reset={reset} />
 )
 

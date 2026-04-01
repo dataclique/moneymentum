@@ -131,9 +131,22 @@ export const PositionsPanel = (props: PositionsPanelProps): JSX.Element => {
                       })
 
                       const delta = createMemo(() => {
+                        const targetPosition = props.targetPortfolio[symbol]
+                        const currentPosition = props.currentPortfolio[symbol]
+                        const signedTargetNotional =
+                          targetPosition === undefined
+                            ? 0
+                            : targetPosition.side === "sell"
+                              ? -targetPosition.notional
+                              : targetPosition.notional
+                        const signedCurrentNotional =
+                          currentPosition === undefined
+                            ? 0
+                            : currentPosition.side === "sell"
+                              ? -currentPosition.notional
+                              : currentPosition.notional
                         return Math.abs(
-                          (props.targetPortfolio[symbol]?.notional ?? 0) -
-                            (props.currentPortfolio[symbol]?.notional ?? 0),
+                          signedTargetNotional - signedCurrentNotional,
                         )
                       })
 

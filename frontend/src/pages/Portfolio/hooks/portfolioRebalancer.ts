@@ -43,18 +43,29 @@ const NOTIONAL_EPSILON = 0.1
 export const preciseRebalanceLegs = (
   positionSide: OrderSide,
   deltaSigned: number,
+  currentNotional: number,
 ): { closeNotional: number; openNotional: number } => {
   const m = MIN_USD
-  if (positionSide === "buy") {
-    if (deltaSigned > 0) {
-      return { closeNotional: m, openNotional: m + deltaSigned }
-    }
-    return { closeNotional: m + Math.abs(deltaSigned), openNotional: m }
+
+  const closeWanted =
+    positionSide === "buy"
+      ? deltaSigned > 0
+        ? m
+        : m + Math.abs(deltaSigned)
+      : deltaSigned > 0
+        ? m + deltaSigned
+        : m
+
+  const closeNotional = Math.min(currentNotional, closeWanted)
+  const openNotional =
+    positionSide === "buy"
+      ? closeNotional + deltaSigned
+      : closeNotional - deltaSigned
+
+  return {
+    closeNotional: Math.max(0, closeNotional),
+    openNotional: Math.max(0, openNotional),
   }
-  if (deltaSigned > 0) {
-    return { closeNotional: m + deltaSigned, openNotional: m }
-  }
-  return { closeNotional: m, openNotional: m + Math.abs(deltaSigned) }
 }
 
 const getSignedNotional = (side: OrderSide, notional: number) =>
@@ -111,6 +122,7 @@ export const diffPortfolios = (
       const { closeNotional, openNotional } = preciseRebalanceLegs(
         t.side,
         delta,
+        c.notional,
       )
       actions.push({
         kind: "preciseRebalance",

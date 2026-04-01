@@ -94,10 +94,18 @@ Nearly all target portfolio change scenarios decompose like this:
 - changing leverage without changing notional -> `rebalance` with `leverageChanged`;
 - tiny same-side tweak (precise mode, below `MIN_USD`) -> `preciseRebalance`.
 
-### Precise mode (`precise: true` in the API payload)
+### Precise mode (action-planning input)
+
+`precise` is an input to action planning, not a field sent to the execution API.
+It is consumed by `buildApiPayload(...)`, which calls
+`diffPortfolios(..., precise: true/false)` to decide which actions to produce.
 
 When the user enables precise rebalancing, `diffPortfolios(..., precise: true)`
 can emit `preciseRebalance` instead of dropping sub-minimum deltas.
+`useRebalanceHyperliquidPositions` submits only `{ actions }`, and
+`HyperliquidClient.rebalancePositions(...)` receives that resulting actions array.
+So if precise planning emits `preciseRebalance`, it is present as an action in
+the submitted array, not as a separate `precise` property in the payload.
 
 Trigger (all must hold):
 

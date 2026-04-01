@@ -19,32 +19,40 @@ const sell = (notional: number, leverage = 2): PortfolioInterface => ({
 
 describe("preciseRebalanceLegs", () => {
   const m = MIN_USD
+  const current = 100
 
   it("long increase by 2: close m then open m+2", () => {
-    expect(preciseRebalanceLegs("buy", 2)).toEqual({
+    expect(preciseRebalanceLegs("buy", 2, current)).toEqual({
       closeNotional: m,
       openNotional: m + 2,
     })
   })
 
   it("long decrease by 2: close m+2 then open m", () => {
-    expect(preciseRebalanceLegs("buy", -2)).toEqual({
+    expect(preciseRebalanceLegs("buy", -2, current)).toEqual({
       closeNotional: m + 2,
       openNotional: m,
     })
   })
 
   it("short deeper by 2 (signed delta -2): close m then open m+2", () => {
-    expect(preciseRebalanceLegs("sell", -2)).toEqual({
+    expect(preciseRebalanceLegs("sell", -2, current)).toEqual({
       closeNotional: m,
       openNotional: m + 2,
     })
   })
 
   it("short reduce by 2 (signed delta +2): close m+2 then open m", () => {
-    expect(preciseRebalanceLegs("sell", 2)).toEqual({
+    expect(preciseRebalanceLegs("sell", 2, current)).toEqual({
       closeNotional: m + 2,
       openNotional: m,
+    })
+  })
+
+  it("caps close leg by current notional when current is below min", () => {
+    expect(preciseRebalanceLegs("buy", 2, 5)).toEqual({
+      closeNotional: 5,
+      openNotional: 7,
     })
   })
 })

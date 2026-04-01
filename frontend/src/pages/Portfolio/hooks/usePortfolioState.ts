@@ -180,8 +180,16 @@ export const usePortfolioState = () => {
       const target = targetPortfolio[symbol]
       if (!target) return false
 
-      const currentNotional = currentPortfolio[symbol]?.notional ?? 0
-      const delta = Math.abs(target.notional - currentNotional)
+      const targetSignedNotional =
+        target.side === "sell" ? -target.notional : target.notional
+      const currentPosition = currentPortfolio[symbol]
+      const currentSignedNotional =
+        currentPosition === undefined
+          ? 0
+          : currentPosition.side === "sell"
+            ? -currentPosition.notional
+            : currentPosition.notional
+      const delta = Math.abs(targetSignedNotional - currentSignedNotional)
 
       return delta < MIN_USD && delta !== 0
     }),

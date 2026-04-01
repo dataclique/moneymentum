@@ -332,7 +332,7 @@ describe("useTrading hooks", () => {
           {
             kind: "rebalance",
             symbol: "BTC/USDC:USDC",
-            notional: 120,
+            signedNotionalDelta: 120,
             leverage: 2,
             leverageChanged: false,
           },
@@ -347,7 +347,7 @@ describe("useTrading hooks", () => {
         {
           kind: "rebalance",
           symbol: "BTC/USDC:USDC",
-          notional: 120,
+          signedNotionalDelta: 120,
           leverage: 2,
           leverageChanged: false,
         },

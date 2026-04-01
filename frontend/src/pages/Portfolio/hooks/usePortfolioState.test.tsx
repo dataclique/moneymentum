@@ -236,7 +236,7 @@ describe("usePortfolioState", () => {
         expect.objectContaining({
           kind: "rebalance",
           symbol: "BTC/USDC:USDC",
-          notional: 100,
+          signedNotionalDelta: 100,
           leverage: 2,
           leverageChanged: false,
         }),

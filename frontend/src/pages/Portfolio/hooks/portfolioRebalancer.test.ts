@@ -49,10 +49,13 @@ describe("preciseRebalanceLegs", () => {
     })
   })
 
-  it("caps close leg by current notional when current is below min", () => {
-    expect(preciseRebalanceLegs("buy", 2, 5)).toEqual({
-      closeNotional: 5,
-      openNotional: 7,
+  it("caps close leg when current notional is below the planned close slice", () => {
+    // Planned close slice is MIN_USD; current is 9, so close is capped to 9.
+    // Open leg is 9 + 2 = 11, meeting MIN_USD. Smaller currents can yield open < MIN_USD;
+    // that case should be blocked upstream (submit gates), not fixed inside this helper.
+    expect(preciseRebalanceLegs("buy", 2, 9)).toEqual({
+      closeNotional: 9,
+      openNotional: m,
     })
   })
 })
@@ -91,7 +94,7 @@ describe("diffPortfolios precise mode", () => {
     expect(actions).toHaveLength(1)
     expect(actions[0]).toMatchObject({
       kind: "rebalance",
-      notional: MIN_USD,
+      signedNotionalDelta: MIN_USD,
     })
   })
 
@@ -104,7 +107,10 @@ describe("diffPortfolios precise mode", () => {
     }
 
     const actions = diffPortfolios(current, target, false)
-    expect(actions[0]).toMatchObject({ kind: "rebalance", notional: 2 })
+    expect(actions[0]).toMatchObject({
+      kind: "rebalance",
+      signedNotionalDelta: 2,
+    })
   })
 
   it("never emits preciseRebalance when side flips (uses rebalance)", () => {
@@ -161,7 +167,7 @@ describe("diffPortfolios precise mode", () => {
     expect(actions).toHaveLength(1)
     expect(actions[0]).toMatchObject({
       kind: "rebalance",
-      notional: 0,
+      signedNotionalDelta: 0,
       leverage: 5,
       leverageChanged: true,
     })

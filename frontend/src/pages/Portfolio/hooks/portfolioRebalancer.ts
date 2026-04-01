@@ -13,7 +13,7 @@ export type RebalanceAction =
   | {
       kind: "rebalance"
       symbol: string
-      notional: number
+      signedNotionalDelta: number
       leverage: number
       leverageChanged: boolean
     }
@@ -139,7 +139,7 @@ export const diffPortfolios = (
     actions.push({
       kind: "rebalance",
       symbol,
-      notional: delta,
+      signedNotionalDelta: delta,
       leverage: t.leverage,
       leverageChanged,
     })

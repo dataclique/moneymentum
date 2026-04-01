@@ -610,8 +610,8 @@ export class HyperliquidClient {
           break
         }
         case "rebalance": {
-          const side = action.notional > 0 ? "buy" : "sell"
-          const amount = Math.abs(action.notional) / price
+          const side = action.signedNotionalDelta > 0 ? "buy" : "sell"
+          const amount = Math.abs(action.signedNotionalDelta) / price
 
           const request = this.buildOrderRequest(
             action.symbol,
@@ -622,7 +622,7 @@ export class HyperliquidClient {
           )
           if (request) {
             const isRed = position
-              ? this.rebalanceIsReduction(position, action.notional)
+              ? this.rebalanceIsReduction(position, action.signedNotionalDelta)
               : false
 
             if (isRed) reduction.push(request)

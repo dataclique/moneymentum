@@ -114,6 +114,19 @@ export const usePortfolioState = () => {
   // Track previous connection state for disconnect cleanup
   let wasConnected = isConnected()
 
+  const handleDisconnect = () => {
+    batch(() => {
+      setCurrentPortfolio(reconcile({}))
+      setTargetPortfolio(reconcile({}))
+      setDeletedArchive(reconcile({}))
+      setCurrentCrossAccountLeverage(DEFAULT_CROSS_ACCOUNT_LEVERAGE)
+      setTargetCrossAccountLeverage(DEFAULT_CROSS_ACCOUNT_LEVERAGE)
+      setCurrentTotalNotional(0)
+      setTargetTotalNotional(0)
+      setPositionsLoadedFromExchange(false)
+    })
+  }
+
   const redistributeWeights = (
     changedSymbol: string,
     newPercentage: number,
@@ -219,10 +232,7 @@ export const usePortfolioState = () => {
       return
     }
 
-    setCurrentPortfolio(reconcile({}))
-    setTargetCrossAccountLeverage(DEFAULT_CROSS_ACCOUNT_LEVERAGE)
-    setCurrentCrossAccountLeverage(DEFAULT_CROSS_ACCOUNT_LEVERAGE)
-    setPositionsLoadedFromExchange(false)
+    handleDisconnect()
   })
 
   // Derive accountValue from account summary
@@ -317,7 +327,7 @@ export const usePortfolioState = () => {
           delta = -getSignedNotional(c.side, c.notional)
           break
         case "rebalance":
-          delta = action.notional
+          delta = action.signedNotionalDelta
           break
         case "preciseRebalance":
           if (!c || !t) {
@@ -449,6 +459,7 @@ export const usePortfolioState = () => {
   const handleWeightChange = (changedSymbol: string, newPercentage: number) => {
     if (!isManualWeightEntry()) {
       redistributeWeights(changedSymbol, newPercentage)
+      return
     }
 
     const totalNotional = targetTotalNotional()
@@ -512,17 +523,6 @@ export const usePortfolioState = () => {
     rebalancePositionsMutation.mutate(apiPayload)
 
     setIsRebalancingUi(true)
-  }
-
-  const handleDisconnect = () => {
-    setCurrentPortfolio(reconcile({}))
-    setTargetPortfolio(reconcile({}))
-    setDeletedArchive(reconcile({}))
-    // setFundingRatesByBaseSymbol({})
-    setCurrentCrossAccountLeverage(DEFAULT_CROSS_ACCOUNT_LEVERAGE)
-    setTargetCrossAccountLeverage(DEFAULT_CROSS_ACCOUNT_LEVERAGE)
-    setCurrentTotalNotional(0)
-    setTargetTotalNotional(0)
   }
 
   const canSubmit = () => {

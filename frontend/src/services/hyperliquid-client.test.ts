@@ -133,7 +133,7 @@ describe("HyperliquidClient", () => {
       {
         kind: "rebalance",
         symbol: "BTC/USDC:USDC",
-        notional: 100,
+        signedNotionalDelta: 100,
         leverage: 5,
         leverageChanged: true,
       },
@@ -199,7 +199,7 @@ describe("HyperliquidClient", () => {
       {
         kind: "rebalance",
         symbol: "BTC/USDC:USDC",
-        notional: 100,
+        signedNotionalDelta: 100,
         leverage: 2,
         leverageChanged: false,
       },
@@ -246,7 +246,7 @@ describe("HyperliquidClient", () => {
       {
         kind: "rebalance",
         symbol: "BTC/USDC:USDC",
-        notional: -50,
+        signedNotionalDelta: -50,
         leverage: 2,
         leverageChanged: false,
       },
@@ -277,7 +277,7 @@ describe("HyperliquidClient", () => {
       {
         kind: "rebalance",
         symbol: "BTC/USDC:USDC",
-        notional: 100,
+        signedNotionalDelta: 100,
         leverage: 2,
         leverageChanged: false,
       },
@@ -300,7 +300,7 @@ describe("HyperliquidClient", () => {
       {
         kind: "rebalance",
         symbol: "BTC/USDC:USDC",
-        notional: 10,
+        signedNotionalDelta: 10,
         leverage: 2,
         leverageChanged: false,
       },
@@ -331,7 +331,7 @@ describe("HyperliquidClient", () => {
       {
         kind: "rebalance",
         symbol: "BTC/USDC:USDC",
-        notional: 50,
+        signedNotionalDelta: 50,
         leverage: 3,
         leverageChanged: true,
       },
@@ -473,7 +473,7 @@ describe("HyperliquidClient", () => {
       {
         kind: "rebalance",
         symbol: "BTC/USDC:USDC",
-        notional: -25,
+        signedNotionalDelta: -25,
         leverage: 2,
         leverageChanged: false,
       },

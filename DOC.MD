@@ -90,7 +90,7 @@ Nearly all target portfolio change scenarios decompose like this:
 
 - deleting a position -> `close`;
 - adding a new position -> `rebalance` (from zero to the target size);
-- changing weight/side -> `rebalance` with the required signed delta;
+- changing weight/side -> `rebalance` with the signed delta;
 - changing leverage without changing notional -> `rebalance` with `leverageChanged`;
 - tiny same-side tweak (precise mode, below `MIN_USD`) -> `preciseRebalance`.
 
@@ -157,8 +157,8 @@ Key file: `frontend/src/services/hyperliquid-client.ts`.
 - **`close`**: full close using current `contracts`, side is the **closing** side
   (opposite of the stored position side), always in the **reduction** batch with
   `reduceOnly: true`.
-- **`rebalance`**: side from signed delta (buy if `notional > 0`, sell if `< 0`),
-  size `abs(notional) / price`. Classified with `rebalanceIsReduction`: long
+- **`rebalance`**: side from signed delta (buy if `signedNotionalDelta > 0`, sell if `< 0`),
+  size `abs(signedNotionalDelta) / price`. Classified with `rebalanceIsReduction`: long
   positions reduce on negative delta, short positions reduce on positive delta.
   Reductions go to phase 1, increases to phase 2.
 - **`preciseRebalance`**: always **two** conceptual legs:
@@ -190,6 +190,6 @@ In other words, the panel preview and the executable action rely on the same dif
 
 - If a symbol has **no usable ticker `last`** when building orders, that action is
   skipped silently (no order, no synthetic `OrderResult` in the current code).
-- In `portfolioRebalancer.ts` there is a task to apply `MIN_USD` filtering at the diff layer
-  (not only via UI/state checks).
-- There is a `console.log` in key places of the pipeline.
+- **Diff layer:** `diffPortfolios` / `preciseRebalanceLegs` use `MIN_USD` (and
+  `NOTIONAL_EPSILON`) for precise vs `rebalance` branching and leg sizing; `usePortfolioState`
+  still applies submit-time gates (minimum notionals, delta checks, etc.).

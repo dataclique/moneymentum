@@ -1,6 +1,7 @@
 mod beta;
 mod candle;
 mod dataframe;
+pub mod derive;
 mod finance;
 mod funding;
 mod hyperliquid;

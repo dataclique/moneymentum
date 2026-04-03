@@ -13,6 +13,7 @@ clap = { version = "4.5.57", features = ["derive", "env"] }
 cqrs-es = "0.4.11"
 futures = "0.3.31"
 hyperliquid_rust_sdk = "0.6.0"
+reqwest = { version = "0.11", features = ["json"] }
 polars = { version = "0.51", features = [
   "parquet",
   "lazy",
@@ -25,6 +26,7 @@ polars = { version = "0.51", features = [
 rocket = { version = "0.5.1", features = ["json"] }
 rust_decimal = { version = "1.40.0", features = ["serde-with-str"] }
 serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
 sqlite-es = { git = "https://github.com/ST0x-Technology/st0x.issuance" }
 sqlx = { version = "0.8.6", features = [
   "sqlite",

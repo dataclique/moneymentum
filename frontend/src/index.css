@@ -276,3 +276,29 @@
   border: 2px solid color-mix(in srgb, var(--background) 70%, white);
   box-shadow: 0 0 8px rgba(0, 0, 0, 0.25);
 }
+
+@keyframes quote-flash-up {
+  0% {
+    background-color: color-mix(in oklch, var(--positive) 50%, transparent);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+
+@keyframes quote-flash-down {
+  0% {
+    background-color: color-mix(in oklch, var(--negative) 45%, transparent);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+
+.quote-flash-up {
+  animation: quote-flash-up 0.75s ease-out forwards;
+}
+
+.quote-flash-down {
+  animation: quote-flash-down 0.75s ease-out forwards;
+}

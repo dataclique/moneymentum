@@ -1,24 +1,46 @@
+use std::cmp::Ordering;
+use std::collections::{BTreeMap, HashMap};
+use std::sync::Arc;
+use std::time::Duration;
+
 use chrono::{DateTime, TimeZone, Utc};
+use futures::{SinkExt, StreamExt};
 use reqwest::Client;
-use serde::Deserialize;
+use rocket::fairing::{Fairing, Info, Kind};
+use rocket::http::Header;
+use rocket::http::Status;
+use rocket::response::stream::{Event, EventStream};
+use rocket::serde::json::Json;
+use rocket::{Build, Request, Response, Rocket, State, get, options, post, routes};
+use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::collections::BTreeSet;
 use thiserror::Error;
+use tokio::sync::{RwLock, broadcast, mpsc};
+use tokio_tungstenite::connect_async;
+use tokio_tungstenite::tungstenite::Message;
+use tracing::{debug, error, info, warn};
 use url::Url;
 
-// ─── Errors ──────────────────────────────────────────────────────────────────
+const ATM_TOLERANCE: f64 = 0.005;
+const BTC_ASSET: &str = "BTC";
+const TICKER_SLIM_INTERVAL_MS: &str = "100";
+const SUBSCRIBE_CHANNELS_PER_MESSAGE: usize = 25;
 
 #[derive(Debug, Error)]
 pub enum DeriveError {
     #[error(transparent)]
     Http(#[from] reqwest::Error),
+    #[error(transparent)]
+    Url(#[from] url::ParseError),
     #[error("invalid expiry timestamp: {timestamp}")]
     InvalidExpiry { timestamp: i64 },
     #[error("api error: {message}")]
     Api { message: String },
+    #[error(transparent)]
+    WebSocket(#[from] tokio_tungstenite::tungstenite::Error),
+    #[error("serialization failed: {message}")]
+    Serialization { message: String },
 }
-
-// ─── Raw API DTOs ─────────────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
 struct RpcResponse<T> {
@@ -39,461 +61,976 @@ struct InstrumentDto {
     option_details: Option<OptionDetailsDto>,
 }
 
-/// Response from /public/get_tickers.
-/// result is a map: instrument_name -> ticker object with single-letter keys:
-///   "b" = best bid, "a" = best ask, "I" = index price
-#[derive(Debug, Deserialize)]
-struct TickerDto {
-    /// Best bid price in USD
-    #[serde(rename = "b")]
-    best_bid_price: String,
-    /// Best ask price in USD
+#[derive(Debug, Deserialize, Clone)]
+struct WsNotification {
+    channel: Option<String>,
+    data: Option<WsData>,
+    params: Option<WsParams>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct WsParams {
+    channel: Option<String>,
+    data: Option<WsData>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct WsData {
+    #[serde(rename = "instrument_ticker")]
+    instrument_ticker: TickerSlimDto,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct TickerSlimDto {
+    #[serde(rename = "A")]
+    best_ask_size: String,
+    #[serde(rename = "B")]
+    best_bid_size: String,
     #[serde(rename = "a")]
     best_ask_price: String,
-    /// Spot index price (e.g. BTC-USD)
+    #[serde(rename = "b")]
+    best_bid_price: String,
     #[serde(rename = "I")]
     index_price: String,
+    #[serde(rename = "M")]
+    mark_price: String,
+    option_pricing: Option<OptionPricingSlimDto>,
 }
 
-// ─── Domain types ─────────────────────────────────────────────────────────────
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OptionKind {
-    Call,
-    Put,
+#[derive(Debug, Deserialize, Clone)]
+struct OptionPricingSlimDto {
+    #[serde(rename = "ai")]
+    ask_iv: String,
+    #[serde(rename = "bi")]
+    bid_iv: String,
+    #[serde(rename = "d")]
+    delta: String,
+    #[serde(rename = "g")]
+    gamma: String,
+    #[serde(rename = "v")]
+    vega: String,
+    #[serde(rename = "t")]
+    theta: String,
+    #[serde(rename = "i")]
+    iv: String,
+    #[serde(rename = "r")]
+    rho: String,
+    #[serde(rename = "f")]
+    forward: String,
+    #[serde(rename = "m")]
+    model_mark: String,
+    #[serde(rename = "df")]
+    discount_factor: String,
 }
 
-impl std::fmt::Display for OptionKind {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            OptionKind::Call => write!(f, "C"),
-            OptionKind::Put => write!(f, "P"),
-        }
+#[derive(Debug, Deserialize)]
+pub struct DeriveConfig {
+    pub port: u16,
+    pub rest_base_url: Url,
+    pub ws_url: Url,
+}
+
+impl DeriveConfig {
+    pub fn load(path: &str) -> Result<Self, super::ConfigError> {
+        let content = std::fs::read_to_string(path)?;
+        Ok(toml::from_str(&content)?)
     }
 }
 
-/// How the option relates to the current spot price.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub enum OptionKind {
+    #[serde(rename = "C")]
+    Call,
+    #[serde(rename = "P")]
+    Put,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Moneyness {
     InTheMoney,
     AtTheMoney,
     OutOfTheMoney,
 }
 
-impl std::fmt::Display for Moneyness {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Moneyness::InTheMoney => write!(f, "ITM"),
-            Moneyness::AtTheMoney => write!(f, "ATM"),
-            Moneyness::OutOfTheMoney => write!(f, "OTM"),
-        }
-    }
+#[derive(Debug, Clone, Serialize, Default)]
+pub struct OptionGreeks {
+    pub bid_iv: Option<f64>,
+    pub ask_iv: Option<f64>,
+    pub delta: Option<f64>,
+    pub gamma: Option<f64>,
+    pub vega: Option<f64>,
+    pub theta: Option<f64>,
+    pub iv: Option<f64>,
+    pub rho: Option<f64>,
+    pub forward_price: Option<f64>,
+    pub discount_factor: Option<f64>,
+    pub option_model_mark: Option<f64>,
 }
 
-/// A single option with its live market data attached.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct OptionQuote {
     pub instrument_name: String,
     pub kind: OptionKind,
     pub strike: f64,
     pub expiry: DateTime<Utc>,
-    /// Best bid in USD. `None` means no bids in the order book.
+    pub expiry_unix: i64,
     pub bid: Option<f64>,
-    /// Best ask in USD. `None` means no offers in the order book.
     pub ask: Option<f64>,
-    /// Current spot price of the underlying (BTC/USD, etc.).
+    pub bid_size: Option<f64>,
+    pub ask_size: Option<f64>,
+    pub mark: Option<f64>,
     pub spot_price: f64,
     pub moneyness: Moneyness,
+    pub greeks: OptionGreeks,
 }
 
-impl OptionQuote {
-    /// Mid-price, only meaningful when both bid and ask are present.
-    pub fn mid(&self) -> Option<f64> {
-        match (self.bid, self.ask) {
-            (Some(b), Some(a)) => Some((b + a) / 2.0),
-            _ => None,
-        }
-    }
+#[derive(Debug, Clone, Serialize, Default)]
+pub struct PortfolioRiskSummary {
+    pub aggregate_delta: f64,
+    pub aggregate_gamma: f64,
+    pub aggregate_vega: f64,
+    pub aggregate_theta: f64,
+    pub hedge_ratio_btc: f64,
 }
 
-/// The full options chain for one expiry date.
-#[derive(Debug)]
-pub struct ExpiryChain {
-    pub expiry: DateTime<Utc>,
-    /// Sorted by strike price.
-    pub quotes: Vec<OptionQuote>,
+#[derive(Debug, Clone, Serialize)]
+pub struct ScenarioPoint {
+    pub pct_move: f64,
+    pub estimated_pnl: f64,
 }
 
-/// A structured options chain:  expiry → strike → (call, put).
-///
-/// This is the main return type of [`DeriveClient::btc_options_chain`].
-#[derive(Debug)]
-pub struct OptionsChain {
+#[derive(Debug, Clone, Serialize)]
+pub struct OptionsSnapshot {
     pub asset: String,
-    /// Current BTC/USD spot price.
+    pub updated_at: DateTime<Utc>,
+    pub active_expiry_unix: i64,
+    pub expiry_unixes: Vec<i64>,
     pub spot_price: f64,
-    /// All available expiry dates, sorted ascending.
     pub expiry_dates: Vec<DateTime<Utc>>,
-    /// All available strike prices across all expiries, sorted ascending.
     pub strikes: Vec<f64>,
-    /// Full flat list of quotes, useful for iteration.
     pub quotes: Vec<OptionQuote>,
+    pub risk: PortfolioRiskSummary,
+    pub scenarios: Vec<ScenarioPoint>,
 }
 
-impl OptionsChain {
-    /// Return all quotes for a specific expiry.
-    pub fn by_expiry(&self, expiry: &DateTime<Utc>) -> Vec<&OptionQuote> {
-        self.quotes.iter().filter(|q| &q.expiry == expiry).collect()
-    }
+#[derive(Debug, Clone, Serialize)]
+pub struct ExpiryTabPayload {
+    pub expiry_unix: i64,
+    pub instruments: Vec<String>,
+}
 
-    /// Return all quotes for a specific strike.
-    pub fn by_strike(&self, strike: f64) -> Vec<&OptionQuote> {
-        self.quotes
-            .iter()
-            .filter(|q| (q.strike - strike).abs() < 0.01)
-            .collect()
-    }
+#[derive(Debug, Clone, Serialize)]
+pub struct OptionsBootstrap {
+    pub asset: String,
+    pub default_expiry_unix: i64,
+    pub tabs: Vec<ExpiryTabPayload>,
+}
 
-    /// Pretty-print the chain (useful for debugging / CLI).
-    pub fn print_summary(&self) {
-        println!(
-            "\n═══ BTC Options Chain  │  Spot: ${:.2} ═══\n",
-            self.spot_price
-        );
-        println!("Available expiries ({}):", self.expiry_dates.len());
-        for exp in &self.expiry_dates {
-            println!("  • {}", exp.format("%d %b %Y %H:%M UTC"));
+#[derive(Debug, Clone, Deserialize)]
+pub struct ActiveExpiryBody {
+    pub expiry_unix: i64,
+}
+
+#[derive(Debug, Clone)]
+struct InstrumentMeta {
+    instrument_name: String,
+    kind: OptionKind,
+    strike: f64,
+    expiry: DateTime<Utc>,
+    expiry_unix: i64,
+}
+
+#[derive(Debug, Clone)]
+struct QuoteState {
+    bid: Option<f64>,
+    ask: Option<f64>,
+    bid_size: Option<f64>,
+    ask_size: Option<f64>,
+    mark: Option<f64>,
+    spot: f64,
+    greeks: OptionGreeks,
+}
+
+impl Default for QuoteState {
+    fn default() -> Self {
+        Self {
+            bid: None,
+            ask: None,
+            bid_size: None,
+            ask_size: None,
+            mark: None,
+            spot: 0.0,
+            greeks: OptionGreeks::default(),
         }
-        println!("\nAvailable strikes ({}):", self.strikes.len());
-        let strike_strs: Vec<String> = self.strikes.iter().map(|s| format!("${s:.0}")).collect();
-        println!("  {}", strike_strs.join("  "));
+    }
+}
 
-        println!("\n{:-<80}", "");
-        println!(
-            "{:<40} {:>8} {:>8} {:>8} {:>6}",
-            "Instrument", "Bid", "Ask", "Mid", "Money"
-        );
-        println!("{:-<80}", "");
+struct OptionsCatalogue {
+    instrument_by_name: HashMap<String, InstrumentMeta>,
+    names_by_expiry_unix: HashMap<i64, Vec<String>>,
+    expiry_unix_sorted_asc: Vec<i64>,
+}
 
-        for exp in &self.expiry_dates {
-            println!("\n  ▶ Expiry: {}", exp.format("%d %b %Y"));
-            let mut chain_quotes: Vec<&OptionQuote> = self.by_expiry(exp);
-            // Sort: ascending strike, then Calls before Puts
-            chain_quotes.sort_by(|a, b| {
-                a.strike
-                    .partial_cmp(&b.strike)
-                    .unwrap()
-                    .then_with(|| a.kind.to_string().cmp(&b.kind.to_string()))
-            });
-            for q in chain_quotes {
-                let bid = q
-                    .bid
-                    .map(|v| format!("{v:.2}"))
-                    .unwrap_or_else(|| "-".to_string());
-                let ask = q
-                    .ask
-                    .map(|v| format!("{v:.2}"))
-                    .unwrap_or_else(|| "-".to_string());
-                let mid = q
-                    .mid()
-                    .map(|v| format!("{v:.2}"))
-                    .unwrap_or_else(|| "-".to_string());
-                println!(
-                    "  {:<40} {:>8} {:>8} {:>8} {:>6}",
-                    q.instrument_name, bid, ask, mid, q.moneyness
-                );
+struct DeriveState {
+    catalogue: Arc<OptionsCatalogue>,
+    snapshot: Arc<RwLock<OptionsSnapshot>>,
+    tx: broadcast::Sender<OptionsSnapshot>,
+    tab_command_tx: mpsc::Sender<i64>,
+}
+
+struct CorsFairing;
+
+#[rocket::async_trait]
+impl Fairing for CorsFairing {
+    fn info(&self) -> Info {
+        Info {
+            name: "derive-cors",
+            kind: Kind::Response,
+        }
+    }
+
+    async fn on_response<'r>(&self, _request: &'r Request<'_>, response: &mut Response<'r>) {
+        response.set_header(Header::new("Access-Control-Allow-Origin", "*"));
+        response.set_header(Header::new(
+            "Access-Control-Allow-Methods",
+            "GET, POST, OPTIONS",
+        ));
+        response.set_header(Header::new(
+            "Access-Control-Allow-Headers",
+            "Content-Type, Authorization",
+        ));
+    }
+}
+
+async fn fetch_options_catalogue(
+    http: &Client,
+    rest_base_url: &Url,
+    asset: &str,
+) -> Result<OptionsCatalogue, DeriveError> {
+    let rest_url = format!(
+        "{}/public/get_instruments",
+        rest_base_url.as_str().trim_end_matches('/')
+    );
+    let payload = json!({
+        "currency": asset,
+        "instrument_type": "option",
+        "expired": false
+    });
+
+    let response: RpcResponse<Vec<InstrumentDto>> = http
+        .post(&rest_url)
+        .json(&payload)
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+
+    let mut by_expiry: BTreeMap<i64, Vec<InstrumentMeta>> = BTreeMap::new();
+    let mut instrument_by_name: HashMap<String, InstrumentMeta> = HashMap::new();
+
+    for row in response.result {
+        if !row.is_active {
+            continue;
+        }
+        let Some(details) = row.option_details else {
+            continue;
+        };
+        let timestamp = i64::try_from(details.expiry).map_err(|_| DeriveError::Api {
+            message: "expiry value does not fit i64".to_string(),
+        })?;
+        let expiry = Utc
+            .timestamp_opt(timestamp, 0)
+            .single()
+            .ok_or(DeriveError::InvalidExpiry { timestamp })?;
+        let strike = parse_required_number(&details.strike, "strike")?;
+        let kind = match details.option_type.as_str() {
+            "C" => OptionKind::Call,
+            "P" => OptionKind::Put,
+            other => {
+                return Err(DeriveError::Api {
+                    message: format!("unsupported option_type: {other}"),
+                });
             }
-        }
-        println!("{:-<80}", "");
+        };
+        let meta = InstrumentMeta {
+            instrument_name: row.instrument_name.clone(),
+            kind,
+            strike,
+            expiry,
+            expiry_unix: timestamp,
+        };
+        instrument_by_name.insert(row.instrument_name.clone(), meta.clone());
+        by_expiry.entry(timestamp).or_default().push(meta);
     }
+
+    let mut names_by_expiry_unix: HashMap<i64, Vec<String>> = HashMap::new();
+    let mut expiry_unix_sorted_asc: Vec<i64> = Vec::new();
+    for (expiry_unix, mut metas) in by_expiry {
+        expiry_unix_sorted_asc.push(expiry_unix);
+        metas.sort_by(|left, right| {
+            left.strike
+                .partial_cmp(&right.strike)
+                .unwrap_or(Ordering::Equal)
+                .then_with(|| match (left.kind, right.kind) {
+                    (OptionKind::Call, OptionKind::Put) => Ordering::Less,
+                    (OptionKind::Put, OptionKind::Call) => Ordering::Greater,
+                    _ => Ordering::Equal,
+                })
+        });
+        let names = metas
+            .into_iter()
+            .map(|meta| meta.instrument_name)
+            .collect::<Vec<_>>();
+        names_by_expiry_unix.insert(expiry_unix, names);
+    }
+
+    Ok(OptionsCatalogue {
+        instrument_by_name,
+        names_by_expiry_unix,
+        expiry_unix_sorted_asc,
+    })
 }
 
-// ─── Moneyness helper ─────────────────────────────────────────────────────────
+fn channel_name_for_instrument(instrument_name: &str) -> String {
+    format!("ticker_slim.{instrument_name}.{TICKER_SLIM_INTERVAL_MS}")
+}
 
-/// Tolerance (in %) used to classify ATM. If strike is within 0.5% of spot → ATM.
-const ATM_TOLERANCE: f64 = 0.005;
+fn parse_instrument_from_channel(channel: &str) -> Option<String> {
+    let parts: Vec<&str> = channel.split('.').collect();
+    if parts.len() != 3 || parts.first() != Some(&"ticker_slim") {
+        return None;
+    }
+    Some(parts[1].to_string())
+}
+
+async fn send_subscribe_batch(
+    writer: &mut futures::stream::SplitSink<
+        tokio_tungstenite::WebSocketStream<
+            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+        >,
+        Message,
+    >,
+    channels: &[String],
+    message_id: &mut i64,
+) -> Result<(), DeriveError> {
+    for chunk in channels.chunks(SUBSCRIBE_CHANNELS_PER_MESSAGE) {
+        let payload = json!({
+            "method": "subscribe",
+            "params": { "channels": chunk },
+            "id": *message_id
+        });
+        *message_id += 1;
+        writer
+            .send(Message::Text(payload.to_string().into()))
+            .await?;
+    }
+    Ok(())
+}
+
+async fn send_unsubscribe_batch(
+    writer: &mut futures::stream::SplitSink<
+        tokio_tungstenite::WebSocketStream<
+            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+        >,
+        Message,
+    >,
+    channels: &[String],
+    message_id: &mut i64,
+) -> Result<(), DeriveError> {
+    for chunk in channels.chunks(SUBSCRIBE_CHANNELS_PER_MESSAGE) {
+        let payload = json!({
+            "method": "unsubscribe",
+            "params": { "channels": chunk },
+            "id": *message_id
+        });
+        *message_id += 1;
+        writer
+            .send(Message::Text(payload.to_string().into()))
+            .await?;
+    }
+    Ok(())
+}
+
+fn extract_notification_parts(notification: &WsNotification) -> Option<(String, WsData)> {
+    if let (Some(channel), Some(data)) = (notification.channel.clone(), notification.data.clone()) {
+        return Some((channel, data));
+    }
+    notification
+        .params
+        .as_ref()
+        .and_then(|params| params.channel.clone().zip(params.data.clone()))
+}
+
+fn parse_optional_number(input: &str) -> Option<f64> {
+    let value = input.parse::<f64>().ok()?;
+    if value == 0.0 { None } else { Some(value) }
+}
+
+fn parse_api_decimal(input: &str) -> Option<f64> {
+    input.parse::<f64>().ok()
+}
+
+fn parse_required_number(input: &str, field: &str) -> Result<f64, DeriveError> {
+    input.parse::<f64>().map_err(|_| DeriveError::Api {
+        message: format!("failed to parse {field}: {input}"),
+    })
+}
 
 fn compute_moneyness(kind: OptionKind, strike: f64, spot: f64) -> Moneyness {
+    if spot <= 0.0 {
+        return Moneyness::AtTheMoney;
+    }
     let ratio = (strike - spot).abs() / spot;
     if ratio < ATM_TOLERANCE {
         return Moneyness::AtTheMoney;
     }
     match kind {
-        // Call ITM  → spot > strike  (you can buy cheaper than market)
-        OptionKind::Call => {
-            if spot > strike {
-                Moneyness::InTheMoney
-            } else {
-                Moneyness::OutOfTheMoney
-            }
-        }
-        // Put ITM   → spot < strike  (you can sell higher than market)
-        OptionKind::Put => {
-            if spot < strike {
-                Moneyness::InTheMoney
-            } else {
-                Moneyness::OutOfTheMoney
-            }
-        }
+        OptionKind::Call if spot > strike => Moneyness::InTheMoney,
+        OptionKind::Put if spot < strike => Moneyness::InTheMoney,
+        _ => Moneyness::OutOfTheMoney,
     }
 }
 
-// ─── Parse helpers ────────────────────────────────────────────────────────────
-
-fn parse_price(s: &str) -> Option<f64> {
-    let v: f64 = s.parse().ok()?;
-    // Derive returns "0" when there is no quote in the book.
-    if v == 0.0 { None } else { Some(v) }
+fn build_greeks(ticker: &TickerSlimDto) -> OptionGreeks {
+    let Some(pricing) = ticker.option_pricing.as_ref() else {
+        return OptionGreeks::default();
+    };
+    OptionGreeks {
+        bid_iv: parse_api_decimal(&pricing.bid_iv),
+        ask_iv: parse_api_decimal(&pricing.ask_iv),
+        delta: parse_api_decimal(&pricing.delta),
+        gamma: parse_api_decimal(&pricing.gamma),
+        vega: parse_api_decimal(&pricing.vega),
+        theta: parse_api_decimal(&pricing.theta),
+        iv: parse_api_decimal(&pricing.iv),
+        rho: parse_api_decimal(&pricing.rho),
+        forward_price: parse_api_decimal(&pricing.forward),
+        discount_factor: parse_api_decimal(&pricing.discount_factor),
+        option_model_mark: parse_api_decimal(&pricing.model_mark),
+    }
 }
 
-// ─── Client ──────────────────────────────────────────────────────────────────
-
-pub struct DeriveClient {
-    http: Client,
-    base_url: Url,
+fn build_bootstrap(catalogue: &OptionsCatalogue, asset: &str) -> OptionsBootstrap {
+    let tabs = catalogue
+        .expiry_unix_sorted_asc
+        .iter()
+        .map(|expiry_unix| ExpiryTabPayload {
+            expiry_unix: *expiry_unix,
+            instruments: catalogue
+                .names_by_expiry_unix
+                .get(expiry_unix)
+                .cloned()
+                .unwrap_or_default(),
+        })
+        .collect::<Vec<_>>();
+    let default_expiry_unix = catalogue
+        .expiry_unix_sorted_asc
+        .first()
+        .copied()
+        .unwrap_or(0);
+    OptionsBootstrap {
+        asset: asset.to_string(),
+        default_expiry_unix,
+        tabs,
+    }
 }
 
-impl DeriveClient {
-    pub fn new(base_url: Url) -> Self {
-        Self {
-            http: Client::new(),
-            base_url,
+fn expiry_datetimes_from_catalogue(catalogue: &OptionsCatalogue) -> Vec<DateTime<Utc>> {
+    catalogue
+        .expiry_unix_sorted_asc
+        .iter()
+        .filter_map(|unix| Utc.timestamp_opt(*unix, 0).single())
+        .collect()
+}
+
+fn build_tab_snapshot(
+    asset: &str,
+    catalogue: &OptionsCatalogue,
+    active_expiry_unix: i64,
+    quote_map: &HashMap<String, QuoteState>,
+) -> OptionsSnapshot {
+    let names = catalogue
+        .names_by_expiry_unix
+        .get(&active_expiry_unix)
+        .cloned()
+        .unwrap_or_default();
+
+    let mut quotes: Vec<OptionQuote> = names
+        .iter()
+        .filter_map(|instrument_name| {
+            let meta = catalogue.instrument_by_name.get(instrument_name)?;
+            let state = quote_map.get(instrument_name).cloned().unwrap_or_default();
+            Some(OptionQuote {
+                instrument_name: instrument_name.clone(),
+                kind: meta.kind,
+                strike: meta.strike,
+                expiry: meta.expiry,
+                expiry_unix: meta.expiry_unix,
+                bid: state.bid,
+                ask: state.ask,
+                bid_size: state.bid_size,
+                ask_size: state.ask_size,
+                mark: state.mark,
+                spot_price: state.spot,
+                moneyness: compute_moneyness(meta.kind, meta.strike, state.spot),
+                greeks: state.greeks,
+            })
+        })
+        .collect();
+
+    quotes.sort_by(|left, right| {
+        left.strike
+            .partial_cmp(&right.strike)
+            .unwrap_or(Ordering::Equal)
+            .then_with(|| match (left.kind, right.kind) {
+                (OptionKind::Call, OptionKind::Put) => Ordering::Less,
+                (OptionKind::Put, OptionKind::Call) => Ordering::Greater,
+                _ => Ordering::Equal,
+            })
+    });
+
+    let mut strike_bits = quotes
+        .iter()
+        .map(|quote| quote.strike.to_bits())
+        .collect::<Vec<_>>();
+    strike_bits.sort_unstable();
+    strike_bits.dedup();
+    let strikes = strike_bits
+        .into_iter()
+        .map(f64::from_bits)
+        .collect::<Vec<_>>();
+
+    let spot_price = quotes
+        .iter()
+        .find_map(|quote| (quote.spot_price > 0.0).then_some(quote.spot_price))
+        .unwrap_or(0.0);
+
+    let risk = aggregate_risk(&quotes);
+    let scenarios = [-0.10, -0.05, 0.05, 0.10]
+        .iter()
+        .map(|pct_move| ScenarioPoint {
+            pct_move: *pct_move,
+            estimated_pnl: scenario_pnl(&risk, spot_price, *pct_move),
+        })
+        .collect::<Vec<_>>();
+
+    OptionsSnapshot {
+        asset: asset.to_string(),
+        updated_at: Utc::now(),
+        active_expiry_unix,
+        expiry_unixes: catalogue.expiry_unix_sorted_asc.clone(),
+        spot_price,
+        expiry_dates: expiry_datetimes_from_catalogue(catalogue),
+        strikes,
+        quotes,
+        risk,
+        scenarios,
+    }
+}
+
+fn aggregate_risk(quotes: &[OptionQuote]) -> PortfolioRiskSummary {
+    let aggregate_delta = quotes
+        .iter()
+        .filter_map(|quote| quote.greeks.delta)
+        .sum::<f64>();
+    let aggregate_gamma = quotes
+        .iter()
+        .filter_map(|quote| quote.greeks.gamma)
+        .sum::<f64>();
+    let aggregate_vega = quotes
+        .iter()
+        .filter_map(|quote| quote.greeks.vega)
+        .sum::<f64>();
+    let aggregate_theta = quotes
+        .iter()
+        .filter_map(|quote| quote.greeks.theta)
+        .sum::<f64>();
+
+    PortfolioRiskSummary {
+        aggregate_delta,
+        aggregate_gamma,
+        aggregate_vega,
+        aggregate_theta,
+        hedge_ratio_btc: -aggregate_delta,
+    }
+}
+
+fn scenario_pnl(risk: &PortfolioRiskSummary, spot: f64, pct_move: f64) -> f64 {
+    let spot_move = spot * pct_move;
+    risk.aggregate_delta * spot_move + 0.5 * risk.aggregate_gamma * spot_move * spot_move
+}
+
+async fn run_websocket_hub(
+    ws_url: Url,
+    catalogue: Arc<OptionsCatalogue>,
+    asset: String,
+    snapshot: Arc<RwLock<OptionsSnapshot>>,
+    broadcast_tx: broadcast::Sender<OptionsSnapshot>,
+    mut tab_command_rx: mpsc::Receiver<i64>,
+    initial_expiry_unix: i64,
+) -> Result<(), DeriveError> {
+    let mut quote_map: HashMap<String, QuoteState> = HashMap::new();
+    let mut active_expiry_unix = initial_expiry_unix;
+
+    async fn apply_tab_switch(
+        writer: &mut futures::stream::SplitSink<
+            tokio_tungstenite::WebSocketStream<
+                tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+            >,
+            Message,
+        >,
+        message_id: &mut i64,
+        subscribed_channels: &mut Vec<String>,
+        quote_map: &mut HashMap<String, QuoteState>,
+        catalogue: &OptionsCatalogue,
+        new_expiry_unix: i64,
+    ) -> Result<(), DeriveError> {
+        if !subscribed_channels.is_empty() {
+            send_unsubscribe_batch(writer, subscribed_channels, message_id).await?;
+            subscribed_channels.clear();
         }
+        quote_map.clear();
+
+        let names = catalogue
+            .names_by_expiry_unix
+            .get(&new_expiry_unix)
+            .cloned()
+            .unwrap_or_default();
+        let channels = names
+            .iter()
+            .map(|name| channel_name_for_instrument(name))
+            .collect::<Vec<_>>();
+        if !channels.is_empty() {
+            send_subscribe_batch(writer, &channels, message_id).await?;
+        }
+        *subscribed_channels = channels;
+        Ok(())
     }
 
-    fn url(&self, path: &str) -> String {
-        format!(
-            "{}/{}",
-            self.base_url.as_str().trim_end_matches('/'),
-            path.trim_start_matches('/')
+    'reconnect: loop {
+        let (stream, _) = match connect_async(ws_url.as_str()).await {
+            Ok(pair) => pair,
+            Err(error) => {
+                error!(error = %error, url = %ws_url, "derive websocket connect failed");
+                tokio::time::sleep(Duration::from_secs(3)).await;
+                continue 'reconnect;
+            }
+        };
+        info!(url = %ws_url, "derive websocket connected");
+        let (mut writer, mut reader) = stream.split();
+
+        let mut message_id: i64 = 1;
+        let mut subscribed_channels: Vec<String> = Vec::new();
+
+        if let Err(error) = apply_tab_switch(
+            &mut writer,
+            &mut message_id,
+            &mut subscribed_channels,
+            &mut quote_map,
+            catalogue.as_ref(),
+            active_expiry_unix,
         )
-    }
-
-    // ── Low-level: list instruments ──────────────────────────────────────────
-
-    async fn list_active_option_instruments(
-        &self,
-        asset: &str,
-    ) -> Result<Vec<InstrumentDto>, DeriveError> {
-        let payload = json!({
-            "currency": asset,
-            "instrument_type": "option",
-            "expired": false
-        });
-
-        let body: serde_json::Value = self
-            .http
-            .post(self.url("/public/get_instruments"))
-            .json(&payload)
-            .send()
-            .await?
-            .error_for_status()?
-            .json()
-            .await?;
-
-        // The API wraps results in { "result": [...] }
-        let instruments: Vec<InstrumentDto> = serde_json::from_value(body["result"].clone())
-            .map_err(|e| DeriveError::Api {
-                message: format!("failed to parse instruments: {e}"),
-            })?;
-
-        Ok(instruments.into_iter().filter(|i| i.is_active).collect())
-    }
-
-    // ── Low-level: get tickers for a batch of instruments ────────────────────
-    //
-    // /public/get_tickers requires `currency` and `expiry_date` (YYYYMMDD) for options.
-    // We group by expiry and do one request per expiry date to stay within API limits.
-
-    async fn get_tickers_for_expiry(
-        &self,
-        asset: &str,
-        expiry_date: &str, // "YYYYMMDD"
-    ) -> Result<Vec<(String, TickerDto)>, DeriveError> {
-        let payload = json!({
-            "currency": asset,
-            "instrument_type": "option",
-            "expiry_date": expiry_date
-        });
-
-        let body: serde_json::Value = self
-            .http
-            .post(self.url("/public/get_tickers"))
-            .json(&payload)
-            .send()
-            .await?
-            .error_for_status()?
-            .json()
-            .await?;
-
-        // result shape: { "tickers": { "BTC-...-C": { "b": ..., "a": ..., "I": ... }, ... } }
-        let result_map = body["result"]["tickers"]
-            .as_object()
-            .ok_or_else(|| DeriveError::Api {
-                message: "get_tickers: result.tickers is not an object".to_string(),
-            })?;
-
-        let mut tickers: Vec<(String, TickerDto)> = Vec::new();
-        for (name, val) in result_map {
-            match serde_json::from_value::<TickerDto>(val.clone()) {
-                Ok(dto) => tickers.push((name.clone(), dto)),
-                Err(e) => eprintln!("warning: skip ticker {name}: {e}"),
-            }
+        .await
+        {
+            error!(error = %error, "derive initial tab subscriptions failed");
+            return Err(error);
         }
 
-        Ok(tickers)
-    }
-
-    // ── Low-level: get spot / index price ────────────────────────────────────
-    //
-    // We use /public/get_ticker on the perpetual (e.g. "BTC-PERP") to read `index_price`,
-    // which is the pure spot feed. This avoids needing a separate endpoint.
-
-    /// Extract spot price from the first ticker in a map.
-    /// Every option ticker already carries "I" = index price, so no extra request needed.
-    fn spot_from_ticker_map(
-        ticker_map: &std::collections::HashMap<String, TickerDto>,
-    ) -> Option<f64> {
-        ticker_map
-            .values()
-            .find_map(|t| t.index_price.parse::<f64>().ok().filter(|&v| v > 0.0))
-    }
-
-    // ── High-level: full BTC options chain ───────────────────────────────────
-
-    /// Fetch the complete BTC options chain with live bid/ask data and moneyness.
-    ///
-    /// Strategy:
-    ///   1. Fetch all active BTC option instruments → extract unique expiry dates.
-    ///   2. For each expiry, fetch tickers (bid/ask) in a single request.
-    ///   3. Extract spot price from the "I" field present in every option ticker.
-    ///   4. Join instruments with their ticker data, compute moneyness.
-    pub async fn btc_options_chain(&self) -> Result<OptionsChain, DeriveError> {
-        let asset = "BTC";
-
-        // 1. Instruments
-        let raw_instruments = self.list_active_option_instruments(asset).await?;
-
-        // Parse and collect into a map: instrument_name → parsed fields
-        let mut parsed: Vec<(String, OptionKind, f64, DateTime<Utc>)> = Vec::new();
-        let mut expiry_dates_set: BTreeSet<(i64, String)> = BTreeSet::new(); // (ts, YYYYMMDD)
-        // BTreeSet<u64> via f64::to_bits() gives us sorted, deduplicated strikes
-        // without needing the ordered_float crate.
-        let mut strikes_set: BTreeSet<u64> = BTreeSet::new();
-
-        for dto in raw_instruments {
-            // Skip instruments without option_details (shouldn't happen, but be safe)
-            let details = match dto.option_details {
-                Some(d) => d,
-                None => continue,
-            };
-
-            let ts = i64::try_from(details.expiry).unwrap_or(i64::MAX);
-            let expiry = Utc
-                .timestamp_opt(ts, 0)
-                .single()
-                .ok_or(DeriveError::InvalidExpiry { timestamp: ts })?;
-
-            let strike: f64 = details
-                .strike
-                .parse()
-                .map_err(|_| DeriveError::InvalidExpiry { timestamp: ts })?;
-
-            let kind = match details.option_type.as_str() {
-                "P" => OptionKind::Put,
-                _ => OptionKind::Call,
-            };
-
-            let expiry_str = expiry.format("%Y%m%d").to_string();
-            expiry_dates_set.insert((ts, expiry_str));
-
-            strikes_set.insert(strike.to_bits());
-
-            parsed.push((dto.instrument_name, kind, strike, expiry));
+        let initial_snapshot = build_tab_snapshot(
+            asset.as_str(),
+            catalogue.as_ref(),
+            active_expiry_unix,
+            &quote_map,
+        );
+        {
+            let mut guard = snapshot.write().await;
+            *guard = initial_snapshot.clone();
         }
+        let _ = broadcast_tx.send(initial_snapshot);
 
-        // 2. Tickers — one request per expiry date
-        // Build a map: instrument_name → TickerDto
-        let mut ticker_map: std::collections::HashMap<String, TickerDto> =
-            std::collections::HashMap::new();
-
-        for (_ts, expiry_str) in &expiry_dates_set {
-            match self.get_tickers_for_expiry(asset, expiry_str).await {
-                Ok(tickers) => {
-                    for (name, dto) in tickers {
-                        ticker_map.insert(name, dto);
+        'session: loop {
+            tokio::select! {
+                maybe_command = tab_command_rx.recv() => {
+                    let Some(next_expiry_unix) = maybe_command else {
+                        return Ok(());
+                    };
+                    if !catalogue.expiry_unix_sorted_asc.contains(&next_expiry_unix) {
+                        warn!(expiry_unix = next_expiry_unix, "ignored unknown expiry tab switch");
+                        continue;
+                    }
+                    active_expiry_unix = next_expiry_unix;
+                    if let Err(error) = apply_tab_switch(
+                        &mut writer,
+                        &mut message_id,
+                        &mut subscribed_channels,
+                        &mut quote_map,
+                        catalogue.as_ref(),
+                        active_expiry_unix,
+                    ).await {
+                        error!(error = %error, "derive tab switch failed");
+                        return Err(error);
+                    }
+                    let switched = build_tab_snapshot(
+                        asset.as_str(),
+                        catalogue.as_ref(),
+                        active_expiry_unix,
+                        &quote_map,
+                    );
+                    {
+                        let mut guard = snapshot.write().await;
+                        *guard = switched.clone();
+                    }
+                    let _ = broadcast_tx.send(switched);
+                    debug!(expiry_unix = active_expiry_unix, "derive tab switched and subscriptions updated");
+                }
+                maybe_message = reader.next() => {
+                    let Some(message_result) = maybe_message else {
+                        break 'session;
+                    };
+                    let message = match message_result {
+                        Ok(message) => message,
+                        Err(error) => {
+                            error!(error = %error, "derive websocket read failed");
+                            break 'session;
+                        }
+                    };
+                    if !message.is_text() {
+                        continue;
+                    }
+                    let text = message.to_text().map_err(|error| DeriveError::Serialization {
+                        message: error.to_string(),
+                    })?;
+                    let Ok(notification) = serde_json::from_str::<WsNotification>(text) else {
+                        continue;
+                    };
+                    if let Some((channel, data)) = extract_notification_parts(&notification) {
+                        if !channel.starts_with("ticker_slim.") {
+                            continue;
+                        }
+                        let Some(instrument_name) = parse_instrument_from_channel(&channel) else {
+                            continue;
+                        };
+                        let Some(meta) = catalogue.instrument_by_name.get(&instrument_name) else {
+                            continue;
+                        };
+                        if meta.expiry_unix != active_expiry_unix {
+                            continue;
+                        }
+                        let state = QuoteState {
+                            bid: parse_optional_number(&data.instrument_ticker.best_bid_price),
+                            ask: parse_optional_number(&data.instrument_ticker.best_ask_price),
+                            bid_size: parse_optional_number(&data.instrument_ticker.best_bid_size),
+                            ask_size: parse_optional_number(&data.instrument_ticker.best_ask_size),
+                            mark: parse_optional_number(&data.instrument_ticker.mark_price),
+                            spot: parse_required_number(&data.instrument_ticker.index_price, "spot")
+                                .unwrap_or(0.0),
+                            greeks: build_greeks(&data.instrument_ticker),
+                        };
+                        quote_map.insert(instrument_name, state);
+                        let next_snapshot = build_tab_snapshot(
+                            asset.as_str(),
+                            catalogue.as_ref(),
+                            active_expiry_unix,
+                            &quote_map,
+                        );
+                        {
+                            let mut guard = snapshot.write().await;
+                            *guard = next_snapshot.clone();
+                        }
+                        let _ = broadcast_tx.send(next_snapshot);
                     }
                 }
-                Err(e) => {
-                    // A single expiry failing shouldn't crash the whole chain
-                    eprintln!("warning: failed to fetch tickers for {expiry_str}: {e}");
-                }
             }
         }
 
-        // 3b. Extract spot price from any option ticker ("I" field = BTC-USD index)
-        let spot_price =
-            Self::spot_from_ticker_map(&ticker_map).ok_or_else(|| DeriveError::Api {
-                message: "could not determine spot price: no tickers returned".to_string(),
-            })?;
+        warn!(url = %ws_url, "derive websocket session ended, reconnecting");
+        tokio::time::sleep(Duration::from_secs(3)).await;
+    }
+}
 
-        // 4. Build OptionQuote list
-        let mut quotes: Vec<OptionQuote> = parsed
-            .into_iter()
-            .map(|(name, kind, strike, expiry)| {
-                let (bid, ask, index) = ticker_map
-                    .get(&name)
-                    .map(|t| {
-                        (
-                            parse_price(&t.best_bid_price),
-                            parse_price(&t.best_ask_price),
-                            t.index_price.parse::<f64>().unwrap_or(spot_price),
-                        )
-                    })
-                    .unwrap_or((None, None, spot_price));
+#[get("/health")]
+fn health() -> &'static str {
+    "ok"
+}
 
-                // Use per-ticker index_price if available (more accurate), else global spot
-                let effective_spot = if index != 0.0 { index } else { spot_price };
+#[get("/derive/options/bootstrap")]
+fn get_bootstrap(state: &State<DeriveState>) -> Json<OptionsBootstrap> {
+    Json(build_bootstrap(state.catalogue.as_ref(), BTC_ASSET))
+}
 
-                let moneyness = compute_moneyness(kind, strike, effective_spot);
+#[get("/derive/options/snapshot")]
+async fn get_snapshot(state: &State<DeriveState>) -> Json<OptionsSnapshot> {
+    Json(state.snapshot.read().await.clone())
+}
 
-                OptionQuote {
-                    instrument_name: name,
-                    kind,
-                    strike,
-                    expiry,
-                    bid,
-                    ask,
-                    spot_price: effective_spot,
-                    moneyness,
+#[get("/derive/options/stream")]
+fn stream_options(state: &State<DeriveState>) -> EventStream![] {
+    let mut rx = state.tx.subscribe();
+    EventStream! {
+        loop {
+            match rx.recv().await {
+                Ok(next_snapshot) => {
+                    yield Event::json(&next_snapshot);
                 }
-            })
-            .collect();
+                Err(broadcast::error::RecvError::Lagged(_)) => {
+                    continue;
+                }
+                Err(broadcast::error::RecvError::Closed) => {
+                    break;
+                }
+            }
+        }
+    }
+}
 
-        // Sort: expiry asc, then strike asc, then Call before Put
-        quotes.sort_by(|a, b| {
-            a.expiry
-                .cmp(&b.expiry)
-                .then(a.strike.partial_cmp(&b.strike).unwrap())
-                .then(a.kind.to_string().cmp(&b.kind.to_string()))
-        });
+#[options("/derive/options/active_expiry")]
+fn options_active_expiry() -> Status {
+    Status::NoContent
+}
 
-        let expiry_dates: Vec<DateTime<Utc>> = expiry_dates_set
-            .iter()
-            .filter_map(|(ts, _)| Utc.timestamp_opt(*ts, 0).single())
-            .collect();
+#[post("/derive/options/active_expiry", format = "json", data = "<body>")]
+async fn post_active_expiry(
+    state: &State<DeriveState>,
+    body: Json<ActiveExpiryBody>,
+) -> Result<Status, Status> {
+    if !state
+        .catalogue
+        .expiry_unix_sorted_asc
+        .contains(&body.expiry_unix)
+    {
+        return Err(Status::BadRequest);
+    }
+    state
+        .tab_command_tx
+        .send(body.expiry_unix)
+        .await
+        .map_err(|_| Status::InternalServerError)?;
+    Ok(Status::NoContent)
+}
 
-        let strikes: Vec<f64> = strikes_set
-            .iter()
-            .map(|&bits| f64::from_bits(bits))
-            .collect();
+pub async fn derive_rocket(config: DeriveConfig) -> Result<Rocket<Build>, DeriveError> {
+    let http = Client::new();
+    let catalogue =
+        Arc::new(fetch_options_catalogue(&http, &config.rest_base_url, BTC_ASSET).await?);
+    let default_expiry_unix = catalogue
+        .expiry_unix_sorted_asc
+        .first()
+        .copied()
+        .unwrap_or(0);
 
-        Ok(OptionsChain {
-            asset: asset.to_string(),
-            spot_price,
-            expiry_dates,
-            strikes,
-            quotes,
+    let empty_snapshot = build_tab_snapshot(
+        BTC_ASSET,
+        catalogue.as_ref(),
+        default_expiry_unix,
+        &HashMap::new(),
+    );
+    let snapshot = Arc::new(RwLock::new(empty_snapshot));
+    let (broadcast_tx, _) = broadcast::channel(2048);
+    let (tab_command_tx, tab_command_rx) = mpsc::channel::<i64>(32);
+
+    let state = DeriveState {
+        catalogue: Arc::clone(&catalogue),
+        snapshot: Arc::clone(&snapshot),
+        tx: broadcast_tx.clone(),
+        tab_command_tx,
+    };
+
+    let ws_url = config.ws_url.clone();
+    let snapshot_for_task = Arc::clone(&snapshot);
+    let catalogue_for_task = Arc::clone(&catalogue);
+    tokio::spawn(async move {
+        if let Err(error) = run_websocket_hub(
+            ws_url,
+            catalogue_for_task,
+            BTC_ASSET.to_string(),
+            snapshot_for_task,
+            broadcast_tx,
+            tab_command_rx,
+            default_expiry_unix,
+        )
+        .await
+        {
+            error!(error = %error, "derive websocket hub exited with error");
+        }
+    });
+
+    info!(port = config.port, "derive options server ready");
+    Ok(rocket::build()
+        .configure(rocket::Config {
+            port: config.port,
+            ..rocket::Config::default()
         })
+        .attach(CorsFairing)
+        .manage(state)
+        .mount(
+            "/",
+            routes![
+                health,
+                get_bootstrap,
+                get_snapshot,
+                stream_options,
+                post_active_expiry,
+                options_active_expiry
+            ],
+        ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn build_greeks_maps_option_pricing_including_zero_bid_iv() {
+        let ticker: TickerSlimDto = serde_json::from_value(serde_json::json!({
+            "A": "1",
+            "B": "1",
+            "a": "1",
+            "b": "1",
+            "I": "71760",
+            "M": "13289",
+            "option_pricing": {
+                "d": "-0.9545",
+                "t": "-15.89706",
+                "g": "0.00001374",
+                "v": "16.42465",
+                "i": "0.40474",
+                "r": "761.28903",
+                "f": "71824",
+                "m": "13289",
+                "df": "0.999",
+                "bi": "0",
+                "ai": "0.54578"
+            }
+        }))
+        .expect("fixture ticker");
+
+        let greeks = build_greeks(&ticker);
+        assert!((greeks.delta.expect("delta") + 0.9545).abs() < 1e-9);
+        assert_eq!(greeks.bid_iv, Some(0.0));
+        assert!((greeks.ask_iv.expect("ask_iv") - 0.54578).abs() < 1e-9);
+        assert!((greeks.rho.expect("rho") - 761.28903).abs() < 1e-5);
+        assert_eq!(greeks.forward_price, Some(71824.0));
+        assert_eq!(greeks.option_model_mark, Some(13289.0));
+        assert!((greeks.discount_factor.expect("df") - 0.999).abs() < 1e-9);
+    }
+
+    #[test]
+    fn build_greeks_default_without_option_pricing() {
+        let ticker: TickerSlimDto = serde_json::from_value(serde_json::json!({
+            "A": "1",
+            "B": "1",
+            "a": "1",
+            "b": "1",
+            "I": "100",
+            "M": "50",
+            "option_pricing": null
+        }))
+        .expect("fixture ticker");
+
+        let greeks = build_greeks(&ticker);
+        assert_eq!(greeks.delta, None);
+        assert_eq!(greeks.iv, None);
     }
 }

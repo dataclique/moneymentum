@@ -14,6 +14,11 @@ import {
   type OrderSide,
 } from "@/hooks/useTrading"
 import { buildApiPayload, diffPortfolios } from "./portfolioRebalancer"
+import {
+  useReadonlyPortfolioState,
+  type ReadonlyBetaPosition,
+  type ReadonlyBtcRow,
+} from "./useReadonlyPortfolioState"
 import { useWallet } from "@/hooks/useWallet"
 import { createStore, produce, reconcile } from "solid-js/store"
 
@@ -247,6 +252,8 @@ export const usePortfolioState = () => {
       .toDecimalPlaces(2, Decimal.ROUND_HALF_UP)
       .toNumber(),
   )
+
+  const readonlyPortfolio = useReadonlyPortfolioState()
 
   // Wait for positionsQuery data and positive accountValue, then initialize from exchange positions
   createEffect(() => {
@@ -604,6 +611,22 @@ export const usePortfolioState = () => {
       return canSubmit()
     },
 
+    get readonlyBtcRows(): ReadonlyBtcRow[] {
+      return readonlyPortfolio.rows
+    },
+
+    get readonlyBetaPositions(): ReadonlyBetaPosition[] {
+      return readonlyPortfolio.betaPositions
+    },
+
+    get isReadonlyBtcLoading() {
+      return readonlyPortfolio.isLoading
+    },
+
+    get readonlyBtcError() {
+      return readonlyPortfolio.error
+    },
+
     get symbolsBelowMinimum() {
       return symbolsBelowMinimum()
     },
@@ -639,6 +662,9 @@ export const usePortfolioState = () => {
     handleCrossAccountLeverageChange,
     handleRebalancePositions,
     handleResetToCurrent,
+    addReadonlyBtcAddress: readonlyPortfolio.addAddress,
+    removeReadonlyBtcAddress: readonlyPortfolio.removeAddress,
+    setReadonlyBtcIncludeInBeta: readonlyPortfolio.setIncludeInBeta,
     handleDisconnect,
   }
 }

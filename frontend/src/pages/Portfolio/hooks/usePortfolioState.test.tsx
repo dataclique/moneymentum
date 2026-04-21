@@ -25,6 +25,18 @@ vi.mock("@/hooks/useWallet", () => ({
   })),
 }))
 
+vi.mock("./useReadonlyPortfolioState", () => ({
+  useReadonlyPortfolioState: vi.fn(() => ({
+    rows: [],
+    betaPositions: [],
+    isLoading: false,
+    error: null,
+    addAddress: vi.fn(),
+    removeAddress: vi.fn(),
+    setIncludeInBeta: vi.fn(),
+  })),
+}))
+
 const createWrapper = () => {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -86,7 +98,7 @@ describe("usePortfolioState", () => {
     vi.mocked(useRebalanceHyperliquidPositions).mockReturnValue({
       mutate,
       isPending: false,
-    } as ReturnType<typeof useRebalanceHyperliquidPositions>)
+    } as unknown as ReturnType<typeof useRebalanceHyperliquidPositions>)
   })
 
   afterEach(() => {

@@ -66,7 +66,10 @@ const PortfolioPage = () => {
     return set
   })
 
-  const betaResult = useBeta(() => portfolio.targetPortfolio)
+  const betaResult = useBeta(
+    () => portfolio.targetPortfolio,
+    () => portfolio.readonlyBetaPositions,
+  )
 
   const tickersQuery = useHyperliquidTickers()
   const fundingRatesQuery = useHyperliquidFundingRates()
@@ -176,6 +179,14 @@ const PortfolioPage = () => {
                 symbolsDeltaBelowMinimum={portfolio.symbolsDeltaBelowMinimum}
                 hasTotalWeightExceeded={portfolio.hasTotalWeightExceeded}
                 targetAllocationPercent={portfolio.targetAllocationPercent}
+                readonlyBtcRows={portfolio.readonlyBtcRows}
+                isReadonlyBtcLoading={portfolio.isReadonlyBtcLoading}
+                readonlyBtcError={portfolio.readonlyBtcError}
+                onAddReadonlyBtcAddress={portfolio.addReadonlyBtcAddress}
+                onRemoveReadonlyBtcAddress={portfolio.removeReadonlyBtcAddress}
+                onReadonlyBtcIncludeInBetaChange={
+                  portfolio.setReadonlyBtcIncludeInBeta
+                }
               />
             </div>
             {/* <Show when={portfolio.blockingReasons.length > 0}>

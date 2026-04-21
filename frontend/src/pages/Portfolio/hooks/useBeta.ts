@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/solid-query"
 import { createMemo } from "solid-js"
 import type { PortfolioInterface } from "./usePortfolioState"
+import type { ReadonlyBetaPosition } from "./useReadonlyPortfolioState"
 
 const BETA_BENCHMARK = "BTC"
 
@@ -9,25 +10,42 @@ const symbolToTicker = (symbol: string): string =>
 
 const weightsFromPortfolio = (
   portfolio: Record<string, PortfolioInterface | undefined>,
+  readonlyPositions: ReadonlyBetaPosition[],
 ): Record<string, number> => {
-  const positions = Object.values(portfolio).filter(
+  const exchangePositions = Object.values(portfolio).filter(
     (position): position is PortfolioInterface => position !== undefined,
   )
-
-  const totalNotional = positions.reduce(
-    (sum, position) => sum + position.notional,
-    0,
+  const includedReadonlyPositions = readonlyPositions.filter(
+    position =>
+      position.includeInBeta &&
+      Number.isFinite(position.notionalUsd) &&
+      position.notionalUsd > 0,
   )
+
+  const totalNotional =
+    exchangePositions.reduce((sum, position) => sum + position.notional, 0) +
+    includedReadonlyPositions.reduce(
+      (sum, position) => sum + position.notionalUsd,
+      0,
+    )
 
   if (totalNotional <= 0) return {}
 
   const signedWeights: Record<string, number> = {}
 
-  for (const position of positions) {
+  for (const position of exchangePositions) {
     const ticker = symbolToTicker(position.symbol)
     const signedWeight =
       (position.notional / totalNotional) * (position.side === "buy" ? 1 : -1)
     signedWeights[ticker] = (signedWeights[ticker] ?? 0) + signedWeight
+  }
+
+  for (const position of includedReadonlyPositions) {
+    const signedWeight =
+      (position.notionalUsd / totalNotional) *
+      (position.side === "buy" ? 1 : -1)
+    signedWeights[position.symbol] =
+      (signedWeights[position.symbol] ?? 0) + signedWeight
   }
 
   return signedWeights
@@ -56,8 +74,11 @@ const fetchBeta = async (
 
 export const useBeta = (
   portfolio: () => Record<string, PortfolioInterface | undefined>,
+  readonlyPositions: () => ReadonlyBetaPosition[],
 ) => {
-  const weights = createMemo(() => weightsFromPortfolio(portfolio()))
+  const weights = createMemo(() =>
+    weightsFromPortfolio(portfolio(), readonlyPositions()),
+  )
 
   const query = useQuery(() => {
     const currentWeights = weights()

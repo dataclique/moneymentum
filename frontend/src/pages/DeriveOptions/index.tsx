@@ -1,5 +1,6 @@
 import {
   For,
+  Index,
   Show,
   createEffect,
   createMemo,
@@ -8,6 +9,9 @@ import {
   onMount,
   type Accessor,
 } from "solid-js"
+
+import { computeRollingVolatility } from "@/pages/Prototype/metrics/computations"
+import type { TimeSeriesPoint } from "@/pages/Prototype/metrics/registry"
 
 type OptionKind = "C" | "P"
 type Moneyness = "in_the_money" | "at_the_money" | "out_of_the_money"
@@ -130,6 +134,97 @@ const GREEKS_CHAIN_COL_CLASSES = [
 const parseJsonUnknown = (text: string): unknown =>
   (JSON.parse as (input: string) => unknown)(text)
 
+const REALIZED_VOL_WINDOW_DAYS = 30
+
+const parseNdjsonRecords = (text: string): unknown[] => {
+  const trimmed = text.trim()
+  if (trimmed.length === 0) {
+    return []
+  }
+  if (trimmed.startsWith("[")) {
+    const parsed = parseJsonUnknown(trimmed)
+    return Array.isArray(parsed) ? parsed : []
+  }
+  return trimmed
+    .split("\n")
+    .filter(line => line.length > 0)
+    .map(line => parseJsonUnknown(line))
+}
+
+const recordToObject = (row: unknown): Record<string, unknown> | null =>
+  row !== null && typeof row === "object" && !Array.isArray(row)
+    ? (row as Record<string, unknown>)
+    : null
+
+const isBtcCandleRow = (row: Record<string, unknown>): boolean => {
+  const ticker = row.ticker
+  if (typeof ticker === "string" && ticker.toUpperCase() === "BTC") {
+    return true
+  }
+  const symbol = row.symbol
+  if (typeof symbol === "string") {
+    const sym = symbol.toUpperCase()
+    if (sym === "BTC" || sym.startsWith("BTC/") || sym.startsWith("BTC:")) {
+      return true
+    }
+  }
+  return false
+}
+
+const rowClosePrice = (row: Record<string, unknown>): number | null => {
+  const close = row.close
+  if (typeof close === "number" && Number.isFinite(close)) {
+    return close
+  }
+  if (typeof close === "string") {
+    const parsed = Number.parseFloat(close)
+    return Number.isFinite(parsed) ? parsed : null
+  }
+  return null
+}
+
+const rowTimeMs = (row: Record<string, unknown>): number => {
+  const ts = row.timestamp
+  if (typeof ts === "number" && Number.isFinite(ts)) {
+    return ts < 1e12 ? ts * 1000 : ts
+  }
+  if (typeof ts === "string") {
+    const parsed = Date.parse(ts)
+    return Number.isFinite(parsed) ? parsed : 0
+  }
+  return 0
+}
+
+const btcCloseSeriesFromCandlesResponse = (text: string): TimeSeriesPoint[] => {
+  const points: TimeSeriesPoint[] = []
+  for (const raw of parseNdjsonRecords(text)) {
+    const row = recordToObject(raw)
+    if (row === null || !isBtcCandleRow(row)) {
+      continue
+    }
+    const close = rowClosePrice(row)
+    if (close === null) {
+      continue
+    }
+    const time = rowTimeMs(row)
+    if (!Number.isFinite(time) || time <= 0) {
+      continue
+    }
+    points.push({ time, value: close })
+  }
+  points.sort((left, right) => left.time - right.time)
+  const deduped: TimeSeriesPoint[] = []
+  for (const point of points) {
+    const tail = deduped.length > 0 ? deduped[deduped.length - 1] : undefined
+    if (tail?.time === point.time) {
+      deduped[deduped.length - 1] = point
+      continue
+    }
+    deduped.push(point)
+  }
+  return deduped
+}
+
 type QuotePriceFlash = "up" | "down"
 
 type QuoteFlashEntry = {
@@ -186,6 +281,9 @@ const DeriveOptionsPage = () => {
   const [flashByInstrument, setFlashByInstrument] = createSignal<
     Partial<Record<string, QuoteFlashEntry>>
   >({})
+  const [realizedVolAnnual30d, setRealizedVolAnnual30d] = createSignal<
+    number | null
+  >(null)
 
   const quotePriceHistoryRef: {
     map: Map<string, { bid: number | null; ask: number | null }>
@@ -448,44 +546,76 @@ const DeriveOptionsPage = () => {
       if (flashClearTimerRef.id !== undefined) {
         window.clearTimeout(flashClearTimerRef.id)
       }
-      setFlashByInstrument(nextFlash)
+      const previousFlash = flashByInstrument()
+      const mergedFlash: Partial<Record<string, QuoteFlashEntry>> = {
+        ...previousFlash,
+      }
+      for (const name of Object.keys(nextFlash)) {
+        const tick = nextFlash[name]
+        if (tick === undefined) {
+          continue
+        }
+        mergedFlash[name] = {
+          ...mergedFlash[name],
+          ...tick,
+        }
+      }
+      setFlashByInstrument(mergedFlash)
       flashClearTimerRef.id = window.setTimeout(() => {
         setFlashByInstrument({})
         flashClearTimerRef.id = undefined
-      }, 780)
+      }, 950)
     }
   })
 
   const smileGeometry = createMemo(() => {
     const points = ivSmilePoints()
+    const realizedAnnual = realizedVolAnnual30d()
     const width = 760
     const height = 260
     const paddingLeft = 52
     const paddingRight = 20
     const paddingTop = 20
     const paddingBottom = 34
+    const plotHeight = height - paddingTop - paddingBottom
+    const empty = () => ({
+      width,
+      height,
+      circles: [] as Array<{
+        x: number
+        y: number
+        strike: number
+        iv: number
+      }>,
+      path: "",
+      realizedY: null as number | null,
+      realizedAnnual: null as number | null,
+    })
     if (points.length < 2) {
-      return {
-        width,
-        height,
-        circles: [] as Array<{
-          x: number
-          y: number
-          strike: number
-          iv: number
-        }>,
-        path: "",
-      }
+      return empty()
     }
 
     const strikes = points.map(point => point.strike)
     const ivs = points.map(point => point.iv)
+    let minIv = Math.min(...ivs)
+    let maxIv = Math.max(...ivs)
+    if (
+      realizedAnnual !== null &&
+      Number.isFinite(realizedAnnual) &&
+      realizedAnnual > 0
+    ) {
+      minIv = Math.min(minIv, realizedAnnual)
+      maxIv = Math.max(maxIv, realizedAnnual)
+    }
+    const ivSpan = maxIv - minIv || 0.0001
+    const pad = Math.max(ivSpan * 0.05, 0.0005)
+    minIv -= pad
+    maxIv += pad
+    const ivRange = maxIv - minIv || 0.0001
+
     const minStrike = Math.min(...strikes)
     const maxStrike = Math.max(...strikes)
-    const minIv = Math.min(...ivs)
-    const maxIv = Math.max(...ivs)
     const strikeRange = maxStrike - minStrike || 1
-    const ivRange = maxIv - minIv || 0.0001
 
     const circles = points.map(point => {
       const x =
@@ -493,9 +623,7 @@ const DeriveOptionsPage = () => {
         ((point.strike - minStrike) / strikeRange) *
           (width - paddingLeft - paddingRight)
       const y =
-        height -
-        paddingBottom -
-        ((point.iv - minIv) / ivRange) * (height - paddingTop - paddingBottom)
+        height - paddingBottom - ((point.iv - minIv) / ivRange) * plotHeight
       return { x, y, strike: point.strike, iv: point.iv }
     })
 
@@ -504,7 +632,29 @@ const DeriveOptionsPage = () => {
         (circle, index) => `${index === 0 ? "M" : "L"} ${circle.x} ${circle.y}`,
       )
       .join(" ")
-    return { width, height, circles, path }
+
+    const realizedY =
+      realizedAnnual !== null &&
+      Number.isFinite(realizedAnnual) &&
+      realizedAnnual > 0
+        ? height -
+          paddingBottom -
+          ((realizedAnnual - minIv) / ivRange) * plotHeight
+        : null
+
+    return {
+      width,
+      height,
+      circles,
+      path,
+      realizedY,
+      realizedAnnual:
+        realizedAnnual !== null &&
+        Number.isFinite(realizedAnnual) &&
+        realizedAnnual > 0
+          ? realizedAnnual
+          : null,
+    }
   })
 
   const loadSnapshot = async (
@@ -556,6 +706,50 @@ const DeriveOptionsPage = () => {
     const mountGeneration = { value: 0 }
     const claim = ++mountGeneration.value
 
+    const loadBtcRealizedVol = async (): Promise<void> => {
+      try {
+        const viteCandles: unknown = import.meta.env.VITE_CANDLES_BASE_URL
+        const prefix =
+          typeof viteCandles === "string" && viteCandles.length > 0
+            ? viteCandles.replace(/\/$/, "")
+            : ""
+        const response = await fetch(`${prefix}/candles/1d`, {
+          signal: controller.signal,
+        })
+        if (!response.ok) {
+          if (mountGeneration.value === claim) {
+            setRealizedVolAnnual30d(null)
+          }
+          return
+        }
+        const text = await response.text()
+        if (mountGeneration.value !== claim) {
+          return
+        }
+        const series = btcCloseSeriesFromCandlesResponse(text)
+        const volSeries = computeRollingVolatility(
+          series,
+          REALIZED_VOL_WINDOW_DAYS,
+        )
+        if (mountGeneration.value !== claim) {
+          return
+        }
+        if (volSeries.length === 0) {
+          setRealizedVolAnnual30d(null)
+          return
+        }
+        const last = volSeries[volSeries.length - 1]
+        setRealizedVolAnnual30d(last.value)
+      } catch (error) {
+        const aborted =
+          (error instanceof DOMException || error instanceof Error) &&
+          error.name === "AbortError"
+        if (!aborted && mountGeneration.value === claim) {
+          setRealizedVolAnnual30d(null)
+        }
+      }
+    }
+
     const initialize = async () => {
       try {
         const bootResponse = await fetch(
@@ -605,6 +799,7 @@ const DeriveOptionsPage = () => {
     }
 
     void initialize()
+    void loadBtcRealizedVol()
 
     onCleanup(() => {
       mountGeneration.value += 1
@@ -620,375 +815,383 @@ const DeriveOptionsPage = () => {
   return (
     <div class="h-screen overflow-auto bg-background p-4 text-[11px] text-foreground">
       <div class="mx-auto max-w-[1600px] space-y-4">
-        <div class="rounded border border-border p-3">
-          <div class="flex items-center justify-between">
-            <h1 class="text-sm font-semibold">BTC Options Realtime Monitor</h1>
-            <Show when={snapshot()}>
-              {(getSnapshot: Accessor<OptionsSnapshot>) => (
-                <div class="text-xs text-muted-foreground">
-                  Updated:{" "}
-                  {new Date(getSnapshot().updated_at).toLocaleTimeString()}
-                </div>
-              )}
-            </Show>
-          </div>
-        </div>
-
-        <div class="h-4 shrink-0" aria-hidden />
+        <h1 class="text-sm font-semibold">BTC Options Realtime Monitor</h1>
 
         <Show when={snapshot()}>
           <div class="rounded border border-border p-3">
-            <div class="mb-2 text-xs font-semibold text-muted-foreground">
-              Expiry
+            <div class="mb-3 flex flex-wrap items-end justify-between gap-x-4 gap-y-2">
+              <div class="min-w-0 flex-1">
+                <div class="mb-2 text-xs font-semibold text-muted-foreground">
+                  Expiry
+                </div>
+                <div class="flex flex-wrap gap-1">
+                  <For each={expiryTabList()}>
+                    {tab => (
+                      <button
+                        type="button"
+                        class={`rounded border px-2 py-1 text-xs ${
+                          selectedExpiryUnix() === tab.unix
+                            ? "border-primary bg-primary/10 text-foreground"
+                            : "border-border text-muted-foreground"
+                        }`}
+                        onMouseDown={() => {
+                          switchExpiryTab(tab.unix)
+                        }}
+                        onClick={(
+                          event: MouseEvent & {
+                            currentTarget: HTMLButtonElement
+                            target: Element
+                          },
+                        ) => {
+                          if (event.detail === 0) {
+                            switchExpiryTab(tab.unix)
+                          }
+                        }}
+                      >
+                        {formatExpiryTabLabel(tab.iso)}
+                      </button>
+                    )}
+                  </For>
+                </div>
+              </div>
+              <Show when={snapshot()}>
+                {(getSnapshot: Accessor<OptionsSnapshot>) => (
+                  <div class="shrink-0 text-xs text-muted-foreground whitespace-nowrap">
+                    Updated:{" "}
+                    {new Date(getSnapshot().updated_at).toLocaleTimeString()}
+                  </div>
+                )}
+              </Show>
             </div>
-            <div class="flex flex-wrap gap-1">
-              <For each={expiryTabList()}>
-                {tab => (
+
+            <div class="mb-2 flex flex-wrap items-center justify-between gap-2 border-t border-border pt-3">
+              <div class="flex items-center gap-3">
+                <div class="text-xs font-semibold">Option Chain</div>
+                <div class="inline-flex rounded border border-border p-0.5 text-xs">
                   <button
                     type="button"
-                    class={`rounded border px-2 py-1 text-xs ${
-                      selectedExpiryUnix() === tab.unix
-                        ? "border-primary bg-primary/10 text-foreground"
-                        : "border-border text-muted-foreground"
-                    }`}
+                    class={`rounded px-2 py-1 ${tableView() === "chain" ? "bg-muted text-foreground" : "text-muted-foreground"}`}
                     onClick={() => {
-                      switchExpiryTab(tab.unix)
+                      setTableView("chain")
                     }}
                   >
-                    {formatExpiryTabLabel(tab.iso)}
+                    Prices
                   </button>
-                )}
-              </For>
-            </div>
-          </div>
-        </Show>
-
-        <div class="rounded border border-border p-3">
-          <div class="mb-2 flex items-center justify-between">
-            <div class="flex items-center gap-3">
-              <div class="text-xs font-semibold">Option Chain</div>
-              <div class="inline-flex rounded border border-border p-0.5 text-xs">
-                <button
-                  type="button"
-                  class={`rounded px-2 py-1 ${tableView() === "chain" ? "bg-muted text-foreground" : "text-muted-foreground"}`}
-                  onClick={() => {
-                    setTableView("chain")
-                  }}
-                >
-                  Prices
-                </button>
-                <button
-                  type="button"
-                  class={`rounded px-2 py-1 ${tableView() === "greeks" ? "bg-muted text-foreground" : "text-muted-foreground"}`}
-                  onClick={() => {
-                    setTableView("greeks")
-                  }}
-                >
-                  Greeks
-                </button>
+                  <button
+                    type="button"
+                    class={`rounded px-2 py-1 ${tableView() === "greeks" ? "bg-muted text-foreground" : "text-muted-foreground"}`}
+                    onClick={() => {
+                      setTableView("greeks")
+                    }}
+                  >
+                    Greeks
+                  </button>
+                </div>
+              </div>
+              <div class="text-xs text-muted-foreground">
+                Expiry:{" "}
+                <span class="font-medium text-foreground">
+                  {activeExpiryLabel()}
+                </span>
               </div>
             </div>
-            <div class="text-xs text-muted-foreground">
-              Expiry:{" "}
-              <span class="font-medium text-foreground">
-                {activeExpiryLabel()}
-              </span>
-            </div>
+            <Show when={tableView() === "chain"}>
+              <div class="overflow-x-auto">
+                <table class="table-fixed w-full min-w-[1040px] border-collapse text-xs tabular-nums [&_th]:whitespace-nowrap [&_td]:whitespace-nowrap">
+                  <colgroup>
+                    <For each={[...OPTION_CHAIN_COL_CLASSES]}>
+                      {widthClass => <col class={widthClass} />}
+                    </For>
+                  </colgroup>
+                  <thead>
+                    <tr class="border-b border-border text-muted-foreground">
+                      <th class="p-1 text-left" colSpan={8}>
+                        Calls
+                      </th>
+                      <th class="p-1 text-center">Strike</th>
+                      <th class="p-1 text-center border-x border-border">
+                        Strike
+                      </th>
+                      <th class="p-1 text-left" colSpan={8}>
+                        Puts
+                      </th>
+                      <th class="p-1 text-center">Strike</th>
+                    </tr>
+                    <tr class="border-b border-border text-left text-muted-foreground">
+                      <th class="p-1 text-right">Bid Size</th>
+                      <th class="p-1 text-right">Bid IV</th>
+                      <th class="p-1 text-right">Bid</th>
+                      <th class="p-1 text-right">Mark</th>
+                      <th class="p-1 text-right">Ask</th>
+                      <th class="p-1 text-right">Ask IV</th>
+                      <th class="p-1 text-right">Ask Size</th>
+                      <th class="p-1 text-right">Delta</th>
+                      <th class="p-1 text-right">Strike</th>
+                      <th class="p-1 text-right border-x border-border">
+                        Strike
+                      </th>
+                      <th class="p-1 text-right">Bid Size</th>
+                      <th class="p-1 text-right">Bid IV</th>
+                      <th class="p-1 text-right">Bid</th>
+                      <th class="p-1 text-right">Mark</th>
+                      <th class="p-1 text-right">Ask</th>
+                      <th class="p-1 text-right">Ask IV</th>
+                      <th class="p-1 text-right">Ask Size</th>
+                      <th class="p-1 text-right">Delta</th>
+                      <th class="p-1 text-right">Strike</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <Index each={chainRows()}>
+                      {row => (
+                        <tr class="border-b border-border/50">
+                          <td
+                            class={`p-1 text-right ${row().call?.moneyness === "in_the_money" ? "bg-emerald-500/10" : ""}`}
+                          >
+                            {formatNumber(row().call?.bid_size ?? null, 4)}
+                          </td>
+                          <td
+                            class={`p-1 text-right ${row().call?.moneyness === "in_the_money" ? "bg-emerald-500/10" : ""}`}
+                          >
+                            {formatNumber(row().call?.greeks.bid_iv ?? null, 4)}
+                          </td>
+                          <td
+                            class={`p-1 text-right ${row().call?.moneyness === "in_the_money" ? "bg-emerald-500/10" : ""}`}
+                          >
+                            <span
+                              class={bidAskFlashClass(
+                                flashByInstrument(),
+                                row().call?.instrument_name,
+                                "bid",
+                              )}
+                            >
+                              {formatNumber(row().call?.bid ?? null)}
+                            </span>
+                          </td>
+                          <td
+                            class={`p-1 text-right ${row().call?.moneyness === "in_the_money" ? "bg-emerald-500/10" : ""}`}
+                          >
+                            {formatNumber(row().call?.mark ?? null)}
+                          </td>
+                          <td
+                            class={`p-1 text-right ${row().call?.moneyness === "in_the_money" ? "bg-emerald-500/10" : ""}`}
+                          >
+                            <span
+                              class={bidAskFlashClass(
+                                flashByInstrument(),
+                                row().call?.instrument_name,
+                                "ask",
+                              )}
+                            >
+                              {formatNumber(row().call?.ask ?? null)}
+                            </span>
+                          </td>
+                          <td
+                            class={`p-1 text-right ${row().call?.moneyness === "in_the_money" ? "bg-emerald-500/10" : ""}`}
+                          >
+                            {formatNumber(row().call?.greeks.ask_iv ?? null, 4)}
+                          </td>
+                          <td
+                            class={`p-1 text-right ${row().call?.moneyness === "in_the_money" ? "bg-emerald-500/10" : ""}`}
+                          >
+                            {formatNumber(row().call?.ask_size ?? null, 4)}
+                          </td>
+                          <td
+                            class={`p-1 text-right ${row().call?.moneyness === "in_the_money" ? "bg-emerald-500/10" : ""}`}
+                          >
+                            {formatNumber(row().call?.greeks.delta ?? null, 4)}
+                          </td>
+                          <td
+                            class={`p-1 text-right ${row().call?.moneyness === "in_the_money" ? "bg-emerald-500/10 text-emerald-300" : "text-muted-foreground"}`}
+                          >
+                            {formatNumber(row().call?.strike ?? null, 0)}
+                          </td>
+
+                          <td class="p-1 text-right border-x border-border font-semibold">
+                            {formatNumber(row().strike, 0)}
+                          </td>
+
+                          <td
+                            class={`p-1 text-right ${row().put?.moneyness === "in_the_money" ? "bg-emerald-500/10" : ""}`}
+                          >
+                            {formatNumber(row().put?.bid_size ?? null, 4)}
+                          </td>
+                          <td
+                            class={`p-1 text-right ${row().put?.moneyness === "in_the_money" ? "bg-emerald-500/10" : ""}`}
+                          >
+                            {formatNumber(row().put?.greeks.bid_iv ?? null, 4)}
+                          </td>
+                          <td
+                            class={`p-1 text-right ${row().put?.moneyness === "in_the_money" ? "bg-emerald-500/10" : ""}`}
+                          >
+                            <span
+                              class={bidAskFlashClass(
+                                flashByInstrument(),
+                                row().put?.instrument_name,
+                                "bid",
+                              )}
+                            >
+                              {formatNumber(row().put?.bid ?? null)}
+                            </span>
+                          </td>
+                          <td
+                            class={`p-1 text-right ${row().put?.moneyness === "in_the_money" ? "bg-emerald-500/10" : ""}`}
+                          >
+                            {formatNumber(row().put?.mark ?? null)}
+                          </td>
+                          <td
+                            class={`p-1 text-right ${row().put?.moneyness === "in_the_money" ? "bg-emerald-500/10" : ""}`}
+                          >
+                            <span
+                              class={bidAskFlashClass(
+                                flashByInstrument(),
+                                row().put?.instrument_name,
+                                "ask",
+                              )}
+                            >
+                              {formatNumber(row().put?.ask ?? null)}
+                            </span>
+                          </td>
+                          <td
+                            class={`p-1 text-right ${row().put?.moneyness === "in_the_money" ? "bg-emerald-500/10" : ""}`}
+                          >
+                            {formatNumber(row().put?.greeks.ask_iv ?? null, 4)}
+                          </td>
+                          <td
+                            class={`p-1 text-right ${row().put?.moneyness === "in_the_money" ? "bg-emerald-500/10" : ""}`}
+                          >
+                            {formatNumber(row().put?.ask_size ?? null, 4)}
+                          </td>
+                          <td
+                            class={`p-1 text-right ${row().put?.moneyness === "in_the_money" ? "bg-emerald-500/10" : ""}`}
+                          >
+                            {formatNumber(row().put?.greeks.delta ?? null, 4)}
+                          </td>
+                          <td
+                            class={`p-1 text-right ${row().put?.moneyness === "in_the_money" ? "bg-emerald-500/10 text-emerald-300" : "text-muted-foreground"}`}
+                          >
+                            {formatNumber(row().put?.strike ?? null, 0)}
+                          </td>
+                        </tr>
+                      )}
+                    </Index>
+                  </tbody>
+                </table>
+              </div>
+            </Show>
+
+            <Show when={tableView() === "greeks"}>
+              <div class="overflow-x-auto">
+                <table class="table-fixed w-full min-w-[1320px] border-collapse text-xs tabular-nums [&_th]:whitespace-nowrap [&_td]:whitespace-nowrap">
+                  <colgroup>
+                    <For each={[...GREEKS_CHAIN_COL_CLASSES]}>
+                      {widthClass => <col class={widthClass} />}
+                    </For>
+                  </colgroup>
+                  <thead>
+                    <tr class="border-b border-border text-left text-muted-foreground">
+                      <th class="p-1">Instrument</th>
+                      <th class="p-1 text-right">Strike</th>
+                      <th class="p-1">Type</th>
+                      <th class="p-1">Money</th>
+                      <th class="p-1 text-right">Bid</th>
+                      <th class="p-1 text-right">Ask</th>
+                      <th class="p-1 text-right">IV</th>
+                      <th class="p-1 text-right">Delta</th>
+                      <th class="p-1 text-right">Gamma</th>
+                      <th class="p-1 text-right">Vega</th>
+                      <th class="p-1 text-right">Theta</th>
+                      <th class="p-1 text-right">Bid IV</th>
+                      <th class="p-1 text-right">Ask IV</th>
+                      <th class="p-1 text-right">Rho</th>
+                      <th class="p-1 text-right">Forward</th>
+                      <th class="p-1 text-right">DF</th>
+                      <th class="p-1 text-right">Mdl M</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <Index each={greeksRows()}>
+                      {quote => (
+                        <tr
+                          class={`border-b border-border/50 ${quote().moneyness === "in_the_money" ? "bg-emerald-500/10" : ""}`}
+                        >
+                          <td
+                            class="max-w-[10.5rem] truncate p-1"
+                            title={quote().instrument_name}
+                          >
+                            {quote().instrument_name}
+                          </td>
+                          <td class="p-1 text-right">
+                            {formatNumber(quote().strike, 0)}
+                          </td>
+                          <td class="p-1">{quote().kind}</td>
+                          <td class="p-1">
+                            {formatMoneyness(quote().moneyness)}
+                          </td>
+                          <td class="p-1 text-right">
+                            <span
+                              class={bidAskFlashClass(
+                                flashByInstrument(),
+                                quote().instrument_name,
+                                "bid",
+                              )}
+                            >
+                              {formatNumber(quote().bid)}
+                            </span>
+                          </td>
+                          <td class="p-1 text-right">
+                            <span
+                              class={bidAskFlashClass(
+                                flashByInstrument(),
+                                quote().instrument_name,
+                                "ask",
+                              )}
+                            >
+                              {formatNumber(quote().ask)}
+                            </span>
+                          </td>
+                          <td class="p-1 text-right">
+                            {formatNumber(quote().greeks.iv, 4)}
+                          </td>
+                          <td class="p-1 text-right">
+                            {formatNumber(quote().greeks.delta, 4)}
+                          </td>
+                          <td class="p-1 text-right">
+                            {formatNumber(quote().greeks.gamma, 6)}
+                          </td>
+                          <td class="p-1 text-right">
+                            {formatNumber(quote().greeks.vega, 4)}
+                          </td>
+                          <td class="p-1 text-right">
+                            {formatNumber(quote().greeks.theta, 4)}
+                          </td>
+                          <td class="p-1 text-right">
+                            {formatNumber(quote().greeks.bid_iv, 4)}
+                          </td>
+                          <td class="p-1 text-right">
+                            {formatNumber(quote().greeks.ask_iv, 4)}
+                          </td>
+                          <td class="p-1 text-right">
+                            {formatNumber(quote().greeks.rho, 2)}
+                          </td>
+                          <td class="p-1 text-right">
+                            {formatNumber(quote().greeks.forward_price, 0)}
+                          </td>
+                          <td class="p-1 text-right">
+                            {formatNumber(quote().greeks.discount_factor, 4)}
+                          </td>
+                          <td class="p-1 text-right">
+                            {formatNumber(quote().greeks.option_model_mark, 0)}
+                          </td>
+                        </tr>
+                      )}
+                    </Index>
+                  </tbody>
+                </table>
+              </div>
+            </Show>
           </div>
-          <Show when={tableView() === "chain"}>
-            <div class="overflow-x-auto">
-              <table class="table-fixed w-full min-w-[1040px] border-collapse text-xs tabular-nums [&_th]:whitespace-nowrap [&_td]:whitespace-nowrap">
-                <colgroup>
-                  <For each={[...OPTION_CHAIN_COL_CLASSES]}>
-                    {widthClass => <col class={widthClass} />}
-                  </For>
-                </colgroup>
-                <thead>
-                  <tr class="border-b border-border text-muted-foreground">
-                    <th class="p-1 text-left" colSpan={8}>
-                      Calls
-                    </th>
-                    <th class="p-1 text-center">Strike</th>
-                    <th class="p-1 text-center border-x border-border">
-                      Strike
-                    </th>
-                    <th class="p-1 text-left" colSpan={8}>
-                      Puts
-                    </th>
-                    <th class="p-1 text-center">Strike</th>
-                  </tr>
-                  <tr class="border-b border-border text-left text-muted-foreground">
-                    <th class="p-1 text-right">Bid Size</th>
-                    <th class="p-1 text-right">Bid IV</th>
-                    <th class="p-1 text-right">Bid</th>
-                    <th class="p-1 text-right">Mark</th>
-                    <th class="p-1 text-right">Ask</th>
-                    <th class="p-1 text-right">Ask IV</th>
-                    <th class="p-1 text-right">Ask Size</th>
-                    <th class="p-1 text-right">Delta</th>
-                    <th class="p-1 text-right">Strike</th>
-                    <th class="p-1 text-right border-x border-border">
-                      Strike
-                    </th>
-                    <th class="p-1 text-right">Bid Size</th>
-                    <th class="p-1 text-right">Bid IV</th>
-                    <th class="p-1 text-right">Bid</th>
-                    <th class="p-1 text-right">Mark</th>
-                    <th class="p-1 text-right">Ask</th>
-                    <th class="p-1 text-right">Ask IV</th>
-                    <th class="p-1 text-right">Ask Size</th>
-                    <th class="p-1 text-right">Delta</th>
-                    <th class="p-1 text-right">Strike</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <For each={chainRows()}>
-                    {row => (
-                      <tr class="border-b border-border/50">
-                        <td
-                          class={`p-1 text-right ${row.call?.moneyness === "in_the_money" ? "bg-emerald-500/10" : ""}`}
-                        >
-                          {formatNumber(row.call?.bid_size ?? null, 4)}
-                        </td>
-                        <td
-                          class={`p-1 text-right ${row.call?.moneyness === "in_the_money" ? "bg-emerald-500/10" : ""}`}
-                        >
-                          {formatNumber(row.call?.greeks.bid_iv ?? null, 4)}
-                        </td>
-                        <td
-                          class={`p-1 text-right ${row.call?.moneyness === "in_the_money" ? "bg-emerald-500/10" : ""}`}
-                        >
-                          <span
-                            class={bidAskFlashClass(
-                              flashByInstrument(),
-                              row.call?.instrument_name,
-                              "bid",
-                            )}
-                          >
-                            {formatNumber(row.call?.bid ?? null)}
-                          </span>
-                        </td>
-                        <td
-                          class={`p-1 text-right ${row.call?.moneyness === "in_the_money" ? "bg-emerald-500/10" : ""}`}
-                        >
-                          {formatNumber(row.call?.mark ?? null)}
-                        </td>
-                        <td
-                          class={`p-1 text-right ${row.call?.moneyness === "in_the_money" ? "bg-emerald-500/10" : ""}`}
-                        >
-                          <span
-                            class={bidAskFlashClass(
-                              flashByInstrument(),
-                              row.call?.instrument_name,
-                              "ask",
-                            )}
-                          >
-                            {formatNumber(row.call?.ask ?? null)}
-                          </span>
-                        </td>
-                        <td
-                          class={`p-1 text-right ${row.call?.moneyness === "in_the_money" ? "bg-emerald-500/10" : ""}`}
-                        >
-                          {formatNumber(row.call?.greeks.ask_iv ?? null, 4)}
-                        </td>
-                        <td
-                          class={`p-1 text-right ${row.call?.moneyness === "in_the_money" ? "bg-emerald-500/10" : ""}`}
-                        >
-                          {formatNumber(row.call?.ask_size ?? null, 4)}
-                        </td>
-                        <td
-                          class={`p-1 text-right ${row.call?.moneyness === "in_the_money" ? "bg-emerald-500/10" : ""}`}
-                        >
-                          {formatNumber(row.call?.greeks.delta ?? null, 4)}
-                        </td>
-                        <td
-                          class={`p-1 text-right ${row.call?.moneyness === "in_the_money" ? "bg-emerald-500/10 text-emerald-300" : "text-muted-foreground"}`}
-                        >
-                          {row.call ? formatNumber(row.call.strike, 0) : "-"}
-                        </td>
-
-                        <td class="p-1 text-right border-x border-border font-semibold">
-                          {formatNumber(row.strike, 0)}
-                        </td>
-
-                        <td
-                          class={`p-1 text-right ${row.put?.moneyness === "in_the_money" ? "bg-emerald-500/10" : ""}`}
-                        >
-                          {formatNumber(row.put?.bid_size ?? null, 4)}
-                        </td>
-                        <td
-                          class={`p-1 text-right ${row.put?.moneyness === "in_the_money" ? "bg-emerald-500/10" : ""}`}
-                        >
-                          {formatNumber(row.put?.greeks.bid_iv ?? null, 4)}
-                        </td>
-                        <td
-                          class={`p-1 text-right ${row.put?.moneyness === "in_the_money" ? "bg-emerald-500/10" : ""}`}
-                        >
-                          <span
-                            class={bidAskFlashClass(
-                              flashByInstrument(),
-                              row.put?.instrument_name,
-                              "bid",
-                            )}
-                          >
-                            {formatNumber(row.put?.bid ?? null)}
-                          </span>
-                        </td>
-                        <td
-                          class={`p-1 text-right ${row.put?.moneyness === "in_the_money" ? "bg-emerald-500/10" : ""}`}
-                        >
-                          {formatNumber(row.put?.mark ?? null)}
-                        </td>
-                        <td
-                          class={`p-1 text-right ${row.put?.moneyness === "in_the_money" ? "bg-emerald-500/10" : ""}`}
-                        >
-                          <span
-                            class={bidAskFlashClass(
-                              flashByInstrument(),
-                              row.put?.instrument_name,
-                              "ask",
-                            )}
-                          >
-                            {formatNumber(row.put?.ask ?? null)}
-                          </span>
-                        </td>
-                        <td
-                          class={`p-1 text-right ${row.put?.moneyness === "in_the_money" ? "bg-emerald-500/10" : ""}`}
-                        >
-                          {formatNumber(row.put?.greeks.ask_iv ?? null, 4)}
-                        </td>
-                        <td
-                          class={`p-1 text-right ${row.put?.moneyness === "in_the_money" ? "bg-emerald-500/10" : ""}`}
-                        >
-                          {formatNumber(row.put?.ask_size ?? null, 4)}
-                        </td>
-                        <td
-                          class={`p-1 text-right ${row.put?.moneyness === "in_the_money" ? "bg-emerald-500/10" : ""}`}
-                        >
-                          {formatNumber(row.put?.greeks.delta ?? null, 4)}
-                        </td>
-                        <td
-                          class={`p-1 text-right ${row.put?.moneyness === "in_the_money" ? "bg-emerald-500/10 text-emerald-300" : "text-muted-foreground"}`}
-                        >
-                          {row.put ? formatNumber(row.put.strike, 0) : "-"}
-                        </td>
-                      </tr>
-                    )}
-                  </For>
-                </tbody>
-              </table>
-            </div>
-          </Show>
-
-          <Show when={tableView() === "greeks"}>
-            <div class="overflow-x-auto">
-              <table class="table-fixed w-full min-w-[1320px] border-collapse text-xs tabular-nums [&_th]:whitespace-nowrap [&_td]:whitespace-nowrap">
-                <colgroup>
-                  <For each={[...GREEKS_CHAIN_COL_CLASSES]}>
-                    {widthClass => <col class={widthClass} />}
-                  </For>
-                </colgroup>
-                <thead>
-                  <tr class="border-b border-border text-left text-muted-foreground">
-                    <th class="p-1">Instrument</th>
-                    <th class="p-1 text-right">Strike</th>
-                    <th class="p-1">Type</th>
-                    <th class="p-1">Money</th>
-                    <th class="p-1 text-right">Bid</th>
-                    <th class="p-1 text-right">Ask</th>
-                    <th class="p-1 text-right">IV</th>
-                    <th class="p-1 text-right">Delta</th>
-                    <th class="p-1 text-right">Gamma</th>
-                    <th class="p-1 text-right">Vega</th>
-                    <th class="p-1 text-right">Theta</th>
-                    <th class="p-1 text-right">Bid IV</th>
-                    <th class="p-1 text-right">Ask IV</th>
-                    <th class="p-1 text-right">Rho</th>
-                    <th class="p-1 text-right">Forward</th>
-                    <th class="p-1 text-right">DF</th>
-                    <th class="p-1 text-right">Mdl M</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <For each={greeksRows()}>
-                    {quote => (
-                      <tr
-                        class={`border-b border-border/50 ${quote.moneyness === "in_the_money" ? "bg-emerald-500/10" : ""}`}
-                      >
-                        <td
-                          class="max-w-[10.5rem] truncate p-1"
-                          title={quote.instrument_name}
-                        >
-                          {quote.instrument_name}
-                        </td>
-                        <td class="p-1 text-right">
-                          {formatNumber(quote.strike, 0)}
-                        </td>
-                        <td class="p-1">{quote.kind}</td>
-                        <td class="p-1">{formatMoneyness(quote.moneyness)}</td>
-                        <td class="p-1 text-right">
-                          <span
-                            class={bidAskFlashClass(
-                              flashByInstrument(),
-                              quote.instrument_name,
-                              "bid",
-                            )}
-                          >
-                            {formatNumber(quote.bid)}
-                          </span>
-                        </td>
-                        <td class="p-1 text-right">
-                          <span
-                            class={bidAskFlashClass(
-                              flashByInstrument(),
-                              quote.instrument_name,
-                              "ask",
-                            )}
-                          >
-                            {formatNumber(quote.ask)}
-                          </span>
-                        </td>
-                        <td class="p-1 text-right">
-                          {formatNumber(quote.greeks.iv, 4)}
-                        </td>
-                        <td class="p-1 text-right">
-                          {formatNumber(quote.greeks.delta, 4)}
-                        </td>
-                        <td class="p-1 text-right">
-                          {formatNumber(quote.greeks.gamma, 6)}
-                        </td>
-                        <td class="p-1 text-right">
-                          {formatNumber(quote.greeks.vega, 4)}
-                        </td>
-                        <td class="p-1 text-right">
-                          {formatNumber(quote.greeks.theta, 4)}
-                        </td>
-                        <td class="p-1 text-right">
-                          {formatNumber(quote.greeks.bid_iv, 4)}
-                        </td>
-                        <td class="p-1 text-right">
-                          {formatNumber(quote.greeks.ask_iv, 4)}
-                        </td>
-                        <td class="p-1 text-right">
-                          {formatNumber(quote.greeks.rho, 2)}
-                        </td>
-                        <td class="p-1 text-right">
-                          {formatNumber(quote.greeks.forward_price, 0)}
-                        </td>
-                        <td class="p-1 text-right">
-                          {formatNumber(quote.greeks.discount_factor, 4)}
-                        </td>
-                        <td class="p-1 text-right">
-                          {formatNumber(quote.greeks.option_model_mark, 0)}
-                        </td>
-                      </tr>
-                    )}
-                  </For>
-                </tbody>
-              </table>
-            </div>
-          </Show>
-        </div>
+        </Show>
 
         <div class="rounded border border-border p-3">
           <div class="text-xs text-muted-foreground">
@@ -1071,53 +1274,61 @@ const DeriveOptionsPage = () => {
               </div>
 
               <div class="rounded border border-border p-3">
-                <div class="mb-2 flex items-center justify-between">
-                  <div class="text-xs font-semibold">IV Smile</div>
-                  <div class="flex items-center gap-2 text-xs">
-                    <select
-                      class="rounded border border-border bg-background px-2 py-1"
-                      value={
-                        selectedExpiryUnix() !== null
-                          ? String(selectedExpiryUnix())
-                          : ""
-                      }
-                      onChange={event => {
-                        const nextUnix = Number.parseInt(
-                          event.currentTarget.value,
-                          10,
-                        )
-                        if (Number.isNaN(nextUnix)) {
-                          return
+                <div class="mb-2">
+                  <div class="flex flex-wrap items-center justify-between gap-2">
+                    <div class="text-xs font-semibold">IV Smile</div>
+                    <div class="flex items-center gap-2 text-xs">
+                      <select
+                        class="rounded border border-border bg-background px-2 py-1"
+                        value={
+                          selectedExpiryUnix() !== null
+                            ? String(selectedExpiryUnix())
+                            : ""
                         }
-                        switchExpiryTab(nextUnix)
-                      }}
-                    >
-                      <For each={expiryTabList()}>
-                        {tab => (
-                          <option value={String(tab.unix)}>
-                            {new Date(tab.iso).toLocaleDateString()}
-                          </option>
-                        )}
-                      </For>
-                    </select>
-                    <select
-                      class="rounded border border-border bg-background px-2 py-1"
-                      value={smileKind()}
-                      onChange={event => {
-                        const nextKind = event.currentTarget.value
-                        if (
-                          nextKind === "C" ||
-                          nextKind === "P" ||
-                          nextKind === "both"
-                        ) {
-                          setSmileKind(nextKind)
-                        }
-                      }}
-                    >
-                      <option value="both">Call + Put (avg)</option>
-                      <option value="C">Calls only</option>
-                      <option value="P">Puts only</option>
-                    </select>
+                        onChange={event => {
+                          const nextUnix = Number.parseInt(
+                            event.currentTarget.value,
+                            10,
+                          )
+                          if (Number.isNaN(nextUnix)) {
+                            return
+                          }
+                          switchExpiryTab(nextUnix)
+                        }}
+                      >
+                        <For each={expiryTabList()}>
+                          {tab => (
+                            <option value={String(tab.unix)}>
+                              {new Date(tab.iso).toLocaleDateString()}
+                            </option>
+                          )}
+                        </For>
+                      </select>
+                      <select
+                        class="rounded border border-border bg-background px-2 py-1"
+                        value={smileKind()}
+                        onChange={event => {
+                          const nextKind = event.currentTarget.value
+                          if (
+                            nextKind === "C" ||
+                            nextKind === "P" ||
+                            nextKind === "both"
+                          ) {
+                            setSmileKind(nextKind)
+                          }
+                        }}
+                      >
+                        <option value="both">Call + Put (avg)</option>
+                        <option value="C">Calls only</option>
+                        <option value="P">Puts only</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div class="mt-1 text-[10px] leading-snug text-muted-foreground">
+                    Blue: implied volatility (options). Orange dashed: realized{" "}
+                    {REALIZED_VOL_WINDOW_DAYS}d annualized vol from BTC{" "}
+                    <code class="rounded bg-muted px-0.5">/candles/1d</code>{" "}
+                    (main API). Same vertical scale as IV.
                   </div>
                 </div>
 
@@ -1150,6 +1361,28 @@ const DeriveOptionsPage = () => {
                         stroke="currentColor"
                         opacity="0.25"
                       />
+                      <Show
+                        when={() => {
+                          const y = smileGeometry().realizedY
+                          return y ?? false
+                        }}
+                      >
+                        {(y: number) => (
+                          <g>
+                            <title>{`Realized ${REALIZED_VOL_WINDOW_DAYS}d annualized (daily closes, sqrt(252)): ${formatNumber(realizedVolAnnual30d(), 4)}`}</title>
+                            <line
+                              x1="52"
+                              y1={y}
+                              x2="740"
+                              y2={y}
+                              stroke="#fb923c"
+                              stroke-dasharray="7 5"
+                              stroke-width="1.75"
+                              opacity="0.92"
+                            />
+                          </g>
+                        )}
+                      </Show>
                       <path
                         d={smileGeometry().path}
                         fill="none"
@@ -1171,6 +1404,23 @@ const DeriveOptionsPage = () => {
                         )}
                       </For>
                     </svg>
+                  </div>
+                  <div class="mt-2 flex flex-wrap items-center gap-4 text-[10px] text-muted-foreground">
+                    <div class="flex items-center gap-2">
+                      <span class="inline-block h-0.5 w-7 bg-sky-400" />
+                      <span>Implied vol</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                      <span class="inline-block w-7 border-t-2 border-dashed border-orange-400" />
+                      <span>
+                        Realized {REALIZED_VOL_WINDOW_DAYS}d (ann.):{" "}
+                        <span class="font-medium text-foreground">
+                          {realizedVolAnnual30d() !== null
+                            ? formatNumber(realizedVolAnnual30d(), 4)
+                            : "—"}
+                        </span>
+                      </span>
+                    </div>
                   </div>
                   <div class="mt-2 grid grid-cols-2 gap-2 text-xs md:grid-cols-4">
                     <For each={ivSmilePoints().slice(0, 12)}>

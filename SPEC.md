@@ -62,6 +62,10 @@ This tool enforces proportion-based thinking.
 6. **Repeat**: Market moves change your realized weights. Hit rebalance to
    return to target proportions, or adjust the target and rebalance to that
 
+[ROADMAP](./ROADMAP.md) groups in-flight workflow improvements into themes;
+[user-stories/](./user-stories/README.md) breaks each into deliverable units
+with acceptance criteria.
+
 ## Core Architectural Principle
 
 **Dual abstraction**: The system abstracts away both **data sources** and
@@ -88,7 +92,7 @@ flowchart LR
         DATA --> ANAL --> PLAN --> ROUTE
     end
 
-    subgraph Privy["Privy (Policy Enforcement)"]
+    subgraph Turnkey["Turnkey (Policy Enforcement)"]
         direction TB
         POL[Policy Engine]
         WALLET[Server Wallets]
@@ -104,7 +108,7 @@ flowchart LR
 
 ## Security Model
 
-**Policy-enforced custody via Privy server wallets.** The backend orchestrates
+**Policy-enforced custody via Turnkey server wallets.** The backend orchestrates
 execution but never holds raw private keys.
 
 - **Policy engine**: Contract allowlists, calldata restrictions, deny rules.
@@ -119,12 +123,12 @@ frontend is a monitoring and control dashboard.
 
 ## Custody & Execution
 
-**Privy server wallets** provide the custody layer with policy enforcement at
+**Turnkey server wallets** provide the custody layer with policy enforcement at
 the signing layer. The backend routes orders to venues but cannot withdraw funds
 or interact with non-whitelisted contracts.
 
 **Solana vault program** (Anchor) handles investor deposits/withdrawals, share
-token accounting, and fee deductions. Capital flows from the vault to Privy
+token accounting, and fee deductions. Capital flows from the vault to Turnkey
 wallets for trading across venues.
 
 **NAV oracle**: The backend aggregates positions across all venues, computes
@@ -138,7 +142,7 @@ graph TB
     subgraph Solana["── Solana ──"]
         Investor["Investor"]
         Vault["Vault Program<br/>─────────────<br/>share tokens<br/>fee accounting<br/>NAV attestations"]
-        SOLWallet["Privy SOL Wallet<br/>(vault custody)"]
+        SOLWallet["Turnkey SOL Wallet<br/>(vault custody)"]
         HumidiFi["HumidiFi<br/>spot trading"]
         PMFee["PM Fee Wallet"]
 
@@ -158,7 +162,7 @@ graph TB
     end
 
     subgraph Hyperliquid["── Hyperliquid L1 ──"]
-        EVMWallet["Privy EVM Wallet<br/>(HyperEVM home)"]
+        EVMWallet["Turnkey EVM Wallet<br/>(HyperEVM home)"]
         HyperCore["HyperCore<br/>perps + spot"]
 
         EVMWallet -- "deposit USDC" --> HyperCore
@@ -205,15 +209,15 @@ Revenue comes from PMs managing other people's money.
 
 ## Technology Stack
 
-| Layer         | Technology           | Rationale                                |
-| ------------- | -------------------- | ---------------------------------------- |
-| Backend       | Rust                 | See below.                               |
-| Frontend      | TypeScript + SolidJS | Monitoring dashboard, PM controls.       |
-| Vault Program | Anchor (Rust)        | Deposits, withdrawals, fees, NAV.        |
-| Custody       | Privy server wallets | Policy-enforced signing.                 |
-| Dependencies  | Nix                  | Reproducible builds. Non-negotiable.     |
-| Storage       | SQLite > Postgres    | Start simple, migrate when needed.       |
-| Analytics     | Parquet              | Historical prices for VaR, stress tests. |
+| Layer         | Technology             | Rationale                                |
+| ------------- | ---------------------- | ---------------------------------------- |
+| Backend       | Rust                   | See below.                               |
+| Frontend      | TypeScript + SolidJS   | Monitoring dashboard, PM controls.       |
+| Vault Program | Anchor (Rust)          | Deposits, withdrawals, fees, NAV.        |
+| Custody       | Turnkey server wallets | Policy-enforced signing.                 |
+| Dependencies  | Nix                    | Reproducible builds. Non-negotiable.     |
+| Storage       | SQLite > Postgres      | Start simple, migrate when needed.       |
+| Analytics     | Parquet                | Historical prices for VaR, stress tests. |
 
 **Why Rust?**
 
@@ -249,7 +253,7 @@ Revenue comes from PMs managing other people's money.
 | **Perps Trading**   | Open/close perpetual futures positions                  |
 | **Options Trading** | Options contracts, Greeks                               |
 | **Bridging**        | Cross-chain asset transfers                             |
-| **Signing**         | Transaction signing, policy enforcement                 |
+| **Wallet**          | Transaction signing, policy enforcement                 |
 | **Vault**           | Investor deposits, share tokens, fee accounting         |
 | **Rebalancing**     | Orchestrate trades across venues/chains to reach target |
 
@@ -264,7 +268,7 @@ Revenue comes from PMs managing other people's money.
 | perps      | `PerpsVenue`   | `hyperliquid`, `mock`            |
 | options    | `OptionsVenue` | `derive`, `mock`                 |
 | bridging   | `Bridge`       | `debridge`, `mock`               |
-| signing    | `Signer`       | `privy`, `mock`                  |
+| wallet     | `Wallet`       | `turnkey`, `mock`                |
 | vault      | `VaultClient`  | `anchor`, `mock`                 |
 | rebalancer | —              | —                                |
 | api        | —              | —                                |
@@ -273,9 +277,18 @@ Each crate exposes a trait and common types. Implementations are behind feature
 flags (e.g., `spot/hyperliquid`, `spot/mock`) to enforce domain boundaries,
 improve build times, and enable testing with mocks.
 
+This is the target architecture. The current backend lives in a single root
+crate at `src/`; the split into per-domain crates happens as domain boundaries
+solidify.
+
 ## Analytics Capabilities
 
-**Factor Engine**: TBD
+**Factor Engine**: Computes per-asset factor scores (beta, momentum, carry,
+volatility, Sharpe) over the tradable universe. The backend already computes
+rolling beta to BTC; momentum, carry, and volatility follow the same pattern
+(rolling windows over ingested OHLCV and funding-rate data). Outputs feed the
+screener (rank/filter assets by factor) and the rebalancer (target factor
+exposures, not symbols).
 
 **Risk Engine**: Portfolio-level risk metrics
 

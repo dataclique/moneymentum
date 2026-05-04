@@ -11,6 +11,11 @@ tags:
 Each `##` section is a theme — a goal-oriented group of related stories. Themes
 are ordered by priority (highest first).
 
+Stories link to their per-feature acceptance criteria in
+[user-stories/](./user-stories/README.md). Engineering tasks (refactors,
+migrations, infra) live as GitHub issues, not stories — see
+[contributions.md](./contributions.md) for the split.
+
 ---
 
 ## Usable production deployment

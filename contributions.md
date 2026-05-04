@@ -3,6 +3,10 @@
 Moneymentum uses AI-era extreme programming: small stories, tests first, tight
 feedback, and frequent review by humans and agents.
 
+Audience: contributors (human and AI). See [AGENTS.md](./AGENTS.md) for
+code-style and testing policies, and [SPEC.md](./SPEC.md) for the architectural
+vision.
+
 ## Rules
 
 - Start every change from a user story in

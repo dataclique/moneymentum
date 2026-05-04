@@ -3,35 +3,35 @@
 [![His name is Yang](https://img.youtube.com/vi/FoYC_8cutb0/0.jpg)](https://www.youtube.com/watch?v=FoYC_8cutb0)
 You don't even know what sort of things your ass is currently exposed to.
 
-See [SPEC.md](./SPEC.md) for the vision and [ROADMAP.md](./ROADMAP.md) for the
-path there.
+Moneymentum is an institutional-grade quant toolkit for crypto portfolio
+management. Define portfolios as proportions, not positions. Stage and simulate
+before executing. Manage factor exposures, not symbols.
 
----
+## Status
 
-## What Works Today
+- **Frontend rebalancer** (working, used daily): weight-based positions,
+  cross-account leverage, staged trade preview, execution against Hyperliquid
+  perps.
+- **Frontend prototype** at `/prototype`: design reference for the target UI.
+- **Backend** (active development): Rust + Rocket API, Polars analytics, cqrs-es
+  event store on SQLite. Ingests Hyperliquid OHLCV and funding rates; computes
+  rolling beta to BTC.
+- **Vault program** (planned): Anchor program on Solana for non-custodial
+  managed deposits with two-phase withdrawal.
 
-**Portfolio Rebalancer** (`/`): Set positions by weight, adjust cross-account
-leverage while maintaining proportions. Currently shows net notional exposure;
-beta-aware hedging coming soon.
+See [ROADMAP.md](./ROADMAP.md) for what's next.
 
-**Design Reference** (`/prototype`): Interactive mockup of the target UI/UX.
+## Documentation
 
----
+| Doc                                       | Purpose                                           |
+| ----------------------------------------- | ------------------------------------------------- |
+| [SPEC.md](./SPEC.md)                      | Product vision and target architecture            |
+| [ROADMAP.md](./ROADMAP.md)                | Themed user stories ordered by priority           |
+| [user-stories/](./user-stories/README.md) | Customer-visible work units with acceptance tests |
+| [contributions.md](./contributions.md)    | XP workflow for contributors                      |
+| [AGENTS.md](./AGENTS.md)                  | Per-repo rules for AI coding agents               |
 
-## Architecture
-
-| Layer          | Technology           | Status         |
-| -------------- | -------------------- | -------------- |
-| Frontend       | TypeScript + SolidJS | Active         |
-| Backend        | Rust                 | Building       |
-| Legacy Backend | Python               | Being replaced |
-
-The frontend holds credentials and executes trades directly to venues. The
-backend provides analytics and execution plans but never touches credentials.
-
----
-
-## Getting Started
+## Quick start
 
 ### Prerequisites
 
@@ -46,88 +46,69 @@ cd moneymentum
 direnv allow  # or: nix develop
 ```
 
-### Run Frontend
+### Frontend
+
+Run from `frontend/`:
 
 ```bash
-cd frontend
-bun run dev  # http://localhost:5173
+bun run typecheck   # type check
+bun run lint        # eslint
+bun run test        # vitest
+bun run dev         # dev server on :5173
+bun run build       # production bundle
 ```
 
-### Run Legacy Backend (Python)
+### Backend
+
+Run from repo root:
 
 ```bash
-python server.py  # FastAPI on port 8000
+cargo check         # fast compilation verification
+cargo test -q       # tests
+cargo clippy        # lints (pedantic + nursery, panic-free)
+cargo fmt           # format
+
+cargo run -- --help # see CLI options
 ```
 
----
+Configuration is loaded from a TOML file modeled on
+[example.toml](./example.toml).
 
-## Development
+### Pre-commit
 
 ```bash
-# Frontend (from frontend/)
-bun run typecheck
-bun run lint
-bun run test
-
-# Legacy Python
-ruff check .
-ruff format .
-pytest
-
-# Pre-commit (must pass)
 pre-commit run -a
 ```
 
-### Running AI Coding Agents
+All dependencies are managed through Nix. Do not use `bun install` or similar
+directly.
 
-Launch agents directly via nix develop rather than relying on direnv:
+### Running AI coding agents
+
+Launch agents via `nix develop --impure` rather than relying on direnv to avoid
+shell-init quirks:
 
 ```bash
-# Example with Claude Code
 nix develop --impure -c claude
 ```
 
-This avoids occasional shell initialization quirks that can occur when agents
-are spawned in a direnv-managed shell.
-
-All dependencies managed through Nix. Do not use pip install or bun install
-directly.
-
----
+Agents must follow [AGENTS.md](./AGENTS.md).
 
 ## Infrastructure
 
 Terraform provisions the server, then NixOS is bootstrapped onto it.
 
-### First-time setup
-
 ```bash
-# Create and encrypt terraform variables
-nix run .#tfCreateVars
-
-# Initialize terraform
+nix run .#tfCreateVars   # create + encrypt terraform vars
 nix run .#tfInit
-
-# Plan and apply infrastructure
 nix run .#tfPlan
 nix run .#tfApply
+nix run .#bootstrap      # bootstrap NixOS
 
-# Bootstrap NixOS on the provisioned server
-nix run .#bootstrap
-```
-
-### Ongoing operations
-
-```bash
-# SSH into the server
-nix run .#remote
-
-# Edit terraform variables
+nix run .#remote         # SSH
 nix run .#tfEditVars
-
-# Destroy infrastructure
 nix run .#tfDestroy
 ```
 
-All infrastructure commands use age-encrypted state files. The `-i` flag can be
-passed to specify a custom SSH identity file (defaults to `~/.ssh/id_ed25519`).
+Infrastructure commands use age-encrypted state. The `-i` flag selects a custom
+SSH identity (defaults to `~/.ssh/id_ed25519`).

@@ -83,6 +83,8 @@ let
       ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isDarwin
       [ pkgs.apple-sdk_15 ];
 
+    RUSTFLAGS = "-D warnings";
+
     # Compile-time env for sqlx. Tests are skipped in nix builds.
     DATABASE_URL = "sqlite::memory:";
   };
@@ -94,6 +96,9 @@ in {
     inherit cargoArtifacts;
     doCheck = true;
   });
+
+  # CI check derivations — lighter than buildPackage (no final link step)
+  test = craneLib.cargoTest (commonArgs // { inherit cargoArtifacts; });
 
   clippy = craneLib.cargoClippy (commonArgs // {
     inherit cargoArtifacts;

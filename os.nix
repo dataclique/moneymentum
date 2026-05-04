@@ -1,4 +1,4 @@
-{ pkgs, lib, modulesPath, frontend, ... }:
+{ pkgs, lib, modulesPath, ... }:
 
 let
   inherit (import ./keys.nix) roles;
@@ -99,7 +99,7 @@ in {
           addr = "0.0.0.0";
           port = 80;
         }];
-        root = "${frontend}";
+        root = "/var/lib/moneymentum/frontend";
         locations = {
           "/".tryFiles = "$uri $uri/ /index.html";
           "/api/" = { proxyPass = "http://127.0.0.1:8000/"; };
@@ -125,7 +125,7 @@ in {
           addr = "0.0.0.0";
           port = 8080;
         }];
-        root = "${frontend}";
+        root = "/var/lib/moneymentum/frontend";
         locations = {
           "/".tryFiles = "$uri $uri/ /index.html";
           "/api/" = { proxyPass = "http://127.0.0.1:8001/"; };
@@ -210,7 +210,8 @@ in {
 
   systemd.tmpfiles.rules =
     let dataDirs = lib.mapAttrsToList (_: cfg: cfg.dataDir) enabledServices;
-    in map (dir: "d ${dir} 0770 moneymentum warehouse -") dataDirs;
+    in map (dir: "d ${dir} 0770 moneymentum warehouse -") dataDirs
+    ++ [ "d /var/lib/moneymentum/frontend 0755 root root -" ];
 
   system.activationScripts.moneymentum-init.text = "mkdir -p /run/moneymentum";
 

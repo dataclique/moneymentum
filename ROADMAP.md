@@ -8,15 +8,52 @@ are ordered by priority (highest first).
 
 ---
 
-## Portfolio beta in frontend
+## Usable production deployment
+
+Users need to reach the app before any portfolio feature matters. Deployment is
+the next implementation priority.
+
+- [ ] [Keep the app deployed and reachable](./user-stories/008-keep-app-deployed-and-reachable.md)
+- [ ] [Verify deployed Hyperliquid long-short rebalancing](./user-stories/010-verify-deployed-hyperliquid-long-short-rebalancing.md)
+- [ ] [Serve the app from a domain](./user-stories/009-serve-app-from-domain.md)
+
+---
+
+## Full Bitcoin beta accounting
 
 The backend already computes portfolio-weighted beta (`POST /beta` takes weights
-and benchmark, returns a single beta value). The frontend doesn't use it yet —
-the rebalancer still shows raw net notional, which ignores correlations and
-makes hedging guesswork.
+and benchmark, returns a single beta value). The frontend should show Bitcoin
+beta for the active portfolio, then include read-only Bitcoin holdings so the
+risk view reflects the user's actual exposure.
 
-- [ ] Fetch portfolio beta from backend (`POST /beta`)
-- [ ] Display alongside net notional in rebalancer
+- [ ] [Show Bitcoin beta for the active portfolio](./user-stories/011-show-bitcoin-beta-for-active-portfolio.md)
+- [ ] [Add read-only Bitcoin addresses](./user-stories/012-add-read-only-bitcoin-addresses.md)
+- [ ] [Include read-only Bitcoin holdings in beta](./user-stories/013-include-read-only-bitcoin-holdings-in-beta.md)
+- [ ] [Target ending Bitcoin beta while hedging](./user-stories/014-target-ending-bitcoin-beta-while-hedging.md)
+
+---
+
+## Portfolio identity and sharing
+
+Read-only portfolios need stable identity. Solana public keys are the natural
+identifier because the north star already assumes Solana deposits.
+
+- [ ] [Authenticate portfolio ownership by Solana pubkey](./user-stories/015-authenticate-portfolio-ownership-by-solana-pubkey.md)
+- [ ] [View portfolios by public key URL](./user-stories/016-view-portfolios-by-public-key-url.md)
+- [ ] [Hide portfolio details for a fee](./user-stories/017-hide-portfolio-details-for-fee.md)
+
+---
+
+## Crash protection and simulation
+
+Users who are long-term bullish Bitcoin still need protection against short- and
+mid-term crashes. Start with manually entered protective puts and simple
+historical crash simulations, then add stressed correlations and rolling.
+
+- [ ] [Enter protective put positions](./user-stories/019-enter-protective-put-positions.md)
+- [ ] [Simulate historical Bitcoin crashes](./user-stories/020-simulate-historical-bitcoin-crashes.md)
+- [ ] [Simulate stressed crash correlations](./user-stories/021-simulate-stressed-crash-correlations.md)
+- [ ] [Roll protective puts before final month](./user-stories/022-roll-protective-puts-before-final-month.md)
 
 ---
 
@@ -24,25 +61,12 @@ makes hedging guesswork.
 
 > See SPEC.md: Analytics Capabilities > Risk Engine
 
-Portfolio risk assessment beyond beta.
+Portfolio risk assessment beyond beta and crash-specific simulations.
 
 - [ ] Monte Carlo simulation of portfolio returns
 - [ ] VaR/CVaR at configurable confidence levels
 - [ ] Historical drawdown analysis
 - [ ] Correlation matrix visualization
-
----
-
-## Screener and staged trade simulation
-
-> See SPEC.md: Core Workflow > Screen, Stage, Simulate
-
-Find assets by factor characteristics and preview portfolio changes before
-executing.
-
-- [ ] Screener: rank assets by beta, momentum, carry, volatility
-- [ ] Staged trades: add/remove positions, see simulated impact on risk metrics
-- [ ] Compare staged vs current portfolio
 
 ---
 
@@ -55,6 +79,7 @@ Unified perp + spot portfolio management.
 - [ ] Hyperliquid spot integration
 - [ ] Combined notional and weight calculations
 - [ ] Single rebalance across both instrument types
+- [ ] [Add read-only wallets on other chains](./user-stories/018-add-read-only-wallets-on-other-chains.md)
 
 ---
 
@@ -62,7 +87,6 @@ Unified perp + spot portfolio management.
 
 These are directions we know matter but haven't designed:
 
-- Options (Derive) for advanced risk management
 - Tokenized equities (st0x) for TradFi factor exposure
 - Yield products (Pendle)
 - Multi-account support

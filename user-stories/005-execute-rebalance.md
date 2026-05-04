@@ -1,3 +1,11 @@
+---
+status: completed
+epic: completed-rebalancer
+priority: 5
+tags:
+  - moneymentum/user-story
+---
+
 # Execute Rebalance
 
 As a user, I want to be able to execute the staged rebalance so that my venue

@@ -5,8 +5,10 @@ feedback, and frequent review by humans and agents.
 
 ## Rules
 
-- Start every change from a user story in `user-stories/`.
+- Start every change from a user story in [[user-stories/README|User Stories]].
 - Keep each story pull-request sized.
+- Make acceptance criteria verifiable before merge; do not require a follow-up
+  PR just to mark the story done.
 - Write the failing test before changing behavior.
 - Pair while implementing: human and AI, AI and AI, or human driver with AI
   reviewer.

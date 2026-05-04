@@ -1,3 +1,11 @@
+---
+status: planned
+epic: usable-production-deployment
+priority: 10
+tags:
+  - moneymentum/user-story
+---
+
 # Serve The App From A Domain
 
 As a user, I want to go to a domain instead of a random IP address so that the
@@ -9,9 +17,10 @@ Planned.
 
 ## Acceptance Criteria
 
-- [ ] A production domain points to the deployed frontend.
-- [ ] TLS works for the production domain.
-- [ ] Backend API calls work from the production domain.
-- [ ] The old IP-based access path either redirects or remains documented as an
-      operational fallback.
-- [ ] The README uses the domain instead of the raw IP address.
+- [ ] The production domain is defined in checked-in configuration.
+- [ ] TLS configuration for the production domain is defined in checked-in
+      configuration.
+- [ ] Frontend configuration uses the domain as the canonical app URL.
+- [ ] Backend API calls from the domain are allowed by checked-in CORS or proxy
+      configuration.
+- [ ] The README documents the domain and the raw IP fallback behavior.

@@ -1,3 +1,11 @@
+---
+status: planned
+epic: crash-protection-and-simulation
+priority: 21
+tags:
+  - moneymentum/user-story
+---
+
 # Simulate Stressed Crash Correlations
 
 As a user, I want crash simulations to account for stressed correlations so that

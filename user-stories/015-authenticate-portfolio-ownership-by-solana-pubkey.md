@@ -1,3 +1,11 @@
+---
+status: planned
+epic: portfolio-identity-and-sharing
+priority: 15
+tags:
+  - moneymentum/user-story
+---
+
 # Authenticate Portfolio Ownership By Solana Pubkey
 
 As a user, I want to authenticate cryptographically with a Solana wallet so that

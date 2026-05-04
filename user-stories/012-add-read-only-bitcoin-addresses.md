@@ -1,3 +1,11 @@
+---
+status: planned
+epic: full-bitcoin-beta-accounting
+priority: 12
+tags:
+  - moneymentum/user-story
+---
+
 # Add Read-Only Bitcoin Addresses
 
 As a user, I want to add read-only Bitcoin addresses so that spot holdings in

@@ -1,3 +1,11 @@
+---
+status: planned
+epic: portfolio-identity-and-sharing
+priority: 17
+tags:
+  - moneymentum/user-story
+---
+
 # Hide Portfolio Details For A Fee
 
 As a user, I want to hide my portfolio details for a fee so that strangers

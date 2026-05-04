@@ -1,3 +1,11 @@
+---
+status: planned
+epic: usable-production-deployment
+priority: 9
+tags:
+  - moneymentum/user-story
+---
+
 # Verify Deployed Hyperliquid Long-Short Rebalancing
 
 As a user, I want to put up a long-short portfolio on Hyperliquid from the
@@ -10,9 +18,14 @@ Planned.
 
 ## Acceptance Criteria
 
-- [ ] The deployed app can connect a wallet.
-- [ ] The deployed app loads Hyperliquid account value and positions.
-- [ ] The user can construct long and short target positions.
-- [ ] The user can preview staged trades before submitting.
-- [ ] The user can submit a rebalance from the deployed app.
-- [ ] The app refreshes positions after the rebalance.
+- [ ] A smoke test or runbook exists for deployed wallet connection.
+- [ ] A smoke test or runbook exists for verifying that the deployed app loads
+      Hyperliquid account value and positions.
+- [ ] A smoke test or runbook exists for verifying that a user can construct
+      long and short target positions.
+- [ ] A smoke test or runbook exists for verifying that staged trades appear
+      before submission.
+- [ ] A smoke test or runbook exists for verifying that rebalance submission
+      works from the deployed app.
+- [ ] A smoke test or runbook exists for verifying that positions refresh after
+      rebalance.

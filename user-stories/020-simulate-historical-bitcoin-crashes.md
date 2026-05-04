@@ -1,3 +1,11 @@
+---
+status: planned
+epic: crash-protection-and-simulation
+priority: 20
+tags:
+  - moneymentum/user-story
+---
+
 # Simulate Historical Bitcoin Crashes
 
 As a user, I want to simulate historical Bitcoin crashes so that I can see how

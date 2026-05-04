@@ -1,7 +1,12 @@
+---
+tags:
+  - moneymentum/roadmap
+---
+
 # Roadmap
 
 > **Purpose**: Practical path from where we are today to the north star in
-> [SPEC.md](./SPEC.md).
+> [[SPEC]].
 
 Each `##` section is an epic — a goal-oriented group of related issues. Epics
 are ordered by priority (highest first).
@@ -13,9 +18,9 @@ are ordered by priority (highest first).
 Users need to reach the app before any portfolio feature matters. Deployment is
 the next implementation priority.
 
-- [ ] [Keep the app deployed and reachable](./user-stories/008-keep-app-deployed-and-reachable.md)
-- [ ] [Verify deployed Hyperliquid long-short rebalancing](./user-stories/010-verify-deployed-hyperliquid-long-short-rebalancing.md)
-- [ ] [Serve the app from a domain](./user-stories/009-serve-app-from-domain.md)
+- [ ] [[008-keep-app-deployed-and-reachable]]
+- [ ] [[010-verify-deployed-hyperliquid-long-short-rebalancing]]
+- [ ] [[009-serve-app-from-domain]]
 
 ---
 
@@ -26,10 +31,10 @@ and benchmark, returns a single beta value). The frontend should show Bitcoin
 beta for the active portfolio, then include read-only Bitcoin holdings so the
 risk view reflects the user's actual exposure.
 
-- [ ] [Show Bitcoin beta for the active portfolio](./user-stories/011-show-bitcoin-beta-for-active-portfolio.md)
-- [ ] [Add read-only Bitcoin addresses](./user-stories/012-add-read-only-bitcoin-addresses.md)
-- [ ] [Include read-only Bitcoin holdings in beta](./user-stories/013-include-read-only-bitcoin-holdings-in-beta.md)
-- [ ] [Target ending Bitcoin beta while hedging](./user-stories/014-target-ending-bitcoin-beta-while-hedging.md)
+- [ ] [[011-show-bitcoin-beta-for-active-portfolio]]
+- [ ] [[012-add-read-only-bitcoin-addresses]]
+- [ ] [[013-include-read-only-bitcoin-holdings-in-beta]]
+- [ ] [[014-target-ending-bitcoin-beta-while-hedging]]
 
 ---
 
@@ -38,9 +43,9 @@ risk view reflects the user's actual exposure.
 Read-only portfolios need stable identity. Solana public keys are the natural
 identifier because the north star already assumes Solana deposits.
 
-- [ ] [Authenticate portfolio ownership by Solana pubkey](./user-stories/015-authenticate-portfolio-ownership-by-solana-pubkey.md)
-- [ ] [View portfolios by public key URL](./user-stories/016-view-portfolios-by-public-key-url.md)
-- [ ] [Hide portfolio details for a fee](./user-stories/017-hide-portfolio-details-for-fee.md)
+- [ ] [[015-authenticate-portfolio-ownership-by-solana-pubkey]]
+- [ ] [[016-view-portfolios-by-public-key-url]]
+- [ ] [[017-hide-portfolio-details-for-fee]]
 
 ---
 
@@ -50,10 +55,10 @@ Users who are long-term bullish Bitcoin still need protection against short- and
 mid-term crashes. Start with manually entered protective puts and simple
 historical crash simulations, then add stressed correlations and rolling.
 
-- [ ] [Enter protective put positions](./user-stories/019-enter-protective-put-positions.md)
-- [ ] [Simulate historical Bitcoin crashes](./user-stories/020-simulate-historical-bitcoin-crashes.md)
-- [ ] [Simulate stressed crash correlations](./user-stories/021-simulate-stressed-crash-correlations.md)
-- [ ] [Roll protective puts before final month](./user-stories/022-roll-protective-puts-before-final-month.md)
+- [ ] [[019-enter-protective-put-positions]]
+- [ ] [[020-simulate-historical-bitcoin-crashes]]
+- [ ] [[021-simulate-stressed-crash-correlations]]
+- [ ] [[022-roll-protective-puts-before-final-month]]
 
 ---
 
@@ -79,7 +84,7 @@ Unified perp + spot portfolio management.
 - [ ] Hyperliquid spot integration
 - [ ] Combined notional and weight calculations
 - [ ] Single rebalance across both instrument types
-- [ ] [Add read-only wallets on other chains](./user-stories/018-add-read-only-wallets-on-other-chains.md)
+- [ ] [[018-add-read-only-wallets-on-other-chains]]
 
 ---
 

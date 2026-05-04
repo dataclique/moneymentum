@@ -1,3 +1,11 @@
+---
+status: planned
+epic: full-bitcoin-beta-accounting
+priority: 14
+tags:
+  - moneymentum/user-story
+---
+
 # Target Ending Bitcoin Beta While Hedging
 
 As a user, I want to choose my ending beta to Bitcoin while constructing a hedge

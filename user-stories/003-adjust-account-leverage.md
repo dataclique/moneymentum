@@ -1,3 +1,11 @@
+---
+status: completed
+epic: completed-rebalancer
+priority: 3
+tags:
+  - moneymentum/user-story
+---
+
 # Adjust Account Leverage
 
 As a user, I want to be able to adjust cross-account leverage so that total

@@ -1,3 +1,11 @@
+---
+status: planned
+epic: crash-protection-and-simulation
+priority: 19
+tags:
+  - moneymentum/user-story
+---
+
 # Enter Protective Put Positions
 
 As a long-term bullish Bitcoin user, I want to enter protective put positions so

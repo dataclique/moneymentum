@@ -1,3 +1,11 @@
+---
+status: planned
+epic: full-bitcoin-beta-accounting
+priority: 13
+tags:
+  - moneymentum/user-story
+---
+
 # Include Read-Only Bitcoin Holdings In Beta
 
 As a user, I want my read-only Bitcoin holdings included in beta so that the

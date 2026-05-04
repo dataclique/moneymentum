@@ -1,3 +1,11 @@
+---
+status: planned
+epic: full-bitcoin-beta-accounting
+priority: 11
+tags:
+  - moneymentum/user-story
+---
+
 # Show Bitcoin Beta For The Active Portfolio
 
 As a user, I want to see my portfolio beta to Bitcoin so that I can understand

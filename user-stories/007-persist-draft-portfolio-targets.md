@@ -1,3 +1,11 @@
+---
+status: completed
+epic: completed-rebalancer
+priority: 7
+tags:
+  - moneymentum/user-story
+---
+
 # Persist Draft Portfolio Targets
 
 As a user, I want draft portfolio targets to persist locally so that refreshing

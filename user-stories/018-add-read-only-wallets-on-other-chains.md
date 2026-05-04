@@ -1,3 +1,11 @@
+---
+status: planned
+epic: spot-trading
+priority: 18
+tags:
+  - moneymentum/user-story
+---
+
 # Add Read-Only Wallets On Other Chains
 
 As a user, I want to add read-only wallets on other chains so that non-Bitcoin

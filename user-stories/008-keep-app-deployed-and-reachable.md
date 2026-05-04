@@ -1,3 +1,11 @@
+---
+status: planned
+epic: usable-production-deployment
+priority: 8
+tags:
+  - moneymentum/user-story
+---
+
 # Keep The App Deployed And Reachable
 
 As a user, I want to be able to use the platform so that Moneymentum is not just
@@ -9,10 +17,12 @@ Planned.
 
 ## Acceptance Criteria
 
-- [ ] The frontend is deployed from the current mainline build.
-- [ ] The backend required by the frontend is deployed and reachable.
-- [ ] The deployed frontend can call the deployed backend without manual local
-      configuration.
-- [ ] The deployed app exposes health or smoke-testable endpoints.
-- [ ] A deployment failure is visible in CI or deployment logs.
-- [ ] The README links to the deployed app once it exists.
+- [ ] The repository contains deployment configuration for the frontend.
+- [ ] The repository contains deployment configuration for the backend required
+      by the frontend.
+- [ ] Frontend configuration points at the deployed backend through checked-in
+      configuration, not manual local edits.
+- [ ] The backend exposes a smoke-testable health endpoint.
+- [ ] CI or deployment checks fail visibly when the deploy configuration is
+      invalid.
+- [ ] The README documents the master-branch deployment flow.

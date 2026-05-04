@@ -1,3 +1,11 @@
+---
+status: completed
+epic: completed-rebalancer
+priority: 4
+tags:
+  - moneymentum/user-story
+---
+
 # Preview Staged Rebalance Trades
 
 As a user, I want to be able to preview staged rebalance trades so that I can

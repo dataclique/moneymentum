@@ -1,3 +1,11 @@
+---
+status: completed
+epic: completed-rebalancer
+priority: 1
+tags:
+  - moneymentum/user-story
+---
+
 # Select Perps From The Screener
 
 As a user, I want to be able to select perps from a searchable screener so that

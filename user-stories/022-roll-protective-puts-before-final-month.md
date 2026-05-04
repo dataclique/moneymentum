@@ -1,3 +1,11 @@
+---
+status: planned
+epic: crash-protection-and-simulation
+priority: 22
+tags:
+  - moneymentum/user-story
+---
+
 # Roll Protective Puts Before Final Month
 
 As a long-term bullish Bitcoin user, I want protective puts to roll before their

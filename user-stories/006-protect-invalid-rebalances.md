@@ -1,3 +1,11 @@
+---
+status: completed
+epic: completed-rebalancer
+priority: 6
+tags:
+  - moneymentum/user-story
+---
+
 # Protect Invalid Rebalances
 
 As a user, I want to be prevented from submitting invalid rebalances so that I

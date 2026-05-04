@@ -1,3 +1,11 @@
+---
+status: completed
+epic: completed-rebalancer
+priority: 2
+tags:
+  - moneymentum/user-story
+---
+
 # Edit Target Position Allocations
 
 As a user, I want to be able to edit target position allocations by weight,

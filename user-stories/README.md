@@ -1,12 +1,11 @@
 # User Stories
 
-This folder contains PR-sized user stories for Moneymentum. Stories are ordered
-by filename so the next useful implementation target is easy to scan.
+This folder contains PR-sized user stories for Moneymentum.
 
-Current focus: the working portfolio rebalancer at `/`, especially selecting
-perps, editing target weights, staging changes, and rebalancing.
+Current focus: documenting completed behavior in the working portfolio
+rebalancer at `/`.
 
-## Story Index
+## Completed
 
 - [Select perps from the screener](./001-select-perps-from-screener.md)
 - [Edit target position allocations](./002-edit-target-position-allocations.md)

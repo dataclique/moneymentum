@@ -1,6 +1,6 @@
 ---
 tags:
-  - moneymentum/user-stories
+  - user-stories
 ---
 
 # User Stories

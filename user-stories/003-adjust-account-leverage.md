@@ -3,7 +3,7 @@ status: completed
 epic: completed-rebalancer
 priority: 3
 tags:
-  - moneymentum/user-story
+  - user-story
 ---
 
 # Adjust Account Leverage

@@ -3,7 +3,7 @@ status: planned
 epic: full-bitcoin-beta-accounting
 priority: 12
 tags:
-  - moneymentum/user-story
+  - user-story
 ---
 
 # Add Read-Only Bitcoin Addresses

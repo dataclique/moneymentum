@@ -3,7 +3,7 @@ status: planned
 epic: spot-trading
 priority: 18
 tags:
-  - moneymentum/user-story
+  - user-story
 ---
 
 # Add Read-Only Wallets On Other Chains

@@ -3,7 +3,7 @@ status: completed
 epic: completed-rebalancer
 priority: 5
 tags:
-  - moneymentum/user-story
+  - user-story
 ---
 
 # Execute Rebalance

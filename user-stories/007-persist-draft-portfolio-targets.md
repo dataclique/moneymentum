@@ -3,7 +3,7 @@ status: completed
 epic: completed-rebalancer
 priority: 7
 tags:
-  - moneymentum/user-story
+  - user-story
 ---
 
 # Persist Draft Portfolio Targets

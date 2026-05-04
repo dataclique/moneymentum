@@ -3,7 +3,7 @@ status: completed
 epic: completed-rebalancer
 priority: 6
 tags:
-  - moneymentum/user-story
+  - user-story
 ---
 
 # Protect Invalid Rebalances

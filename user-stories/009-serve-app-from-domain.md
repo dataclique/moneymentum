@@ -3,7 +3,7 @@ status: planned
 epic: usable-production-deployment
 priority: 10
 tags:
-  - moneymentum/user-story
+  - user-story
 ---
 
 # Serve The App From A Domain

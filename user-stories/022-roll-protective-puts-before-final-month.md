@@ -3,7 +3,7 @@ status: planned
 epic: crash-protection-and-simulation
 priority: 22
 tags:
-  - moneymentum/user-story
+  - user-story
 ---
 
 # Roll Protective Puts Before Final Month

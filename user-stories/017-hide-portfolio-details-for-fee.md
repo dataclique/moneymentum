@@ -3,7 +3,7 @@ status: planned
 epic: portfolio-identity-and-sharing
 priority: 17
 tags:
-  - moneymentum/user-story
+  - user-story
 ---
 
 # Hide Portfolio Details For A Fee

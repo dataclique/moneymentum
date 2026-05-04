@@ -3,7 +3,7 @@ status: planned
 epic: usable-production-deployment
 priority: 9
 tags:
-  - moneymentum/user-story
+  - user-story
 ---
 
 # Verify Deployed Hyperliquid Long-Short Rebalancing

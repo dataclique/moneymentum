@@ -3,7 +3,7 @@ status: completed
 epic: completed-rebalancer
 priority: 1
 tags:
-  - moneymentum/user-story
+  - user-story
 ---
 
 # Select Perps From The Screener

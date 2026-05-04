@@ -3,7 +3,7 @@ status: planned
 epic: portfolio-identity-and-sharing
 priority: 16
 tags:
-  - moneymentum/user-story
+  - user-story
 ---
 
 # View Portfolios By Public Key URL

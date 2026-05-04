@@ -3,7 +3,7 @@ status: completed
 epic: completed-rebalancer
 priority: 4
 tags:
-  - moneymentum/user-story
+  - user-story
 ---
 
 # Preview Staged Rebalance Trades

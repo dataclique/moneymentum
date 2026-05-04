@@ -3,7 +3,7 @@ status: completed
 epic: completed-rebalancer
 priority: 2
 tags:
-  - moneymentum/user-story
+  - user-story
 ---
 
 # Edit Target Position Allocations

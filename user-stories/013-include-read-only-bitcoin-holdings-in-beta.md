@@ -3,7 +3,7 @@ status: planned
 epic: full-bitcoin-beta-accounting
 priority: 13
 tags:
-  - moneymentum/user-story
+  - user-story
 ---
 
 # Include Read-Only Bitcoin Holdings In Beta

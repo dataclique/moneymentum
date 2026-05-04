@@ -3,7 +3,7 @@ status: planned
 epic: crash-protection-and-simulation
 priority: 21
 tags:
-  - moneymentum/user-story
+  - user-story
 ---
 
 # Simulate Stressed Crash Correlations

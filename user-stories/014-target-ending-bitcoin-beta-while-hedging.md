@@ -3,7 +3,7 @@ status: planned
 epic: full-bitcoin-beta-accounting
 priority: 14
 tags:
-  - moneymentum/user-story
+  - user-story
 ---
 
 # Target Ending Bitcoin Beta While Hedging

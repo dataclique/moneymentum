@@ -3,7 +3,7 @@ status: planned
 epic: usable-production-deployment
 priority: 8
 tags:
-  - moneymentum/user-story
+  - user-story
 ---
 
 # Keep The App Deployed And Reachable

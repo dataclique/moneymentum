@@ -3,7 +3,7 @@ status: planned
 epic: crash-protection-and-simulation
 priority: 19
 tags:
-  - moneymentum/user-story
+  - user-story
 ---
 
 # Enter Protective Put Positions

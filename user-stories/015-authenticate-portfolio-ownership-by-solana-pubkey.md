@@ -3,7 +3,7 @@ status: planned
 epic: portfolio-identity-and-sharing
 priority: 15
 tags:
-  - moneymentum/user-story
+  - user-story
 ---
 
 # Authenticate Portfolio Ownership By Solana Pubkey

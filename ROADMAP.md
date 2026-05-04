@@ -1,6 +1,6 @@
 ---
 tags:
-  - moneymentum/roadmap
+  - roadmap
 ---
 
 # Roadmap

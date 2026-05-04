@@ -1,19 +1,12 @@
 ---
 status: planned
-epic: full-bitcoin-beta-accounting
-priority: 14
-tags:
-  - user-story
+theme: full-bitcoin-beta-accounting
 ---
 
 # Target Ending Bitcoin Beta While Hedging
 
 As a user, I want to choose my ending beta to Bitcoin while constructing a hedge
 so that I can decide how much market exposure remains after rebalancing.
-
-## Status
-
-Planned.
 
 ## Acceptance Criteria
 

@@ -1,19 +1,12 @@
 ---
 status: planned
-epic: crash-protection-and-simulation
-priority: 21
-tags:
-  - user-story
+theme: crash-protection-and-simulation
 ---
 
 # Simulate Stressed Crash Correlations
 
 As a user, I want crash simulations to account for stressed correlations so that
 hedges are not evaluated under calm-market assumptions.
-
-## Status
-
-Planned.
 
 ## Acceptance Criteria
 

@@ -1,19 +1,12 @@
 ---
 status: planned
-epic: portfolio-identity-and-sharing
-priority: 16
-tags:
-  - user-story
+theme: portfolio-identity-and-sharing
 ---
 
 # View Portfolios By Public Key URL
 
 As a user, I want a portfolio to be viewable at `/<pubkey>` so that I can share
 or revisit a portfolio by its owner identifier.
-
-## Status
-
-Planned.
 
 ## Acceptance Criteria
 

@@ -1,19 +1,12 @@
 ---
 status: planned
-epic: full-bitcoin-beta-accounting
-priority: 12
-tags:
-  - user-story
+theme: full-bitcoin-beta-accounting
 ---
 
 # Add Read-Only Bitcoin Addresses
 
 As a user, I want to add read-only Bitcoin addresses so that spot holdings in
 those wallets count as part of my portfolio.
-
-## Status
-
-Planned.
 
 ## Acceptance Criteria
 

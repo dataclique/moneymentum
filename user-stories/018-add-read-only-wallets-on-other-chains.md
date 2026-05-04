@@ -1,19 +1,12 @@
 ---
 status: planned
-epic: spot-trading
-priority: 18
-tags:
-  - user-story
+theme: spot-trading
 ---
 
 # Add Read-Only Wallets On Other Chains
 
 As a user, I want to add read-only wallets on other chains so that non-Bitcoin
 holdings can become part of my portfolio view.
-
-## Status
-
-Planned.
 
 ## Acceptance Criteria
 

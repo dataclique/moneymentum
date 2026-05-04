@@ -1,19 +1,12 @@
 ---
 status: completed
-epic: completed-rebalancer
-priority: 7
-tags:
-  - user-story
+theme: completed-rebalancer
 ---
 
 # Persist Draft Portfolio Targets
 
 As a user, I want draft portfolio targets to persist locally so that refreshing
 the app does not erase an unfinished rebalance plan.
-
-## Status
-
-Completed.
 
 ## Acceptance Criteria
 

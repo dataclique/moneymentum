@@ -1,19 +1,12 @@
 ---
 status: planned
-epic: crash-protection-and-simulation
-priority: 20
-tags:
-  - user-story
+theme: crash-protection-and-simulation
 ---
 
 # Simulate Historical Bitcoin Crashes
 
 As a user, I want to simulate historical Bitcoin crashes so that I can see how
 my portfolio and protective puts might behave in black swan scenarios.
-
-## Status
-
-Planned.
 
 ## Acceptance Criteria
 

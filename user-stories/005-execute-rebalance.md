@@ -1,19 +1,12 @@
 ---
 status: completed
-epic: completed-rebalancer
-priority: 5
-tags:
-  - user-story
+theme: completed-rebalancer
 ---
 
 # Execute Rebalance
 
 As a user, I want to be able to execute the staged rebalance so that my venue
 positions move toward the target portfolio.
-
-## Status
-
-Completed.
 
 ## Acceptance Criteria
 
@@ -27,3 +20,8 @@ Completed.
 - [x] Once the refreshed exchange state matches the target, staged trades clear.
 - [x] On failure, the failed position shows the error message and remains
       reviewable.
+
+## Related Work
+
+- PR [#142](https://github.com/data-cartel/moneymentum/pull/142) — placing
+  order + rendering logic fixes

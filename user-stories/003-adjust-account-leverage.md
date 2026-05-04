@@ -1,19 +1,12 @@
 ---
 status: completed
-epic: completed-rebalancer
-priority: 3
-tags:
-  - user-story
+theme: completed-rebalancer
 ---
 
 # Adjust Account Leverage
 
 As a user, I want to be able to adjust cross-account leverage so that total
 target notional scales up or down while preserving portfolio weights.
-
-## Status
-
-Completed.
 
 ## Acceptance Criteria
 

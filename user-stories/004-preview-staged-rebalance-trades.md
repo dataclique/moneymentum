@@ -1,19 +1,12 @@
 ---
 status: completed
-epic: completed-rebalancer
-priority: 4
-tags:
-  - user-story
+theme: completed-rebalancer
 ---
 
 # Preview Staged Rebalance Trades
 
 As a user, I want to be able to preview staged rebalance trades so that I can
 understand what will be sent before I execute.
-
-## Status
-
-Completed.
 
 ## Acceptance Criteria
 

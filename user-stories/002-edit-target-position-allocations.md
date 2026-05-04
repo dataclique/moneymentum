@@ -1,9 +1,6 @@
 ---
 status: completed
-epic: completed-rebalancer
-priority: 2
-tags:
-  - user-story
+theme: completed-rebalancer
 ---
 
 # Edit Target Position Allocations
@@ -11,10 +8,6 @@ tags:
 As a user, I want to be able to edit target position allocations by weight,
 notional, side, and per-position leverage so that the portfolio expresses my
 intended exposure before I rebalance.
-
-## Status
-
-Completed.
 
 ## Acceptance Criteria
 

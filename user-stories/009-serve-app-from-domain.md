@@ -1,19 +1,12 @@
 ---
 status: planned
-epic: usable-production-deployment
-priority: 10
-tags:
-  - user-story
+theme: usable-production-deployment
 ---
 
 # Serve The App From A Domain
 
 As a user, I want to go to a domain instead of a random IP address so that the
 platform feels stable and easy to return to.
-
-## Status
-
-Planned.
 
 ## Acceptance Criteria
 

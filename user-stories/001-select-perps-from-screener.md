@@ -1,19 +1,12 @@
 ---
 status: completed
-epic: completed-rebalancer
-priority: 1
-tags:
-  - user-story
+theme: completed-rebalancer
 ---
 
 # Select Perps From The Screener
 
 As a user, I want to be able to select perps from a searchable screener so that
 I can build a target portfolio from the assets available on the venue.
-
-## Status
-
-Completed.
 
 ## Acceptance Criteria
 

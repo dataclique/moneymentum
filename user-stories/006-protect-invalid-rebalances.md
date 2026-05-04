@@ -1,9 +1,6 @@
 ---
 status: completed
-epic: completed-rebalancer
-priority: 6
-tags:
-  - user-story
+theme: completed-rebalancer
 ---
 
 # Protect Invalid Rebalances
@@ -11,10 +8,6 @@ tags:
 As a user, I want to be prevented from submitting invalid rebalances so that I
 do not send orders that the venue will reject or that contradict the target
 portfolio model.
-
-## Status
-
-Completed.
 
 ## Acceptance Criteria
 
@@ -29,3 +22,8 @@ Completed.
 - [x] Non-precise mode blocks changes below the minimum change threshold and
       explains that precise mode can be used.
 - [x] Blocking reasons are visible near the portfolio controls.
+
+## Related Work
+
+- PR [#142](https://github.com/data-cartel/moneymentum/pull/142) — placing
+  order + rendering logic fixes

@@ -1,9 +1,6 @@
 ---
 status: planned
-epic: usable-production-deployment
-priority: 9
-tags:
-  - user-story
+theme: usable-production-deployment
 ---
 
 # Verify Deployed Hyperliquid Long-Short Rebalancing
@@ -11,10 +8,6 @@ tags:
 As a user, I want to put up a long-short portfolio on Hyperliquid from the
 deployed app so that I can manage real positions without running the project
 locally.
-
-## Status
-
-Planned.
 
 ## Acceptance Criteria
 

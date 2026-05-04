@@ -1,19 +1,12 @@
 ---
 status: planned
-epic: usable-production-deployment
-priority: 8
-tags:
-  - user-story
+theme: usable-production-deployment
 ---
 
 # Keep The App Deployed And Reachable
 
 As a user, I want to be able to use the platform so that Moneymentum is not just
 a local development tool.
-
-## Status
-
-Planned.
 
 ## Acceptance Criteria
 

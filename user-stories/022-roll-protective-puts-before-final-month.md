@@ -1,19 +1,12 @@
 ---
 status: planned
-epic: crash-protection-and-simulation
-priority: 22
-tags:
-  - user-story
+theme: crash-protection-and-simulation
 ---
 
 # Roll Protective Puts Before Final Month
 
 As a long-term bullish Bitcoin user, I want protective puts to roll before their
 final month so that theta decay does not consume the hedge at the worst time.
-
-## Status
-
-Planned.
 
 ## Acceptance Criteria
 

@@ -1,19 +1,12 @@
 ---
 status: planned
-epic: full-bitcoin-beta-accounting
-priority: 13
-tags:
-  - user-story
+theme: full-bitcoin-beta-accounting
 ---
 
 # Include Read-Only Bitcoin Holdings In Beta
 
 As a user, I want my read-only Bitcoin holdings included in beta so that the
 portfolio risk view reflects my full exposure.
-
-## Status
-
-Planned.
 
 ## Acceptance Criteria
 

@@ -5,7 +5,8 @@ feedback, and frequent review by humans and agents.
 
 ## Rules
 
-- Start every change from a user story in [[user-stories/README|User Stories]].
+- Start every change from a user story in
+  [User Stories](./user-stories/README.md).
 - Keep each story pull-request sized.
 - Make acceptance criteria verifiable before merge; do not require a follow-up
   PR just to mark the story done.
@@ -19,13 +20,14 @@ feedback, and frequent review by humans and agents.
 ## Story Format
 
 ```markdown
+---
+status: completed | planned
+theme: <theme-slug>
+---
+
 # Short Story Name
 
 As a user, I want to ...
-
-## Status
-
-Completed | Planned
 
 ## Acceptance Criteria
 

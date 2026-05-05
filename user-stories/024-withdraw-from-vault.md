@@ -15,8 +15,21 @@ capital out of the strategy when I choose to.
 - [ ] Pending withdrawals show their unlock time based on the redeem period.
 - [ ] After the redeem period elapses, the user can execute the withdrawal and
       receive USDC.
-- [ ] The settled withdrawal accounts for management and performance fees before
-      the USDC payout.
+- [ ] The settled withdrawal applies the canonical fee schedule before the
+      USDC payout, with deterministic math the UI and the on-chain program
+      both reproduce. Specifically:
+      1. Accrue and deduct the management fee, computed as the configured
+         annualized rate pro-rated since the vault's last accrual timestamp
+         on the user's pre-withdrawal share of NAV.
+      2. Compute and settle the performance fee, taken as the configured
+         rate on gains above the per-user (or vault-level, per program
+         design) high-water mark for the relevant period.
+      3. Convert the post-fee share value to USDC for the payout, applying
+         the documented rounding rule.
+      The source of truth for rates and timestamps is the on-chain vault
+      account (e.g. `Vault.feeSchedule` and `Vault.lastAccrualTimestamp`);
+      the UI must read from the same source rather than recomputing
+      independently.
 - [ ] Burned shares are removed from the user's portfolio view.
 - [ ] Failed withdrawals surface the on-chain error.
 

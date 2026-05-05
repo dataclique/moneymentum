@@ -12,6 +12,13 @@ cannot inspect my full positions and risk metrics just by knowing my public key.
 
 - [ ] A portfolio owner can mark detailed portfolio breakdowns as private.
 - [ ] Public visitors see only the allowed summary for private portfolios.
+- [ ] Privacy is enforced server-side, not just in the UI: backend endpoints
+      that return positions, risk metrics, or other detailed portfolio data
+      verify the requester is the owner or has approved access, and respond
+      with 401/403 (or a reduced summary payload) otherwise. UI gating is a
+      convenience layer on top of this enforcement, never a substitute.
+- [ ] Tests cover the server-side authorization for both unauthenticated
+      visitors and authenticated non-owners on the detail endpoints.
 - [ ] Full positions and risk metrics require owner authentication or approved
       access.
 - [ ] The UI explains whether a portfolio is public or private.

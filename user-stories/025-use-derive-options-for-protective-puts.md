@@ -18,7 +18,12 @@ than only manually tracked entries.
 - [ ] Option positions are valued at the current Derive mark price.
 - [ ] The risk view includes Derive options alongside manually entered puts from
       [Story 019](./019-enter-protective-put-positions.md).
-- [ ] Failed Derive interactions surface the underlying error to the user.
+- [ ] Failed Derive interactions present an actionable, user-safe message to
+      the user (concise description plus a suggested next step) and do not
+      expose raw provider or internal error text in the UI. The full
+      provider/internal error is recorded in application logs and developer
+      traces for troubleshooting, following the logging guidance in
+      [AGENTS.md](../AGENTS.md).
 
 ## Related Work
 

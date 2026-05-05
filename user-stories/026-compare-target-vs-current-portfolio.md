@@ -14,7 +14,12 @@ when I do.
 - [ ] The portfolio surface labels target and current allocations distinctly.
 - [ ] Each position row shows target weight, current weight, and the delta.
 - [ ] Positions whose delta is below the minimum tradable change are visibly
-      marked as such.
+      marked as such. The threshold is sourced from a single config key
+      (`portfolio.minTradableChange`), with documented units (percent or
+      absolute), a documented default value, and a documented override rule.
+      The UI rendering (e.g. `markNonTradablePositions`) and the rebalance
+      logic (e.g. `calculateRebalanceDeltas`) both read this key so the UI
+      and the staged trades always agree on what counts as tradable.
 - [ ] When the user opens the app after a price move, the drift is visible
       without having to stage any trades.
 - [ ] Clicking Rebalance reflects the previewed deltas in the staged trades.

@@ -18,4 +18,9 @@ a local development tool.
 - [ ] The backend exposes a smoke-testable health endpoint.
 - [ ] CI or deployment checks fail visibly when the deploy configuration is
       invalid.
-- [ ] The README documents the master-branch deployment flow.
+- [ ] Automated post-deploy smoke verification: a CI job runs after deployment,
+      issues HTTP GETs to the deployed frontend URL and the backend `/health`
+      endpoint from the public network, and fails the pipeline if either does
+      not return a healthy status.
+- [ ] The README documents the master-branch deployment flow, including the
+      post-deploy verification job and how to interpret its failures.

@@ -17,7 +17,12 @@ send any trades.
 - [ ] The view shows current and staged side-by-side for direct comparison.
 - [ ] The specific trades needed to move from current to staged are visible.
 - [ ] Clearing staged changes restores the current view.
-- [ ] A simulation failure does not block submitting the rebalance.
+- [ ] A simulation failure does not block submitting the rebalance, but the
+      degraded state is unmistakable: when projections fail or are stale at
+      submission time, the UI shows a prominent banner or dialog (e.g.
+      "Projections unavailable/stale - proceeding with degraded metrics"),
+      hides or marks any metric badges that would otherwise look authoritative,
+      and requires the user to acknowledge the degraded state before submit.
 
 ## Related Work
 

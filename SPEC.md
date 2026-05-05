@@ -290,6 +290,14 @@ rolling beta to BTC; momentum, carry, and volatility follow the same pattern
 screener (rank/filter assets by factor) and the rebalancer (target factor
 exposures, not symbols).
 
+The portfolio-weighted beta is exposed via `POST /beta`, which accepts a set
+of position weights plus a benchmark symbol and returns a single beta value
+(weighted sum of per-asset rolling betas to the benchmark). Per-asset betas
+are computed from log returns over a rolling window of daily candles. The
+endpoint is the canonical way for clients to compute portfolio Bitcoin beta;
+endpoint-level request/response details are documented next to the handler in
+the backend crate.
+
 **Risk Engine**: Portfolio-level risk metrics
 
 - VaR/CVaR (Value at Risk: maximum expected loss at a confidence level;

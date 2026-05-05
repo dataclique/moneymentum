@@ -15,3 +15,8 @@ holdings can become part of my portfolio view.
 - [ ] The app fetches token balances for the selected chain.
 - [ ] The portfolio view labels holdings by chain and asset.
 - [ ] Unsupported tokens are visible as unsupported instead of silently ignored.
+- [ ] Read-only wallets cannot sign or submit transactions: the wallet form
+      and portfolio view expose no signing controls or private-key import
+      flow for read-only entries, and any server- or client-side request to
+      sign or broadcast a transaction using a read-only wallet identifier is
+      rejected before reaching a venue or chain RPC.

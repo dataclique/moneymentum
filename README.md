@@ -1,11 +1,12 @@
 # Moneymentum
 
 [![His name is Yang](https://img.youtube.com/vi/FoYC_8cutb0/0.jpg)](https://www.youtube.com/watch?v=FoYC_8cutb0)
-You don't even know what sort of things your ass is currently exposed to.
 
 Moneymentum is an institutional-grade quant toolkit for crypto portfolio
 management. Define portfolios as proportions, not positions. Stage and simulate
-before executing. Manage factor exposures, not symbols.
+before executing. Manage factor exposures, not symbols. Most crypto holders
+cannot answer basic questions about their portfolio's factor exposure;
+Moneymentum makes those exposures legible and adjustable.
 
 ## Status
 

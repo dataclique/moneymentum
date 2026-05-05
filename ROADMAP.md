@@ -31,10 +31,10 @@ the next implementation priority.
 
 ## Full Bitcoin beta accounting
 
-The backend already computes portfolio-weighted beta (`POST /beta` takes weights
-and benchmark, returns a single beta value). The frontend should show Bitcoin
-beta for the active portfolio, then include read-only Bitcoin holdings so the
-risk view reflects the user's actual exposure.
+Display portfolio-weighted Bitcoin beta for the active portfolio and surface
+read-only Bitcoin holdings so the risk view reflects the user's actual
+exposure. See [SPEC.md](./SPEC.md) for the beta methodology and the `POST /beta`
+contract.
 
 - [ ] [Show Bitcoin Beta For The Active Portfolio](./user-stories/011-show-bitcoin-beta-for-active-portfolio.md)
 - [ ] [Add Read-Only Bitcoin Addresses](./user-stories/012-add-read-only-bitcoin-addresses.md)

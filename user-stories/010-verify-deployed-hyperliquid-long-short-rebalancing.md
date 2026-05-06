@@ -29,8 +29,8 @@ documented rollback path.
       funds cannot be used unintentionally.
 - [ ] A smoke test or runbook exists for verifying that positions refresh after
       rebalance.
-- [ ] **Safety & Rollback**: the runbook names the designated test account,
-      the per-run notional cap, the deploy-config flag that enforces test mode
+- [ ] **Safety & Rollback**: the runbook names the designated test account, the
+      per-run notional cap, the deploy-config flag that enforces test mode
       (preventing live-fund execution unless explicitly disabled), the named
       approver(s) who may authorize a live check, and the documented procedure
       to revert or close any positions opened during verification.

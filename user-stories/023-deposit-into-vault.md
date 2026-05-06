@@ -21,9 +21,9 @@ so that my capital is allocated by the vault strategy without giving up custody.
 
 ## Related Work
 
-- PR [#122](https://github.com/data-cartel/moneymentum/pull/122) — vault program
-  architecture (DRAFT)
+- PR [#122](https://github.com/data-cartel/moneymentum/pull/122) -- vault
+  program architecture (DRAFT)
 - Issues [#123](https://github.com/data-cartel/moneymentum/issues/123),
   [#124](https://github.com/data-cartel/moneymentum/issues/124),
-  [#131](https://github.com/data-cartel/moneymentum/issues/131) — vault
+  [#131](https://github.com/data-cartel/moneymentum/issues/131) -- vault
   scaffold, initialize + deposit instructions, deposit UI

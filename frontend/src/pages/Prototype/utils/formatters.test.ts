@@ -3,11 +3,11 @@ import { formatNum, formatPct, formatUsd } from "./formatters"
 
 describe("formatNum", () => {
   it("returns em dash for null", () => {
-    expect(formatNum(null)).toBe("—")
+    expect(formatNum(null)).toBe("--")
   })
 
   it("returns em dash for undefined", () => {
-    expect(formatNum(undefined)).toBe("—")
+    expect(formatNum(undefined)).toBe("--")
   })
 
   it("formats positive numbers with default 2 decimals", () => {

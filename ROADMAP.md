@@ -8,12 +8,12 @@ tags:
 > **Purpose**: Practical path from where we are today to the north star in
 > [SPEC](./SPEC.md).
 
-Each `##` section is a theme — a goal-oriented group of related stories. Themes
+Each `##` section is a theme -- a goal-oriented group of related stories. Themes
 are ordered by priority (highest first).
 
 Stories link to their per-feature acceptance criteria in
 [user-stories/](./user-stories/README.md). Engineering tasks (refactors,
-migrations, infra) live as GitHub issues, not stories — see
+migrations, infra) live as GitHub issues, not stories -- see
 [contributions.md](./contributions.md) for the split.
 
 ---
@@ -32,9 +32,8 @@ the next implementation priority.
 ## Full Bitcoin beta accounting
 
 Display portfolio-weighted Bitcoin beta for the active portfolio and surface
-read-only Bitcoin holdings so the risk view reflects the user's actual
-exposure. See [SPEC.md](./SPEC.md) for the beta methodology and the `POST /beta`
-contract.
+read-only Bitcoin holdings so the risk view reflects the user's actual exposure.
+See [SPEC.md](./SPEC.md) for the beta methodology and the `POST /beta` contract.
 
 - [ ] [Show Bitcoin Beta For The Active Portfolio](./user-stories/011-show-bitcoin-beta-for-active-portfolio.md)
 - [ ] [Add Read-Only Bitcoin Addresses](./user-stories/012-add-read-only-bitcoin-addresses.md)
@@ -126,7 +125,7 @@ These are directions we know matter but haven't designed:
 ## Completed: Frontend rewrite in SolidJS
 
 SolidJS compiles away the runtime, has cleaner reactivity, and shadcn-solid
-provides the component library. Converted page by page — same logic, different
+provides the component library. Converted page by page -- same logic, different
 primitives.
 
 - [x] Project setup: Vite + solid-js, TypeScript config, dev server

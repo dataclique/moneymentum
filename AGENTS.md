@@ -27,8 +27,8 @@ AI coding agents working in this repo are expected to:
 - Don't substitute approaches, libraries, or tools without checking in. Scope is
   whatever was asked, not whatever you'd prefer.
 
-For status — what works today vs. what's planned — see [README.md](./README.md)
-and [ROADMAP.md](./ROADMAP.md).
+For status -- what works today vs. what's planned -- see
+[README.md](./README.md) and [ROADMAP.md](./ROADMAP.md).
 
 **Key architectural decisions:**
 
@@ -219,7 +219,7 @@ const openModal = () => setIsOpen(true);
 All code, comments, identifiers, and documentation must use ASCII characters
 only. Unicode is allowed exclusively in string literals that produce
 user-visible output (UI text, CLI messages). Use ASCII equivalents in comments:
-`*` not `×`, `->` not `→`, `~` not `≈`, `--` not `—`, `beta` not `β`.
+`*` not `×`, `->` not `→`, `~` not `≈`, `--` not em-dash, `beta` not `β`.
 
 ### Self-documenting code
 

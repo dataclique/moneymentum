@@ -20,11 +20,11 @@ send any trades.
 - [ ] A simulation failure does not block submitting the rebalance, but the
       degraded state is unmistakable: when projections fail or are stale at
       submission time, the UI shows a prominent banner or dialog (e.g.
-      "Projections unavailable/stale - proceeding with degraded metrics"),
-      hides or marks any metric badges that would otherwise look authoritative,
-      and requires the user to acknowledge the degraded state before submit.
+      "Projections unavailable/stale - proceeding with degraded metrics"), hides
+      or marks any metric badges that would otherwise look authoritative, and
+      requires the user to acknowledge the degraded state before submit.
 
 ## Related Work
 
-- Issue [#76](https://github.com/data-cartel/moneymentum/issues/76) — staged
+- Issue [#76](https://github.com/data-cartel/moneymentum/issues/76) -- staged
   simulation scope

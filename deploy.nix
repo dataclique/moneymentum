@@ -67,7 +67,7 @@ in {
         ${infraPkgs.resolveIp}
 
         if [ -z "$host_ip" ]; then
-          echo "ERROR: host_ip not resolved — check resolveIp or --hostname flag" >&2
+          echo "ERROR: host_ip not resolved -- check resolveIp or --hostname flag" >&2
           exit 1
         fi
 

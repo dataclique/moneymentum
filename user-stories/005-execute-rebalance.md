@@ -23,5 +23,5 @@ positions move toward the target portfolio.
 
 ## Related Work
 
-- PR [#142](https://github.com/data-cartel/moneymentum/pull/142) — placing
+- PR [#142](https://github.com/data-cartel/moneymentum/pull/142) -- placing
   order + rendering logic fixes

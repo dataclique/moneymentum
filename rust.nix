@@ -11,7 +11,7 @@ let
       || (pkgs.lib.hasPrefix (toString ./migrations) path);
   };
 
-  # Cargo manifests only — deps derivation hash changes only when dependencies change
+  # Cargo manifests only -- deps derivation hash changes only when dependencies change
   depsSrc = pkgs.lib.cleanSourceWith {
     src = ./.;
     filter = path: type:
@@ -21,7 +21,7 @@ let
 
   # Vendor cargo deps with git dependency hashes
   # Use depsSrc (Cargo manifests only) so the vendor hash is stable across
-  # source-only changes — vendoring only needs Cargo.toml + Cargo.lock.
+  # source-only changes -- vendoring only needs Cargo.toml + Cargo.lock.
   baseVendorDir = craneLib.vendorCargoDeps {
     src = depsSrc;
     cargoLock = ./Cargo.lock;
@@ -38,7 +38,7 @@ let
     builtins.filter (p: p.name or "" == "sqlite-es") cargoLock.package;
   sqliteEsPackage = if sqliteEsMatches == [ ] then
     builtins.throw
-    "sqlite-es not found in Cargo.lock — is the dependency still present?"
+    "sqlite-es not found in Cargo.lock -- is the dependency still present?"
   else
     builtins.head sqliteEsMatches;
   sqliteEsRevMatch =
@@ -97,7 +97,7 @@ in {
     doCheck = true;
   });
 
-  # CI check derivations — lighter than buildPackage (no final link step)
+  # CI check derivations -- lighter than buildPackage (no final link step)
   test = craneLib.cargoTest (commonArgs // { inherit cargoArtifacts; });
 
   clippy = craneLib.cargoClippy (commonArgs // {

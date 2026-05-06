@@ -27,13 +27,12 @@ metrics so the reader knows the baseline.
 - [ ] The portfolio view shows historical drawdown for the active allocation
       over the measurement window.
 - [ ] The portfolio view shows a correlation matrix across held positions
-      computed over the measurement window at the configured sampling
-      frequency.
+      computed over the measurement window at the configured sampling frequency.
 - [ ] The portfolio view shows an effective number of bets that accounts for
       correlations.
 - [ ] A Monte Carlo simulation can project portfolio returns over a chosen
-      horizon, with its inputs (window, frequency, sample count) shown
-      alongside the result.
+      horizon, with its inputs (window, frequency, sample count) shown alongside
+      the result.
 - [ ] All metrics use active position weights rather than raw net notional.
 - [ ] All metrics display the active `measurement_window` and
       `sampling_frequency` so every number references the same baseline.
@@ -41,5 +40,5 @@ metrics so the reader knows the baseline.
 
 ## Related Work
 
-- Issue [#74](https://github.com/data-cartel/moneymentum/issues/74) — risk
+- Issue [#74](https://github.com/data-cartel/moneymentum/issues/74) -- risk
   analytics scope

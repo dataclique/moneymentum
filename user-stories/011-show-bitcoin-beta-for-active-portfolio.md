@@ -16,12 +16,17 @@ number is reproducible across the UI, backend, and tests:
 - Benchmark: BTC perpetual on Hyperliquid (the same symbol the backend ingests
   for the rolling-beta calculation).
 - Return interval: daily log returns.
-- Lookback window: 252 trading days (one year).
+- Lookback window: 365 calendar days (one year). Crypto markets trade 24/7, so
+  the window is calendar-based rather than business-day-based.
 - Weighting: active position weights, normalized to sum to one in absolute value
   across the included positions.
 - Missing/stale prices: assets without enough history in the lookback window are
   excluded from the weighted sum and surfaced in the loading/failure UI rather
-  than silently substituted.
+  than silently substituted. When assets are excluded, the remaining weights
+  used in the weighted_sum/beta calculation are renormalized to sum to one in
+  absolute value (each remaining weight divided by the sum of remaining absolute
+  weights). The UI must indicate when renormalization occurred and which assets
+  were excluded.
 
 - [ ] The portfolio page requests Bitcoin beta (as defined above) for the active
       target portfolio.

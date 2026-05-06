@@ -2,11 +2,11 @@ import { describe, it, expect } from "vitest"
 import { formatNum, formatPct, formatUsd } from "./formatters"
 
 describe("formatNum", () => {
-  it("returns em dash for null", () => {
+  it("returns placeholder '--' for null", () => {
     expect(formatNum(null)).toBe("--")
   })
 
-  it("returns em dash for undefined", () => {
+  it("returns placeholder '--' for undefined", () => {
     expect(formatNum(undefined)).toBe("--")
   })
 

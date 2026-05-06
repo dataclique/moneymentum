@@ -23,5 +23,14 @@ or revisit a portfolio by its owner identifier.
       is public. The story defers the public/private visibility model and
       default to [Story 017](./017-hide-portfolio-details-for-fee.md);
       unauthenticated visits to a private portfolio behave per that story.
-- [ ] The route does not expose private configuration or credentials.
+- [ ] The route does not expose private configuration or credentials. "Private
+      configuration or credentials" covers, at minimum: API keys and session
+      tokens, wallet credentials and signing material, rebalancer settings
+      (target weights, leverage, factor preferences), trade history, risk
+      preferences, analytics/telemetry identifiers, and any PII tied to the
+      owner. The exact boundary follows the data classification defined in
+      [Story 015](./015-authenticate-portfolio-ownership-by-solana-pubkey.md)
+      (portfolio metadata schema) and
+      [Story 017](./017-hide-portfolio-details-for-fee.md) (public vs private
+      visibility model).
 - [ ] The owner can still authenticate to edit portfolio settings.

@@ -11,11 +11,29 @@ than only manually tracked entries.
 
 ## Acceptance Criteria
 
-- [ ] The user can browse Derive option chains for Bitcoin from the app.
+- [ ] The user can browse Derive option chains for Bitcoin from the app. The
+      chain view exposes, per row, the following fields: contract symbol,
+      exchange (Derive), expiry, strike, option type (PUT/CALL), bid, ask, mid,
+      last price, volume (24h), open interest, implied volatility, delta, and
+      quote timestamp. Other Greeks (gamma, theta, vega) are optional but should
+      appear in a row detail view. The header shows the underlying BTC spot
+      price. Columns are sortable; the default sort is nearest expiry then
+      ascending strike. Listings are paginated at 50 contracts per page. Filters
+      are available for expiry (single date or range), strike (range), implied
+      volatility (range), and minimum volume, to support put selection
+      workflows.
 - [ ] The user can buy a put option through a connected wallet.
 - [ ] Open Derive option positions appear in the portfolio next to perp and spot
       positions.
-- [ ] Option positions are valued at the current Derive mark price.
+- [ ] Option positions are valued at the current Derive mark price. A mark is
+      considered stale when its quote timestamp is more than 60 seconds old;
+      stale marks must surface a "stale mark" warning on the position. When the
+      mark is unavailable or stale, valuation falls back deterministically in
+      this order: 1. mid-price computed from the current bid and ask; 2. last
+      trade price; 3. omit the valuation and display an explicit "valuation
+      unavailable" error/warning. The position view annotates whichever fallback
+      was used (e.g. "valued using mid-price (fallback)" or "valued using last
+      trade (fallback)").
 - [ ] The risk view includes Derive options alongside manually entered puts from
       [Story 019](./019-enter-protective-put-positions.md).
 - [ ] Failed Derive interactions present an actionable, user-safe message to the

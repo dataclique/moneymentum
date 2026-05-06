@@ -108,7 +108,16 @@ nix run .#bootstrap      # bootstrap NixOS
 
 nix run .#remote         # SSH
 nix run .#tfEditVars
-nix run .#tfDestroy
+```
+
+> **DANGER -- destructive: `nix run .#tfDestroy` permanently deletes the
+> environment's infrastructure.** It is not a routine command. Before running,
+> pin the target environment (e.g., `export ENV=staging`) and require an
+> explicit confirmation flag (e.g., `TF_DESTROY_CONFIRM=1` or `--confirm`).
+> Never run against `production` without a separate, written approval.
+
+```bash
+ENV=staging TF_DESTROY_CONFIRM=1 nix run .#tfDestroy -- --confirm
 ```
 
 Infrastructure commands use age-encrypted state. The `-i` flag selects a custom

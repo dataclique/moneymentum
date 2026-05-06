@@ -14,10 +14,21 @@ All risk metrics on this page share a common measurement contract so they
 describe the same portfolio under the same assumptions:
 
 - `measurement_window`: a lookback expressed as either `lookback_days` or an
-  explicit `start_date`/`end_date` pair.
-- `sampling_frequency`: e.g. daily or weekly.
-- `confidence_levels`: array of confidence levels used by VaR and CVaR.
-- Weighting: all metrics use active position weights, not gross notional.
+  explicit `start_date`/`end_date` pair. `lookback_days` is an integer in the
+  inclusive range `[30, 365]` and defaults to `90`. When `start_date` and
+  `end_date` are provided they take precedence over `lookback_days`,
+  `start_date` must be strictly earlier than `end_date`, both must fall within
+  the available history, and the resulting span must itself satisfy the
+  `[30, 365]`-day bound.
+- `sampling_frequency`: an enumeration; allowed values are `"daily"` and
+  `"weekly"`. Default: `"daily"`.
+- `confidence_levels`: array of numeric confidence levels in `(0, 1)` used by
+  VaR and CVaR; allowed values are `0.90`, `0.95`, and `0.99`. Default:
+  `[0.90, 0.95, 0.99]`.
+- Weighting: all metrics use active position weights by default, not gross
+  notional. Overrides are accepted only when the supplied weight vector matches
+  the set of active positions exactly and sums to one in absolute value;
+  otherwise the request is rejected with a validation error.
 
 The portfolio view displays the active window and frequency alongside the
 metrics so the reader knows the baseline.
@@ -33,9 +44,6 @@ metrics so the reader knows the baseline.
 - [ ] A Monte Carlo simulation can project portfolio returns over a chosen
       horizon, with its inputs (window, frequency, sample count) shown alongside
       the result.
-- [ ] All metrics use active position weights rather than raw net notional.
-- [ ] All metrics display the active `measurement_window` and
-      `sampling_frequency` so every number references the same baseline.
 - [ ] Loading and failure states for each metric are visible.
 
 ## Related Work

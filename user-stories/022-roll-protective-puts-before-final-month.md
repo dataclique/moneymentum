@@ -10,9 +10,36 @@ final month so that theta decay does not consume the hedge at the worst time.
 
 ## Acceptance Criteria
 
-- [ ] The user can define a put ladder with target moneyness and expiry tenors.
-- [ ] The app identifies put positions with less than one month to expiry.
-- [ ] The app stages selling near-expiry puts and buying replacement puts.
+- [ ] The user can define a put ladder with target moneyness and expiry tenors,
+      using concrete parameters. Target moneyness is expressed as percent OTM
+      levels (allowed: 5%, 10%, 20%, 30%) and/or delta targets (allowed: 0.10,
+      0.25, 0.40); the default ladder is 10% / 20% / 30% OTM. Expiry tenors are
+      concrete durations (allowed: 30, 60, 90, 180, 365 days) mapped to the
+      nearest listed monthly or quarterly expiry on Derive; the default ladder
+      uses 30 / 90 / 180 days.
+- [ ] The app identifies put positions whose remaining days to expiry are less
+      than the ladder's `rollThresholdDays` parameter. `rollThresholdDays` is a
+      positive integer configured per ladder/strategy and defaults to 30 for
+      backward compatibility; values are validated at ladder creation. The
+      selection function (e.g. `identifyPutsToRoll`) reads this parameter rather
+      than hardcoding a threshold.
+- [ ] The app stages selling near-expiry puts and buying replacement puts using
+      a deterministic selection algorithm: - **Strike**: preserve the original
+      ladder rung's moneyness percent relative to the current underlying price
+      (e.g. a 20% OTM rung rolls to the contract whose strike is closest to
+      `spot * (1 - 0.20)`). If the ladder rung is delta-targeted, choose the
+      strike whose listed delta is closest to the target. - **Expiry**: select
+      the next tenor from the ladder definition; if no listed expiry matches the
+      target tenor exactly, choose the listed expiry closest to the target.
+      Tie-break by preferring the longer expiry, then by higher open interest. -
+      **Quantity**: scale to preserve equivalent delta exposure where the ladder
+      is delta-targeted, or match notional for moneyness-targeted rungs
+      (`quantity = round(current_notional / replacement_premium)`). - **Partial
+      fills**: if the buy leg fills only partially, the staging step holds the
+      unsold portion of the original put and surfaces the coverage shortfall
+      rather than tearing down the hedge. - **Rounding**: round contract counts
+      to the exchange's minimum lot size, always rounding up to preserve hedge
+      coverage.
 - [ ] Staging validates hedge continuity: any roll must keep post-roll hedge
       coverage at or above a configured minimum threshold (e.g. minimum coverage
       ratio of notional protected to underlying exposure). If the candidate roll

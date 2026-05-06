@@ -12,16 +12,29 @@ my portfolio can be identified by my public key.
 
 - [ ] The user can sign in by proving control of a Solana public key using a
       Sign-In With Solana (SIWS) style challenge.
-- [ ] The signature challenge cannot be replayed: the server issues a
-      single-use, cryptographically random nonce bound to the requesting address
-      with a short expiry, rejects expired or already-used nonces, and verifies
-      the signed message recovers the same public key.
+- [ ] The signature challenge cannot be replayed. The binding mechanism is
+      embedding the requesting address inside the challenge message itself: the
+      client requests a nonce by sending the address it intends to sign with;
+      the server returns a message of the form "Sign this nonce
+      <random-nonce> for address <address>" where `<random-nonce>` is a
+      single-use, cryptographically random value with a 5-minute expiry; the
+      server stores the nonce as `(nonce, issuedAt, expiresAt, used)` until
+      consumption. Verification steps: (1) reject if the nonce is unknown,
+      expired, or already marked `used`; (2) parse the address from the signed
+      message; (3) verify the signature against the parsed address; (4) reject
+      if the parsed address does not match the address the client claims to sign
+      as; (5) atomically mark the nonce `used` before issuing a session.
 - [ ] Sign-in supports the wallets the app already integrates with (e.g.
       Phantom, Solflare) and surfaces clear errors for signature rejection and
       wallet disconnection.
-- [ ] Sessions have an explicit lifetime and refresh policy: the story defines a
-      session TTL, the renewal/re-sign behavior at expiry, multi-device session
-      semantics, and how sessions are revoked.
+- [ ] Sessions have an explicit lifetime and refresh policy: session TTL is 24
+      hours; refresh tokens are valid for 30 days and silently renew the session
+      as long as the refresh token has not expired; once the refresh token
+      expires the user must re-sign a fresh SIWS challenge to reauthenticate;
+      sessions are scoped per device, each device receives an independent
+      session ID, and revocation is performed via a server-side revoke API that
+      invalidates a specific session ID and adds the associated refresh token to
+      a server-maintained blacklist consulted on every renewal.
 - [ ] The portfolio identifier is the authenticated Solana public key.
 - [ ] The app stores portfolio metadata under that identifier. "Portfolio
       metadata" is a defined schema covering at least: portfolio settings (e.g.

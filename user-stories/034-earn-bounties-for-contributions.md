@@ -10,8 +10,8 @@ incentivized to take part in tasks.
 
 ## Acceptance Criteria
 
-- [ ] A list of open bounties is visible in the UI with task description,
-      reward amount, and acceptance criteria.
+- [ ] A list of open bounties is visible in the UI with task description, reward
+      amount, and acceptance criteria.
 - [ ] A user can claim a bounty, submit proof of completion, and track the
       review status of their submission.
 - [ ] Approved submissions trigger an on-chain payout to the contributor's

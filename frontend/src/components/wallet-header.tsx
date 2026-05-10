@@ -34,7 +34,7 @@ interface WalletHeaderProps {
   handleDisconnect?: () => void
 }
 
-//TOOD: make this without page reloading on network switch
+// TODO(#162): make this without page reloading on network switch
 export const WalletHeader = (props: WalletHeaderProps) => {
   const { data: walletSettings, isConnected } = useWalletSettings()
   const switchNetworkMutation = useSwitchNetwork()

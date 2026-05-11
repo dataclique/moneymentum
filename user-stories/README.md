@@ -45,3 +45,7 @@ from Hyperliquid-only positions to read-only wallets and protective hedges.
 - [Screen Perps By Factor](./028-screen-perps-by-factor.md)
 - [Simulate Staged Portfolio Metrics](./029-simulate-staged-portfolio-metrics.md)
 - [Trade Hyperliquid Spot Positions](./030-trade-hyperliquid-spot-positions.md)
+- [Protocol Revenue Buybacks](./031-protocol-revenue-buybacks.md)
+- [Transparent Fee Calculations](./032-transparent-fee-calculations.md)
+- [Participate In Governance](./033-participate-in-governance.md)
+- [Earn Bounties For Contributions](./034-earn-bounties-for-contributions.md)

@@ -80,7 +80,7 @@ export const ScreenerPanel = (props: ScreenerPanelProps) => {
                     fundingRate === undefined ? null : fundingRate * 24 * 365
                   const fundingDisplay =
                     annualizedFundingRate === null
-                      ? "--"
+                      ? "—"
                       : `${(annualizedFundingRate * 100).toFixed(2)}%`
 
                   return (

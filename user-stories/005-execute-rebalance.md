@@ -16,6 +16,12 @@ positions move toward the target portfolio.
 - [x] The submitted payload includes account value, cross-account leverage,
       precise mode, and target position weights.
 - [x] The UI marks submitted positions as working while orders are in flight.
+- [x] Repeated clicks or retries cannot create duplicate submissions: the submit
+      handler generates a per-batch `submissionId`, sets a `submitting` flag
+      before sending orders, and returns early when either is already set. The
+      same `submissionId` propagates with the request so the backend treats a
+      retry as the same submission. The transition to working state and the
+      clearing of staged trades happen only on the path that owns the guard.
 - [x] On success, the app refreshes account and position data from the venue.
 - [x] Once the refreshed exchange state matches the target, staged trades clear.
 - [x] On failure, the failed position shows the error message and remains

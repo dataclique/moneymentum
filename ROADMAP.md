@@ -16,6 +16,10 @@ Stories link to their per-feature acceptance criteria in
 migrations, infra) live as GitHub issues, not stories -- see
 [contributions.md](./contributions.md) for the split.
 
+Numeric story IDs (`001`, `018`, etc.) reflect creation order, not
+implementation priority. Priority is defined by this roadmap's theme order and
+the order within each theme.
+
 ---
 
 ## Usable production deployment

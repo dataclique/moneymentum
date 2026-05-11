@@ -10,7 +10,12 @@ the app does not erase an unfinished rebalance plan.
 
 ## Acceptance Criteria
 
-- [x] Draft portfolio state is stored per network mode.
+- [x] Draft portfolio state is stored per `(accountId, networkMode)` composite
+      key, never per network alone. `saveDraftPortfolio`, `loadDraftPortfolio`,
+      `clearDraftForNetwork`, and `mergeDraftWithExchangePositions` all build
+      the storage key from both values. Switching the active account loads the
+      matching draft (or none) rather than reusing another account's draft on
+      the same network, so drafts cannot leak between accounts.
 - [x] Stored state includes selected symbols, weights, side, leverage, notional,
       and cross-account leverage.
 - [x] On load, stored draft positions merge with exchange positions.

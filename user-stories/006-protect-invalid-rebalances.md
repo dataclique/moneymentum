@@ -16,11 +16,19 @@ portfolio model.
       minimum.
 - [x] Rebalance is blocked when selected positions cannot each satisfy the
       minimum notional.
-- [x] Rebalance is blocked when total weights are materially above 100%.
-- [x] Rebalance is blocked when total weights are materially below 100%.
-- [x] Positions below minimum notional show an inline warning.
-- [x] Non-precise mode blocks changes below the minimum change threshold and
-      explains that precise mode can be used.
+- [x] Rebalance is blocked when total weights exceed
+      `1 + REBALANCE_MAX_DEVIATION` (default `REBALANCE_MAX_DEVIATION = 0.01`,
+      i.e. 101%).
+- [x] Rebalance is blocked when total weights fall below
+      `1 - REBALANCE_MIN_DEVIATION` (default `REBALANCE_MIN_DEVIATION = 0.01`,
+      i.e. 99%).
+- [x] Positions below `MIN_NOTIONAL` (venue-supplied per symbol) show an inline
+      warning.
+- [x] Non-precise mode blocks per-position changes below `MIN_CHANGE_PERCENT`
+      (default `0.5%`) and explains that precise mode can be used. All
+      thresholds are defined as a single set of constants shared by the
+      rebalancer UI, the submit validation, and the tests so the source of truth
+      never drifts.
 - [x] Blocking reasons are visible near the portfolio controls.
 
 ## Related Work

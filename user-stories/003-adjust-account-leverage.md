@@ -13,7 +13,14 @@ target notional scales up or down while preserving portfolio weights.
 - [x] The current cross-account leverage is visible near the portfolio controls.
 - [x] The user can change leverage with a slider.
 - [x] The user can type an exact leverage value.
-- [x] Leverage is constrained to the supported account-level range.
+- [x] Leverage is constrained to the supported account-level range. The slider,
+      the text input, and the rebalance payload all read from one source:
+      `LEVERAGE_MIN`, `LEVERAGE_MAX`, and `LEVERAGE_STEP` come from the venue
+      configuration the backend already loads, not UI-only defaults. Typed input
+      and slider changes are normalized with `roundToStep(value, LEVERAGE_STEP)`
+      then `clamp(value, LEVERAGE_MIN,
+      LEVERAGE_MAX)` using integer-tick
+      math to avoid float drift.
 - [x] Changing leverage recalculates target notional from account value times
       leverage.
 - [x] Changing leverage preserves active position weights.

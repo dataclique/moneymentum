@@ -48,5 +48,10 @@ final month so that theta decay does not consume the hedge at the worst time.
 - [ ] The user can review roll trades before execution; the review step shows
       the projected post-roll coverage and blocks or visibly warns when the
       configured threshold would be violated.
+- [ ] The review step shows roll cost transparency: the net debit or credit from
+      selling the near-expiry puts and buying the replacements, the premium
+      delta per leg, and a warning when the net debit exceeds a configurable
+      threshold (default 1.5x the prior roll's debit) so an IV spike or
+      liquidity gap is surfaced before execution rather than after.
 - [ ] The app does not execute roll trades automatically without explicit
       approval.

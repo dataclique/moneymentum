@@ -20,6 +20,14 @@ intended exposure before I rebalance.
       notional.
 - [x] Notional edits update portfolio weights consistently with total selected
       notional.
+- [x] Synchronization uses fixed precision and a deterministic precedence rule:
+      weights are stored to four decimal places, notional to two; equality and
+      sum checks use `EPSILON = 1e-6`; the most recently edited field wins, and
+      residuals from rounding are redistributed across the remaining positions
+      so that `sum(weights) == 1 +/- EPSILON` and
+      `sum(notional) ==
+      totalSelectedNotional +/- EPSILON` hold after each
+      edit and across round-trip edits.
 - [x] Per-position leverage cannot exceed the venue leverage limit for that
       symbol.
 - [x] Removing an existing exchange position stages a close instead of silently

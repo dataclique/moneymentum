@@ -16,5 +16,9 @@ I can build a target portfolio from the assets available on the venue.
 - [x] Selecting an unselected symbol adds it to the positions table.
 - [x] Already selected symbols are visibly disabled in the screener.
 - [x] Keyboard selection works with Enter or Space on a focused screener row.
+      Rows use `role="option"` inside a `role="listbox"` container with
+      `aria-selected` reflecting selection state, are reachable via the keyboard
+      through managed `tabindex`, and show a visible focus indicator distinct
+      from the hover state.
 - [x] Funding rate, when available, is shown as an annualized rate next to the
       symbol.

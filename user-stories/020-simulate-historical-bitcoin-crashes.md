@@ -15,3 +15,10 @@ my portfolio and protective puts might behave in black swan scenarios.
 - [ ] Spot, perp, and manually entered put positions are included.
 - [ ] The output shows projected portfolio value before and after the scenario.
 - [ ] The output shows whether protective puts offset the drawdown.
+- [ ] Protective puts are valued at intrinsic value only:
+      `max(0, strike - scenarioPrice) * quantity * contractSize`, where
+      `scenarioPrice` is the scenario end price at the scenario valuation
+      timestamp. Time value and scenario volatility are excluded so the
+      simulation is deterministic and reproducible. Put values are added to spot
+      and perp position values when computing pre- and post-scenario portfolio
+      value.

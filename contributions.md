@@ -14,7 +14,9 @@ vision.
 - Keep each story pull-request sized.
 - Make acceptance criteria verifiable before merge; do not require a follow-up
   PR just to mark the story done.
-- Write the failing test before changing behavior.
+- Write the failing test before changing behavior. Docs-only, metadata-only, and
+  exploratory spike changes may skip the failing test, but the PR description
+  must say so and flag any potential footguns the change introduces.
 - Pair while implementing: human and AI, AI and AI, or human driver with AI
   reviewer.
 - Review before handoff. Reviews should find bugs, missing tests, and unclear

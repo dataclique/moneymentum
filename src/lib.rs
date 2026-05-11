@@ -177,26 +177,39 @@ async fn post_portfolio_readonly_btc(
             }),
         )
     })?;
-
-    readonly_portfolio::load_readonly_btc_balances(&http_client, &btc_base_url, &body)
-        .await
-        .map(Json)
-        .map_err(|err| {
-            error!(error = %err, "failed to load readonly btc balances");
-            let status = match err {
-                readonly_portfolio::ReadonlyPortfolioError::InvalidBtcAddress(_)
-                | readonly_portfolio::ReadonlyPortfolioError::EmptyAddressList => {
-                    Status::BadRequest
-                }
-                _ => Status::InternalServerError,
-            };
+    let blockchain_info_base_url =
+        readonly_portfolio::default_blockchain_info_base_url().map_err(|err| {
+            error!(error = %err, "failed to resolve blockchain.info base url");
             Custom(
-                status,
+                Status::InternalServerError,
                 Json(ApiErrorResponse {
-                    error: err.to_string(),
+                    error: "failed to resolve blockchain.info base url".to_string(),
                 }),
             )
-        })
+        })?;
+
+    readonly_portfolio::load_readonly_btc_balances(
+        &http_client,
+        &btc_base_url,
+        &blockchain_info_base_url,
+        &body,
+    )
+    .await
+    .map(Json)
+    .map_err(|err| {
+        error!(error = %err, "failed to load readonly btc balances");
+        let status = match err {
+            readonly_portfolio::ReadonlyPortfolioError::InvalidBtcAddress(_)
+            | readonly_portfolio::ReadonlyPortfolioError::EmptyAddressList => Status::BadRequest,
+            _ => Status::InternalServerError,
+        };
+        Custom(
+            status,
+            Json(ApiErrorResponse {
+                error: err.to_string(),
+            }),
+        )
+    })
 }
 
 #[post("/portfolio/exposure", data = "<body>")]
@@ -214,10 +227,21 @@ async fn post_portfolio_exposure(
             }),
         )
     })?;
+    let blockchain_info_base_url =
+        readonly_portfolio::default_blockchain_info_base_url().map_err(|err| {
+            error!(error = %err, "failed to resolve blockchain.info base url");
+            Custom(
+                Status::InternalServerError,
+                Json(ApiErrorResponse {
+                    error: "failed to resolve blockchain.info base url".to_string(),
+                }),
+            )
+        })?;
 
     readonly_portfolio::load_portfolio_exposure(
         &http_client,
         &btc_base_url,
+        &blockchain_info_base_url,
         config.hyperliquid_base_url.as_ref(),
         &body,
     )

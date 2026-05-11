@@ -210,19 +210,33 @@ pub(crate) fn default_btc_base_url() -> Result<Url, ReadonlyPortfolioError> {
     Ok(Url::parse(DEFAULT_MEMPOOL_BASE_URL)?)
 }
 
+pub(crate) fn default_blockchain_info_base_url() -> Result<Url, ReadonlyPortfolioError> {
+    Ok(Url::parse(DEFAULT_BLOCKCHAIN_INFO_BASE_URL)?)
+}
+
 pub(crate) async fn load_readonly_btc_balances(
     http_client: &reqwest::Client,
     btc_base_url: &Url,
+    blockchain_info_base_url: &Url,
     request: &ReadonlyBtcBalancesRequest,
 ) -> Result<ReadonlyBtcBalancesResponse, ReadonlyPortfolioError> {
     if request.addresses.is_empty() {
         return Err(ReadonlyPortfolioError::EmptyAddressList);
     }
 
-    let holdings: Vec<ReadonlyBtcHolding> = stream::iter(request.addresses.iter())
-        .map(|btc_address| async move {
-            load_single_address_holding(http_client, btc_base_url, btc_address).await
+    let fetch_futures: Vec<_> = request
+        .addresses
+        .iter()
+        .map(|btc_address| {
+            load_single_address_holding(
+                http_client,
+                btc_base_url,
+                blockchain_info_base_url,
+                btc_address,
+            )
         })
+        .collect();
+    let holdings: Vec<ReadonlyBtcHolding> = stream::iter(fetch_futures)
         .buffered(ADDRESS_FETCH_CONCURRENCY)
         .try_collect()
         .await?;
@@ -245,6 +259,7 @@ pub(crate) async fn load_readonly_btc_balances(
 pub(crate) async fn load_portfolio_exposure(
     http_client: &reqwest::Client,
     btc_base_url: &Url,
+    blockchain_info_base_url: &Url,
     hyperliquid_base_url: Option<&Url>,
     request: &PortfolioExposureRequest,
 ) -> Result<PortfolioExposureResponse, ReadonlyPortfolioError> {
@@ -260,9 +275,13 @@ pub(crate) async fn load_portfolio_exposure(
                 .map(|entry| entry.address.clone())
                 .collect(),
         };
-        let readonly_balances =
-            load_readonly_btc_balances(http_client, btc_base_url, &readonly_balance_request)
-                .await?;
+        let readonly_balances = load_readonly_btc_balances(
+            http_client,
+            btc_base_url,
+            blockchain_info_base_url,
+            &readonly_balance_request,
+        )
+        .await?;
         let price = fetch_ubtc_price_usd(http_client, hyperliquid_base_url).await?;
 
         // The order of `holdings` mirrors `readonly_btc_entries` because
@@ -342,6 +361,7 @@ fn validate_hyperliquid_positions(
 async fn load_single_address_holding(
     http_client: &reqwest::Client,
     btc_base_url: &Url,
+    blockchain_info_base_url: &Url,
     btc_address: &BtcAddress,
 ) -> Result<ReadonlyBtcHolding, ReadonlyPortfolioError> {
     match load_mempool_address_holding(http_client, btc_base_url, btc_address).await {
@@ -352,7 +372,7 @@ async fn load_single_address_holding(
                 error = %primary_error,
                 "primary btc provider failed, falling back to blockchain.info"
             );
-            load_blockchain_info_holding(http_client, btc_address)
+            load_blockchain_info_holding(http_client, blockchain_info_base_url, btc_address)
                 .await
                 .map_err(|fallback_error| {
                     warn!(
@@ -411,10 +431,10 @@ async fn load_mempool_address_holding(
 
 async fn load_blockchain_info_holding(
     http_client: &reqwest::Client,
+    blockchain_info_base_url: &Url,
     btc_address: &BtcAddress,
 ) -> Result<ReadonlyBtcHolding, ReadonlyPortfolioError> {
-    let base_url = Url::parse(DEFAULT_BLOCKCHAIN_INFO_BASE_URL)?;
-    let endpoint = base_url.join(&format!("rawaddr/{}", btc_address.as_str()))?;
+    let endpoint = blockchain_info_base_url.join(&format!("rawaddr/{}", btc_address.as_str()))?;
     let response_text = http_client
         .get(endpoint)
         .send()
@@ -488,7 +508,12 @@ fn parse_i128_field(value: &Value, field_name: &str) -> Option<i128> {
 }
 
 fn sats_to_btc(satoshis: i128) -> f64 {
-    (satoshis as f64) / SATOSHIS_PER_BTC
+    // f64 here is a known financial-math wart tracked in #220 — the whole
+    // readonly_portfolio pipeline needs to move off floats. Allow the cast
+    // until that refactor lands.
+    #[allow(clippy::cast_precision_loss)]
+    let satoshis_as_f64 = satoshis as f64;
+    satoshis_as_f64 / SATOSHIS_PER_BTC
 }
 
 async fn fetch_ubtc_price_usd(
@@ -553,10 +578,9 @@ fn resolve_hyperliquid_info_endpoint(
 
     let already_targets_info = base_url
         .path_segments()
-        .and_then(|segments| {
+        .and_then(|mut segments| {
             segments
-                .filter(|segment| !segment.is_empty())
-                .last()
+                .rfind(|segment| !segment.is_empty())
                 .map(|segment| segment == "info")
         })
         .unwrap_or(false);
@@ -654,6 +678,7 @@ mod tests {
         let response = load_readonly_btc_balances(
             &client(),
             &Url::parse(&mock_server.uri()).unwrap(),
+            &Url::parse(&mock_server.uri()).unwrap(),
             &ReadonlyBtcBalancesRequest {
                 addresses: vec![parsed("1FfmbHfnpaZjKFvyi1okTjJJusN455paPH")],
             },
@@ -681,12 +706,20 @@ mod tests {
             })))
             .mount(&mock_server)
             .await;
-        // Mock blockchain.info fallback to also fail so error surfaces deterministically.
-        // The fallback hits a real URL; we don't intercept it here, so the call
-        // will fail with a network error, producing BtcProvidersFailed.
+        // Mock blockchain.info fallback with a negative balance too so both
+        // providers fail deterministically without depending on outbound
+        // network.
+        Mock::given(method("GET"))
+            .and(path("/rawaddr/1FfmbHfnpaZjKFvyi1okTjJJusN455paPH"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "final_balance": -100_i64
+            })))
+            .mount(&mock_server)
+            .await;
 
         let result = load_readonly_btc_balances(
             &client(),
+            &Url::parse(&mock_server.uri()).unwrap(),
             &Url::parse(&mock_server.uri()).unwrap(),
             &ReadonlyBtcBalancesRequest {
                 addresses: vec![parsed("1FfmbHfnpaZjKFvyi1okTjJJusN455paPH")],
@@ -705,6 +738,7 @@ mod tests {
     async fn load_readonly_btc_balances_rejects_empty_addresses() {
         let result = load_readonly_btc_balances(
             &client(),
+            &Url::parse("https://example.invalid").unwrap(),
             &Url::parse("https://example.invalid").unwrap(),
             &ReadonlyBtcBalancesRequest { addresses: vec![] },
         )
@@ -738,6 +772,7 @@ mod tests {
 
         let exposure = load_portfolio_exposure(
             &client(),
+            &Url::parse(&mock_server.uri()).unwrap(),
             &Url::parse(&mock_server.uri()).unwrap(),
             Some(&Url::parse(&mock_server.uri()).unwrap()),
             &PortfolioExposureRequest {

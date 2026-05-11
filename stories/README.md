@@ -1,8 +1,3 @@
----
-tags:
-  - stories
----
-
 # Stories
 
 This folder holds PR-sized stories for Moneymentum. User-facing stories and

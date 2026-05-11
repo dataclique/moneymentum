@@ -115,6 +115,36 @@ Never add "Generated with [Tool Name]" to commits, PRs, or code.
 
 Explain WHY the PR exists, not what changed.
 
+### Documentation stays in lockstep with the code
+
+Every PR must leave the documentation in a true state. Before handing off work
+-- requesting review, marking a task done, declaring a story complete -- audit
+the docs that touch what you changed and update anything that has gone stale.
+
+Concrete audit checklist:
+
+- [README.md](./README.md): does it still describe the system accurately (status
+  of components, doc index)?
+- [SPEC.md](./SPEC.md): does the vision or architecture description still match
+  the code?
+- [ROADMAP.md](./ROADMAP.md): are completed items marked completed, are new
+  themes/stories listed, are stale ones removed?
+- [stories/](./stories/README.md): is the story status frontmatter current, is
+  the index entry present, are acceptance criteria reworded to match the shipped
+  behavior?
+- [contributions.md](./contributions.md) and `AGENTS.md`: did a rule change in
+  practice? If so, the rule changes here first.
+- Per-file CLAUDE.md / AGENTS.md (e.g. `frontend/CLAUDE.md`): same audit at the
+  subtree level.
+- Inline doc comments and module-level docstrings on any code you touched.
+
+If a doc has fallen out of sync with reality and is not directly in your
+change's path, either fix it in the same PR (preferred) or open a follow-up
+issue immediately -- do not leave silent drift.
+
+Stale documentation is a bug. Treat it like any other defect: do not ship work
+that introduces it, and do not ignore it when you see it.
+
 ### Quality checks
 
 **NEVER disable or relax any quality checks without explicit permission.** This

@@ -48,6 +48,7 @@ from Hyperliquid-only positions to read-only wallets and protective hedges.
 - [Transparent Fee Calculations](./0x020.transparent-fee-calculations.md)
 - [Participate In Governance](./0x021.participate-in-governance.md)
 - [Earn Bounties For Contributions](./0x022.earn-bounties-for-contributions.md)
+- [Sync Encrypted Local State Across Devices](./0x024.sync-encrypted-local-state.md)
 
 ## Dev
 

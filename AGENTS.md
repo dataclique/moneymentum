@@ -268,7 +268,12 @@ user-visible output (UI text, CLI messages). Use ASCII equivalents in comments:
 ### Descriptive names
 
 - Avoid generic names like `result`, `data`, `value`, `item` - name what it IS
-- No single-letter variables in closures: `|r|` is unreadable, use `|rate|`
+- No single-letter variable names anywhere - not in closures, locals,
+  parameters, destructuring, or function bindings. `|r|` is unreadable; use
+  `|rate|`. `const c = ...` is unreadable; use `const current = ...`. Single
+  letters are only acceptable when the user has explicitly approved them for a
+  specific case (e.g., conventional loop indices in tight numeric code where a
+  longer name would obscure intent).
 - No abbreviations unless universally understood (`id`, `url`, `http`, `msg`,
   `tx` are fine)
 

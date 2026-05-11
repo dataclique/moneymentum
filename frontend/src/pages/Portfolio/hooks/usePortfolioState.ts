@@ -143,10 +143,10 @@ export const usePortfolioState = () => {
     if (totalNotional <= 0 || !symbols.includes(changedSymbol)) return
 
     const clampedNew = Math.max(0, Math.min(100, newPercentage))
-    const otherSymbols = symbols.filter(s => s !== changedSymbol)
+    const otherSymbols = symbols.filter(symbol => symbol !== changedSymbol)
 
-    const otherTotalPercent = otherSymbols.reduce((sum, s) => {
-      const pos = portfolio[s]
+    const otherTotalPercent = otherSymbols.reduce((sum, symbol) => {
+      const pos = portfolio[symbol]
       const currentNotional = pos?.notional ?? 0
       return sum + (currentNotional / totalNotional) * 100
     }, 0)
@@ -319,32 +319,35 @@ export const usePortfolioState = () => {
 
     return actions().map(action => {
       const symbol = action.symbol
-      const c = currentPortfolio[symbol]
-      const t = targetPortfolio[symbol]
+      const currentPosition = currentPortfolio[symbol]
+      const targetPosition = targetPortfolio[symbol]
 
       let delta = 0
 
       switch (action.kind) {
         case "close":
-          if (!c) {
+          if (!currentPosition) {
             throw new Error(
               `Close action for ${symbol} without current position`,
             )
           }
-          delta = -getSignedNotional(c.side, c.notional)
+          delta = -getSignedNotional(
+            currentPosition.side,
+            currentPosition.notional,
+          )
           break
         case "rebalance":
           delta = action.signedNotionalDelta
           break
         case "preciseRebalance":
-          if (!c || !t) {
+          if (!currentPosition || !targetPosition) {
             throw new Error(
               `Precise rebalance for ${symbol} requires current and target`,
             )
           }
           delta =
-            getSignedNotional(t.side, t.notional) -
-            getSignedNotional(c.side, c.notional)
+            getSignedNotional(targetPosition.side, targetPosition.notional) -
+            getSignedNotional(currentPosition.side, currentPosition.notional)
           break
       }
 
@@ -352,8 +355,12 @@ export const usePortfolioState = () => {
         underlying: symbol,
         side: delta > 0 ? "buy" : "sell",
         notional: Math.abs(delta),
-        previousWeight: totalCurrent ? (c?.notional ?? 0) / totalCurrent : 0,
-        newWeight: totalTarget ? (t?.notional ?? 0) / totalTarget : 0,
+        previousWeight: totalCurrent
+          ? (currentPosition?.notional ?? 0) / totalCurrent
+          : 0,
+        newWeight: totalTarget
+          ? (targetPosition?.notional ?? 0) / totalTarget
+          : 0,
       }
     })
   })
@@ -536,7 +543,6 @@ export const usePortfolioState = () => {
     const isPortfolioValid =
       Object.keys(targetPortfolio).length + Object.keys(deletedArchive).length >
       0
-    // const allOrdersValid = stagedTrades().every(t => t.notional >= 11);
 
     return (
       isPortfolioValid &&

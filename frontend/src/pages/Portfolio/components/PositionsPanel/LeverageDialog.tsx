@@ -53,8 +53,8 @@ export const LeverageDialog = (props: LeverageDialogProps): JSX.Element => {
           {/* backdrop */}
           <div
             class="absolute inset-0 bg-black/60 backdrop-blur-sm"
-            onClick={e => {
-              e.stopPropagation()
+            onClick={event => {
+              event.stopPropagation()
               setOpen(false)
             }}
           />

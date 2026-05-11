@@ -41,8 +41,8 @@ export const PositionsPanelAlerts = (
   )
 
   const belowMinimumDetail = (symbol: string) => {
-    const n = props.targetPortfolio[symbol]?.notional ?? 0
-    return `${symbol} ($${n.toFixed(2)})`
+    const notional = props.targetPortfolio[symbol]?.notional ?? 0
+    return `${symbol} ($${notional.toFixed(2)})`
   }
 
   const deltaDetail = (symbol: string) => {

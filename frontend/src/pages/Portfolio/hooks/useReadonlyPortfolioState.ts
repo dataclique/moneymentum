@@ -131,14 +131,13 @@ export const useReadonlyPortfolioState = () => {
   )
 
   const query = useQuery(() => {
-    const readonlyEntries = entries
-    const readonlyAddresses = readonlyEntries.map(entry => entry.address)
+    const readonlyAddresses = entries.map(entry => entry.address)
     const enabled = readonlyAddresses.length > 0
 
     return {
       queryKey: ["readonly-btc-exposure", readonlyAddresses] as const,
       queryFn: (ctx: { signal: AbortSignal }) =>
-        fetchExposure(readonlyEntries, ctx.signal),
+        fetchExposure(entries, ctx.signal),
       enabled,
       retry: 1,
       staleTime: 5 * 60 * 1000,
@@ -211,7 +210,7 @@ export const useReadonlyPortfolioState = () => {
       return betaPositions()
     },
     get isLoading() {
-      return query.isLoading && query.data === undefined
+      return query.isLoading
     },
     get error() {
       return query.error?.message ?? null

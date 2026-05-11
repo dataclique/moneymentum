@@ -486,9 +486,9 @@ export class HyperliquidClient {
   ): number {
     const raw = pos.notional
     if (raw !== undefined && raw !== "") {
-      const v = typeof raw === "number" ? raw : parseFloat(raw)
-      if (Number.isFinite(v) && Math.abs(v) > 0) {
-        return Math.abs(v)
+      const parsed = typeof raw === "number" ? raw : parseFloat(raw)
+      if (Number.isFinite(parsed) && Math.abs(parsed) > 0) {
+        return Math.abs(parsed)
       }
     }
     return Math.abs(parseFloat(String(pos.contracts))) * price
@@ -591,7 +591,9 @@ export class HyperliquidClient {
     const expansion: OrderRequest[] = []
 
     for (const action of actions) {
-      const position = positions.find(p => p.symbol === action.symbol)
+      const position = positions.find(
+        candidate => candidate.symbol === action.symbol,
+      )
       const price = tickers[action.symbol]?.last ?? undefined
       if (price === undefined) continue
 

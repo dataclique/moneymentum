@@ -9,8 +9,11 @@ vision.
 
 ## Rules
 
-- Start every change from a user story in [Stories](./stories/README.md).
-- Keep each story pull-request sized.
+- Start every change from a user story in [Stories](./stories/README.md). A
+  story is scoped to the value it delivers, not to a single PR; large stories
+  decompose into PR-sized GitHub issues tracked as sub-issues of the story's
+  parent issue.
+- Keep each **issue** pull-request sized. One issue, one PR.
 - Make acceptance criteria verifiable before merge; do not require a follow-up
   PR just to mark the story done.
 - Write the failing test before changing behavior. Docs-only, metadata-only, and
@@ -100,5 +103,5 @@ Example footer for a PR description:
 
 ## Intake
 
-When new behavior is described, split it into PR-sized stories first. If the
-product decision is unclear, stop and ask before coding.
+When new behavior is described, write the story first, then decompose it into
+PR-sized issues. If the product decision is unclear, stop and ask before coding.

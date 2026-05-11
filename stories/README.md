@@ -1,8 +1,10 @@
 # Stories
 
-This folder holds PR-sized stories for Moneymentum. User-facing stories and
-internal dev stories (refactors, migrations, foundations) share a single
-hex-indexed sequence so they sort and cross-reference consistently.
+This folder holds the contract for every change in Moneymentum. User-facing
+stories and internal dev stories (refactors, migrations, foundations) share a
+single hex-indexed sequence so they sort and cross-reference consistently. A
+story is scoped to the value it delivers and may span as many PR-sized GitHub
+issues as it needs.
 
 Current focus: make the app usable in production, then expand portfolio beta
 from Hyperliquid-only positions to read-only wallets and protective hedges.

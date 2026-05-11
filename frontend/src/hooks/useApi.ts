@@ -209,6 +209,8 @@ export const useBudgetPreference = () => {
 }
 
 export const useSaveBudgetPreference = () => {
+  const queryClient = useQueryClient()
+
   return useMutation(() => ({
     mutationFn: async (payload: { budget: number }) => {
       const response = await fetch("/api/hyperliquid/budget-preference", {
@@ -223,6 +225,11 @@ export const useSaveBudgetPreference = () => {
         const errorData = (await response.json().catch(() => ({}))) as ApiError
         throw new Error(errorData.detail ?? "Unable to save budget preference")
       }
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: ["hyperliquid", "budget-preference"],
+      })
     },
   }))
 }

@@ -1,6 +1,5 @@
-import { createSignal, createEffect, createMemo, Show, For } from "solid-js"
+import { createSignal, createEffect, createMemo, Show } from "solid-js"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Slider } from "@/components/ui/slider"
 import {
@@ -16,69 +15,76 @@ import { useNetwork } from "@/hooks/useNetwork"
 import { WalletHeader } from "@/components/wallet-header"
 import { ModeToggle } from "@/components/ui/mode-toggle"
 
-import { usePortfolioState } from "./hooks/usePortfolioState"
+import {
+  MANUAL_WEIGHT_ENTRY_STORAGE_KEY,
+  PRECISE_TOGGLE_STORAGE_KEY,
+  usePortfolioState,
+} from "./hooks/usePortfolioState"
 import { useBeta } from "./hooks/useBeta"
 import {
   useHyperliquidTickers,
   useHyperliquidFundingRates,
 } from "@/hooks/useTrading"
 import { ScreenerPanel } from "@/pages/Portfolio/components/ScreenerPanel"
-import { PositionsPanel } from "@/pages/Portfolio/components/PositionsPanel"
+import { PositionsPanel } from "@/pages/Portfolio/components/PositionsPanel/PositionsPanel"
 import { PerformancePanel } from "@/pages/Portfolio/components/PerformancePanel"
 import { StagedChangesPanel } from "@/pages/Portfolio/components/StagedChangesPanel"
 import { FactorsPanel } from "@/pages/Portfolio/components/FactorsPanel"
 import { RiskPanel } from "@/pages/Portfolio/components/RiskPanel"
 
-const PRECISE_TOGGLE_STORAGE_KEY = "portfolio-precise-toggle"
-const WEIGHT_REDISTRIBUTION_STORAGE_KEY = "portfolio-weight-redistribution"
-
 const LEVERAGE_MIN = 0.001
 const LEVERAGE_MAX = 5
 const LEVERAGE_STEP = 0.1
-const DEFAULT_LEVERAGE = 1
 
 const PortfolioPage = () => {
   const { isNetworkSwitching } = useNetwork()
-  const [isPrecise, setIsPrecise] = createSignal(
-    localStorage.getItem(PRECISE_TOGGLE_STORAGE_KEY) === "true",
-  )
-  const [isWeightRedistribution, setIsWeightRedistribution] = createSignal(
-    localStorage.getItem(WEIGHT_REDISTRIBUTION_STORAGE_KEY) !== "false",
-  )
+  const portfolio = usePortfolioState()
 
-  // createEffect: side-effect persisting signal to localStorage
-  createEffect(() => {
-    localStorage.setItem(PRECISE_TOGGLE_STORAGE_KEY, String(isPrecise()))
-  })
-  // createEffect: side-effect persisting signal to localStorage
   createEffect(() => {
     localStorage.setItem(
-      WEIGHT_REDISTRIBUTION_STORAGE_KEY,
-      String(isWeightRedistribution()),
+      PRECISE_TOGGLE_STORAGE_KEY,
+      String(portfolio.isPrecise),
     )
   })
 
-  const portfolio = usePortfolioState(isPrecise, isWeightRedistribution)
+  createEffect(() => {
+    localStorage.setItem(
+      MANUAL_WEIGHT_ENTRY_STORAGE_KEY,
+      String(portfolio.isManualWeightEntry),
+    )
+  })
+  const activeSymbolsSet = createMemo(() => {
+    const set = new Set<string>()
+    for (const key of Object.keys(portfolio.targetPortfolio)) {
+      set.add(key)
+    }
+    for (const key of Object.keys(portfolio.deletedArchive)) {
+      if (portfolio.deletedArchive[key] !== undefined) {
+        set.add(key)
+      }
+    }
+    return set
+  })
 
-  const betaResult = useBeta(() => portfolio.activeTokens)
+  const betaResult = useBeta(
+    () => portfolio.targetPortfolio,
+    () => portfolio.readonlyBetaPositions,
+  )
 
   const tickersQuery = useHyperliquidTickers()
   const fundingRatesQuery = useHyperliquidFundingRates()
   const screenerSymbols = () => tickersQuery.data ?? []
-  const selectedSymbolsSet = createMemo(
-    () => new Set(portfolio.selectedTokens.map(token => token.symbol)),
-  )
   const fundingRatesByBaseSymbol = () => fundingRatesQuery.data ?? {}
 
   const [leverageInput, setLeverageInput] = createSignal(
-    portfolio.crossAccountLeverage.toFixed(2),
+    portfolio.targetCrossAccountLeverage.toFixed(2),
   )
+
   const [isLeverageInputFocused, setIsLeverageInputFocused] =
     createSignal(false)
-
   createEffect(() => {
     if (!isLeverageInputFocused()) {
-      setLeverageInput(portfolio.crossAccountLeverage.toFixed(2))
+      setLeverageInput(portfolio.targetCrossAccountLeverage.toFixed(2))
     }
   })
 
@@ -92,28 +98,13 @@ const PortfolioPage = () => {
     }
   }
 
-  const handleLeverageBlur = () => {
-    setIsLeverageInputFocused(false)
-    const raw = leverageInput()
-    if (raw === "") {
-      const fallback = portfolio.initialCrossAccountLeverage ?? DEFAULT_LEVERAGE
-      portfolio.handleCrossAccountLeverageChange(fallback)
-      return
-    }
-    const value = parseFloat(raw)
-    if (!Number.isNaN(value)) {
-      const clamped = Math.max(LEVERAGE_MIN, Math.min(LEVERAGE_MAX, value))
-      portfolio.handleCrossAccountLeverageChange(clamped)
-    }
-  }
-
   return (
     <>
       <header class="flex items-center justify-between px-3 py-1.5 border-b border-border shrink-0 bg-muted/30">
         <div class="flex items-center gap-5">
           <span class="font-semibold">Moneymentum</span>
           <div class="h-4 border-l border-border" />
-          <WalletHeader />
+          <WalletHeader handleDisconnect={portfolio.handleDisconnect} />
           <div class="h-4 border-l border-border" />
           <div class="flex gap-1.5">
             <span class="text-muted-foreground">NAV</span>
@@ -122,7 +113,7 @@ const PortfolioPage = () => {
           <div class="flex gap-1.5">
             <span class="text-muted-foreground">Notional</span>
             <span class="font-mono">
-              ${portfolio.targetNotional.toFixed(2)}
+              ${portfolio.targetTotalNotional.toFixed(2)}
             </span>
           </div>
           <span class="text-muted-foreground">
@@ -158,8 +149,8 @@ const PortfolioPage = () => {
       >
         <ScreenerPanel
           symbols={screenerSymbols()}
-          isLoading={tickersQuery.isLoading}
-          selectedSymbols={selectedSymbolsSet()}
+          activeSymbols={activeSymbolsSet()}
+          fundingIsLoading={fundingRatesQuery.isLoading}
           onAddSymbol={portfolio.handleAddToken}
           fundingRatesByBaseSymbol={fundingRatesByBaseSymbol()}
         />
@@ -168,12 +159,14 @@ const PortfolioPage = () => {
           <div class="shrink-0 basis-[600px] flex flex-col overflow-hidden">
             <div class="flex gap-1 min-h-0 min-w-0 flex-1">
               <PositionsPanel
-                tokens={portfolio.selectedTokens}
+                currentPortfolio={portfolio.currentPortfolio}
+                targetPortfolio={portfolio.targetPortfolio}
+                deletedArchive={portfolio.deletedArchive}
                 isLoading={portfolio.isPositionsLoading}
-                displayNotional={portfolio.displayNotional}
+                fundingIsLoading={fundingRatesQuery.isLoading}
                 leverageLimitsMap={portfolio.leverageLimitsMap}
                 _isRebalancing={portfolio.isRebalancing}
-                isPrecise={isPrecise()}
+                isPrecise={portfolio.isPrecise}
                 onRemove={portfolio.handleRemoveToken}
                 onUndoRemove={portfolio.handleUndoRemoveToken}
                 onSideChange={portfolio.handleSideChange}
@@ -181,9 +174,22 @@ const PortfolioPage = () => {
                 onNotionalChange={portfolio.handleNotionalChange}
                 onWeightChange={portfolio.handleWeightChange}
                 fundingRatesByBaseSymbol={fundingRatesByBaseSymbol()}
+                targetTotalNotional={portfolio.targetTotalNotional}
+                symbolsBelowMinimum={portfolio.symbolsBelowMinimum}
+                symbolsDeltaBelowMinimum={portfolio.symbolsDeltaBelowMinimum}
+                hasTotalWeightExceeded={portfolio.hasTotalWeightExceeded}
+                targetAllocationPercent={portfolio.targetAllocationPercent}
+                readonlyBtcRows={portfolio.readonlyBtcRows}
+                isReadonlyBtcLoading={portfolio.isReadonlyBtcLoading}
+                readonlyBtcError={portfolio.readonlyBtcError}
+                onAddReadonlyBtcAddress={portfolio.addReadonlyBtcAddress}
+                onRemoveReadonlyBtcAddress={portfolio.removeReadonlyBtcAddress}
+                onReadonlyBtcIncludeInBetaChange={
+                  portfolio.setReadonlyBtcIncludeInBeta
+                }
               />
             </div>
-            <Show when={portfolio.blockingReasons.length > 0}>
+            {/* <Show when={portfolio.blockingReasons.length > 0}>
               <Card class="shrink-0">
                 <CardContent class="space-y-2 text-sm text-rose-400 py-3">
                   <For each={portfolio.blockingReasons}>
@@ -191,7 +197,7 @@ const PortfolioPage = () => {
                   </For>
                 </CardContent>
               </Card>
-            </Show>
+            </Show> */}
 
             {/* Footer */}
             <div class="sticky bottom-0 bg-background/80 backdrop-blur mt-auto">
@@ -203,11 +209,12 @@ const PortfolioPage = () => {
                       Leverage
                     </span>
                     <Show
+                      // TODO: we can make not isBalanceLoading logic
                       when={!portfolio.isBalanceLoading}
                       fallback={<Skeleton class="h-4 w-full" />}
                     >
                       <Slider
-                        value={[portfolio.crossAccountLeverage]}
+                        value={[portfolio.targetCrossAccountLeverage]}
                         onChange={([selectedLeverage]) => {
                           portfolio.handleCrossAccountLeverageChange(
                             selectedLeverage,
@@ -221,14 +228,17 @@ const PortfolioPage = () => {
                       <input
                         type="number"
                         value={leverageInput()}
+                        onFocus={() => setIsLeverageInputFocused(true)}
+                        onBlur={() => {
+                          setIsLeverageInputFocused(false)
+                          setLeverageInput(
+                            portfolio.targetCrossAccountLeverage.toFixed(2),
+                          )
+                        }}
                         onInput={leverageInputChangeEvent => {
                           applyLeverageInput(
                             leverageInputChangeEvent.currentTarget.value,
                           )
-                        }}
-                        onBlur={handleLeverageBlur}
-                        onFocus={() => {
-                          setIsLeverageInputFocused(true)
                         }}
                         min={LEVERAGE_MIN}
                         max={LEVERAGE_MAX}
@@ -255,18 +265,22 @@ const PortfolioPage = () => {
                         >
                           <span>Precise</span>
                           <Switch
-                            checked={isPrecise()}
-                            onChange={setIsPrecise}
+                            checked={portfolio.isPrecise}
+                            onChange={value => {
+                              portfolio.setIsPrecise(value)
+                            }}
                           />
                         </DropdownMenuItem>
                         <DropdownMenuItem
                           class="flex items-center justify-between gap-2"
                           closeOnSelect={false}
                         >
-                          <span>Redistribution of weights</span>
+                          <span>Manual weight entry</span>
                           <Switch
-                            checked={isWeightRedistribution()}
-                            onChange={setIsWeightRedistribution}
+                            checked={portfolio.isManualWeightEntry}
+                            onChange={value => {
+                              portfolio.setManualWeightEntry(value)
+                            }}
                           />
                         </DropdownMenuItem>
                       </DropdownMenuContent>
@@ -284,16 +298,18 @@ const PortfolioPage = () => {
               <div class="flex flex-[0_0_40%] min-w-0">
                 <StagedChangesPanel
                   stagedTrades={portfolio.stagedTrades}
-                  initialTotalNotional={portfolio.initialTotalNotional}
-                  targetNotional={portfolio.targetNotional}
-                  initialCrossAccountLeverage={
-                    portfolio.initialCrossAccountLeverage
+                  currentTotalNotional={portfolio.currentTotalNotional}
+                  targetTotalNotional={portfolio.targetTotalNotional}
+                  currentCrossAccountLeverage={
+                    portfolio.currentCrossAccountLeverage
                   }
-                  crossAccountLeverage={portfolio.crossAccountLeverage}
-                  onRebalance={portfolio.handleOpenPositions}
+                  targetCrossAccountLeverage={
+                    portfolio.targetCrossAccountLeverage
+                  }
+                  onRebalance={portfolio.handleRebalancePositions}
                   isRebalancing={portfolio.isRebalancing}
-                  disableSubmit={portfolio.disableSubmit}
-                  onClearAll={portfolio.handleResetToInitial}
+                  canSubmit={portfolio.canSubmit}
+                  onClearAll={portfolio.handleResetToCurrent}
                 />
               </div>
               <div class="flex-[0_0_25%] min-w-0">

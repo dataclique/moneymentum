@@ -108,7 +108,9 @@ describe("WalletHeader", () => {
 
   describe("display state", () => {
     it("shows 'No wallet configured' when not connected", async () => {
-      render(() => <WalletHeader />, { wrapper: createWrapper() })
+      render(() => <WalletHeader handleDisconnect={() => {}} />, {
+        wrapper: createWrapper(),
+      })
 
       expect(screen.getByText("No wallet configured")).toBeInTheDocument()
     })
@@ -122,7 +124,9 @@ describe("WalletHeader", () => {
         isConnected: () => true,
       })
 
-      render(() => <WalletHeader />, { wrapper: createWrapper() })
+      render(() => <WalletHeader handleDisconnect={() => {}} />, {
+        wrapper: createWrapper(),
+      })
 
       expect(screen.getByText("0x1234...5678")).toBeInTheDocument()
     })
@@ -137,7 +141,9 @@ describe("WalletHeader", () => {
         isConnected: () => true,
       })
 
-      render(() => <WalletHeader />, { wrapper: createWrapper() })
+      render(() => <WalletHeader handleDisconnect={() => {}} />, {
+        wrapper: createWrapper(),
+      })
 
       await user.click(screen.getByText("0xTest...ress"))
 
@@ -147,7 +153,9 @@ describe("WalletHeader", () => {
 
   describe("testnet switch", () => {
     it("is disabled when wallet is not connected", () => {
-      render(() => <WalletHeader />, { wrapper: createWrapper() })
+      render(() => <WalletHeader handleDisconnect={() => {}} />, {
+        wrapper: createWrapper(),
+      })
 
       // When not connected, the testnet switch is not rendered at all.
       expect(screen.queryByRole("switch")).not.toBeInTheDocument()
@@ -163,7 +171,9 @@ describe("WalletHeader", () => {
         isConnected: () => true,
       })
 
-      render(() => <WalletHeader />, { wrapper: createWrapper() })
+      render(() => <WalletHeader handleDisconnect={() => {}} />, {
+        wrapper: createWrapper(),
+      })
 
       await user.click(screen.getByText("0xTest...ress"))
 
@@ -175,7 +185,9 @@ describe("WalletHeader", () => {
   describe("wallet configuration dialog", () => {
     it("opens dialog when clicking 'No wallet configured'", async () => {
       const user = userEvent.setup()
-      render(() => <WalletHeader />, { wrapper: createWrapper() })
+      render(() => <WalletHeader handleDisconnect={() => {}} />, {
+        wrapper: createWrapper(),
+      })
 
       const walletButton = screen.getByText("No wallet configured")
       await user.click(walletButton)
@@ -190,7 +202,9 @@ describe("WalletHeader", () => {
 
     it("shows all credential input fields when not connected", async () => {
       const user = userEvent.setup()
-      render(() => <WalletHeader />, { wrapper: createWrapper() })
+      render(() => <WalletHeader handleDisconnect={() => {}} />, {
+        wrapper: createWrapper(),
+      })
 
       await user.click(screen.getByText("No wallet configured"))
 
@@ -210,7 +224,9 @@ describe("WalletHeader", () => {
 
     it("shows optional vault address field", async () => {
       const user = userEvent.setup()
-      render(() => <WalletHeader />, { wrapper: createWrapper() })
+      render(() => <WalletHeader handleDisconnect={() => {}} />, {
+        wrapper: createWrapper(),
+      })
 
       await user.click(screen.getByText("No wallet configured"))
 
@@ -222,7 +238,9 @@ describe("WalletHeader", () => {
     it("shows error toast when trying to connect with empty required fields", async () => {
       const user = userEvent.setup()
       const { toast } = await import("solid-sonner")
-      render(() => <WalletHeader />, { wrapper: createWrapper() })
+      render(() => <WalletHeader handleDisconnect={() => {}} />, {
+        wrapper: createWrapper(),
+      })
 
       await user.click(screen.getByText("No wallet configured"))
       await user.click(screen.getByRole("button", { name: "Connect" }))
@@ -235,7 +253,9 @@ describe("WalletHeader", () => {
     it("connects wallet when valid credentials are provided", async () => {
       const user = userEvent.setup()
       const { toast } = await import("solid-sonner")
-      render(() => <WalletHeader />, { wrapper: createWrapper() })
+      render(() => <WalletHeader handleDisconnect={() => {}} />, {
+        wrapper: createWrapper(),
+      })
 
       await user.click(screen.getByText("No wallet configured"))
 
@@ -262,13 +282,15 @@ describe("WalletHeader", () => {
       expect(parsed).toEqual({
         accountAddress: "0xMyAccountAddress",
         apiWalletAddress: "0xMyApiWalletAddress",
+        privateKey: "0xMyPrivateKey",
       })
-      expect(parsed).not.toHaveProperty("privateKey")
     }, 15000)
 
     it("stores vault address when provided", async () => {
       const user = userEvent.setup()
-      render(() => <WalletHeader />, { wrapper: createWrapper() })
+      render(() => <WalletHeader handleDisconnect={() => {}} />, {
+        wrapper: createWrapper(),
+      })
 
       await user.click(screen.getByText("No wallet configured"))
 
@@ -297,14 +319,16 @@ describe("WalletHeader", () => {
       expect(parsed).toEqual({
         accountAddress: "0xMyAccountAddress",
         apiWalletAddress: "0xMyApiWalletAddress",
+        privateKey: "0xMyPrivateKey",
         vaultAddress: "0xMyVaultAddress",
       })
-      expect(parsed).not.toHaveProperty("privateKey")
     }, 15000)
 
     it("connects without vault address when not provided", async () => {
       const user = userEvent.setup()
-      render(() => <WalletHeader />, { wrapper: createWrapper() })
+      render(() => <WalletHeader handleDisconnect={() => {}} />, {
+        wrapper: createWrapper(),
+      })
 
       await user.click(screen.getByText("No wallet configured"))
 
@@ -331,7 +355,9 @@ describe("WalletHeader", () => {
 
     it("closes dialog after successful connection", async () => {
       const user = userEvent.setup()
-      render(() => <WalletHeader />, { wrapper: createWrapper() })
+      render(() => <WalletHeader handleDisconnect={() => {}} />, {
+        wrapper: createWrapper(),
+      })
 
       await user.click(screen.getByText("No wallet configured"))
 
@@ -362,7 +388,9 @@ describe("WalletHeader", () => {
 
     it("clears input fields after successful connection", async () => {
       const user = userEvent.setup()
-      render(() => <WalletHeader />, { wrapper: createWrapper() })
+      render(() => <WalletHeader handleDisconnect={() => {}} />, {
+        wrapper: createWrapper(),
+      })
 
       await user.click(screen.getByText("No wallet configured"))
 
@@ -409,7 +437,9 @@ describe("WalletHeader", () => {
     }, 20000)
 
     it("auto-opens dialog when autoOpen prop is true and not connected", async () => {
-      render(() => <WalletHeader autoOpen />, { wrapper: createWrapper() })
+      render(() => <WalletHeader autoOpen handleDisconnect={() => {}} />, {
+        wrapper: createWrapper(),
+      })
 
       await waitFor(() => {
         expect(screen.getByText("Connect Wallet")).toBeInTheDocument()
@@ -425,7 +455,9 @@ describe("WalletHeader", () => {
         isConnected: () => true,
       })
 
-      render(() => <WalletHeader autoOpen />, { wrapper: createWrapper() })
+      render(() => <WalletHeader autoOpen handleDisconnect={() => {}} />, {
+        wrapper: createWrapper(),
+      })
 
       await waitFor(() => {
         expect(screen.queryByText("Connect Wallet")).not.toBeInTheDocument()
@@ -444,7 +476,9 @@ describe("WalletHeader", () => {
         isConnected: () => true,
       })
 
-      render(() => <WalletHeader />, { wrapper: createWrapper() })
+      render(() => <WalletHeader handleDisconnect={() => {}} />, {
+        wrapper: createWrapper(),
+      })
 
       await user.click(screen.getByText("0xConn...ress"))
 
@@ -462,7 +496,9 @@ describe("WalletHeader", () => {
         isConnected: () => true,
       })
 
-      render(() => <WalletHeader />, { wrapper: createWrapper() })
+      render(() => <WalletHeader handleDisconnect={() => {}} />, {
+        wrapper: createWrapper(),
+      })
 
       await user.click(screen.getByText("0xConn...ress"))
 
@@ -479,7 +515,9 @@ describe("WalletHeader", () => {
         isConnected: () => true,
       })
 
-      render(() => <WalletHeader />, { wrapper: createWrapper() })
+      render(() => <WalletHeader handleDisconnect={() => {}} />, {
+        wrapper: createWrapper(),
+      })
 
       await user.click(screen.getByText("0xConn...ress"))
 
@@ -509,7 +547,9 @@ describe("WalletHeader", () => {
         isConnected: () => true,
       })
 
-      render(() => <WalletHeader />, { wrapper: createWrapper() })
+      render(() => <WalletHeader handleDisconnect={() => {}} />, {
+        wrapper: createWrapper(),
+      })
 
       await user.click(screen.getByText("0xConn...ress"))
       await user.click(screen.getByRole("button", { name: "Disconnect" }))
@@ -537,7 +577,9 @@ describe("WalletHeader", () => {
         isConnected: () => true,
       })
 
-      render(() => <WalletHeader />, { wrapper: createWrapper() })
+      render(() => <WalletHeader handleDisconnect={() => {}} />, {
+        wrapper: createWrapper(),
+      })
 
       await user.click(screen.getByText("0xConn...ress"))
       await user.click(screen.getByRole("button", { name: "Disconnect" }))
@@ -555,7 +597,9 @@ describe("WalletHeader", () => {
 
   describe("wallet button styling", () => {
     it("has hover styling to indicate clickability", () => {
-      render(() => <WalletHeader />, { wrapper: createWrapper() })
+      render(() => <WalletHeader handleDisconnect={() => {}} />, {
+        wrapper: createWrapper(),
+      })
 
       const walletButton = screen.getByText("No wallet configured")
       expect(walletButton).toHaveClass("cursor-pointer")

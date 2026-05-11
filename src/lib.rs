@@ -6,6 +6,7 @@ mod funding;
 mod hyperliquid;
 mod ingestion;
 mod lifecycle;
+mod readonly_portfolio;
 mod timeframe;
 mod wire;
 
@@ -20,6 +21,7 @@ use rocket::config::Config as RocketConfig;
 use rocket::http::Status;
 use rocket::request::FromParam;
 use rocket::response::content::RawJson;
+use rocket::response::status::Custom;
 use rocket::serde::json::Json;
 use rocket::{Rocket, State, get, post, routes};
 use serde::Deserialize;
@@ -154,6 +156,114 @@ struct BetaRequest {
 #[derive(Debug, serde::Serialize)]
 struct BetaResponse {
     beta: Option<f64>,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct ApiErrorResponse {
+    error: String,
+}
+
+#[post("/portfolio/readonly/btc", data = "<body>")]
+async fn post_portfolio_readonly_btc(
+    body: Json<readonly_portfolio::ReadonlyBtcBalancesRequest>,
+) -> Result<Json<readonly_portfolio::ReadonlyBtcBalancesResponse>, Custom<Json<ApiErrorResponse>>> {
+    let http_client = reqwest::Client::new();
+    let btc_base_url = readonly_portfolio::default_btc_base_url().map_err(|err| {
+        error!(error = %err, "failed to resolve btc explorer base url");
+        Custom(
+            Status::InternalServerError,
+            Json(ApiErrorResponse {
+                error: "failed to resolve btc explorer base url".to_string(),
+            }),
+        )
+    })?;
+    let blockchain_info_base_url =
+        readonly_portfolio::default_blockchain_info_base_url().map_err(|err| {
+            error!(error = %err, "failed to resolve blockchain.info base url");
+            Custom(
+                Status::InternalServerError,
+                Json(ApiErrorResponse {
+                    error: "failed to resolve blockchain.info base url".to_string(),
+                }),
+            )
+        })?;
+
+    readonly_portfolio::load_readonly_btc_balances(
+        &http_client,
+        &btc_base_url,
+        &blockchain_info_base_url,
+        &body,
+    )
+    .await
+    .map(Json)
+    .map_err(|err| {
+        error!(error = %err, "failed to load readonly btc balances");
+        let status = match err {
+            readonly_portfolio::ReadonlyPortfolioError::InvalidBtcAddress(_)
+            | readonly_portfolio::ReadonlyPortfolioError::EmptyAddressList => Status::BadRequest,
+            _ => Status::InternalServerError,
+        };
+        Custom(
+            status,
+            Json(ApiErrorResponse {
+                error: err.to_string(),
+            }),
+        )
+    })
+}
+
+#[post("/portfolio/exposure", data = "<body>")]
+async fn post_portfolio_exposure(
+    config: &State<Config>,
+    body: Json<readonly_portfolio::PortfolioExposureRequest>,
+) -> Result<Json<readonly_portfolio::PortfolioExposureResponse>, Custom<Json<ApiErrorResponse>>> {
+    let http_client = reqwest::Client::new();
+    let btc_base_url = readonly_portfolio::default_btc_base_url().map_err(|err| {
+        error!(error = %err, "failed to resolve btc explorer base url");
+        Custom(
+            Status::InternalServerError,
+            Json(ApiErrorResponse {
+                error: "failed to resolve btc explorer base url".to_string(),
+            }),
+        )
+    })?;
+    let blockchain_info_base_url =
+        readonly_portfolio::default_blockchain_info_base_url().map_err(|err| {
+            error!(error = %err, "failed to resolve blockchain.info base url");
+            Custom(
+                Status::InternalServerError,
+                Json(ApiErrorResponse {
+                    error: "failed to resolve blockchain.info base url".to_string(),
+                }),
+            )
+        })?;
+
+    readonly_portfolio::load_portfolio_exposure(
+        &http_client,
+        &btc_base_url,
+        &blockchain_info_base_url,
+        config.hyperliquid_base_url.as_ref(),
+        &body,
+    )
+    .await
+    .map(Json)
+    .map_err(|err| {
+        error!(error = %err, "failed to load portfolio exposure");
+        let status = match err {
+            readonly_portfolio::ReadonlyPortfolioError::InvalidBtcAddress(_)
+            | readonly_portfolio::ReadonlyPortfolioError::EmptyAddressList
+            | readonly_portfolio::ReadonlyPortfolioError::InvalidNotional { .. } => {
+                Status::BadRequest
+            }
+            _ => Status::InternalServerError,
+        };
+        Custom(
+            status,
+            Json(ApiErrorResponse {
+                error: err.to_string(),
+            }),
+        )
+    })
 }
 
 #[post("/beta", data = "<body>")]
@@ -298,7 +408,9 @@ pub async fn rocket(
                 get_candles,
                 start_ingestion,
                 get_ingestion_status,
-                post_beta
+                post_beta,
+                post_portfolio_readonly_btc,
+                post_portfolio_exposure
             ],
         ))
 }

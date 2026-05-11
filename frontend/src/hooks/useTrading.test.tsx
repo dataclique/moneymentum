@@ -19,24 +19,28 @@ import { useWallet } from "@/hooks/useWallet"
 // Create mock methods
 const mockMethods = {
   getBalance: vi.fn(),
+  getAccountSummary: vi.fn(),
+  getFundingRates: vi.fn(),
   getCurrentPositions: vi.fn(),
   listPerpTickers: vi.fn(),
   getLeverageLimits: vi.fn(),
   rebalancePositions: vi.fn(),
   getNetworkMode: vi.fn(),
-  getPublicKey: vi.fn(),
+  getWalletAddress: vi.fn(),
 }
 
 // Mock the HyperliquidClient as a class
 vi.mock("@/services/hyperliquid-client", () => ({
   HyperliquidClient: class MockHyperliquidClient {
     getBalance = mockMethods.getBalance
+    getAccountSummary = mockMethods.getAccountSummary
+    getFundingRates = mockMethods.getFundingRates
     getCurrentPositions = mockMethods.getCurrentPositions
     listPerpTickers = mockMethods.listPerpTickers
     getLeverageLimits = mockMethods.getLeverageLimits
     rebalancePositions = mockMethods.rebalancePositions
     getNetworkMode = mockMethods.getNetworkMode
-    getPublicKey = mockMethods.getPublicKey
+    getWalletAddress = mockMethods.getWalletAddress
   },
   preloadMarkets: vi.fn().mockResolvedValue(undefined),
 }))
@@ -82,12 +86,40 @@ const createConnectedWrapper = (walletCredentials: {
 }
 
 describe("useTrading hooks", () => {
+  const ensureLocalStorage = () => {
+    const globalAny = globalThis as { localStorage?: Storage }
+    if (
+      !globalAny.localStorage ||
+      typeof globalAny.localStorage.clear !== "function"
+    ) {
+      const store = new Map<string, string>()
+      globalAny.localStorage = {
+        getItem: key => (store.has(key) ? store.get(key)! : null),
+        setItem: (key, value) => {
+          store.set(key, value)
+        },
+        removeItem: key => {
+          store.delete(key)
+        },
+        clear: () => {
+          store.clear()
+        },
+        key: index => Array.from(store.keys())[index] ?? null,
+        get length() {
+          return store.size
+        },
+      } as unknown as Storage
+    }
+  }
+
   beforeEach(() => {
     vi.clearAllMocks()
+    ensureLocalStorage()
     localStorage.clear()
   })
 
   afterEach(() => {
+    ensureLocalStorage()
     localStorage.clear()
   })
 
@@ -268,10 +300,7 @@ describe("useTrading hooks", () => {
       })
 
       result.mutate({
-        accountValue: 1000,
-        crossAccountLeverage: 1,
-        precise: false,
-        positions: [],
+        actions: [],
       })
 
       await waitFor(() => {
@@ -286,7 +315,6 @@ describe("useTrading hooks", () => {
         {
           symbol: "BTC/USDC:USDC",
           side: "buy",
-          percentage: 0.5,
           status: "filled",
         },
       ])
@@ -300,17 +328,13 @@ describe("useTrading hooks", () => {
       })
 
       result.mutate({
-        accountValue: 1000,
-        crossAccountLeverage: 2,
-        precise: false,
-        positions: [
+        actions: [
           {
+            kind: "rebalance",
             symbol: "BTC/USDC:USDC",
-            percentage: 0.5,
-            side: "buy",
+            signedNotionalDelta: 120,
             leverage: 2,
             leverageChanged: false,
-            status: "modified",
           },
         ],
       })
@@ -319,27 +343,24 @@ describe("useTrading hooks", () => {
         expect(result.isSuccess).toBe(true)
       })
 
-      expect(mockMethods.rebalancePositions).toHaveBeenCalledWith(
-        [
-          expect.objectContaining({
-            symbol: "BTC/USDC:USDC",
-            percentage: 0.5,
-            side: "buy",
-            leverage: 2,
-            status: "modified",
-          }),
-        ],
-        1000,
-        2,
-        false,
-      )
+      expect(mockMethods.rebalancePositions).toHaveBeenCalledWith([
+        {
+          kind: "rebalance",
+          symbol: "BTC/USDC:USDC",
+          signedNotionalDelta: 120,
+          leverage: 2,
+          leverageChanged: false,
+        },
+      ])
 
       expect(result.data?.orders).toHaveLength(1)
       expect(result.data?.orders[0].status).toBe("filled")
     })
 
-    it("converts working status to idle before sending", async () => {
-      mockMethods.rebalancePositions.mockResolvedValue([])
+    it("calls rebalancePositions with only the actions array (no separate precise arg)", async () => {
+      mockMethods.rebalancePositions.mockResolvedValue([
+        { symbol: "ETH/USDC:USDC", side: "sell", status: "working" },
+      ])
 
       const { result } = renderHook(() => useRebalanceHyperliquidPositions(), {
         wrapper: createConnectedWrapper({
@@ -350,17 +371,11 @@ describe("useTrading hooks", () => {
       })
 
       result.mutate({
-        accountValue: 1000,
-        crossAccountLeverage: 1,
-        precise: false,
-        positions: [
+        actions: [
           {
+            kind: "close",
             symbol: "BTC/USDC:USDC",
-            percentage: 0.5,
             side: "buy",
-            leverage: 2,
-            leverageChanged: false,
-            status: "working",
           },
         ],
       })
@@ -369,23 +384,14 @@ describe("useTrading hooks", () => {
         expect(result.isSuccess).toBe(true)
       })
 
-      expect(mockMethods.rebalancePositions).toHaveBeenCalledWith(
-        [
-          {
-            symbol: "BTC/USDC:USDC",
-            percentage: 0.5,
-            side: "buy",
-            leverage: 2,
-            leverageChanged: false,
-            currentNotional: undefined,
-            currentSide: undefined,
-            status: "idle",
-          },
-        ],
-        1000,
-        1,
-        false, // precise parameter defaults to false
-      )
+      expect(mockMethods.rebalancePositions).toHaveBeenCalledWith([
+        {
+          kind: "close",
+          symbol: "BTC/USDC:USDC",
+          side: "buy",
+        },
+      ])
+      expect(mockMethods.rebalancePositions).toHaveBeenCalledTimes(1)
     })
   })
 

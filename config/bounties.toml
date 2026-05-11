@@ -1,0 +1,29 @@
+[bounties]
+# Bounty system configuration
+enabled = true
+default_currency = "USD"
+expiry_days = 30
+
+[bounties.rates]
+# Default bounty rates by category
+critical_bug = 200
+major_bug = 100
+minor_bug = 25
+major_feature = 500
+minor_feature = 150
+documentation = 50
+refactor = 75
+
+[bounties.payment]
+# Payment configuration
+methods = ["github_sponsors", "crypto", "paypal"]
+min_amount = 10
+max_amount = 1000
+auto_pay_threshold = 50
+
+[bounties.labels]
+# GitHub labels for bounty tracking
+bounty_label = "bounty"
+claimed_label = "bounty-claimed"
+completed_label = "bounty-completed"
+paid_label = "bounty-paid"

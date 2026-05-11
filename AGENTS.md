@@ -10,64 +10,25 @@ this document is a directive, not a suggestion.
 This project is an institutional-grade quant toolkit. See [SPEC.md](./SPEC.md)
 for the vision and [ROADMAP.md](./ROADMAP.md) for the path.
 
-### Agent Implementations
+### Agent expectations
 
-This section documents concrete AI agents used in this repository. Each agent
-entry includes a short identifier, its purpose, core capabilities and
-limitations, typical usage patterns, and orchestration boundaries so
-contributors know what the agent owns vs. what human workflows or other
-automation must handle.
+AI coding agents working in this repo are expected to:
 
-#### Cursor Coding Agent (`cursor-coding`)
+- Read [ROADMAP.md](./ROADMAP.md) and the relevant story under
+  [user-stories/](./user-stories/README.md) before changing code. The story's
+  acceptance criteria are the contract.
+- Follow [contributions.md](./contributions.md): types-first, failing test,
+  implementation, review.
+- Honor the rules in this document for code style, testing, and quality gates.
+- Edit code, tests, and configs in this repo. Humans own deploys, secrets, and
+  external systems outside git.
+- Never relax quality checks (clippy, eslint, tests) without explicit
+  permission. Ask if a check seems wrong; don't suppress.
+- Don't substitute approaches, libraries, or tools without checking in. Scope is
+  whatever was asked, not whatever you'd prefer.
 
-- **Purpose**: Assist with day-to-day development on the Rust backend and
-  frontend, following this document’s rules.
-- **Capabilities**:
-  - Reads and understands existing Rust, TypeScript, Nix, and documentation.
-  - Proposes and implements code changes inside the repo (including tests),
-    respecting project style and TTDD workflow.
-  - Runs local tooling via the provided commands (e.g., `cargo check`,
-    `bun run lint`, `nix flake check`) when explicitly instructed or when needed
-    to validate changes.
-  - Suggests refactors, test cases, and documentation improvements.
-  - **Limitations**:
-    - Does not manage secrets or production infrastructure directly; only edits
-      code and config checked into git.
-    - Does not bypass or relax quality gates (clippy, linters, tests) unless
-      explicitly authorized in a discussion and annotated in code.
-- **Usage patterns**:
-  - **When to invoke**: Implementing new features (e.g., portfolio beta
-    analytics), updating API endpoints, adjusting frontend behavior, or
-    refactoring existing modules (Rust, TS, Nix).
-  - **Expected inputs**: A clear description of the change, relevant file
-    references (e.g., `@tests/api.rs`, `@rust.nix`), and any constraints
-    (performance, backwards compatibility, rollout considerations).
-  - **Expected outputs**: Updated code, tests, and configuration with a short,
-    high-level summary of what changed and how to run checks.
-  - **Integration points**: Works within local dev flows (`cargo check`,
-    `cargo test -q`, `bun run test`, `nix flake check`) and existing CI. Human
-    contributors remain responsible for reviewing diffs, running deployments,
-    and updating external systems (e.g., Terraform, Hyperliquid keys).
-  - **Handoff boundaries**: The agent owns code and test changes inside this
-    repo; humans own orchestration, approvals, production deploys, and any
-    manual secret/config management outside git.
-  - **Runtime requirements / config keys**: Assumes the Nix-based dev
-    environment is active (`direnv allow`, `nix develop`/`devenv shell`) and
-    that project configuration files (e.g., `example.toml`-derived configs) are
-    present when running or testing the binaries.
-
-**Current state:**
-
-- Frontend at `/` is a working portfolio rebalancer (weight-based positions,
-  cross-account leverage). Used daily.
-- Frontend at `/prototype` is a design reference (like Figma in code).
-- Rust backend provides analytics and API.
-
-**What's being built:**
-
-- Rust backend for analytics and API (polars, cqrs-es, rocket)
-- First priority: portfolio beta calculation (current tool shows net notional,
-  which ignores correlations and makes hedging guesswork)
+For status -- what works today vs. what's planned -- see
+[README.md](./README.md) and [ROADMAP.md](./ROADMAP.md).
 
 **Key architectural decisions:**
 
@@ -135,7 +96,7 @@ sqlx migrate run                   # Applies pending migrations
 ### Environment
 
 - **Nix + Direnv**: `direnv allow` activates the dev environment
-- All dependencies managed through Nix flake - do not use pip install, bun
+- All dependencies managed through Nix flake - do not use bun install, cargo
   install, or similar
 
 ---
@@ -258,7 +219,7 @@ const openModal = () => setIsOpen(true);
 All code, comments, identifiers, and documentation must use ASCII characters
 only. Unicode is allowed exclusively in string literals that produce
 user-visible output (UI text, CLI messages). Use ASCII equivalents in comments:
-`*` not `×`, `->` not `→`, `~` not `≈`, `--` not `—`, `beta` not `β`.
+`*` not `×`, `->` not `→`, `~` not `≈`, `--` not em-dash, `beta` not `β`.
 
 ### Self-documenting code
 

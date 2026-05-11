@@ -11,7 +11,7 @@ permissions:
 jobs:
   deploy:
     concurrency:
-      # Shared with staging workflow — deployAll touches staging too
+      # Shared with staging workflow -- deployAll touches staging too
       group: deploy-production
       cancel-in-progress: false
     runs-on: ubuntu-latest

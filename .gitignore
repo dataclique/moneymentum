@@ -16,3 +16,4 @@
 *.db-wal
 /.venv
 .worktrees/
+.tmp/

@@ -1,0 +1,39 @@
+---
+status: planned
+theme: full-bitcoin-beta-accounting
+---
+
+# Show Bitcoin Beta For The Active Portfolio
+
+As a user, I want to see my portfolio beta to Bitcoin so that I can understand
+whether my long-short book is actually hedged.
+
+## Acceptance Criteria
+
+"Bitcoin beta" in this story refers to a fixed methodology so the displayed
+number is reproducible across the UI, backend, and tests:
+
+- Benchmark: BTC perpetual on Hyperliquid (the same symbol the backend ingests
+  for the rolling-beta calculation).
+- Return interval: daily log returns.
+- Lookback window: 365 calendar days (one year). Crypto markets trade 24/7, so
+  the window is calendar-based rather than business-day-based.
+- Weighting: active position weights, normalized to sum to one in absolute value
+  across the included positions.
+- Missing/stale prices: assets without enough history in the lookback window are
+  excluded from the weighted sum and surfaced in the loading/failure UI rather
+  than silently substituted. When assets are excluded, the remaining weights
+  used in the weighted_sum/beta calculation are renormalized to sum to one in
+  absolute value (each remaining weight divided by the sum of remaining absolute
+  weights). The UI must indicate when renormalization occurred and which assets
+  were excluded.
+
+- [ ] The portfolio page requests Bitcoin beta (as defined above) for the active
+      target portfolio.
+- [ ] The UI shows beta beside the existing exposure summary, with the
+      benchmark, interval, and lookback labelled or available on hover.
+- [ ] Loading and failure states are visible for both the benchmark fetch and
+      the beta computation.
+- [ ] The beta calculation uses active position weights, not raw net notional.
+- [ ] Rebalancer edits trigger recalculation so the displayed beta reflects the
+      current set of positions and weights.

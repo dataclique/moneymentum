@@ -2,12 +2,12 @@ import { describe, it, expect } from "vitest"
 import { formatNum, formatPct, formatUsd } from "./formatters"
 
 describe("formatNum", () => {
-  it("returns em dash for null", () => {
-    expect(formatNum(null)).toBe("—")
+  it("returns placeholder '--' for null", () => {
+    expect(formatNum(null)).toBe("--")
   })
 
-  it("returns em dash for undefined", () => {
-    expect(formatNum(undefined)).toBe("—")
+  it("returns placeholder '--' for undefined", () => {
+    expect(formatNum(undefined)).toBe("--")
   })
 
   it("formats positive numbers with default 2 decimals", () => {

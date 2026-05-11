@@ -7,10 +7,10 @@ Each `##` section is a theme -- a goal-oriented group of related stories. Themes
 are ordered by priority (highest first).
 
 Stories link to their per-feature acceptance criteria in
-[user-stories/](./user-stories/README.md). Engineering work (refactors,
-migrations, internal foundations) lives in the same folder under a "Dev"
-sub-heading when a written contract is warranted, otherwise as a standalone
-GitHub issue -- see [contributions.md](./contributions.md) for the split.
+[stories/](./stories/README.md). Engineering work (refactors, migrations,
+internal foundations) lives in the same folder under a "Dev" sub-heading when a
+written contract is warranted, otherwise as a standalone GitHub issue -- see
+[contributions.md](./contributions.md) for the split.
 
 Numeric story IDs (`001`, `018`, etc.) reflect creation order, not
 implementation priority. Priority is defined by this roadmap's theme order and
@@ -23,9 +23,9 @@ the order within each theme.
 Users need to reach the app before any portfolio feature matters. Deployment is
 the next implementation priority.
 
-- [ ] [Keep The App Deployed And Reachable](./user-stories/0x008.keep-app-deployed-and-reachable.md)
-- [ ] [Verify Deployed Hyperliquid Long-Short Rebalancing](./user-stories/0x00a.verify-deployed-hyperliquid-long-short-rebalancing.md)
-- [ ] [Serve The App From A Domain](./user-stories/0x009.serve-app-from-domain.md)
+- [ ] [Keep The App Deployed And Reachable](./stories/0x008.keep-app-deployed-and-reachable.md)
+- [ ] [Verify Deployed Hyperliquid Long-Short Rebalancing](./stories/0x00a.verify-deployed-hyperliquid-long-short-rebalancing.md)
+- [ ] [Serve The App From A Domain](./stories/0x009.serve-app-from-domain.md)
 
 ---
 
@@ -35,10 +35,10 @@ Display portfolio-weighted Bitcoin beta for the active portfolio and surface
 read-only Bitcoin holdings so the risk view reflects the user's actual exposure.
 See [SPEC.md](./SPEC.md) for the beta methodology and the `POST /beta` contract.
 
-- [ ] [Show Bitcoin Beta For The Active Portfolio](./user-stories/0x00b.show-bitcoin-beta-for-active-portfolio.md)
-- [ ] [Add Read-Only Bitcoin Addresses](./user-stories/0x00c.add-read-only-bitcoin-addresses.md)
-- [ ] [Include Read-Only Bitcoin Holdings In Beta](./user-stories/0x00d.include-read-only-bitcoin-holdings-in-beta.md)
-- [ ] [Target Ending Bitcoin Beta While Hedging](./user-stories/0x00e.target-ending-bitcoin-beta-while-hedging.md)
+- [ ] [Show Bitcoin Beta For The Active Portfolio](./stories/0x00b.show-bitcoin-beta-for-active-portfolio.md)
+- [ ] [Add Read-Only Bitcoin Addresses](./stories/0x00c.add-read-only-bitcoin-addresses.md)
+- [ ] [Include Read-Only Bitcoin Holdings In Beta](./stories/0x00d.include-read-only-bitcoin-holdings-in-beta.md)
+- [ ] [Target Ending Bitcoin Beta While Hedging](./stories/0x00e.target-ending-bitcoin-beta-while-hedging.md)
 
 ---
 
@@ -47,9 +47,9 @@ See [SPEC.md](./SPEC.md) for the beta methodology and the `POST /beta` contract.
 Read-only portfolios need stable identity. Solana public keys are the natural
 identifier because the north star already assumes Solana deposits.
 
-- [ ] [Authenticate Portfolio Ownership By Solana Pubkey](./user-stories/0x00f.authenticate-portfolio-ownership-by-solana-pubkey.md)
-- [ ] [View Portfolios By Public Key URL](./user-stories/0x010.view-portfolios-by-public-key-url.md)
-- [ ] [Hide Portfolio Details For A Fee](./user-stories/0x011.hide-portfolio-details-for-fee.md)
+- [ ] [Authenticate Portfolio Ownership By Solana Pubkey](./stories/0x00f.authenticate-portfolio-ownership-by-solana-pubkey.md)
+- [ ] [View Portfolios By Public Key URL](./stories/0x010.view-portfolios-by-public-key-url.md)
+- [ ] [Hide Portfolio Details For A Fee](./stories/0x011.hide-portfolio-details-for-fee.md)
 
 ---
 
@@ -59,8 +59,8 @@ Non-custodial managed vault on Solana for users who prefer strategy allocation
 over hands-on rebalancing. Anchor program with two-phase withdrawal and a
 share-based accounting model.
 
-- [ ] [Deposit Into Vault](./user-stories/0x017.deposit-into-vault.md)
-- [ ] [Withdraw From Vault](./user-stories/0x018.withdraw-from-vault.md)
+- [ ] [Deposit Into Vault](./stories/0x017.deposit-into-vault.md)
+- [ ] [Withdraw From Vault](./stories/0x018.withdraw-from-vault.md)
 
 ---
 
@@ -70,11 +70,11 @@ Users who are long-term bullish Bitcoin still need protection against short- and
 mid-term crashes. Start with manually entered protective puts and simple
 historical crash simulations, then add stressed correlations and rolling.
 
-- [ ] [Enter Protective Put Positions](./user-stories/0x013.enter-protective-put-positions.md)
-- [ ] [Use Derive Options For Protective Puts](./user-stories/0x019.use-derive-options-for-protective-puts.md)
-- [ ] [Simulate Historical Bitcoin Crashes](./user-stories/0x014.simulate-historical-bitcoin-crashes.md)
-- [ ] [Simulate Stressed Crash Correlations](./user-stories/0x015.simulate-stressed-crash-correlations.md)
-- [ ] [Roll Protective Puts Before Final Month](./user-stories/0x016.roll-protective-puts-before-final-month.md)
+- [ ] [Enter Protective Put Positions](./stories/0x013.enter-protective-put-positions.md)
+- [ ] [Use Derive Options For Protective Puts](./stories/0x019.use-derive-options-for-protective-puts.md)
+- [ ] [Simulate Historical Bitcoin Crashes](./stories/0x014.simulate-historical-bitcoin-crashes.md)
+- [ ] [Simulate Stressed Crash Correlations](./stories/0x015.simulate-stressed-crash-correlations.md)
+- [ ] [Roll Protective Puts Before Final Month](./stories/0x016.roll-protective-puts-before-final-month.md)
 
 ---
 
@@ -85,9 +85,9 @@ historical crash simulations, then add stressed correlations and rolling.
 Find assets by factor characteristics, stage portfolio changes, and simulate the
 result before sending trades.
 
-- [ ] [Compare Target vs Current Portfolio](./user-stories/0x01a.compare-target-vs-current-portfolio.md)
-- [ ] [Screen Perps By Factor](./user-stories/0x01c.screen-perps-by-factor.md)
-- [ ] [Simulate Staged Portfolio Metrics](./user-stories/0x01d.simulate-staged-portfolio-metrics.md)
+- [ ] [Compare Target vs Current Portfolio](./stories/0x01a.compare-target-vs-current-portfolio.md)
+- [ ] [Screen Perps By Factor](./stories/0x01c.screen-perps-by-factor.md)
+- [ ] [Simulate Staged Portfolio Metrics](./stories/0x01d.simulate-staged-portfolio-metrics.md)
 
 ---
 
@@ -97,7 +97,7 @@ result before sending trades.
 
 Portfolio risk assessment beyond beta and crash-specific simulations.
 
-- [ ] [Show Risk Analytics For Active Portfolio](./user-stories/0x01b.show-risk-analytics-for-active-portfolio.md)
+- [ ] [Show Risk Analytics For Active Portfolio](./stories/0x01b.show-risk-analytics-for-active-portfolio.md)
 
 ---
 
@@ -107,8 +107,8 @@ Portfolio risk assessment beyond beta and crash-specific simulations.
 
 Unified perp + spot portfolio management.
 
-- [ ] [Trade Hyperliquid Spot Positions](./user-stories/0x01e.trade-hyperliquid-spot-positions.md)
-- [ ] [Add Read-Only Wallets On Other Chains](./user-stories/0x012.add-read-only-wallets-on-other-chains.md)
+- [ ] [Trade Hyperliquid Spot Positions](./stories/0x01e.trade-hyperliquid-spot-positions.md)
+- [ ] [Add Read-Only Wallets On Other Chains](./stories/0x012.add-read-only-wallets-on-other-chains.md)
 
 ---
 

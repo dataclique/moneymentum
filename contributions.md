@@ -9,8 +9,7 @@ vision.
 
 ## Rules
 
-- Start every change from a user story in
-  [User Stories](./user-stories/README.md).
+- Start every change from a user story in [Stories](./stories/README.md).
 - Keep each story pull-request sized.
 - Make acceptance criteria verifiable before merge; do not require a follow-up
   PR just to mark the story done.
@@ -29,11 +28,11 @@ vision.
 story being delivered" both assume there is a user-facing story driving the
 work. Some legitimate changes do not have one: framework migrations, internal
 refactors, build/CI/infra cleanup. The sanctioned path for these is a **dev
-story** -- a story that lives in [user-stories/](./user-stories/README.md)
-alongside user stories (the file index is shared and hex-numbered), listed under
-the "Dev" sub-heading in the index. A dev story plays the same role for
-foundational work that a user story plays for user-facing features: a written
-contract with acceptance criteria.
+story** -- a story that lives in [stories/](./stories/README.md) alongside user
+stories (the file index is shared and hex-numbered), listed under the "Dev"
+sub-heading in the index. A dev story plays the same role for foundational work
+that a user story plays for user-facing features: a written contract with
+acceptance criteria.
 
 A PR submitted under this exception must:
 
@@ -51,7 +50,6 @@ A PR submitted under this exception must:
 ```markdown
 ---
 status: completed | planned
-theme: <theme-slug>
 ---
 
 # Short Story Name
@@ -92,7 +90,7 @@ Example footer for a PR description:
 ### Done Means
 
 - Acceptance criteria: all boxes ticked in
-  user-stories/0x00b.show-bitcoin-beta-for-active-portfolio.md
+  stories/0x00b.show-bitcoin-beta-for-active-portfolio.md
 - Tests: src/beta_handler.rs::beta_handler_returns_active_weighted_beta,
   frontend/src/**tests**/BetaCard.test.tsx
 - Validation: run `cd frontend && bun run dev`, connect testnet wallet with a

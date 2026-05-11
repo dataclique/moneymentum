@@ -2,7 +2,7 @@ export const formatNum = (
   n: number | null | undefined,
   decimals = 2,
 ): string => {
-  if (n === null || n === undefined) return "--"
+  if (n === null || n === undefined) return "—"
   return n.toFixed(decimals)
 }
 

@@ -15,8 +15,8 @@ for the vision and [ROADMAP.md](./ROADMAP.md) for the path.
 AI coding agents working in this repo are expected to:
 
 - Read [ROADMAP.md](./ROADMAP.md) and the relevant story under
-  [user-stories/](./user-stories/README.md) before changing code. The story's
-  acceptance criteria are the contract.
+  [stories/](./stories/README.md) before changing code. The story's acceptance
+  criteria are the contract.
 - Follow [contributions.md](./contributions.md): types-first, failing test,
   implementation, review.
 - Honor the rules in this document for code style, testing, and quality gates.
@@ -214,12 +214,34 @@ setModalState("open");
 const openModal = () => setIsOpen(true);
 ```
 
-### ASCII-only code
+### ASCII for code, Unicode for users
 
-All code, comments, identifiers, and documentation must use ASCII characters
-only. Unicode is allowed exclusively in string literals that produce
-user-visible output (UI text, CLI messages). Use ASCII equivalents in comments:
-`*` not `×`, `->` not `→`, `~` not `≈`, `--` not em-dash, `beta` not `β`.
+The split is by **audience**, not by file type or language.
+
+**ASCII** (the default): code, comments, identifiers, type names, log messages,
+git commit subjects, PR titles, documentation prose, configuration files, and
+developer-console output (`console.log`, `console.table`, `tracing` calls). Use
+ASCII equivalents: `*` not `×`, `->` not `→`, `~` not `≈`, `--` not em-dash,
+`beta` not `β`.
+
+**Unicode** (whenever the audience is a user): UI text rendered in the app, CLI
+messages presented to a user, error messages surfaced in the product,
+tooltip/aria/accessibility strings, and -- importantly -- **the quoted UI
+strings that appear inside documentation**. Story files routinely cite UI text
+verbatim (e.g. `the tooltip reads "Read-only — cannot trade"`); inside those
+quotes, write the exact character the user will see. The prose around the quote
+stays ASCII.
+
+The placeholder rendered when a number is missing is `—` (em-dash), not `--`,
+because the user reads it. The same dash inside a code comment ("see note above
+-- this is documented elsewhere") stays ASCII because no user ever sees it. When
+in doubt, ask: who is the audience for this exact run of characters?
+
+This is a strict, blast-radius-asymmetric rule. A bulk find/replace that
+substitutes `—` with `--` across the repo is **not** a safe refactor -- it
+mangles UI strings and the documentation that quotes them. Audit before running
+such a sweep, and never apply it to `*.tsx`, `*.ts`, or to quoted strings inside
+`stories/`.
 
 ### Self-documenting code
 

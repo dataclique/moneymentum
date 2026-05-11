@@ -357,6 +357,18 @@ verify against an external source, say "I cannot verify this value" rather than
 guessing. Training data cutoffs make historical knowledge unreliable for current
 market prices.
 
+### Scripts
+
+Any script large enough to be pulled out into its own file MUST NOT be bash. Use
+nushell (`.nu`) instead. Bash is acceptable only for short inline blocks (CI
+workflow `run:` steps, npm `scripts`, Makefile recipes); the moment a script
+grows into a standalone file, it must be nushell. Shebang: `#!/usr/bin/env nu`.
+
+Reasons: nushell has structured data, real error handling, typed pipelines, and
+predictable quoting/word-splitting. Bash files accumulate footguns (unquoted
+expansions, `set -e` corner cases, IFS surprises) that nushell avoids by
+construction.
+
 ---
 
 ## Rust Code Style

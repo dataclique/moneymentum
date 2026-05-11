@@ -10,64 +10,25 @@ this document is a directive, not a suggestion.
 This project is an institutional-grade quant toolkit. See [SPEC.md](./SPEC.md)
 for the vision and [ROADMAP.md](./ROADMAP.md) for the path.
 
-### Agent Implementations
+### Agent expectations
 
-This section documents concrete AI agents used in this repository. Each agent
-entry includes a short identifier, its purpose, core capabilities and
-limitations, typical usage patterns, and orchestration boundaries so
-contributors know what the agent owns vs. what human workflows or other
-automation must handle.
+AI coding agents working in this repo are expected to:
 
-#### Cursor Coding Agent (`cursor-coding`)
+- Read [ROADMAP.md](./ROADMAP.md) and the relevant story under
+  [stories/](./stories/README.md) before changing code. The story's acceptance
+  criteria are the contract.
+- Follow [contributions.md](./contributions.md): types-first, failing test,
+  implementation, review.
+- Honor the rules in this document for code style, testing, and quality gates.
+- Edit code, tests, and configs in this repo. Humans own deploys, secrets, and
+  external systems outside git.
+- Never relax quality checks (clippy, eslint, tests) without explicit
+  permission. Ask if a check seems wrong; don't suppress.
+- Don't substitute approaches, libraries, or tools without checking in. Scope is
+  whatever was asked, not whatever you'd prefer.
 
-- **Purpose**: Assist with day-to-day development on the Rust backend and
-  frontend, following this document’s rules.
-- **Capabilities**:
-  - Reads and understands existing Rust, TypeScript, Nix, and documentation.
-  - Proposes and implements code changes inside the repo (including tests),
-    respecting project style and TTDD workflow.
-  - Runs local tooling via the provided commands (e.g., `cargo check`,
-    `bun run lint`, `nix flake check`) when explicitly instructed or when needed
-    to validate changes.
-  - Suggests refactors, test cases, and documentation improvements.
-  - **Limitations**:
-    - Does not manage secrets or production infrastructure directly; only edits
-      code and config checked into git.
-    - Does not bypass or relax quality gates (clippy, linters, tests) unless
-      explicitly authorized in a discussion and annotated in code.
-- **Usage patterns**:
-  - **When to invoke**: Implementing new features (e.g., portfolio beta
-    analytics), updating API endpoints, adjusting frontend behavior, or
-    refactoring existing modules (Rust, TS, Nix).
-  - **Expected inputs**: A clear description of the change, relevant file
-    references (e.g., `@tests/api.rs`, `@rust.nix`), and any constraints
-    (performance, backwards compatibility, rollout considerations).
-  - **Expected outputs**: Updated code, tests, and configuration with a short,
-    high-level summary of what changed and how to run checks.
-  - **Integration points**: Works within local dev flows (`cargo check`,
-    `cargo test -q`, `bun run test`, `nix flake check`) and existing CI. Human
-    contributors remain responsible for reviewing diffs, running deployments,
-    and updating external systems (e.g., Terraform, Hyperliquid keys).
-  - **Handoff boundaries**: The agent owns code and test changes inside this
-    repo; humans own orchestration, approvals, production deploys, and any
-    manual secret/config management outside git.
-  - **Runtime requirements / config keys**: Assumes the Nix-based dev
-    environment is active (`direnv allow`, `nix develop`/`devenv shell`) and
-    that project configuration files (e.g., `example.toml`-derived configs) are
-    present when running or testing the binaries.
-
-**Current state:**
-
-- Frontend at `/` is a working portfolio rebalancer (weight-based positions,
-  cross-account leverage). Used daily.
-- Frontend at `/prototype` is a design reference (like Figma in code).
-- Rust backend provides analytics and API.
-
-**What's being built:**
-
-- Rust backend for analytics and API (polars, cqrs-es, rocket)
-- First priority: portfolio beta calculation (current tool shows net notional,
-  which ignores correlations and makes hedging guesswork)
+For status -- what works today vs. what's planned -- see
+[README.md](./README.md) and [ROADMAP.md](./ROADMAP.md).
 
 **Key architectural decisions:**
 
@@ -135,7 +96,7 @@ sqlx migrate run                   # Applies pending migrations
 ### Environment
 
 - **Nix + Direnv**: `direnv allow` activates the dev environment
-- All dependencies managed through Nix flake - do not use pip install, bun
+- All dependencies managed through Nix flake - do not use bun install, cargo
   install, or similar
 
 ---
@@ -153,6 +114,36 @@ Never add "Generated with [Tool Name]" to commits, PRs, or code.
 ### PR descriptions
 
 Explain WHY the PR exists, not what changed.
+
+### Documentation stays in lockstep with the code
+
+Every PR must leave the documentation in a true state. Before handing off work
+-- requesting review, marking a task done, declaring a story complete -- audit
+the docs that touch what you changed and update anything that has gone stale.
+
+Concrete audit checklist:
+
+- [README.md](./README.md): does it still describe the system accurately (status
+  of components, doc index)?
+- [SPEC.md](./SPEC.md): does the vision or architecture description still match
+  the code?
+- [ROADMAP.md](./ROADMAP.md): are completed items marked completed, are new
+  themes/stories listed, are stale ones removed?
+- [stories/](./stories/README.md): is the story status frontmatter current, is
+  the index entry present, are acceptance criteria reworded to match the shipped
+  behavior?
+- [contributions.md](./contributions.md) and `AGENTS.md`: did a rule change in
+  practice? If so, the rule changes here first.
+- Per-file CLAUDE.md / AGENTS.md (e.g. `frontend/CLAUDE.md`): same audit at the
+  subtree level.
+- Inline doc comments and module-level docstrings on any code you touched.
+
+If a doc has fallen out of sync with reality and is not directly in your
+change's path, either fix it in the same PR (preferred) or open a follow-up
+issue immediately -- do not leave silent drift.
+
+Stale documentation is a bug. Treat it like any other defect: do not ship work
+that introduces it, and do not ignore it when you see it.
 
 ### Quality checks
 
@@ -253,12 +244,34 @@ setModalState("open");
 const openModal = () => setIsOpen(true);
 ```
 
-### ASCII-only code
+### ASCII for code, Unicode for users
 
-All code, comments, identifiers, and documentation must use ASCII characters
-only. Unicode is allowed exclusively in string literals that produce
-user-visible output (UI text, CLI messages). Use ASCII equivalents in comments:
-`*` not `×`, `->` not `→`, `~` not `≈`, `--` not `—`, `beta` not `β`.
+The split is by **audience**, not by file type or language.
+
+**ASCII** (the default): code, comments, identifiers, type names, log messages,
+git commit subjects, PR titles, documentation prose, configuration files, and
+developer-console output (`console.log`, `console.table`, `tracing` calls). Use
+ASCII equivalents: `*` not `×`, `->` not `→`, `~` not `≈`, `--` not em-dash,
+`beta` not `β`.
+
+**Unicode** (whenever the audience is a user): UI text rendered in the app, CLI
+messages presented to a user, error messages surfaced in the product,
+tooltip/aria/accessibility strings, and -- importantly -- **the quoted UI
+strings that appear inside documentation**. Story files routinely cite UI text
+verbatim (e.g. `the tooltip reads "Read-only — cannot trade"`); inside those
+quotes, write the exact character the user will see. The prose around the quote
+stays ASCII.
+
+The placeholder rendered when a number is missing is `—` (em-dash), not `--`,
+because the user reads it. The same dash inside a code comment ("see note above
+-- this is documented elsewhere") stays ASCII because no user ever sees it. When
+in doubt, ask: who is the audience for this exact run of characters?
+
+This is a strict, blast-radius-asymmetric rule. A bulk find/replace that
+substitutes `—` with `--` across the repo is **not** a safe refactor -- it
+mangles UI strings and the documentation that quotes them. Audit before running
+such a sweep, and never apply it to `*.tsx`, `*.ts`, or to quoted strings inside
+`stories/`.
 
 ### Self-documenting code
 

@@ -23,7 +23,7 @@ jobs:
       - uses: DeterminateSystems/magic-nix-cache-action@main
 
       - name: Pre-commit hooks
-        # Pure flake check — runs the same hooks without the heavy devShell
+        # Pure flake check -- runs the same hooks without the heavy devShell
         run: nix run nixpkgs#nushell -- .github/nix-build-quiet.nu .#checks.x86_64-linux.git-hooks
 
   backend:

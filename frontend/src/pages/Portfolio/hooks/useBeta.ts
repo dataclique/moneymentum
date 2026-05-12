@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/solid-query"
 import { createMemo } from "solid-js"
+import Decimal from "decimal.js"
 import type { PortfolioInterface } from "./usePortfolioState"
 import type { ReadonlyBetaPosition } from "./useReadonlyPortfolioState"
 
@@ -18,32 +19,40 @@ const weightsFromPortfolio = (
   const includedReadonlyPositions = readonlyPositions.filter(
     position =>
       position.includeInBeta &&
-      Number.isFinite(position.notionalUsd) &&
-      position.notionalUsd > 0,
+      position.notionalUsd.isFinite() &&
+      position.notionalUsd.isPositive(),
   )
 
-  const totalNotional =
-    exchangePositions.reduce((sum, position) => sum + position.notional, 0) +
-    includedReadonlyPositions.reduce(
-      (sum, position) => sum + position.notionalUsd,
-      0,
+  const totalNotional = exchangePositions
+    .reduce(
+      (sum, position) => sum.plus(position.notional),
+      new Decimal(0),
+    )
+    .plus(
+      includedReadonlyPositions.reduce(
+        (sum, position) => sum.plus(position.notionalUsd),
+        new Decimal(0),
+      ),
     )
 
-  if (totalNotional <= 0) return {}
+  if (!totalNotional.isPositive()) return {}
 
   const signedWeights: Record<string, number> = {}
 
   for (const position of exchangePositions) {
     const ticker = symbolToTicker(position.symbol)
-    const signedWeight =
-      (position.notional / totalNotional) * (position.side === "buy" ? 1 : -1)
+    const signedWeight = new Decimal(position.notional)
+      .div(totalNotional)
+      .mul(position.side === "buy" ? 1 : -1)
+      .toNumber()
     signedWeights[ticker] = (signedWeights[ticker] ?? 0) + signedWeight
   }
 
   for (const position of includedReadonlyPositions) {
-    const signedWeight =
-      (position.notionalUsd / totalNotional) *
-      (position.side === "buy" ? 1 : -1)
+    const signedWeight = position.notionalUsd
+      .div(totalNotional)
+      .mul(position.side === "buy" ? 1 : -1)
+      .toNumber()
     signedWeights[position.symbol] =
       (signedWeights[position.symbol] ?? 0) + signedWeight
   }

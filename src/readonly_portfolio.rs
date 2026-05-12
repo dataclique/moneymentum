@@ -713,7 +713,13 @@ mod tests {
         .unwrap();
 
         assert_eq!(response.holdings.len(), 1);
+        let holding = response.holdings.first().unwrap();
+        assert_eq!(holding.confirmed_btc, dec!(1.0));
+        assert_eq!(holding.pending_btc, dec!(0.00006000));
         assert_eq!(response.total_confirmed_btc, dec!(1.0));
+        let serialized = serde_json::to_value(holding).unwrap();
+        assert_eq!(serialized["confirmed_btc"], "1.00000000");
+        assert_eq!(serialized["pending_btc"], "0.00006000");
         assert!(logs_contain_at(
             Level::DEBUG,
             &["readonly btc balances loaded", "addresses=1"]
@@ -822,6 +828,7 @@ mod tests {
             .iter()
             .find(|position| position.source == ExposureSource::BtcAddress)
             .unwrap();
+        assert_eq!(btc_position.quantity_btc, Some(dec!(1.0)));
         assert_eq!(btc_position.notional_usd, dec!(80000.0));
         assert_eq!(exposure.gross_long_usd, dec!(80000.0));
         assert_eq!(exposure.gross_short_usd, dec!(2000.0));
@@ -853,25 +860,5 @@ mod tests {
         let url = Url::parse("https://api.example.com/info/").unwrap();
         let resolved = resolve_hyperliquid_info_endpoint(Some(&url)).unwrap();
         assert_eq!(resolved.as_str(), "https://api.example.com/info/");
-    }
-
-    #[test]
-    fn sats_to_btc_is_exact_at_satoshi_precision() {
-        assert_eq!(sats_to_btc(1), dec!(0.00000001));
-        assert_eq!(sats_to_btc(123_456_789), dec!(1.23456789));
-    }
-
-    #[test]
-    fn decimal_api_values_serialize_as_strings() {
-        let holding = ReadonlyBtcHolding {
-            address: "1FfmbHfnpaZjKFvyi1okTjJJusN455paPH".to_string(),
-            confirmed_btc: dec!(1.23456789),
-            pending_btc: dec!(0.00000001),
-        };
-
-        let serialized = serde_json::to_value(holding).unwrap();
-
-        assert_eq!(serialized["confirmed_btc"], "1.23456789");
-        assert_eq!(serialized["pending_btc"], "0.00000001");
     }
 }

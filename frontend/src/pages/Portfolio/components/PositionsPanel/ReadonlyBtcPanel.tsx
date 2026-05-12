@@ -78,7 +78,9 @@ export const ReadonlyBtcPanel = (props: ReadonlyBtcPanelProps): JSX.Element => {
                   fallback={<Skeleton class="h-4 w-[108px] justify-self-end" />}
                 >
                   <span class="inline-grid grid-cols-[10ch_auto] items-baseline justify-self-end font-mono text-muted-foreground tabular-nums">
-                    <span class="text-right">{row.quantityBtc.toFixed(6)}</span>
+                    <span class="text-right">
+                      {row.quantityBtc.toFixed(6)}
+                    </span>
                     <span class="pl-1">BTC</span>
                   </span>
                 </Show>

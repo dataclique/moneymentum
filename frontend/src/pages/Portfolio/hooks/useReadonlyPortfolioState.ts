@@ -21,8 +21,8 @@ interface ExposureResponse {
     side: OrderSide
     notional_usd: string
     quantity_btc: string | null
-    is_tradable: boolean
-    include_in_beta: boolean
+    tradability: "tradable" | "read_only"
+    include_in_beta: "included" | "excluded"
   }>
   gross_long_usd: string
   gross_short_usd: string
@@ -36,21 +36,21 @@ interface ApiErrorResponse {
 interface ReadonlyBtcRow {
   address: string
   includeInBeta: boolean
-  quantityBtc: number
-  notionalUsd: number
+  quantityBtc: Decimal
+  notionalUsd: Decimal
 }
 
 interface ReadonlyBetaPosition {
   symbol: string
   side: OrderSide
-  notionalUsd: number
+  notionalUsd: Decimal
   includeInBeta: boolean
 }
 
-const parseApiDecimal = (value: string | null | undefined): number => {
-  if (!value) return 0
+const parseApiDecimal = (value: string | null | undefined): Decimal => {
+  if (!value) return new Decimal(0)
   const parsed = new Decimal(value)
-  return parsed.isFinite() ? parsed.toNumber() : 0
+  return parsed.isFinite() ? parsed : new Decimal(0)
 }
 
 const readEntriesFromStorage = (): ReadonlyBtcEntry[] => {

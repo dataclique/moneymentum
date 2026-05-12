@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach, afterEach } from "vitest"
 import { renderHook, waitFor } from "@solidjs/testing-library"
 import { QueryClient, QueryClientProvider } from "@tanstack/solid-query"
 import type { ParentProps } from "solid-js"
+import Decimal from "decimal.js"
 
 import type { PortfolioInterface } from "./usePortfolioState"
 import { useBeta } from "./useBeta"
@@ -56,7 +57,7 @@ describe("useBeta", () => {
       {
         symbol: "BTC",
         side: "buy",
-        notionalUsd: 100,
+        notionalUsd: new Decimal(100),
         includeInBeta: true,
       },
     ]
@@ -82,7 +83,7 @@ describe("useBeta", () => {
       {
         symbol: "BTC",
         side: "buy",
-        notionalUsd: 100,
+        notionalUsd: new Decimal(100),
         includeInBeta: false,
       },
     ]

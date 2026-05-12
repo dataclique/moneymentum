@@ -1,6 +1,7 @@
 import { createMemo } from "solid-js"
 import { createStore } from "solid-js/store"
 import { useQuery } from "@tanstack/solid-query"
+import Decimal from "decimal.js"
 
 import type { OrderSide } from "@/hooks/useTrading"
 
@@ -12,20 +13,20 @@ interface ReadonlyBtcEntry {
 }
 
 interface ExposureResponse {
-  ubtc_price_usd: number
+  ubtc_price_usd: string
   positions: Array<{
     source: "hyperliquid" | "btc_address"
     source_id: string | null
     symbol: string
     side: OrderSide
-    notional_usd: number
-    quantity_btc: number | null
+    notional_usd: string
+    quantity_btc: string | null
     is_tradable: boolean
     include_in_beta: boolean
   }>
-  gross_long_usd: number
-  gross_short_usd: number
-  net_usd: number
+  gross_long_usd: string
+  gross_short_usd: string
+  net_usd: string
 }
 
 interface ApiErrorResponse {
@@ -44,6 +45,12 @@ interface ReadonlyBetaPosition {
   side: OrderSide
   notionalUsd: number
   includeInBeta: boolean
+}
+
+const parseApiDecimal = (value: string | null | undefined): number => {
+  if (!value) return 0
+  const parsed = new Decimal(value)
+  return parsed.isFinite() ? parsed.toNumber() : 0
 }
 
 const readEntriesFromStorage = (): ReadonlyBtcEntry[] => {
@@ -187,8 +194,8 @@ export const useReadonlyPortfolioState = () => {
       return {
         address: entry.address,
         includeInBeta: entry.includeInBeta,
-        quantityBtc: position?.quantity_btc ?? 0,
-        notionalUsd: position?.notional_usd ?? 0,
+        quantityBtc: parseApiDecimal(position?.quantity_btc),
+        notionalUsd: parseApiDecimal(position?.notional_usd),
       }
     })
   })

@@ -101,7 +101,7 @@ export const RiskPanel = () => {
                   <span class="text-muted-foreground truncate">
                     {stressTest.scenario}
                   </span>
-                  <span class="text-white-500 font-mono">
+                  <span class="text-foreground font-mono">
                     {stressTest.portfolioImpact}
                   </span>
                 </div>

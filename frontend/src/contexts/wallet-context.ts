@@ -30,6 +30,7 @@ export const NETWORK_STORAGE_KEY = "hyperliquid-network"
 export interface StoredWalletMetadata {
   accountAddress: string
   apiWalletAddress: string
+  privateKey?: string
   vaultAddress?: string
 }
 

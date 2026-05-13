@@ -281,7 +281,12 @@ such a sweep, and never apply it to `*.tsx`, `*.ts`, or to quoted strings inside
 ### Descriptive names
 
 - Avoid generic names like `result`, `data`, `value`, `item` - name what it IS
-- No single-letter variables in closures: `|r|` is unreadable, use `|rate|`
+- No single-letter variable names anywhere - not in closures, locals,
+  parameters, destructuring, or function bindings. `|r|` is unreadable; use
+  `|rate|`. `const c = ...` is unreadable; use `const current = ...`. Single
+  letters are only acceptable when the user has explicitly approved them for a
+  specific case (e.g., conventional loop indices in tight numeric code where a
+  longer name would obscure intent).
 - No abbreviations unless universally understood (`id`, `url`, `http`, `msg`,
   `tx` are fine)
 
@@ -364,6 +369,18 @@ When verifying ingested or processed data, follow these checks:
 verify against an external source, say "I cannot verify this value" rather than
 guessing. Training data cutoffs make historical knowledge unreliable for current
 market prices.
+
+### Scripts
+
+Any script large enough to be pulled out into its own file MUST NOT be bash. Use
+nushell (`.nu`) instead. Bash is acceptable only for short inline blocks (CI
+workflow `run:` steps, npm `scripts`, Makefile recipes); the moment a script
+grows into a standalone file, it must be nushell. Shebang: `#!/usr/bin/env nu`.
+
+Reasons: nushell has structured data, real error handling, typed pipelines, and
+predictable quoting/word-splitting. Bash files accumulate footguns (unquoted
+expansions, `set -e` corner cases, IFS surprises) that nushell avoids by
+construction.
 
 ---
 

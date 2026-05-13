@@ -5,8 +5,8 @@ import { cn } from "@/lib/cn"
 
 interface ScreenerPanelProps {
   symbols: string[]
-  isLoading: boolean
-  selectedSymbols: Set<string>
+  fundingIsLoading: boolean
+  activeSymbols: Set<string>
   onAddSymbol: (symbol: string) => void
   fundingRatesByBaseSymbol?: Record<string, number>
 }
@@ -15,16 +15,16 @@ export const ScreenerPanel = (props: ScreenerPanelProps) => {
   const [searchQuery, setSearchQuery] = createSignal("")
 
   const sortedSymbols = createMemo(() => {
-    const query = searchQuery().trim()
+    const query = searchQuery().trim().toLowerCase()
+
     const filtered =
       query === ""
         ? props.symbols
-        : props.symbols.filter(symbol =>
-            symbol.toLowerCase().includes(query.toLowerCase()),
-          )
-    return [...filtered].sort((firstSymbol, secondSymbol) =>
-      firstSymbol.localeCompare(secondSymbol),
-    )
+        : props.symbols.filter(symbol => symbol.toLowerCase().includes(query))
+
+    return filtered
+      .slice()
+      .sort((symbolA, symbolB) => symbolA.localeCompare(symbolB))
   })
 
   return (
@@ -48,76 +48,74 @@ export const ScreenerPanel = (props: ScreenerPanelProps) => {
         </div>
       </div>
       <div class="flex-1 min-h-0 overflow-auto scrollbar-hide">
-        <Show
-          when={!props.isLoading}
-          fallback={
-            <div class="p-2 space-y-1">
-              <For each={Array.from({ length: 12 })}>
-                {() => <Skeleton class="h-5 w-full" />}
-              </For>
-            </div>
-          }
-        >
-          <table class="w-full">
-            <thead class="sticky top-0 bg-muted/90 z-10">
-              <tr class="text-muted-foreground text-[10px]">
-                <th class="px-2 py-1 text-left font-medium">Perp</th>
-                <th class="px-2 py-1 text-right font-medium w-[80px]">
-                  Rate (ann.)
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              <For each={sortedSymbols()}>
-                {symbol => {
-                  const baseSymbol = symbol.includes("/")
-                    ? (symbol.split("/")[0] ?? symbol)
-                    : symbol
-                  const isSelected = props.selectedSymbols.has(symbol)
-                  const fundingRate =
-                    props.fundingRatesByBaseSymbol?.[baseSymbol]
-                  const annualizedFundingRate =
-                    fundingRate === undefined ? null : fundingRate * 24 * 365
-                  const fundingDisplay =
-                    annualizedFundingRate === null
-                      ? "—"
-                      : `${(annualizedFundingRate * 100).toFixed(2)}%`
+        <table class="w-full">
+          <thead class="sticky top-0 bg-muted/90 z-10">
+            <tr class="text-muted-foreground text-[10px]">
+              <th class="px-2 py-1 text-left font-medium">Perp</th>
+              <th class="px-2 py-1 text-right font-medium w-[80px]">
+                Rate (ann.)
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            <For each={sortedSymbols()}>
+              {symbol => {
+                const baseSymbol = symbol.split("/")[0] ?? symbol
+                const isSelected = () => props.activeSymbols.has(symbol)
 
-                  return (
-                    <tr
-                      class={cn(
-                        "border-b border-border/20 cursor-pointer",
-                        isSelected
-                          ? "bg-muted/30 text-muted-foreground cursor-default"
-                          : "hover:bg-muted/30",
-                      )}
-                      tabIndex={0}
-                      aria-disabled={isSelected}
-                      onClick={() => {
-                        if (!isSelected) props.onAddSymbol(symbol)
-                      }}
-                      onKeyDown={(event: KeyboardEvent) => {
-                        if (
-                          !isSelected &&
-                          (event.key === "Enter" || event.key === " ")
-                        ) {
-                          event.preventDefault()
-                          props.onAddSymbol(symbol)
+                // Convert fundings outside with one function.
+                //use same function in PositionsPanelRow
+                const fundingDisplay = createMemo(() => {
+                  const rate = props.fundingRatesByBaseSymbol?.[baseSymbol]
+                  if (rate === undefined) return "—"
+                  return `${(rate * 24 * 365 * 100).toFixed(2)}%`
+                })
+
+                return (
+                  <tr
+                    tabIndex={0}
+                    role="button"
+                    aria-pressed={isSelected()}
+                    onKeyDown={event => {
+                      if (isSelected()) return
+                      if (event.key !== "Enter" && event.key !== " ") return
+                      event.preventDefault()
+                      props.onAddSymbol(symbol)
+                    }}
+                    class={cn(
+                      "border-b border-border/20 cursor-pointer transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-0",
+                      isSelected()
+                        ? "bg-muted/50 opacity-60 cursor-default"
+                        : "hover:bg-muted/30",
+                    )}
+                    onClick={() => {
+                      if (!isSelected()) {
+                        props.onAddSymbol(symbol)
+                      }
+                    }}
+                  >
+                    <td class="px-2 py-1 font-medium">{baseSymbol}</td>
+                    <td class="px-2 py-1 text-right font-mono text-[11px] text-muted-foreground w-[80px]">
+                      <Show
+                        when={!props.fundingIsLoading}
+                        fallback={
+                          <LoadingSkeleton class="inline-block h-3 w-[64px] align-middle" />
                         }
-                      }}
-                    >
-                      <td class="px-2 py-1 font-medium">{baseSymbol}</td>
-                      <td class="px-2 py-1 text-right font-mono text-[11px] text-muted-foreground w-[80px]">
-                        {fundingDisplay}
-                      </td>
-                    </tr>
-                  )
-                }}
-              </For>
-            </tbody>
-          </table>
-        </Show>
+                      >
+                        {fundingDisplay()}
+                      </Show>
+                    </td>
+                  </tr>
+                )
+              }}
+            </For>
+          </tbody>
+        </table>
       </div>
     </div>
   )
 }
+
+const LoadingSkeleton = (props: { class?: string }) => (
+  <Skeleton class={props.class ?? "h-3 w-[64px]"} />
+)

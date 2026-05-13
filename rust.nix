@@ -85,8 +85,10 @@ let
 
     RUSTFLAGS = "-D warnings";
 
-    # Compile-time env for sqlx. Tests are skipped in nix builds.
+    # Compile/test env for sqlx and reqwest in the nix sandbox.
     DATABASE_URL = "sqlite::memory:";
+    SSL_CERT_FILE = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
+    NIX_SSL_CERT_FILE = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
   };
 
   cargoArtifacts = craneLib.buildDepsOnly (commonArgs // { src = depsSrc; });

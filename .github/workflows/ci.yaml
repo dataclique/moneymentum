@@ -24,7 +24,7 @@ jobs:
 
       - name: Pre-commit hooks
         # Pure flake check -- runs the same hooks without the heavy devShell
-        run: nix build .#checks.x86_64-linux.git-hooks
+        run: nix run nixpkgs#nushell -- .github/nix-build-quiet.nu .#checks.x86_64-linux.git-hooks
 
   backend:
     runs-on: ubuntu-latest
@@ -40,10 +40,10 @@ jobs:
       - uses: DeterminateSystems/magic-nix-cache-action@main
 
       - name: Test
-        run: nix build .#moneymentum-test
+        run: nix run nixpkgs#nushell -- .github/nix-build-quiet.nu .#moneymentum-test
 
       - name: Clippy
-        run: nix build .#moneymentum-clippy
+        run: nix run nixpkgs#nushell -- .github/nix-build-quiet.nu .#moneymentum-clippy
 
   frontend:
     runs-on: ubuntu-latest
@@ -59,7 +59,7 @@ jobs:
       - uses: DeterminateSystems/magic-nix-cache-action@main
 
       - name: Lint
-        run: nix build .#frontend-lint
+        run: nix run nixpkgs#nushell -- .github/nix-build-quiet.nu .#frontend-lint
 
       - name: Test
-        run: nix build .#frontend-test
+        run: nix run nixpkgs#nushell -- .github/nix-build-quiet.nu .#frontend-test

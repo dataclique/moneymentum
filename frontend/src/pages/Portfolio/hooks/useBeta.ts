@@ -1,47 +1,54 @@
 import { useQuery } from "@tanstack/solid-query"
-import { createEffect, on } from "solid-js"
-import type { TokenAllocation } from "./usePortfolioState"
+import { createMemo } from "solid-js"
+import type { PortfolioInterface } from "./usePortfolioState"
+import type { ReadonlyBetaPosition } from "./useReadonlyPortfolioState"
 
 const BETA_BENCHMARK = "BTC"
 
-/** Base ticker for beta API: "BTC/USDC:USDC" -> "BTC". Backend ohlcv_1d uses base tickers. */
 const symbolToTicker = (symbol: string): string =>
   symbol.includes("/") ? (symbol.split("/")[0] ?? symbol) : symbol
 
-const weightsFromTokens = (
-  tokens: TokenAllocation[],
+const weightsFromPortfolio = (
+  portfolio: Record<string, PortfolioInterface | undefined>,
+  readonlyPositions: ReadonlyBetaPosition[],
 ): Record<string, number> => {
-  const signedWeights = tokens.reduce<Record<string, number>>(
-    (accumulatedWeights, token) => {
-      const ticker = symbolToTicker(token.symbol)
-      const signedWeight =
-        (token.percentage / 100) * (token.side === "buy" ? 1 : -1)
-      accumulatedWeights[ticker] =
-        (accumulatedWeights[ticker] ?? 0) + signedWeight
-      return accumulatedWeights
-    },
-    {},
+  const exchangePositions = Object.values(portfolio).filter(
+    (position): position is PortfolioInterface => position !== undefined,
+  )
+  const includedReadonlyPositions = readonlyPositions.filter(
+    position =>
+      position.includeInBeta &&
+      Number.isFinite(position.notionalUsd) &&
+      position.notionalUsd > 0,
   )
 
-  const absoluteWeightSum = Object.values(signedWeights).reduce(
-    (totalAbsoluteWeight, weight) => totalAbsoluteWeight + Math.abs(weight),
-    0,
-  )
+  const totalNotional =
+    exchangePositions.reduce((sum, position) => sum + position.notional, 0) +
+    includedReadonlyPositions.reduce(
+      (sum, position) => sum + position.notionalUsd,
+      0,
+    )
 
-  if (absoluteWeightSum <= 0) return signedWeights
+  if (totalNotional <= 0) return {}
 
-  return Object.entries(signedWeights).reduce<Record<string, number>>(
-    (normalizedWeights, [ticker, weight]) => {
-      normalizedWeights[ticker] = weight / absoluteWeightSum
-      return normalizedWeights
-    },
-    {},
-  )
-}
+  const signedWeights: Record<string, number> = {}
 
-const weightsQueryKey = (weights: Record<string, number>): string => {
-  const entries = Object.entries(weights).sort(([a], [b]) => a.localeCompare(b))
-  return JSON.stringify(entries)
+  for (const position of exchangePositions) {
+    const ticker = symbolToTicker(position.symbol)
+    const signedWeight =
+      (position.notional / totalNotional) * (position.side === "buy" ? 1 : -1)
+    signedWeights[ticker] = (signedWeights[ticker] ?? 0) + signedWeight
+  }
+
+  for (const position of includedReadonlyPositions) {
+    const signedWeight =
+      (position.notionalUsd / totalNotional) *
+      (position.side === "buy" ? 1 : -1)
+    signedWeights[position.symbol] =
+      (signedWeights[position.symbol] ?? 0) + signedWeight
+  }
+
+  return signedWeights
 }
 
 interface BetaResponse {
@@ -55,8 +62,6 @@ const fetchBeta = async (
 ): Promise<BetaResponse> => {
   const res = await fetch(`${import.meta.env.BASE_URL}api/beta`, {
     method: "POST",
-    // Abort the request if the backend is unresponsive for too long, or if
-    // TanStack Query cancels it (e.g. query key changed while in-flight).
     signal: signal
       ? AbortSignal.any([signal, AbortSignal.timeout(10_000)])
       : AbortSignal.timeout(10_000),
@@ -67,31 +72,26 @@ const fetchBeta = async (
   return res.json() as Promise<BetaResponse>
 }
 
-export const useBeta = (tokens: () => TokenAllocation[]) => {
-  const weights = () => weightsFromTokens(tokens())
-  const weightsKey = () => weightsQueryKey(weights())
-  const hasTokens = () =>
-    tokens().length > 0 && Object.keys(weights()).length > 0
-
-  const query = useQuery(() => ({
-    queryKey: ["beta", weightsKey(), BETA_BENCHMARK] as const,
-    queryFn: ctx => fetchBeta(weights(), BETA_BENCHMARK, ctx.signal),
-    enabled: hasTokens(),
-    // Retry a couple of times on transient failures.
-    retry: 2,
-  }))
-
-  // Log failures to aid debugging in dev without changing UI behavior.
-  createEffect(
-    on(
-      () => query.error,
-      error => {
-        if (error && import.meta.env.DEV) {
-          console.error("Failed to fetch portfolio beta", error)
-        }
-      },
-    ),
+export const useBeta = (
+  portfolio: () => Record<string, PortfolioInterface | undefined>,
+  readonlyPositions: () => ReadonlyBetaPosition[],
+) => {
+  const weights = createMemo(() =>
+    weightsFromPortfolio(portfolio(), readonlyPositions()),
   )
+
+  const query = useQuery(() => {
+    const currentWeights = weights()
+    const hasData = Object.keys(currentWeights).length > 0
+
+    return {
+      queryKey: ["beta", currentWeights, BETA_BENCHMARK] as const,
+      queryFn: (ctx: { signal: AbortSignal }) =>
+        fetchBeta(currentWeights, BETA_BENCHMARK, ctx.signal),
+      enabled: hasData,
+      retry: 2,
+    }
+  })
 
   return {
     get beta() {

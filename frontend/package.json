@@ -17,6 +17,10 @@
   },
   "dependencies": {
     "@kobalte/core": "^0.13.9",
+    "@reown/appkit": "^1.8.19",
+    "@reown/appkit-adapter-solana": "^1.8.19",
+    "@solana/spl-token": "^0.4.14",
+    "@solana/web3.js": "^1.98.4",
     "@solidjs/router": "^0.15.3",
     "@tanstack/solid-query": "^5.90.9",
     "@tanstack/solid-table": "^8.21.3",
@@ -47,6 +51,7 @@
     "eslint-plugin-solid": "^0.14.5",
     "globals": "^16.0.0",
     "happy-dom": "^20.0.10",
+    "node-stdlib-browser": "^1.3.1",
     "tailwindcss": "^4.1.8",
     "tw-animate-css": "^1.3.5",
     "typescript": "~5.8.3",

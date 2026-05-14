@@ -12,6 +12,7 @@ import "./index.css"
 const PortfolioPage = lazy(() => import("./pages/Portfolio"))
 const MainPage = lazy(() => import("./pages/MainPage"))
 const PrototypePage = lazy(() => import("./pages/Prototype"))
+const ReownAppKitTestPage = lazy(() => import("./pages/ReownAppKitTest"))
 const TokenPage = lazy(() => import("./pages/TokenPage"))
 
 const NotFound = () => <div>Page not found</div>
@@ -62,6 +63,7 @@ render(
               </Route>
               <Route path="/" component={AppLayout}>
                 <Route path="/" component={PortfolioPage} />
+                <Route path="/appkit-test" component={ReownAppKitTestPage} />
                 <Route path="/dashboard" component={MainPage} />
                 <Route path="/token/:ticker" component={TokenPage} />
               </Route>

@@ -3,6 +3,8 @@ use std::str::FromStr;
 use bitcoin::{Address, Network};
 use futures::stream::{self, StreamExt, TryStreamExt};
 use reqwest::Url;
+use rust_decimal::Decimal;
+use rust_decimal_macros::dec;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 use thiserror::Error;
@@ -11,7 +13,7 @@ use tracing::{debug, info, warn};
 const DEFAULT_MEMPOOL_BASE_URL: &str = "https://mempool.space/api";
 const DEFAULT_BLOCKCHAIN_INFO_BASE_URL: &str = "https://blockchain.info";
 const DEFAULT_HYPERLIQUID_INFO_BASE_URL: &str = "https://api.hyperliquid.xyz";
-const SATOSHIS_PER_BTC: f64 = 100_000_000.0;
+const SATOSHIS_PER_BTC: Decimal = Decimal::from_parts(100_000_000, 0, 0, false, 0);
 const ADDRESS_FETCH_CONCURRENCY: usize = 8;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
@@ -109,7 +111,7 @@ where
 pub(crate) struct HyperliquidPositionInput {
     pub(crate) symbol: String,
     pub(crate) side: Side,
-    pub(crate) notional_usd: f64,
+    pub(crate) notional_usd: Decimal,
 }
 
 #[derive(Debug, Deserialize)]
@@ -128,14 +130,14 @@ pub(crate) enum Side {
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub(crate) struct ReadonlyBtcHolding {
     pub(crate) address: String,
-    pub(crate) confirmed_btc: f64,
-    pub(crate) pending_btc: f64,
+    pub(crate) confirmed_btc: Decimal,
+    pub(crate) pending_btc: Decimal,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub(crate) struct ReadonlyBtcBalancesResponse {
     pub(crate) holdings: Vec<ReadonlyBtcHolding>,
-    pub(crate) total_confirmed_btc: f64,
+    pub(crate) total_confirmed_btc: Decimal,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -144,8 +146,8 @@ pub(crate) struct ExposurePosition {
     pub(crate) source_id: Option<String>,
     pub(crate) symbol: String,
     pub(crate) side: Side,
-    pub(crate) notional_usd: f64,
-    pub(crate) quantity_btc: Option<f64>,
+    pub(crate) notional_usd: Decimal,
+    pub(crate) quantity_btc: Option<Decimal>,
     pub(crate) tradability: Tradability,
     pub(crate) include_in_beta: BetaInclusion,
 }
@@ -159,11 +161,11 @@ pub(crate) enum ExposureSource {
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub(crate) struct PortfolioExposureResponse {
-    pub(crate) ubtc_price_usd: f64,
+    pub(crate) ubtc_price_usd: Decimal,
     pub(crate) positions: Vec<ExposurePosition>,
-    pub(crate) gross_long_usd: f64,
-    pub(crate) gross_short_usd: f64,
-    pub(crate) net_usd: f64,
+    pub(crate) gross_long_usd: Decimal,
+    pub(crate) gross_short_usd: Decimal,
+    pub(crate) net_usd: Decimal,
 }
 
 #[derive(Debug, Error)]
@@ -244,7 +246,7 @@ pub(crate) async fn load_readonly_btc_balances(
     let total_confirmed_btc = holdings
         .iter()
         .map(|holding| holding.confirmed_btc)
-        .sum::<f64>();
+        .sum::<Decimal>();
     debug!(
         addresses = holdings.len(),
         total_confirmed_btc, "readonly btc balances loaded"
@@ -266,7 +268,7 @@ pub(crate) async fn load_portfolio_exposure(
     let mut merged_positions = validate_hyperliquid_positions(&request.hyperliquid_positions)?;
 
     let ubtc_price_usd = if request.readonly_btc_entries.is_empty() {
-        0.0
+        Decimal::ZERO
     } else {
         let readonly_balance_request = ReadonlyBtcBalancesRequest {
             addresses: request
@@ -311,12 +313,12 @@ pub(crate) async fn load_portfolio_exposure(
         .iter()
         .filter(|position| position.side == Side::Buy)
         .map(|position| position.notional_usd)
-        .sum::<f64>();
+        .sum::<Decimal>();
     let gross_short_usd = merged_positions
         .iter()
         .filter(|position| position.side == Side::Sell)
         .map(|position| position.notional_usd)
-        .sum::<f64>();
+        .sum::<Decimal>();
     let net_usd = gross_long_usd - gross_short_usd;
 
     info!(
@@ -339,7 +341,7 @@ fn validate_hyperliquid_positions(
     positions
         .iter()
         .map(|position| {
-            if !position.notional_usd.is_finite() || position.notional_usd < 0.0 {
+            if position.notional_usd < Decimal::ZERO {
                 return Err(ReadonlyPortfolioError::InvalidNotional {
                     symbol: position.symbol.clone(),
                 });
@@ -466,7 +468,7 @@ async fn load_blockchain_info_holding(
     Ok(ReadonlyBtcHolding {
         address: btc_address.as_str().to_string(),
         confirmed_btc: sats_to_btc(final_balance_sats),
-        pending_btc: 0.0,
+        pending_btc: Decimal::ZERO,
     })
 }
 
@@ -507,19 +509,14 @@ fn parse_i128_field(value: &Value, field_name: &str) -> Option<i128> {
     }
 }
 
-fn sats_to_btc(satoshis: i128) -> f64 {
-    // f64 here is a known financial-math wart tracked in #220 — the whole
-    // readonly_portfolio pipeline needs to move off floats. Allow the cast
-    // until that refactor lands.
-    #[allow(clippy::cast_precision_loss)]
-    let satoshis_as_f64 = satoshis as f64;
-    satoshis_as_f64 / SATOSHIS_PER_BTC
+fn sats_to_btc(satoshis: i128) -> Decimal {
+    Decimal::from(satoshis) / SATOSHIS_PER_BTC
 }
 
 async fn fetch_ubtc_price_usd(
     http_client: &reqwest::Client,
     hyperliquid_base_url: Option<&Url>,
-) -> Result<f64, ReadonlyPortfolioError> {
+) -> Result<Decimal, ReadonlyPortfolioError> {
     let endpoint = resolve_hyperliquid_info_endpoint(hyperliquid_base_url)?;
     let response_text = http_client
         .post(endpoint)
@@ -592,15 +589,15 @@ fn resolve_hyperliquid_info_endpoint(
 
 fn parse_ubtc_price_from_context(
     context: &serde_json::Value,
-) -> Result<f64, ReadonlyPortfolioError> {
+) -> Result<Decimal, ReadonlyPortfolioError> {
     let candidate_keys = ["midPx", "markPx", "oraclePx"];
 
     for candidate_key in candidate_keys {
         let maybe_price = context
             .get(candidate_key)
             .and_then(serde_json::Value::as_str)
-            .and_then(|value| value.parse::<f64>().ok());
-        if let Some(parsed_price) = maybe_price.filter(|price| price.is_finite() && *price > 0.0) {
+            .and_then(|value| Decimal::from_str(value).ok());
+        if let Some(parsed_price) = maybe_price.filter(|price| *price > Decimal::ZERO) {
             return Ok(parsed_price);
         }
     }
@@ -687,7 +684,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(response.holdings.len(), 1);
-        assert!((response.total_confirmed_btc - 1.0).abs() < 1e-9);
+        assert_eq!(response.total_confirmed_btc, Decimal::ONE);
         assert!(logs_contain_at(
             Level::DEBUG,
             &["readonly btc balances loaded", "addresses=1"]
@@ -796,7 +793,7 @@ mod tests {
             .iter()
             .find(|position| position.source == ExposureSource::BtcAddress)
             .unwrap();
-        assert!((btc_position.notional_usd - 80_000.0).abs() < 1e-9);
+        assert_eq!(btc_position.notional_usd, dec!(80_000));
         assert_eq!(btc_position.tradability, Tradability::ReadOnly);
         assert_eq!(btc_position.include_in_beta, BetaInclusion::Included);
         assert!(logs_contain_at(

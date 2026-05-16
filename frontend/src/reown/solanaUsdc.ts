@@ -41,7 +41,7 @@ export const reownNetworkForSolanaCluster = (cluster: SolanaCluster) =>
  * Single shared AppKit instance for the demo (and for copy-paste reuse).
  * Pass the returned modal into RPC / send helpers.
  */
-export const getOrCreateSolanaAppKitDemo = (): AppKit | null => {
+export const getOrCreateSolanaAppKit = (): AppKit | null => {
   if (appKitSingleton) {
     return appKitSingleton
   }

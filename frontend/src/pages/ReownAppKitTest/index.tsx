@@ -2,7 +2,7 @@ import { createSignal, onCleanup, onMount, Show } from "solid-js"
 
 import { Switch } from "@/components/ui/switch"
 import {
-  getOrCreateSolanaAppKitDemo,
+  getOrCreateSolanaAppKit,
   readReownProjectId,
   readSolanaAddressFromAccountState,
   readSolanaWalletConnectedFromAccountState,
@@ -48,7 +48,7 @@ const ReownAppKitTestPage = () => {
   )
 
   const openSolanaConnect = async () => {
-    const modal = getOrCreateSolanaAppKitDemo()
+    const modal = getOrCreateSolanaAppKit()
     if (!modal) {
       setStatusMessage("Set VITE_REOWN_PROJECT_ID before opening AppKit.")
       return
@@ -58,7 +58,7 @@ const ReownAppKitTestPage = () => {
   }
 
   const disconnectSolanaWallet = async () => {
-    const modal = getOrCreateSolanaAppKitDemo()
+    const modal = getOrCreateSolanaAppKit()
     if (!modal) {
       return
     }
@@ -70,7 +70,7 @@ const ReownAppKitTestPage = () => {
   }
 
   const applySolanaCluster = async (cluster: SolanaCluster): Promise<void> => {
-    const modal = getOrCreateSolanaAppKitDemo()
+    const modal = getOrCreateSolanaAppKit()
     if (!modal) {
       return
     }
@@ -99,7 +99,7 @@ const ReownAppKitTestPage = () => {
   }
 
   onMount(() => {
-    const modal = getOrCreateSolanaAppKitDemo()
+    const modal = getOrCreateSolanaAppKit()
     if (!modal) {
       setModalReady(false)
       return
@@ -130,7 +130,7 @@ const ReownAppKitTestPage = () => {
   })
 
   const handleSendUsdc = async () => {
-    const modal = getOrCreateSolanaAppKitDemo()
+    const modal = getOrCreateSolanaAppKit()
     const projectId = readReownProjectId()
     const sender = publicAddress()
     const recipient = recipientAddressInput()

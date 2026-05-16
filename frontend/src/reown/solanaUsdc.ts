@@ -4,7 +4,7 @@
  */
 
 import { createAppKit, type AppKit } from "@reown/appkit"
-import { solana, solanaDevnet, solanaTestnet } from "@reown/appkit/networks"
+import { solana, solanaDevnet } from "@reown/appkit/networks"
 import { SolanaAdapter } from "@reown/appkit-adapter-solana"
 import type { Provider } from "@reown/appkit-utils/solana"
 import { SolHelpersUtil } from "@reown/appkit-utils/solana"
@@ -53,7 +53,7 @@ export const getOrCreateSolanaAppKitDemo = (): AppKit | null => {
 
   appKitSingleton = createAppKit({
     adapters: [new SolanaAdapter()],
-    networks: [solana, solanaTestnet, solanaDevnet],
+    networks: [solana, solanaDevnet],
     projectId,
     metadata: {
       name: "Moneymentum",

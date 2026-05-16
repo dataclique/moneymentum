@@ -76,22 +76,25 @@ export const usdcMintAddressForCluster = (cluster: SolanaCluster): string =>
   cluster === "devnet" ? USDC_DEVNET_MINT : USDC_MAINNET_MINT
 
 /**
- * RPC Connection for the active Solana network selected in AppKit.
- * Caller must pass the same `projectId` as in `readReownProjectId()`.
+ * RPC Connection for the given cluster. Resolves RPC from the same Reown network
+ * object as mint selection (`reownNetworkForSolanaCluster`), not from whatever
+ * `getCaipNetwork` happens to return if UI and AppKit are out of sync.
  */
 export const buildSolanaRpcConnection = (
   modal: AppKit,
   projectId: string,
+  cluster: SolanaCluster,
 ): Connection | null => {
-  const chain = modal.getCaipNetwork("solana")
-  if (!chain) {
-    return null
+  const chain = reownNetworkForSolanaCluster(cluster)
+  const active = modal.getCaipNetwork("solana")
+
+  if (active && active.id !== chain.id) {
+    throw new Error(
+      "AppKit Solana network does not match the selected cluster. Switch cluster and try again.",
+    )
   }
 
   const rawRpc = chain.rpcUrls.default.http[0]
-  if (!rawRpc || rawRpc.length === 0) {
-    return null
-  }
 
   let rpcUrl: string
   try {
@@ -201,7 +204,7 @@ export const sendUsdcTransfer = async (params: {
 
   const mintAddress = usdcMintAddressForCluster(params.cluster)
 
-  const connection = buildSolanaRpcConnection(modal, projectId)
+  const connection = buildSolanaRpcConnection(modal, projectId, params.cluster)
   if (!connection) {
     throw new Error("Solana RPC URL unavailable for this network.")
   }

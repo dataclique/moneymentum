@@ -10,6 +10,7 @@ const symbolToTicker = (symbol: string): string =>
 
 const weightsFromPortfolio = (
   portfolio: Record<string, PortfolioInterface | undefined>,
+  portfolioTotalNotional: number,
   readonlyPositions: ReadonlyBetaPosition[],
 ): Record<string, number> => {
   const exchangePositions = Object.values(portfolio).filter(
@@ -22,12 +23,11 @@ const weightsFromPortfolio = (
       position.notionalUsd > 0,
   )
 
-  const totalNotional =
-    exchangePositions.reduce((sum, position) => sum + position.notional, 0) +
-    includedReadonlyPositions.reduce(
-      (sum, position) => sum + position.notionalUsd,
-      0,
-    )
+  const readonlyTotalNotional = includedReadonlyPositions.reduce(
+    (notionalSum, position) => notionalSum + position.notionalUsd,
+    0,
+  )
+  const totalNotional = portfolioTotalNotional + readonlyTotalNotional
 
   if (totalNotional <= 0) return {}
 
@@ -50,6 +50,14 @@ const weightsFromPortfolio = (
 
   return signedWeights
 }
+
+const queryKeyFromWeights = (weights: Record<string, number>): string =>
+  Object.entries(weights)
+    .sort(([leftTicker], [rightTicker]) =>
+      leftTicker.localeCompare(rightTicker),
+    )
+    .map(([ticker, weight]) => `${ticker}:${weight}`)
+    .join("|")
 
 interface BetaResponse {
   beta: number | null
@@ -74,18 +82,25 @@ const fetchBeta = async (
 
 export const useBeta = (
   portfolio: () => Record<string, PortfolioInterface | undefined>,
+  portfolioTotalNotional: () => number,
   readonlyPositions: () => ReadonlyBetaPosition[],
 ) => {
   const weights = createMemo(() =>
-    weightsFromPortfolio(portfolio(), readonlyPositions()),
+    weightsFromPortfolio(
+      portfolio(),
+      portfolioTotalNotional(),
+      readonlyPositions(),
+    ),
   )
+  const weightsKey = createMemo(() => queryKeyFromWeights(weights()))
 
   const query = useQuery(() => {
     const currentWeights = weights()
+    const currentWeightsKey = weightsKey()
     const hasData = Object.keys(currentWeights).length > 0
 
     return {
-      queryKey: ["beta", currentWeights, BETA_BENCHMARK] as const,
+      queryKey: ["beta", BETA_BENCHMARK, currentWeightsKey] as const,
       queryFn: (ctx: { signal: AbortSignal }) =>
         fetchBeta(currentWeights, BETA_BENCHMARK, ctx.signal),
       enabled: hasData,

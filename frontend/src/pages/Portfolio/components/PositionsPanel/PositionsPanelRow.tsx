@@ -26,7 +26,8 @@ export const PositionsPanelRow = (props: {
   symbol: string
   position: () => PortfolioInterface
   status: "new" | "unchanged" | "changed" | "closing"
-  maxLeverage: number
+  maxLeverage?: number
+  leverageLimitsIsLoading: boolean
   isPrecise: boolean
   fundingIsLoading: boolean
   onRemove: (symbol: string) => void
@@ -125,6 +126,7 @@ export const PositionsPanelRow = (props: {
             symbol={props.position().symbol}
             leverage={props.position().leverage}
             maxLeverage={props.maxLeverage}
+            leverageLimitsIsLoading={props.leverageLimitsIsLoading}
             disabled={isClosing()}
             onLeverageChange={props.onLeverageChange}
           />

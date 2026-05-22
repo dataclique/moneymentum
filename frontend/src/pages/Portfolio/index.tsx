@@ -68,6 +68,7 @@ const PortfolioPage = () => {
 
   const betaResult = useBeta(
     () => portfolio.targetPortfolio,
+    () => portfolio.targetTotalNotional,
     () => portfolio.readonlyBetaPositions,
   )
 

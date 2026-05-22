@@ -185,7 +185,7 @@
               };
 
               # DATABASE_URL is read by sqlx for compile-time query verification
-              # and by migration tooling. The runtime config uses db_path field.
+              # and by migration tooling. Runtime config uses database_url.
               # PATH so git-hooks:install finds git (common macOS paths; profile has git too).
               env = env // {
                 DATABASE_URL = "sqlite:./moneymentum.db?mode=rwc";

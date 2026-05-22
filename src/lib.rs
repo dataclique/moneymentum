@@ -349,8 +349,9 @@ pub async fn rocket(
     if apalis_tables_exist == 0 {
         SqliteStorage::setup(&pool).await?;
     }
-    sqlx::migrate!().set_ignore_missing(true).run(&pool).await?;
-    debug!("migrations applied");
+    let mut migrations = sqlx::migrate!("./migrations");
+    migrations.set_ignore_missing(true).run(&pool).await?;
+    debug!(count = migrations.iter().count(), "migrations applied");
 
     let job_queue = SqliteStorage::<IngestionJob>::new(pool.clone());
     ingestion::recover_abandoned_runs(&pool).await?;

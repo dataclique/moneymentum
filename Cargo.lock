@@ -1101,19 +1101,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cqrs-es"
-version = "0.4.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5da025e9082adb74e8bb2b7e93feed51c711aa6c384cc18ad03b463ed776db64"
-dependencies = [
- "async-trait",
- "serde",
- "serde_json",
- "thiserror 1.0.69",
- "tokio",
-]
-
-[[package]]
 name = "crc"
 version = "3.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3246,7 +3233,6 @@ dependencies = [
  "bitcoin",
  "chrono",
  "clap",
- "cqrs-es",
  "futures",
  "hyperliquid_rust_sdk",
  "polars",
@@ -3257,7 +3243,6 @@ dependencies = [
  "rust_decimal_macros",
  "serde",
  "serde_json",
- "sqlite-es",
  "sqlx",
  "tempfile",
  "thiserror 2.0.18",
@@ -5864,22 +5849,6 @@ checksum = "d91ed6c858b01f942cd56b37a94b3e0a1798290327d1236e4d9cf4eaca44d29d"
 dependencies = [
  "base64ct",
  "der",
-]
-
-[[package]]
-name = "sqlite-es"
-version = "0.1.0"
-source = "git+https://github.com/ST0x-Technology/st0x.issuance#70534208ed842e31f784c4e673eb26e65f7b47fc"
-dependencies = [
- "async-trait",
- "chrono",
- "cqrs-es",
- "serde",
- "serde_json",
- "sqlx",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
 ]
 
 [[package]]

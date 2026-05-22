@@ -454,25 +454,21 @@ impl ApiKey {
 into proper types immediately at the boundary. Never pass raw strings through
 the system.
 
-**Aggregate IDs must be newtypes.** Never use raw `String` or `&str` for
-aggregate identifiers. cqrs-es uses stringly-typed IDs, but we wrap them:
+**Persistent IDs must be newtypes.** Never use raw `String` or `&str` for domain
+identifiers that are persisted or passed between async boundaries:
 
 ```rust
-// Bad: easy to mix up different aggregate IDs (banned by clippy)
-cqrs.execute("perp:hyperliquid", command).await;
-cqrs.execute("user:123", command).await;  // Oops, wrong ID type
+// Bad: easy to mix up different persistent IDs
+enqueue_ingestion("ingestion-123").await;
+load_portfolio("ingestion-123").await;  // Oops, wrong ID type
 
 // Good: type system prevents mixing IDs
-struct IngestionId;
-impl AggregateId<Ingestion> for IngestionId {
-    type Args = ();
-    fn aggregate_id((): ()) -> String { "perp:hyperliquid".into() }
-}
-// Use typed execute: cqrs.execute::<IngestionId>((), command)
+struct IngestionRunId(String);
+struct PortfolioId(String);
 ```
 
-Use `wire::AggregateId` trait and `wire::Cqrs::execute` for type-safe ID
-construction. The stringly-typed version is banned via clippy.
+If a future framework exposes stringly-typed IDs, wrap it at the boundary and
+keep raw strings out of application call sites.
 
 ### Avoid deep nesting
 

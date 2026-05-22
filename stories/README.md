@@ -52,4 +52,4 @@ from Hyperliquid-only positions to read-only wallets and protective hedges.
 
 ## Dev
 
-- [Switch Event Sourcing To A Better Wrapper](./0x023.switch-event-sourcing-wrapper.md)
+- [Replace Ingestion Event Sourcing With Run Ledger](./0x023.switch-event-sourcing-wrapper.md)

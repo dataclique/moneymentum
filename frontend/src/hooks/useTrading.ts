@@ -217,18 +217,14 @@ export const useFullHyperliquidRefresh = () => {
 
 export const useSwitchNetwork = () => {
   const { setNetworkMode } = useWallet()
+  const queryClient = useQueryClient()
 
   return useMutation(() => ({
-    mutationFn: (network: "testnet" | "mainnet") => {
+    mutationFn: async (network: "testnet" | "mainnet") => {
+      await queryClient.cancelQueries({ queryKey: ["hyperliquid"] })
+      queryClient.removeQueries({ queryKey: ["hyperliquid"] })
       setNetworkMode(network)
-      return Promise.resolve(network)
-    },
-    onSuccess: () => {
-      // Force a full UI reload so all state and local storage-backed
-      // portfolio snapshots are re-initialized for the new network.
-      if (typeof window !== "undefined") {
-        window.location.reload()
-      }
+      return network
     },
   }))
 }

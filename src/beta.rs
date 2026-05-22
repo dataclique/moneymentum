@@ -3,10 +3,11 @@
 //! Reads `ohlcv_1d.csv` from a data directory and computes per-ticker log returns:
 //! `log_return = ln(close_t / close_{t-1})` within each ticker's time series.
 
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 
-/// Number of most recent daily candles used to compute log returns for beta.
-pub const LOG_RETURNS_LOOKBACK_CANDLES: usize = 101;
+/// Daily candles needed for a 365-calendar-day log-return window.
+pub const LOG_RETURNS_LOOKBACK_CANDLES: usize = 366;
 
 use polars::datatypes::AnyValue;
 use polars::prelude::{
@@ -18,6 +19,13 @@ use tracing::{info, instrument};
 
 use crate::dataframe::DataFrameError;
 use crate::timeframe::Timeframe;
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct PortfolioBetaReport {
+    pub beta: Option<f64>,
+    pub excluded_tickers: Vec<String>,
+    pub effective_weights: BTreeMap<String, f64>,
+}
 
 #[derive(Debug, Error)]
 pub enum ReturnsError {
@@ -68,14 +76,12 @@ pub fn compute_beta_from_log_returns(
     Ok(Some(beta))
 }
 
-/// Loads last `LOG_RETURNS_LOOKBACK_CANDLES` daily candles for tickers in `weights` and `benchmark_ticker`,
-/// computes log returns, then β = Cov(portfolio, benchmark) / Var(benchmark).
 #[instrument(skip_all, fields(data_dir = %data_dir.display()))]
-pub async fn compute_portfolio_beta(
+pub async fn compute_portfolio_beta_report(
     data_dir: &Path,
     weights: &[(String, f64)],
     benchmark_ticker: &str,
-) -> Result<Option<f64>, ReturnsError> {
+) -> Result<PortfolioBetaReport, ReturnsError> {
     let path = daily_candles_path(data_dir);
     let df = crate::dataframe::read_csv(path.clone()).await?;
     let Some(df) = df else {
@@ -88,7 +94,7 @@ pub async fn compute_portfolio_beta(
         load_log_returns_last_n_candles(&df, &weights_clone, &benchmark_ticker_clone, lookback)
     })
     .await??;
-    compute_beta_from_log_returns(&log_returns_df, weights, benchmark_ticker)
+    compute_beta_report_from_log_returns(&log_returns_df, weights, benchmark_ticker)
 }
 
 /// Path of the daily candles file relative to the data directory.
@@ -176,8 +182,6 @@ fn build_portfolio_and_benchmark_df(
     weights: &[(String, f64)],
     benchmark_ticker: &str,
 ) -> Result<DataFrame, ReturnsError> {
-    use std::collections::{BTreeMap, HashMap};
-
     let ts_col = log_returns_df.column("timestamp")?;
     let ticker_col = log_returns_df.column("ticker")?;
     let log_return_col = log_returns_df.column("log_return")?;
@@ -239,6 +243,110 @@ fn build_portfolio_and_benchmark_df(
     let benchmark_series = Series::new("benchmark_log_return".into(), benchmark);
     DataFrame::new(vec![portfolio_series.into(), benchmark_series.into()])
         .map_err(ReturnsError::from)
+}
+
+fn compute_beta_report_from_log_returns(
+    log_returns_df: &DataFrame,
+    weights: &[(String, f64)],
+    benchmark_ticker: &str,
+) -> Result<PortfolioBetaReport, ReturnsError> {
+    let return_timestamps = finite_return_timestamps_by_ticker(log_returns_df)?;
+    let benchmark_return_timestamps = return_timestamps
+        .get(benchmark_ticker)
+        .ok_or(ReturnsError::BetaUndefined)?;
+    if benchmark_return_timestamps.is_empty() {
+        return Err(ReturnsError::BetaUndefined);
+    }
+
+    let (included_weights, excluded_tickers): (Vec<_>, Vec<_>) =
+        weights.iter().cloned().partition(|(ticker, _weight)| {
+            return_timestamps
+                .get(ticker)
+                .is_some_and(|ticker_return_timestamps| {
+                    ticker_return_timestamps == benchmark_return_timestamps
+                })
+        });
+
+    let effective_weights = renormalize_abs_weights(&included_weights)?;
+    let beta_weights = effective_weights
+        .iter()
+        .map(|(ticker, weight)| (ticker.clone(), *weight))
+        .collect::<Vec<_>>();
+    let beta = compute_beta_from_log_returns(log_returns_df, &beta_weights, benchmark_ticker)?;
+
+    Ok(PortfolioBetaReport {
+        beta,
+        excluded_tickers: excluded_tickers
+            .into_iter()
+            .map(|(ticker, _weight)| ticker)
+            .collect(),
+        effective_weights,
+    })
+}
+
+fn finite_return_timestamps_by_ticker(
+    log_returns_df: &DataFrame,
+) -> Result<HashMap<String, BTreeSet<String>>, ReturnsError> {
+    let timestamp_col = log_returns_df.column("timestamp")?;
+    let ticker_col = log_returns_df.column("ticker")?;
+    let log_return_col = log_returns_df.column("log_return")?;
+    let mut return_timestamps = HashMap::new();
+
+    for row_index in 0..log_returns_df.height() {
+        let timestamp = timestamp_col
+            .get(row_index)
+            .ok()
+            .and_then(|value| match value {
+                AnyValue::String(timestamp) => Some(timestamp.to_string()),
+                AnyValue::StringOwned(timestamp) => Some(timestamp.to_string()),
+                _ => None,
+            });
+        let Some(timestamp) = timestamp else {
+            continue;
+        };
+
+        let ticker = ticker_col
+            .get(row_index)
+            .ok()
+            .and_then(|value| match value {
+                AnyValue::String(ticker) => Some(ticker.to_string()),
+                AnyValue::StringOwned(ticker) => Some(ticker.to_string()),
+                _ => None,
+            });
+        let Some(ticker) = ticker else {
+            continue;
+        };
+        let has_return = log_return_col
+            .get(row_index)
+            .ok()
+            .and_then(|value| value.try_extract::<f64>().ok())
+            .is_some_and(f64::is_finite);
+        if has_return {
+            return_timestamps
+                .entry(ticker)
+                .or_insert_with(BTreeSet::new)
+                .insert(timestamp);
+        }
+    }
+
+    Ok(return_timestamps)
+}
+
+fn renormalize_abs_weights(
+    weights: &[(String, f64)],
+) -> Result<BTreeMap<String, f64>, ReturnsError> {
+    let absolute_weight_sum = weights
+        .iter()
+        .map(|(_ticker, weight)| weight.abs())
+        .sum::<f64>();
+    if absolute_weight_sum <= 0.0 {
+        return Err(ReturnsError::BetaUndefined);
+    }
+
+    Ok(weights
+        .iter()
+        .map(|(ticker, weight)| (ticker.clone(), weight / absolute_weight_sum))
+        .collect())
 }
 
 /// Covariance of two return series. `Cov(P, B) = E[(P - μ_P)(B - μ_B)]`.
@@ -303,7 +411,7 @@ mod tests {
     #[tokio::test]
     async fn compute_portfolio_beta_errors_when_daily_candles_file_missing() {
         let dir = TempDir::new().unwrap();
-        let result = compute_portfolio_beta(dir.path(), &[], "BTC").await;
+        let result = compute_portfolio_beta_report(dir.path(), &[], "BTC").await;
         assert!(matches!(result, Err(ReturnsError::NoData { .. })));
     }
 
@@ -364,6 +472,60 @@ mod tests {
     }
 
     #[traced_test]
+    #[test]
+    fn beta_report_excludes_missing_assets_and_renormalizes_remaining_weights() {
+        let log_returns_df = df! {
+            "timestamp" => &[
+                "2024-01-01T00:00:00Z", "2024-01-02T00:00:00Z", "2024-01-03T00:00:00Z",
+                "2024-01-01T00:00:00Z", "2024-01-02T00:00:00Z", "2024-01-03T00:00:00Z",
+                "2024-01-02T00:00:00Z",
+            ],
+            "ticker" => &["BTC", "BTC", "BTC", "ETH", "ETH", "ETH", "DOGE"],
+            "log_return" => &[0.01_f64, -0.02, 0.015, 0.01, -0.02, 0.015, 0.04],
+        }
+        .unwrap();
+        let weights = [("ETH".to_string(), 0.4_f64), ("DOGE".to_string(), -0.6_f64)];
+
+        let report = compute_beta_report_from_log_returns(&log_returns_df, &weights, "BTC")
+            .expect("beta report");
+
+        assert_eq!(report.excluded_tickers, vec!["DOGE"]);
+        assert_eq!(report.effective_weights.get("ETH"), Some(&1.0));
+        assert!((report.beta.expect("beta") - 1.0).abs() < 1e-10);
+        assert!(crate::logs_contain_at(
+            tracing::Level::INFO,
+            &["portfolio beta calculated"]
+        ));
+    }
+
+    #[traced_test]
+    #[test]
+    fn beta_report_excludes_assets_with_same_return_count_but_different_timestamps() {
+        let log_returns_df = df! {
+            "timestamp" => &[
+                "2024-01-01T00:00:00Z", "2024-01-02T00:00:00Z", "2024-01-03T00:00:00Z",
+                "2024-01-01T00:00:00Z", "2024-01-02T00:00:00Z", "2024-01-03T00:00:00Z",
+                "2024-01-02T00:00:00Z", "2024-01-03T00:00:00Z", "2024-01-04T00:00:00Z",
+            ],
+            "ticker" => &["BTC", "BTC", "BTC", "ETH", "ETH", "ETH", "DOGE", "DOGE", "DOGE"],
+            "log_return" => &[0.01_f64, -0.02, 0.015, 0.01, -0.02, 0.015, 0.02, -0.01, 0.03],
+        }
+        .unwrap();
+        let weights = [("ETH".to_string(), 0.4_f64), ("DOGE".to_string(), -0.6_f64)];
+
+        let report = compute_beta_report_from_log_returns(&log_returns_df, &weights, "BTC")
+            .expect("beta report");
+
+        assert_eq!(report.excluded_tickers, vec!["DOGE"]);
+        assert_eq!(report.effective_weights.get("ETH"), Some(&1.0));
+        assert!((report.beta.expect("beta") - 1.0).abs() < 1e-10);
+        assert!(crate::logs_contain_at(
+            tracing::Level::INFO,
+            &["portfolio beta calculated"]
+        ));
+    }
+
+    #[traced_test]
     #[tokio::test]
     async fn compute_portfolio_beta_matches_manual_beta_for_ohlcv_1d_data() {
         let tmp_dir = TempDir::new().unwrap();
@@ -374,10 +536,11 @@ mod tests {
         // 60% long BTC, 40% short ETH, benchmark BTC
         let weights = [("BTC".to_string(), 0.6_f64), ("ETH".to_string(), -0.4_f64)];
 
-        let beta = compute_portfolio_beta(tmp_dir.path(), &weights, "BTC")
+        let report = compute_portfolio_beta_report(tmp_dir.path(), &weights, "BTC")
             .await
             .unwrap()
-            .expect("beta defined");
+            .beta;
+        let beta = report.expect("beta defined");
 
         assert!(
             (beta - 0.592_091_722_3_f64).abs() < 1e-10,

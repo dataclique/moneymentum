@@ -35,8 +35,8 @@ Display portfolio-weighted Bitcoin beta for the active portfolio and surface
 read-only Bitcoin holdings so the risk view reflects the user's actual exposure.
 See [SPEC.md](./SPEC.md) for the beta methodology and the `POST /beta` contract.
 
-- [ ] [Show Bitcoin Beta For The Active Portfolio](./stories/0x00b.show-bitcoin-beta-for-active-portfolio.md)
-- [ ] [Add Read-Only Bitcoin Addresses](./stories/0x00c.add-read-only-bitcoin-addresses.md)
+- [x] [Show Bitcoin Beta For The Active Portfolio](./stories/0x00b.show-bitcoin-beta-for-active-portfolio.md)
+- [x] [Add Read-Only Bitcoin Addresses](./stories/0x00c.add-read-only-bitcoin-addresses.md)
 - [ ] [Include Read-Only Bitcoin Holdings In Beta](./stories/0x00d.include-read-only-bitcoin-holdings-in-beta.md)
 - [ ] [Target Ending Bitcoin Beta While Hedging](./stories/0x00e.target-ending-bitcoin-beta-while-hedging.md)
 

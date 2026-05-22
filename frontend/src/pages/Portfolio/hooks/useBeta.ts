@@ -4,6 +4,8 @@ import type { PortfolioInterface } from "./usePortfolioState"
 import type { ReadonlyBetaPosition } from "./useReadonlyPortfolioState"
 
 const BETA_BENCHMARK = "BTC"
+const BETA_INTERVAL_LABEL = "daily log returns"
+const BETA_LOOKBACK_LABEL = "365 calendar days"
 
 const symbolToTicker = (symbol: string): string =>
   symbol.includes("/") ? (symbol.split("/")[0] ?? symbol) : symbol
@@ -61,6 +63,8 @@ const queryKeyFromWeights = (weights: Record<string, number>): string =>
 
 interface BetaResponse {
   beta: number | null
+  excluded_symbols: string[]
+  effective_weights: Record<string, number>
 }
 
 const fetchBeta = async (
@@ -117,6 +121,17 @@ export const useBeta = (
     },
     get error() {
       return query.error
+    },
+    get excludedSymbols() {
+      return query.data?.excluded_symbols ?? []
+    },
+    get effectiveWeights() {
+      return query.data?.effective_weights ?? {}
+    },
+    methodology: {
+      benchmark: "BTC perpetual on Hyperliquid",
+      interval: BETA_INTERVAL_LABEL,
+      lookback: BETA_LOOKBACK_LABEL,
     },
   }
 }

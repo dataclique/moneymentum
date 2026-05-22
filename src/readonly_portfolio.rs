@@ -3,23 +3,32 @@ use std::str::FromStr;
 use bitcoin::{Address, Network};
 use futures::stream::{self, StreamExt, TryStreamExt};
 use reqwest::Url;
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 use thiserror::Error;
 use tracing::{debug, info, warn};
 
-const DEFAULT_MEMPOOL_BASE_URL: &str = "https://mempool.space/api";
+const DEFAULT_MEMPOOL_BASE_URL: &str = "https://mempool.space/api/";
+const DEFAULT_TESTNET_MEMPOOL_BASE_URL: &str = "https://mempool.space/testnet/api/";
 const DEFAULT_BLOCKCHAIN_INFO_BASE_URL: &str = "https://blockchain.info";
 const DEFAULT_HYPERLIQUID_INFO_BASE_URL: &str = "https://api.hyperliquid.xyz";
 const SATOSHIS_PER_BTC: f64 = 100_000_000.0;
 const ADDRESS_FETCH_CONCURRENCY: usize = 8;
+const BECH32_ADDRESS_MAX_LEN: usize = 90;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
-pub(crate) struct BtcAddress(String);
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) struct BtcAddress {
+    value: String,
+    network: Network,
+}
 
 impl BtcAddress {
     pub(crate) fn as_str(&self) -> &str {
-        &self.0
+        &self.value
+    }
+
+    fn network(&self) -> Network {
+        self.network
     }
 }
 
@@ -31,12 +40,34 @@ impl FromStr for BtcAddress {
         if trimmed.is_empty() {
             return Err(ReadonlyPortfolioError::InvalidBtcAddress(value.to_string()));
         }
-        let unchecked_address = Address::from_str(trimmed)
-            .map_err(|_| ReadonlyPortfolioError::InvalidBtcAddress(value.to_string()))?;
-        let checked_address = unchecked_address
-            .require_network(Network::Bitcoin)
-            .map_err(|_| ReadonlyPortfolioError::InvalidBtcAddress(value.to_string()))?;
-        Ok(Self(checked_address.to_string()))
+        if let Ok(unchecked_address) = Address::from_str(trimmed) {
+            if let Ok(checked_address) = unchecked_address.clone().require_network(Network::Bitcoin)
+            {
+                return Ok(Self {
+                    value: checked_address.to_string(),
+                    network: Network::Bitcoin,
+                });
+            }
+            if let Ok(checked_address) = unchecked_address.require_network(Network::Testnet) {
+                return Ok(Self {
+                    value: checked_address.to_string(),
+                    network: Network::Testnet,
+                });
+            }
+        }
+        if let Some(bech32_address) = parse_provider_supported_bech32_address(trimmed) {
+            return Ok(bech32_address);
+        }
+        Err(ReadonlyPortfolioError::InvalidBtcAddress(value.to_string()))
+    }
+}
+
+impl Serialize for BtcAddress {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(self.as_str())
     }
 }
 
@@ -48,6 +79,39 @@ impl<'de> Deserialize<'de> for BtcAddress {
         let raw = String::deserialize(deserializer)?;
         Self::from_str(&raw).map_err(serde::de::Error::custom)
     }
+}
+
+fn parse_provider_supported_bech32_address(value: &str) -> Option<BtcAddress> {
+    if value.len() > BECH32_ADDRESS_MAX_LEN {
+        return None;
+    }
+    if value != value.to_lowercase() && value != value.to_uppercase() {
+        return None;
+    }
+
+    let normalized = value.to_lowercase();
+    let (hrp, _data) = match bitcoin::bech32::decode(&normalized) {
+        Ok(decoded) => decoded,
+        Err(error) => {
+            debug!(
+                error = %error,
+                "provider-supported bech32 address rejected"
+            );
+            return None;
+        }
+    };
+    let network = if hrp == bitcoin::bech32::hrp::BC {
+        Network::Bitcoin
+    } else if hrp == bitcoin::bech32::hrp::TB {
+        Network::Testnet
+    } else {
+        return None;
+    };
+
+    Some(BtcAddress {
+        value: normalized,
+        network,
+    })
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
@@ -214,6 +278,18 @@ pub(crate) fn default_blockchain_info_base_url() -> Result<Url, ReadonlyPortfoli
     Ok(Url::parse(DEFAULT_BLOCKCHAIN_INFO_BASE_URL)?)
 }
 
+fn btc_base_url_for_address(
+    btc_base_url: &Url,
+    btc_address: &BtcAddress,
+) -> Result<Url, ReadonlyPortfolioError> {
+    if btc_address.network() == Network::Testnet
+        && btc_base_url.as_str() == DEFAULT_MEMPOOL_BASE_URL
+    {
+        return Ok(Url::parse(DEFAULT_TESTNET_MEMPOOL_BASE_URL)?);
+    }
+    Ok(btc_base_url.clone())
+}
+
 pub(crate) async fn load_readonly_btc_balances(
     http_client: &reqwest::Client,
     btc_base_url: &Url,
@@ -367,6 +443,14 @@ async fn load_single_address_holding(
     match load_mempool_address_holding(http_client, btc_base_url, btc_address).await {
         Ok(holding) => Ok(holding),
         Err(primary_error) => {
+            if btc_address.network() == Network::Testnet {
+                return Err(ReadonlyPortfolioError::BtcProvidersFailed {
+                    address: btc_address.as_str().to_string(),
+                    primary_error: primary_error.to_string(),
+                    fallback_error: "blockchain.info does not support testnet addresses"
+                        .to_string(),
+                });
+            }
             warn!(
                 address = btc_address.as_str(),
                 error = %primary_error,
@@ -395,7 +479,8 @@ async fn load_mempool_address_holding(
     btc_base_url: &Url,
     btc_address: &BtcAddress,
 ) -> Result<ReadonlyBtcHolding, ReadonlyPortfolioError> {
-    let endpoint = btc_base_url.join(&format!("address/{}", btc_address.as_str()))?;
+    let address_base_url = btc_base_url_for_address(btc_base_url, btc_address)?;
+    let endpoint = address_base_url.join(&format!("address/{}", btc_address.as_str()))?;
     let response_text = http_client
         .get(endpoint)
         .send()
@@ -627,17 +712,62 @@ mod tests {
 
     #[test]
     fn btc_address_accepts_common_mainnet_formats() {
-        assert!(BtcAddress::from_str("1FfmbHfnpaZjKFvyi1okTjJJusN455paPH").is_ok());
+        assert!(BtcAddress::from_str("1BoatSLRHtKNngkdXEeobR76b53LETtpyT").is_ok());
         assert!(BtcAddress::from_str("3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy").is_ok());
+        assert!(BtcAddress::from_str("bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh").is_ok());
     }
 
     #[test]
-    fn btc_address_rejects_non_mainnet_formats() {
-        let result = BtcAddress::from_str("tb1qfm86m4j2fpkq95fkxv7nhxsl0s6z4pfm3a3nrm");
-        assert!(matches!(
-            result,
-            Err(ReadonlyPortfolioError::InvalidBtcAddress(_))
+    fn btc_address_accepts_common_testnet_formats() {
+        assert!(BtcAddress::from_str("mipcBbFg9gMiCh81Kj8tqqdgoZub1ZJRfn").is_ok());
+        assert!(BtcAddress::from_str("2N2JD6wb56AfK4tfmM6PwdVmoYk2dCKf4Br").is_ok());
+        assert!(BtcAddress::from_str("tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx").is_ok());
+    }
+
+    #[test]
+    fn btc_address_accepts_testnet_bech32_address_supported_by_provider() {
+        let address =
+            BtcAddress::from_str("tb1qqltm70wyz734t9k8d9w70uuhyxnemyh56d5ra8rtw082ytd7ywmsqudq5e")
+                .unwrap();
+
+        assert_eq!(
+            address.as_str(),
+            "tb1qqltm70wyz734t9k8d9w70uuhyxnemyh56d5ra8rtw082ytd7ywmsqudq5e"
+        );
+        assert_eq!(address.network(), Network::Testnet);
+    }
+
+    #[traced_test]
+    #[test]
+    fn provider_supported_bech32_parser_rejects_invalid_checksum() {
+        assert!(
+            parse_provider_supported_bech32_address(
+                "tb1qqltm70wyz734t9k8d9w70uuhyxnemyh56d5ra8rtw082ytd7ywmsqudq5f"
+            )
+            .is_none()
+        );
+        assert!(logs_contain_at(
+            Level::DEBUG,
+            &["provider-supported bech32 address rejected", "checksum"]
         ));
+    }
+
+    #[test]
+    fn testnet_mempool_base_url_keeps_api_path_for_address_endpoint() {
+        let base_url = default_btc_base_url().unwrap();
+        let address =
+            BtcAddress::from_str("tb1qqltm70wyz734t9k8d9w70uuhyxnemyh56d5ra8rtw082ytd7ywmsqudq5e")
+                .unwrap();
+
+        let address_base_url = btc_base_url_for_address(&base_url, &address).unwrap();
+        let endpoint = address_base_url
+            .join(&format!("address/{}", address.as_str()))
+            .unwrap();
+
+        assert_eq!(
+            endpoint.as_str(),
+            "https://mempool.space/testnet/api/address/tb1qqltm70wyz734t9k8d9w70uuhyxnemyh56d5ra8rtw082ytd7ywmsqudq5e"
+        );
     }
 
     #[test]

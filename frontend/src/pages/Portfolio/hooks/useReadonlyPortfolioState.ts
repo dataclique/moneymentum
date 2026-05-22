@@ -1,8 +1,10 @@
-import { createMemo } from "solid-js"
+import { createMemo, createSignal } from "solid-js"
 import { createStore } from "solid-js/store"
 import { useQuery } from "@tanstack/solid-query"
 
 import type { OrderSide } from "@/hooks/useTrading"
+import { useWallet } from "@/hooks/useWallet"
+import { validateBitcoinAddress } from "./bitcoinAddress"
 
 const READONLY_BTC_STORAGE_KEY = "portfolio-readonly-btc-addresses"
 
@@ -77,8 +79,14 @@ const writeEntriesToStorage = (entries: ReadonlyBtcEntry[]): void => {
   localStorage.setItem(READONLY_BTC_STORAGE_KEY, JSON.stringify(entries))
 }
 
+const clearEntriesFromStorage = (): void => {
+  if (typeof localStorage === "undefined") return
+  localStorage.removeItem(READONLY_BTC_STORAGE_KEY)
+}
+
 const fetchExposure = async (
   entries: ReadonlyBtcEntry[],
+  networkMode: "testnet" | "mainnet",
   signal?: AbortSignal,
 ): Promise<ExposureResponse> => {
   const response = await fetch(
@@ -90,6 +98,7 @@ const fetchExposure = async (
         : AbortSignal.timeout(10_000),
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        btc_network: networkMode,
         hyperliquid_positions: [],
         readonly_btc_entries: entries.map(entry => ({
           address: entry.address,
@@ -126,8 +135,12 @@ const fetchExposure = async (
 }
 
 export const useReadonlyPortfolioState = () => {
+  const { networkMode } = useWallet()
   const [entries, setEntries] = createStore<ReadonlyBtcEntry[]>(
     readEntriesFromStorage(),
+  )
+  const [validationError, setValidationError] = createSignal<string | null>(
+    null,
   )
 
   const query = useQuery(() => {
@@ -135,9 +148,13 @@ export const useReadonlyPortfolioState = () => {
     const enabled = readonlyAddresses.length > 0
 
     return {
-      queryKey: ["readonly-btc-exposure", readonlyAddresses] as const,
+      queryKey: [
+        "readonly-btc-exposure",
+        networkMode(),
+        readonlyAddresses,
+      ] as const,
       queryFn: (ctx: { signal: AbortSignal }) =>
-        fetchExposure(entries, ctx.signal),
+        fetchExposure(entries, networkMode(), ctx.signal),
       enabled,
       retry: 1,
       staleTime: 5 * 60 * 1000,
@@ -148,8 +165,23 @@ export const useReadonlyPortfolioState = () => {
 
   const addAddress = (rawAddress: string) => {
     const normalizedAddress = rawAddress.trim()
-    if (!normalizedAddress) return
-    if (entries.some(entry => entry.address === normalizedAddress)) return
+    if (!normalizedAddress) {
+      setValidationError(null)
+      return false
+    }
+    const validation = validateBitcoinAddress(normalizedAddress, networkMode())
+    if (!validation.ok) {
+      console.warn(validation.error.message, {
+        error: validation.error,
+        network: networkMode(),
+      })
+      setValidationError(validation.error.message)
+      return false
+    }
+    if (entries.some(entry => entry.address === normalizedAddress)) {
+      setValidationError(null)
+      return false
+    }
 
     const nextEntries = [
       ...entries,
@@ -157,6 +189,8 @@ export const useReadonlyPortfolioState = () => {
     ]
     setEntries(nextEntries)
     writeEntriesToStorage(nextEntries)
+    setValidationError(null)
+    return true
   }
 
   const removeAddress = (address: string) => {
@@ -171,6 +205,12 @@ export const useReadonlyPortfolioState = () => {
     )
     setEntries(nextEntries)
     writeEntriesToStorage(nextEntries)
+  }
+
+  const clearAddresses = () => {
+    setEntries([])
+    clearEntriesFromStorage()
+    setValidationError(null)
   }
 
   const readonlyRows = createMemo<ReadonlyBtcRow[]>(() => {
@@ -215,9 +255,13 @@ export const useReadonlyPortfolioState = () => {
     get error() {
       return query.error?.message ?? null
     },
+    get validationError() {
+      return validationError()
+    },
     addAddress,
     removeAddress,
     setIncludeInBeta,
+    clearAddresses,
   }
 }
 

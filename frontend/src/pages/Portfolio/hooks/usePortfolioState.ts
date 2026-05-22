@@ -116,6 +116,7 @@ export const usePortfolioState = () => {
       setCurrentPortfolio(reconcile({}))
       setTargetPortfolio(reconcile({}))
       setDeletedArchive(reconcile({}))
+      readonlyPortfolio.clearAddresses()
       setCurrentCrossAccountLeverage(DEFAULT_CROSS_ACCOUNT_LEVERAGE)
       setTargetCrossAccountLeverage(DEFAULT_CROSS_ACCOUNT_LEVERAGE)
       setCurrentTotalNotional(0)
@@ -549,6 +550,7 @@ export const usePortfolioState = () => {
       setCurrentPortfolio(reconcile({}))
       setTargetPortfolio(reconcile({}))
       setDeletedArchive(reconcile({}))
+      readonlyPortfolio.clearAddresses()
       setCurrentCrossAccountLeverage(DEFAULT_CROSS_ACCOUNT_LEVERAGE)
       setTargetCrossAccountLeverage(DEFAULT_CROSS_ACCOUNT_LEVERAGE)
       setCurrentTotalNotional(0)
@@ -630,6 +632,10 @@ export const usePortfolioState = () => {
 
     get readonlyBtcError() {
       return readonlyPortfolio.error
+    },
+
+    get readonlyBtcValidationError() {
+      return readonlyPortfolio.validationError
     },
 
     get symbolsBelowMinimum() {

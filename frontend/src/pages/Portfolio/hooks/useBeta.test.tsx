@@ -43,7 +43,11 @@ describe("useBeta", () => {
     fetchMock.mockReset()
     fetchMock.mockResolvedValue({
       ok: true,
-      json: async () => ({ beta: 1.23 }),
+      json: async () => ({
+        beta: 1.23,
+        excluded_symbols: [],
+        effective_weights: { BTC: 0.6, ETH: 0.4 },
+      }),
     })
     vi.stubGlobal("fetch", fetchMock)
   })
@@ -102,5 +106,28 @@ describe("useBeta", () => {
     }
     expect(callBody.weights.BTC).toBeCloseTo(0.6, 6)
     expect(callBody.weights.ETH).toBeCloseTo(0.4, 6)
+  })
+
+  it("surfaces excluded symbols from the beta report", async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        beta: 0.75,
+        excluded_symbols: ["NEWCOIN"],
+        effective_weights: { BTC: 1 },
+      }),
+    })
+
+    const { result } = renderHook(
+      () => useBeta(targetPortfolio, targetTotalNotional, () => []),
+      { wrapper: createWrapper() },
+    )
+
+    await waitFor(() => {
+      expect(result.beta).toBe(0.75)
+    })
+
+    expect(result.excludedSymbols).toEqual(["NEWCOIN"])
+    expect(result.effectiveWeights).toEqual({ BTC: 1 })
   })
 })

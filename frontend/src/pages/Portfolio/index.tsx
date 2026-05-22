@@ -187,6 +187,9 @@ const PortfolioPage = () => {
                 readonlyBtcRows={portfolio.readonlyBtcRows}
                 isReadonlyBtcLoading={portfolio.isReadonlyBtcLoading}
                 readonlyBtcError={portfolio.readonlyBtcError}
+                readonlyBtcValidationError={
+                  portfolio.readonlyBtcValidationError
+                }
                 onAddReadonlyBtcAddress={portfolio.addReadonlyBtcAddress}
                 onRemoveReadonlyBtcAddress={portfolio.removeReadonlyBtcAddress}
                 onReadonlyBtcIncludeInBetaChange={
@@ -321,6 +324,9 @@ const PortfolioPage = () => {
                 <FactorsPanel
                   beta={betaResult.beta}
                   isBetaLoading={betaResult.isLoading}
+                  betaError={betaResult.error}
+                  excludedBetaSymbols={betaResult.excludedSymbols}
+                  betaMethodology={betaResult.methodology}
                 />
               </div>
               <div class="flex-1 min-w-0">

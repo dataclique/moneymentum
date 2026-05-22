@@ -18,14 +18,14 @@ from Hyperliquid-only positions to read-only wallets and protective hedges.
 - [Execute Rebalance](./0x005.execute-rebalance.md)
 - [Protect Invalid Rebalances](./0x006.protect-invalid-rebalances.md)
 - [Persist Draft Portfolio Targets](./0x007.persist-draft-portfolio-targets.md)
+- [Show Bitcoin Beta For The Active Portfolio](./0x00b.show-bitcoin-beta-for-active-portfolio.md)
+- [Add Read-Only Bitcoin Addresses](./0x00c.add-read-only-bitcoin-addresses.md)
 
 ## Planned
 
 - [Keep The App Deployed And Reachable](./0x008.keep-app-deployed-and-reachable.md)
 - [Serve The App From A Domain](./0x009.serve-app-from-domain.md)
 - [Verify Deployed Hyperliquid Long-Short Rebalancing](./0x00a.verify-deployed-hyperliquid-long-short-rebalancing.md)
-- [Show Bitcoin Beta For The Active Portfolio](./0x00b.show-bitcoin-beta-for-active-portfolio.md)
-- [Add Read-Only Bitcoin Addresses](./0x00c.add-read-only-bitcoin-addresses.md)
 - [Include Read-Only Bitcoin Holdings In Beta](./0x00d.include-read-only-bitcoin-holdings-in-beta.md)
 - [Target Ending Bitcoin Beta While Hedging](./0x00e.target-ending-bitcoin-beta-while-hedging.md)
 - [Authenticate Portfolio Ownership By Solana Pubkey](./0x00f.authenticate-portfolio-ownership-by-solana-pubkey.md)

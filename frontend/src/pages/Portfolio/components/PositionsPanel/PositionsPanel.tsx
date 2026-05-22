@@ -37,7 +37,8 @@ interface PositionsPanelProps {
   readonlyBtcRows: ReadonlyBtcRow[]
   isReadonlyBtcLoading: boolean
   readonlyBtcError: string | null
-  onAddReadonlyBtcAddress: (address: string) => void
+  readonlyBtcValidationError: string | null
+  onAddReadonlyBtcAddress: (address: string) => boolean
   onRemoveReadonlyBtcAddress: (address: string) => void
   onReadonlyBtcIncludeInBetaChange: (
     address: string,
@@ -221,6 +222,7 @@ export const PositionsPanel = (props: PositionsPanelProps): JSX.Element => {
               rows={props.readonlyBtcRows}
               isLoading={props.isReadonlyBtcLoading}
               error={props.readonlyBtcError}
+              validationError={props.readonlyBtcValidationError}
               onAddAddress={props.onAddReadonlyBtcAddress}
               onRemoveAddress={props.onRemoveReadonlyBtcAddress}
               onIncludeInBetaChange={props.onReadonlyBtcIncludeInBetaChange}

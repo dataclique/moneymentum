@@ -2,6 +2,12 @@ import { For, Show } from "solid-js"
 import { clsx } from "clsx"
 import { twMerge } from "tailwind-merge"
 import { Skeleton } from "@/components/ui/skeleton"
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
 
 interface FactorExposure {
   name: string
@@ -47,6 +53,13 @@ const defaultConcentration: ConcentrationMetric[] = [
 interface FactorsPanelProps {
   beta: number | null
   isBetaLoading: boolean
+  betaError: unknown
+  excludedBetaSymbols: string[]
+  betaMethodology: {
+    benchmark: string
+    interval: string
+    lookback: string
+  }
   exposures?: FactorExposure[]
   attribution?: FactorAttribution[]
   concentration?: ConcentrationMetric[]
@@ -56,6 +69,8 @@ export const FactorsPanel = (props: FactorsPanelProps) => {
   const exposures = () => props.exposures ?? defaultExposures
   const attribution = () => props.attribution ?? defaultAttribution
   const concentration = () => props.concentration ?? defaultConcentration
+  const betaHasError = () =>
+    props.betaError !== null && props.betaError !== undefined
 
   return (
     <div class="shrink-0 border border-border rounded flex flex-col min-w-[25%] relative">
@@ -72,12 +87,30 @@ export const FactorsPanel = (props: FactorsPanelProps) => {
             Exposures
           </div>
           <div class="flex items-center justify-between">
-            <span class="text-muted-foreground truncate">B to BTC</span>
+            <TooltipProvider>
+              <Tooltip openDelay={0}>
+                <TooltipTrigger class="text-muted-foreground truncate">
+                  B to BTC
+                </TooltipTrigger>
+                <TooltipContent class="max-w-[260px]">
+                  <div>Benchmark: {props.betaMethodology.benchmark}</div>
+                  <div>Interval: {props.betaMethodology.interval}</div>
+                  <div>Lookback: {props.betaMethodology.lookback}</div>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
             <span class="font-mono">
               <Show
-                when={!props.isBetaLoading}
+                when={!props.isBetaLoading && !betaHasError()}
                 fallback={
-                  <Skeleton class="inline-block h-3 w-10 align-middle" />
+                  <Show
+                    when={betaHasError()}
+                    fallback={
+                      <Skeleton class="inline-block h-3 w-10 align-middle" />
+                    }
+                  >
+                    <span class="text-[10px] text-rose-500">unavailable</span>
+                  </Show>
                 }
               >
                 <Show
@@ -99,6 +132,11 @@ export const FactorsPanel = (props: FactorsPanelProps) => {
               </Show>
             </span>
           </div>
+          <Show when={props.excludedBetaSymbols.length > 0}>
+            <div class="text-[10px] text-amber-500">
+              Renormalized without {props.excludedBetaSymbols.join(", ")}
+            </div>
+          </Show>
           <For each={exposures()}>
             {exposure => (
               <div class="flex items-center justify-between">

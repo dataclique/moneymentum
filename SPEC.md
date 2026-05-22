@@ -234,7 +234,7 @@ Revenue comes from PMs managing other people's money.
 | --------- | ------------------------------------------------ |
 | API       | rocket                                           |
 | Analytics | polars, linfa                                    |
-| State     | apalis - job queue, SQLite ingestion runs        |
+| State     | SQLite ingestion runs, Apalis job queue          |
 | EVM       | alloy                                            |
 | Solana    | solana-sdk, anchor-client                        |
 | Venues    | hyperliquid-rs, cockpit, jupiter-swap-api-client |

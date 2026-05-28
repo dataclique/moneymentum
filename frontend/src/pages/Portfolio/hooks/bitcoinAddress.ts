@@ -3,6 +3,7 @@ import WAValidator from "multicoin-address-validator"
 import type { NetworkMode } from "@/contexts/wallet-context"
 
 export const INVALID_BITCOIN_ADDRESS_MESSAGE = "Invalid Bitcoin address"
+export const EMPTY_BITCOIN_ADDRESS_MESSAGE = "Bitcoin address is required."
 export const MAINNET_ADDRESS_ON_TESTNET_MESSAGE =
   "This is a mainnet Bitcoin address, but the active network is testnet."
 export const TESTNET_ADDRESS_ON_MAINNET_MESSAGE =
@@ -64,7 +65,9 @@ export const validateBitcoinAddress = (
   network: NetworkMode,
 ): BitcoinAddressValidationResult => {
   const normalizedAddress = address.trim()
-  if (normalizedAddress.length === 0) return invalid("empty")
+  if (normalizedAddress.length === 0) {
+    return invalid("empty", EMPTY_BITCOIN_ADDRESS_MESSAGE)
+  }
 
   const isValid = WAValidator.validate(
     normalizedAddress,

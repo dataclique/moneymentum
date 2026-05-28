@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest"
 
 import {
+  EMPTY_BITCOIN_ADDRESS_MESSAGE,
   INVALID_BITCOIN_ADDRESS_MESSAGE,
   MAINNET_ADDRESS_ON_TESTNET_MESSAGE,
   TESTNET_ADDRESS_ON_MAINNET_MESSAGE,
@@ -63,6 +64,18 @@ describe("validateBitcoinAddress", () => {
       })
     },
   )
+
+  it("rejects empty addresses with the exact empty-address message", () => {
+    const validation = validateBitcoinAddress("   ", "mainnet")
+
+    expect(validation).toEqual({
+      ok: false,
+      error: {
+        kind: "empty",
+        message: EMPTY_BITCOIN_ADDRESS_MESSAGE,
+      },
+    })
+  })
 
   it("rejects truncated addresses with the exact UI error message", () => {
     const validation = validateBitcoinAddress("1BoatSLR", "mainnet")

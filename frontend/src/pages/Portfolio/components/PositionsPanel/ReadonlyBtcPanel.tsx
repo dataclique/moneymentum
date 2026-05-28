@@ -50,9 +50,14 @@ export const ReadonlyBtcPanel = (props: ReadonlyBtcPanelProps): JSX.Element => {
           </Button>
         </div>
       </div>
-      <Show when={props.validationError ?? props.error}>
-        {message => <div class="text-[11px] text-rose-500">{message()}</div>}
-      </Show>
+      <div class="space-y-1">
+        <Show when={props.validationError}>
+          {message => <div class="text-[11px] text-rose-500">{message()}</div>}
+        </Show>
+        <Show when={props.error}>
+          {message => <div class="text-[11px] text-rose-500">{message()}</div>}
+        </Show>
+      </div>
       <Show
         when={props.rows.length > 0}
         fallback={

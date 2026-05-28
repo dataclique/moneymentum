@@ -15,7 +15,6 @@ const DEFAULT_HYPERLIQUID_INFO_BASE_URL: &str = "https://api.hyperliquid.xyz";
 const SATOSHIS_PER_BTC: f64 = 100_000_000.0;
 const ADDRESS_FETCH_CONCURRENCY: usize = 8;
 const BECH32_ADDRESS_MAX_LEN: usize = 90;
-const BECH32_DATA_CHARSET: &str = "023456789acdefghjklmnpqrstuvwxyz";
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct BtcAddress {
@@ -91,22 +90,14 @@ fn parse_provider_supported_bech32_address(value: &str) -> Option<BtcAddress> {
     }
 
     let normalized = value.to_lowercase();
-    let network = if normalized.starts_with("bc1") {
+    let (hrp, _data) = bitcoin::bech32::decode(&normalized).ok()?;
+    let network = if hrp == bitcoin::bech32::hrp::BC {
         Network::Bitcoin
-    } else if normalized.starts_with("tb1") {
+    } else if hrp == bitcoin::bech32::hrp::TB {
         Network::Testnet
     } else {
         return None;
     };
-
-    let data = normalized.split_once('1')?.1;
-    if data.is_empty()
-        || !data
-            .chars()
-            .all(|character| BECH32_DATA_CHARSET.contains(character))
-    {
-        return None;
-    }
 
     Some(BtcAddress {
         value: normalized,
@@ -735,6 +726,16 @@ mod tests {
             "tb1qqltm70wyz734t9k8d9w70uuhyxnemyh56d5ra8rtw082ytd7ywmsqudq5e"
         );
         assert_eq!(address.network(), Network::Testnet);
+    }
+
+    #[test]
+    fn provider_supported_bech32_parser_rejects_invalid_checksum() {
+        assert!(
+            parse_provider_supported_bech32_address(
+                "tb1qqltm70wyz734t9k8d9w70uuhyxnemyh56d5ra8rtw082ytd7ywmsqudq5f"
+            )
+            .is_none()
+        );
     }
 
     #[test]

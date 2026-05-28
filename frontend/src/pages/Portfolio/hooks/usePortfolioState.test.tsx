@@ -251,6 +251,20 @@ describe("usePortfolioState", () => {
     expect(readonlyPortfolioActions.clearAddresses).toHaveBeenCalledOnce()
   })
 
+  it("clears readonly btc addresses when disconnecting", async () => {
+    const { result } = renderHook(() => usePortfolioState(), {
+      wrapper: createWrapper(),
+    })
+
+    await waitFor(() => {
+      expect(Object.keys(result.targetPortfolio)).toHaveLength(2)
+    })
+
+    result.handleDisconnect()
+
+    expect(readonlyPortfolioActions.clearAddresses).toHaveBeenCalledOnce()
+  })
+
   it("submits rebalance payload with actions; precise toggle shapes diff not the API body", async () => {
     const { result } = renderHook(() => usePortfolioState(), {
       wrapper: createWrapper(),

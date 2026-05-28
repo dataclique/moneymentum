@@ -3,7 +3,7 @@
 //! Reads `ohlcv_1d.csv` from a data directory and computes per-ticker log returns:
 //! `log_return = ln(close_t / close_{t-1})` within each ticker's time series.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 
 /// Daily candles needed for a 365-calendar-day log-return window.
@@ -250,20 +250,21 @@ fn compute_beta_report_from_log_returns(
     weights: &[(String, f64)],
     benchmark_ticker: &str,
 ) -> Result<PortfolioBetaReport, ReturnsError> {
-    let return_counts = return_counts_by_ticker(log_returns_df)?;
-    let benchmark_return_count = return_counts
+    let return_timestamps = finite_return_timestamps_by_ticker(log_returns_df)?;
+    let benchmark_return_timestamps = return_timestamps
         .get(benchmark_ticker)
-        .copied()
         .ok_or(ReturnsError::BetaUndefined)?;
-    if benchmark_return_count == 0 {
+    if benchmark_return_timestamps.is_empty() {
         return Err(ReturnsError::BetaUndefined);
     }
 
     let (included_weights, excluded_tickers): (Vec<_>, Vec<_>) =
         weights.iter().cloned().partition(|(ticker, _weight)| {
-            return_counts
+            return_timestamps
                 .get(ticker)
-                .is_some_and(|return_count| *return_count == benchmark_return_count)
+                .is_some_and(|ticker_return_timestamps| {
+                    ticker_return_timestamps == benchmark_return_timestamps
+                })
         });
 
     let effective_weights = renormalize_abs_weights(&included_weights)?;
@@ -283,14 +284,27 @@ fn compute_beta_report_from_log_returns(
     })
 }
 
-fn return_counts_by_ticker(
+fn finite_return_timestamps_by_ticker(
     log_returns_df: &DataFrame,
-) -> Result<HashMap<String, usize>, ReturnsError> {
+) -> Result<HashMap<String, BTreeSet<String>>, ReturnsError> {
+    let timestamp_col = log_returns_df.column("timestamp")?;
     let ticker_col = log_returns_df.column("ticker")?;
     let log_return_col = log_returns_df.column("log_return")?;
-    let mut return_counts = HashMap::new();
+    let mut return_timestamps = HashMap::new();
 
     for row_index in 0..log_returns_df.height() {
+        let timestamp = timestamp_col
+            .get(row_index)
+            .ok()
+            .and_then(|value| match value {
+                AnyValue::String(timestamp) => Some(timestamp.to_string()),
+                AnyValue::StringOwned(timestamp) => Some(timestamp.to_string()),
+                _ => None,
+            });
+        let Some(timestamp) = timestamp else {
+            continue;
+        };
+
         let ticker = ticker_col
             .get(row_index)
             .ok()
@@ -308,11 +322,14 @@ fn return_counts_by_ticker(
             .and_then(|value| value.try_extract::<f64>().ok())
             .is_some_and(f64::is_finite);
         if has_return {
-            *return_counts.entry(ticker).or_insert(0) += 1;
+            return_timestamps
+                .entry(ticker)
+                .or_insert_with(BTreeSet::new)
+                .insert(timestamp);
         }
     }
 
-    Ok(return_counts)
+    Ok(return_timestamps)
 }
 
 fn renormalize_abs_weights(
@@ -465,6 +482,33 @@ mod tests {
             ],
             "ticker" => &["BTC", "BTC", "BTC", "ETH", "ETH", "ETH", "DOGE"],
             "log_return" => &[0.01_f64, -0.02, 0.015, 0.01, -0.02, 0.015, 0.04],
+        }
+        .unwrap();
+        let weights = [("ETH".to_string(), 0.4_f64), ("DOGE".to_string(), -0.6_f64)];
+
+        let report = compute_beta_report_from_log_returns(&log_returns_df, &weights, "BTC")
+            .expect("beta report");
+
+        assert_eq!(report.excluded_tickers, vec!["DOGE"]);
+        assert_eq!(report.effective_weights.get("ETH"), Some(&1.0));
+        assert!((report.beta.expect("beta") - 1.0).abs() < 1e-10);
+        assert!(crate::logs_contain_at(
+            tracing::Level::INFO,
+            &["portfolio beta calculated"]
+        ));
+    }
+
+    #[traced_test]
+    #[test]
+    fn beta_report_excludes_assets_with_same_return_count_but_different_timestamps() {
+        let log_returns_df = df! {
+            "timestamp" => &[
+                "2024-01-01T00:00:00Z", "2024-01-02T00:00:00Z", "2024-01-03T00:00:00Z",
+                "2024-01-01T00:00:00Z", "2024-01-02T00:00:00Z", "2024-01-03T00:00:00Z",
+                "2024-01-02T00:00:00Z", "2024-01-03T00:00:00Z", "2024-01-04T00:00:00Z",
+            ],
+            "ticker" => &["BTC", "BTC", "BTC", "ETH", "ETH", "ETH", "DOGE", "DOGE", "DOGE"],
+            "log_return" => &[0.01_f64, -0.02, 0.015, 0.01, -0.02, 0.015, 0.02, -0.01, 0.03],
         }
         .unwrap();
         let weights = [("ETH".to_string(), 0.4_f64), ("DOGE".to_string(), -0.6_f64)];

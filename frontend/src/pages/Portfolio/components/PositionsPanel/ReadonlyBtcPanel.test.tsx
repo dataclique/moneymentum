@@ -32,4 +32,25 @@ describe("ReadonlyBtcPanel", () => {
     expect(addressInput).toHaveValue("not-a-btc-address")
     expect(addAddress).toHaveBeenCalledWith("not-a-btc-address")
   })
+
+  it("shows validation and exposure fetch errors together", () => {
+    render(() => (
+      <ReadonlyBtcPanel
+        rows={[]}
+        isLoading={false}
+        error="readonly exposure request failed"
+        validationError={INVALID_BITCOIN_ADDRESS_MESSAGE}
+        onAddAddress={vi.fn()}
+        onRemoveAddress={vi.fn()}
+        onIncludeInBetaChange={vi.fn()}
+      />
+    ))
+
+    expect(
+      screen.getByText(INVALID_BITCOIN_ADDRESS_MESSAGE),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText("readonly exposure request failed"),
+    ).toBeInTheDocument()
+  })
 })

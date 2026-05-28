@@ -134,4 +134,28 @@ describe("useBeta", () => {
     expect(result.dataAgeHours).toBe(26)
     expect(result.isDataStale).toBe(true)
   })
+
+  it("does not mark beta data stale at the 24 hour boundary", async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        beta: 0.75,
+        excluded_symbols: [],
+        effective_weights: { BTC: 1 },
+        data_age_hours: 24,
+      }),
+    })
+
+    const { result } = renderHook(
+      () => useBeta(targetPortfolio, targetTotalNotional, () => []),
+      { wrapper: createWrapper() },
+    )
+
+    await waitFor(() => {
+      expect(result.beta).toBe(0.75)
+    })
+
+    expect(result.dataAgeHours).toBe(24)
+    expect(result.isDataStale).toBe(false)
+  })
 })

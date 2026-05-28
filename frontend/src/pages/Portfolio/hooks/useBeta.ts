@@ -6,6 +6,7 @@ import type { ReadonlyBetaPosition } from "./useReadonlyPortfolioState"
 const BETA_BENCHMARK = "BTC"
 const BETA_INTERVAL_LABEL = "daily log returns"
 const BETA_LOOKBACK_LABEL = "365 calendar days"
+const STALE_BETA_DATA_THRESHOLD_HOURS = 24
 
 const symbolToTicker = (symbol: string): string =>
   symbol.includes("/") ? (symbol.split("/")[0] ?? symbol) : symbol
@@ -65,6 +66,7 @@ interface BetaResponse {
   beta: number | null
   excluded_symbols: string[]
   effective_weights: Record<string, number>
+  data_age_hours: number
 }
 
 const fetchBeta = async (
@@ -128,6 +130,15 @@ export const useBeta = (
     get effectiveWeights() {
       return query.data?.effective_weights ?? {}
     },
+    get dataAgeHours() {
+      return query.data?.data_age_hours ?? null
+    },
+    get isDataStale() {
+      return (
+        query.data?.data_age_hours !== undefined &&
+        query.data.data_age_hours > STALE_BETA_DATA_THRESHOLD_HOURS
+      )
+    },
     methodology: {
       benchmark: "BTC perpetual on Hyperliquid",
       interval: BETA_INTERVAL_LABEL,
@@ -135,3 +146,5 @@ export const useBeta = (
     },
   }
 }
+
+export { STALE_BETA_DATA_THRESHOLD_HOURS }

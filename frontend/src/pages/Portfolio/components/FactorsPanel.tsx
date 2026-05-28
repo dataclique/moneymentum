@@ -55,6 +55,8 @@ interface FactorsPanelProps {
   isBetaLoading: boolean
   betaError: unknown
   excludedBetaSymbols: string[]
+  betaDataAgeHours: number | null
+  isBetaDataStale: boolean
   betaMethodology: {
     benchmark: string
     interval: string
@@ -135,6 +137,11 @@ export const FactorsPanel = (props: FactorsPanelProps) => {
           <Show when={props.excludedBetaSymbols.length > 0}>
             <div class="text-[10px] text-amber-500">
               Renormalized without {props.excludedBetaSymbols.join(", ")}
+            </div>
+          </Show>
+          <Show when={props.isBetaDataStale && props.betaDataAgeHours !== null}>
+            <div class="text-[10px] text-amber-500">
+              Beta data is {props.betaDataAgeHours}h old
             </div>
           </Show>
           <For each={exposures()}>

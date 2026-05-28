@@ -47,6 +47,7 @@ describe("useBeta", () => {
         beta: 1.23,
         excluded_symbols: [],
         effective_weights: { BTC: 0.6, ETH: 0.4 },
+        data_age_hours: 2,
       }),
     })
     vi.stubGlobal("fetch", fetchMock)
@@ -115,6 +116,7 @@ describe("useBeta", () => {
         beta: 0.75,
         excluded_symbols: ["NEWCOIN"],
         effective_weights: { BTC: 1 },
+        data_age_hours: 26,
       }),
     })
 
@@ -129,5 +131,7 @@ describe("useBeta", () => {
 
     expect(result.excludedSymbols).toEqual(["NEWCOIN"])
     expect(result.effectiveWeights).toEqual({ BTC: 1 })
+    expect(result.dataAgeHours).toBe(26)
+    expect(result.isDataStale).toBe(true)
   })
 })

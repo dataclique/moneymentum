@@ -6,6 +6,8 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 
+use chrono::{DateTime, Utc};
+
 /// Daily candles needed for a 365-calendar-day log-return window.
 pub const LOG_RETURNS_LOOKBACK_CANDLES: usize = 366;
 
@@ -25,6 +27,7 @@ pub struct PortfolioBetaReport {
     pub beta: Option<f64>,
     pub excluded_tickers: Vec<String>,
     pub effective_weights: BTreeMap<String, f64>,
+    pub data_age_hours: i64,
 }
 
 #[derive(Debug, Error)]
@@ -37,6 +40,10 @@ pub enum ReturnsError {
     Join(#[from] tokio::task::JoinError),
     #[error("no daily candle data at {path}")]
     NoData { path: std::path::PathBuf },
+    #[error("daily candle data has no timestamps")]
+    NoTimestamps,
+    #[error("invalid candle timestamp: {timestamp}")]
+    InvalidTimestamp { timestamp: String },
     #[error("benchmark variance is zero or insufficient data for beta")]
     BetaUndefined,
 }
@@ -87,6 +94,7 @@ pub async fn compute_portfolio_beta_report(
     let Some(df) = df else {
         return Err(ReturnsError::NoData { path: path.clone() });
     };
+    let data_age_hours = data_age_hours_at(&df, Utc::now())?;
     let weights_clone = weights.to_vec();
     let benchmark_ticker_clone = benchmark_ticker.to_string();
     let lookback = LOG_RETURNS_LOOKBACK_CANDLES;
@@ -94,12 +102,51 @@ pub async fn compute_portfolio_beta_report(
         load_log_returns_last_n_candles(&df, &weights_clone, &benchmark_ticker_clone, lookback)
     })
     .await??;
-    compute_beta_report_from_log_returns(&log_returns_df, weights, benchmark_ticker)
+    let mut report =
+        compute_beta_report_from_log_returns(&log_returns_df, weights, benchmark_ticker)?;
+    report.data_age_hours = data_age_hours;
+    Ok(report)
 }
 
 /// Path of the daily candles file relative to the data directory.
 fn daily_candles_path(data_dir: &Path) -> std::path::PathBuf {
     data_dir.join(Timeframe::OneDay.file_name())
+}
+
+fn data_age_hours_at(df: &DataFrame, now: DateTime<Utc>) -> Result<i64, ReturnsError> {
+    let timestamp_col = df.column("timestamp")?;
+    let latest_timestamp = (0..df.height())
+        .filter_map(|row_index| {
+            timestamp_col
+                .get(row_index)
+                .ok()
+                .and_then(any_value_to_string)
+        })
+        .map(|timestamp| {
+            DateTime::parse_from_rfc3339(&timestamp)
+                .map(|parsed_timestamp| parsed_timestamp.with_timezone(&Utc))
+                .map_err(|_| ReturnsError::InvalidTimestamp { timestamp })
+        })
+        .try_fold(
+            None::<DateTime<Utc>>,
+            |latest_timestamp, parsed_timestamp| {
+                parsed_timestamp.map(|timestamp| {
+                    Some(latest_timestamp.map_or(timestamp, |latest| latest.max(timestamp)))
+                })
+            },
+        )?;
+
+    latest_timestamp
+        .map(|timestamp| now.signed_duration_since(timestamp).num_hours())
+        .ok_or(ReturnsError::NoTimestamps)
+}
+
+fn any_value_to_string(value: AnyValue<'_>) -> Option<String> {
+    match value {
+        AnyValue::String(timestamp) => Some(timestamp.to_string()),
+        AnyValue::StringOwned(timestamp) => Some(timestamp.to_string()),
+        _ => None,
+    }
 }
 
 /// Filters to tickers in `weights` and `benchmark_ticker`, keeps last `lookback` timestamps,
@@ -281,6 +328,7 @@ fn compute_beta_report_from_log_returns(
             .map(|(ticker, _weight)| ticker)
             .collect(),
         effective_weights,
+        data_age_hours: 0,
     })
 }
 
@@ -434,6 +482,23 @@ mod tests {
         let r2 = log_return.get(2).unwrap().try_extract::<f64>().unwrap();
         assert!((r1 - (102.0_f64 / 100.0).ln()).abs() < 1e-10);
         assert!((r2 - (99.0_f64 / 102.0).ln()).abs() < 1e-10);
+    }
+
+    #[test]
+    fn data_age_hours_uses_most_recent_candle_timestamp() {
+        let df = df! {
+            "timestamp" => &["2024-01-01T00:00:00.000Z", "2024-01-02T00:00:00.000Z"],
+            "ticker" => &["BTC", "ETH"],
+            "close" => &[100.0, 200.0],
+        }
+        .unwrap();
+        let now = DateTime::parse_from_rfc3339("2024-01-03T12:00:00.000Z")
+            .unwrap()
+            .with_timezone(&Utc);
+
+        let age_hours = data_age_hours_at(&df, now).unwrap();
+
+        assert_eq!(age_hours, 36);
     }
 
     #[traced_test]

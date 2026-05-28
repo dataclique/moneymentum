@@ -9,6 +9,7 @@ export interface BetaBenchmark {
   interval: string
   lookback: string
 }
+const STALE_BETA_DATA_THRESHOLD_HOURS = 24
 
 const symbolToTicker = (symbol: string): string =>
   symbol.includes("/") ? (symbol.split("/")[0] ?? symbol) : symbol
@@ -68,6 +69,7 @@ interface BetaResponse {
   beta: number | null
   excluded_symbols: string[]
   effective_weights: Record<string, number>
+  data_age_hours: number
 }
 
 const fetchBeta = async (
@@ -143,8 +145,19 @@ export const useBeta = (
     get effectiveWeights() {
       return query.data?.effective_weights ?? {}
     },
+    get dataAgeHours() {
+      return query.data?.data_age_hours ?? null
+    },
+    get isDataStale() {
+      return (
+        query.data?.data_age_hours !== undefined &&
+        query.data.data_age_hours > STALE_BETA_DATA_THRESHOLD_HOURS
+      )
+    },
     get methodology() {
       return methodology()
     },
   }
 }
+
+export { STALE_BETA_DATA_THRESHOLD_HOURS }

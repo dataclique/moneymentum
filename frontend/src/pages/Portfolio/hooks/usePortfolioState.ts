@@ -171,8 +171,25 @@ export const usePortfolioState = () => {
     })
   }
 
-  const symbolsBelowMinimum = createMemo(() =>
-    Object.keys(targetPortfolio).filter(symbol => {
+  const effectiveTotalNotional = createMemo(() => {
+    return Object.values(targetPortfolio).reduce(
+      (sum, pos) => sum + (pos?.notional ?? 0),
+      0,
+    )
+  })
+
+  const hasCurrentPositions = createMemo(() =>
+    Object.values(currentPortfolio).some(position => position !== undefined),
+  )
+
+  const isClosingAllPositions = createMemo(
+    () => hasCurrentPositions() && effectiveTotalNotional() <= 0.01,
+  )
+
+  const symbolsBelowMinimum = createMemo(() => {
+    if (isClosingAllPositions()) return []
+
+    return Object.keys(targetPortfolio).filter(symbol => {
       const targetPosition = targetPortfolio[symbol]
       const currentNotional = currentPortfolio[symbol]?.notional ?? 0
 
@@ -183,11 +200,13 @@ export const usePortfolioState = () => {
         Math.abs(targetPosition.notional - currentNotional) < 0.01
 
       return !unchanged
-    }),
-  )
+    })
+  })
 
-  const symbolsDeltaBelowMinimum = createMemo(() =>
-    Object.keys(targetPortfolio).filter(symbol => {
+  const symbolsDeltaBelowMinimum = createMemo(() => {
+    if (isClosingAllPositions()) return []
+
+    return Object.keys(targetPortfolio).filter(symbol => {
       const target = targetPortfolio[symbol]
       if (!target) return false
 
@@ -203,8 +222,8 @@ export const usePortfolioState = () => {
       const delta = Math.abs(targetSignedNotional - currentSignedNotional)
 
       return delta < MIN_USD && delta !== 0
-    }),
-  )
+    })
+  })
 
   // Keep displayed target leverage in sync with planned target notional.
   createEffect(() => {
@@ -369,13 +388,6 @@ export const usePortfolioState = () => {
   })
 
   const hasPositionsBelowMinimum = () => symbolsBelowMinimum().length > 0
-  const effectiveTotalNotional = createMemo(() => {
-    return Object.values(targetPortfolio).reduce(
-      (sum, pos) => sum + (pos?.notional ?? 0),
-      0,
-    )
-  })
-
   const targetAllocationPercent = createMemo(() => {
     const total = targetTotalNotional()
     if (total <= 0) return 0

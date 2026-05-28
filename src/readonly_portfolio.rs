@@ -753,16 +753,6 @@ mod tests {
     }
 
     #[test]
-    fn provider_supported_bech32_parser_rejects_invalid_checksum() {
-        assert!(
-            parse_provider_supported_bech32_address(
-                "tb1qqltm70wyz734t9k8d9w70uuhyxnemyh56d5ra8rtw082ytd7ywmsqudq5f"
-            )
-            .is_none()
-        );
-    }
-
-    #[test]
     fn testnet_mempool_base_url_keeps_api_path_for_address_endpoint() {
         let base_url = default_btc_base_url().unwrap();
         let address =

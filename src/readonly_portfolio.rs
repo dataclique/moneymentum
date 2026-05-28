@@ -90,7 +90,16 @@ fn parse_provider_supported_bech32_address(value: &str) -> Option<BtcAddress> {
     }
 
     let normalized = value.to_lowercase();
-    let (hrp, _data) = bitcoin::bech32::decode(&normalized).ok()?;
+    let (hrp, _data) = match bitcoin::bech32::decode(&normalized) {
+        Ok(decoded) => decoded,
+        Err(error) => {
+            debug!(
+                error = %error,
+                "provider-supported bech32 address rejected"
+            );
+            return None;
+        }
+    };
     let network = if hrp == bitcoin::bech32::hrp::BC {
         Network::Bitcoin
     } else if hrp == bitcoin::bech32::hrp::TB {
@@ -728,6 +737,7 @@ mod tests {
         assert_eq!(address.network(), Network::Testnet);
     }
 
+    #[traced_test]
     #[test]
     fn provider_supported_bech32_parser_rejects_invalid_checksum() {
         assert!(
@@ -736,6 +746,10 @@ mod tests {
             )
             .is_none()
         );
+        assert!(logs_contain_at(
+            Level::DEBUG,
+            &["provider-supported bech32 address rejected", "checksum"]
+        ));
     }
 
     #[test]

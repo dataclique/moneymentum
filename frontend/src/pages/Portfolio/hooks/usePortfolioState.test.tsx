@@ -217,6 +217,29 @@ describe("usePortfolioState", () => {
     expect(result.canSubmit).toBe(true)
   })
 
+  it("allows submitting a full close to cash", async () => {
+    const { result } = renderHook(() => usePortfolioState(), {
+      wrapper: createWrapper(),
+    })
+
+    await waitFor(() => {
+      expect(Object.keys(result.targetPortfolio)).toHaveLength(2)
+    })
+
+    result.setManualWeightEntry(true)
+    result.handleWeightChange("BTC/USDC:USDC", 0)
+    result.handleWeightChange("ETH/USDC:USDC", 0)
+
+    expect(result.targetAllocationPercent).toBe(0)
+    expect(result.symbolsBelowMinimum).toEqual([])
+    expect(result.symbolsDeltaBelowMinimum).toEqual([])
+    expect(result.canSubmit).toBe(true)
+
+    result.handleRebalancePositions()
+
+    expect(mutate).toHaveBeenCalled()
+  })
+
   it("redistributes other positions when weight redistribution is enabled", async () => {
     const { result } = renderHook(() => usePortfolioState(), {
       wrapper: createWrapper(),

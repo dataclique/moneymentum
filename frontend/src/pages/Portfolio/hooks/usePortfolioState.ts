@@ -41,6 +41,7 @@ const initialManualWeightEntryFromStorage = (): boolean =>
 
 const MAX_CROSS_ACCOUNT_LEVERAGE = 5
 const DEFAULT_CROSS_ACCOUNT_LEVERAGE = 1
+const POSITION_CLOSE_EPSILON = 0.01
 
 export interface PortfolioInterface {
   symbol: string
@@ -182,9 +183,22 @@ export const usePortfolioState = () => {
     Object.values(currentPortfolio).some(position => position !== undefined),
   )
 
-  const isClosingAllPositions = createMemo(
-    () => hasCurrentPositions() && effectiveTotalNotional() <= 0.01,
-  )
+  const isClosingAllPositions = createMemo(() => {
+    if (!hasCurrentPositions()) return false
+
+    const symbols = new Set([
+      ...Object.keys(currentPortfolio),
+      ...Object.keys(targetPortfolio),
+    ])
+
+    return [...symbols].every(symbol => {
+      const targetPosition = targetPortfolio[symbol]
+      return (
+        targetPosition === undefined ||
+        targetPosition.notional <= POSITION_CLOSE_EPSILON
+      )
+    })
+  })
 
   const symbolsBelowMinimum = createMemo(() => {
     if (isClosingAllPositions()) return []

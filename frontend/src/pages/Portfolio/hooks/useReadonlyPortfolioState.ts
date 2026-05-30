@@ -84,11 +84,6 @@ const clearEntriesFromStorage = (): void => {
   localStorage.removeItem(READONLY_BTC_STORAGE_KEY)
 }
 
-const redactAddress = (address: string): string => {
-  const suffix = address.slice(-6)
-  return suffix.length > 0 ? `...${suffix}` : ""
-}
-
 const fetchExposure = async (
   entries: ReadonlyBtcEntry[],
   networkMode: "testnet" | "mainnet",
@@ -177,7 +172,6 @@ export const useReadonlyPortfolioState = () => {
     const validation = validateBitcoinAddress(normalizedAddress, networkMode())
     if (!validation.ok) {
       console.warn(validation.error.message, {
-        address: redactAddress(normalizedAddress),
         error: validation.error,
         network: networkMode(),
       })

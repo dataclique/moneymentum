@@ -237,7 +237,29 @@ describe("usePortfolioState", () => {
 
     result.handleRebalancePositions()
 
-    expect(mutate).toHaveBeenCalled()
+    expect(mutate).toHaveBeenCalledWith({
+      actions: [
+        { kind: "close", symbol: "BTC/USDC:USDC", side: "buy" },
+        { kind: "close", symbol: "ETH/USDC:USDC", side: "buy" },
+      ],
+    })
+  })
+
+  it("allows full close when every target position is dust", async () => {
+    const { result } = renderHook(() => usePortfolioState(), {
+      wrapper: createWrapper(),
+    })
+
+    await waitFor(() => {
+      expect(Object.keys(result.targetPortfolio)).toHaveLength(2)
+    })
+
+    result.handleNotionalChange("BTC/USDC:USDC", 0.006)
+    result.handleNotionalChange("ETH/USDC:USDC", 0.006)
+
+    expect(result.symbolsBelowMinimum).toEqual([])
+    expect(result.symbolsDeltaBelowMinimum).toEqual([])
+    expect(result.canSubmit).toBe(true)
   })
 
   it("redistributes other positions when weight redistribution is enabled", async () => {

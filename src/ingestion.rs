@@ -146,20 +146,11 @@ pub(crate) struct IngestionServices {
 }
 
 pub(crate) async fn create_run(pool: &SqlitePool) -> Result<IngestionRunId, IngestionRunError> {
-    let running_run_exists: bool =
-        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM ingestion_runs WHERE status = 'running')")
-            .fetch_one(pool)
-            .await?;
-
-    if running_run_exists {
-        return Err(IngestionRunError::AlreadyRunning);
-    }
-
     let started_at = Utc::now();
     let run_id = IngestionRunId::new(started_at);
     let timestamp = started_at.to_rfc3339();
 
-    sqlx::query(
+    match sqlx::query(
         r"
         INSERT INTO ingestion_runs (id, status, started_at, heartbeat_at)
         VALUES (?1, ?2, ?3, ?3)
@@ -169,7 +160,14 @@ pub(crate) async fn create_run(pool: &SqlitePool) -> Result<IngestionRunId, Inge
     .bind(IngestionStatus::Running.as_db_str())
     .bind(timestamp)
     .execute(pool)
-    .await?;
+    .await
+    {
+        Ok(_) => {}
+        Err(sqlx::Error::Database(database_error)) if database_error.is_unique_violation() => {
+            return Err(IngestionRunError::AlreadyRunning);
+        }
+        Err(err) => return Err(err.into()),
+    }
 
     debug!(run_id = run_id.as_str(), "ingestion run created");
     Ok(run_id)
@@ -416,11 +414,17 @@ mod tests {
         ));
     }
 
+    #[traced_test]
     #[tokio::test]
     async fn create_run_rejects_concurrent_running_run() {
         let pool = setup_pool().await;
 
-        create_run(&pool).await.unwrap();
+        let run_id = create_run(&pool).await.unwrap();
+        assert!(logs_contain_at(
+            Level::DEBUG,
+            &["ingestion run created", run_id.as_str()]
+        ));
+
         let duplicate = create_run(&pool).await;
 
         assert!(matches!(duplicate, Err(IngestionRunError::AlreadyRunning)));

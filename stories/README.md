@@ -21,7 +21,6 @@ from Hyperliquid-only positions to read-only wallets and protective hedges.
 - [Replace Ingestion Event Sourcing With Run Ledger](./0x023.switch-event-sourcing-wrapper.md)
 - [Show Bitcoin Beta For The Active Portfolio](./0x00b.show-bitcoin-beta-for-active-portfolio.md)
 - [Add Read-Only Bitcoin Addresses](./0x00c.add-read-only-bitcoin-addresses.md)
-- [Replace Ingestion Event Sourcing With Run Ledger](./0x023.switch-event-sourcing-wrapper.md)
 
 ## Planned
 

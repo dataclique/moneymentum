@@ -232,6 +232,10 @@ export const PositionsPanelRow = (props: {
         return
       }
 
+      if (event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) {
+        return
+      }
+
       if (!/^\d$/.test(event.key)) return
 
       event.preventDefault()

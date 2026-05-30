@@ -21,7 +21,7 @@ import { cn } from "@/lib/cn"
 interface LeverageDialogProps {
   symbol: string
   leverage: number
-  maxLeverage: number
+  maxLeverage?: number
   leverageLimitsIsLoading: boolean
   disabled: boolean
   onLeverageChange: (symbol: string, leverage: number) => void
@@ -29,15 +29,17 @@ interface LeverageDialogProps {
 
 export const LeverageDialog = (props: LeverageDialogProps): JSX.Element => {
   const [open, setOpen] = createSignal(false)
-  const isLeverageLoading = () => props.leverageLimitsIsLoading
+  const maxLeverage = () => props.maxLeverage ?? 1
+  const isLeverageLoading = () =>
+    props.leverageLimitsIsLoading || props.maxLeverage === undefined
   const leverageMarks = createMemo(() =>
     Array.from(
-      { length: Math.max(1, Math.floor(props.maxLeverage)) },
+      { length: Math.max(1, Math.floor(maxLeverage())) },
       (_, markIndex) => markIndex + 1,
     ),
   )
   const markLeft = (leverage: number) => {
-    const leverageRange = props.maxLeverage - 1
+    const leverageRange = maxLeverage() - 1
     if (leverageRange <= 0) return "0%"
     return `${String(((leverage - 1) / leverageRange) * 100)}%`
   }
@@ -127,7 +129,7 @@ export const LeverageDialog = (props: LeverageDialogProps): JSX.Element => {
                   props.onLeverageChange(props.symbol, leverage)
                 }}
                 minValue={1}
-                maxValue={props.maxLeverage}
+                maxValue={maxLeverage()}
                 step={1}
                 class="w-full"
               />
@@ -143,7 +145,7 @@ export const LeverageDialog = (props: LeverageDialogProps): JSX.Element => {
                         when={
                           leverageMark === 1 ||
                           leverageMark === props.leverage ||
-                          leverageMark === Math.floor(props.maxLeverage)
+                          leverageMark === Math.floor(maxLeverage())
                         }
                       >
                         <span class="font-mono text-xs leading-none text-muted-foreground">

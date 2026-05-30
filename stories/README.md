@@ -52,5 +52,3 @@ from Hyperliquid-only positions to read-only wallets and protective hedges.
 - [Sync Encrypted Local State Across Devices](./0x024.sync-encrypted-local-state.md)
 
 ## Dev
-
-- [Replace Ingestion Event Sourcing With Run Ledger](./0x023.switch-event-sourcing-wrapper.md)

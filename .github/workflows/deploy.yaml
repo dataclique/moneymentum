@@ -3,6 +3,7 @@ name: Deploy
 on:
   push:
     branches: [master]
+  workflow_dispatch:
 
 permissions:
   id-token: write
@@ -33,15 +34,102 @@ jobs:
           echo "${{ secrets.SSH_KEY }}" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
 
-      - name: Resolve and mask host IP
+      - name: Resolve host IP
         run: |
           host_ip=$(nix run .#resolveIp)
           echo "::add-mask::$host_ip"
+
+          # The host key is pinned in keys.nix, not fetched from the target host.
           host_key=$(nix eval --raw --file keys.nix keys.host)
+          if [ -z "$host_key" ]; then
+            echo "Host key is empty" >&2
+            exit 1
+          fi
+
           echo "$host_ip $host_key" > ~/.ssh/known_hosts
 
       - name: Deploy
         run: nix run .#deployAll
+
+      - name: Cleanup SSH
+        if: always()
+        run: rm -rf ~/.ssh
+
+  post-deploy-smoke-test:
+    needs: deploy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: DeterminateSystems/nix-installer-action@main
+        with:
+          extra-conf: |
+            accept-flake-config = true
+            fallback = true
+
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+
+      - name: Setup SSH key for state decryption
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          echo "${{ secrets.SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+
+      - name: Verify deployed frontend and backend
+        env:
+          FRONTEND_URL: ${{ vars.DEPLOY_FRONTEND_URL }}
+          HEALTH_URL: ${{ vars.DEPLOY_HEALTH_URL }}
+          SMOKE_HOST: ${{ vars.DEPLOY_SMOKE_HOST }}
+          SMOKE_INSECURE: ${{ vars.DEPLOY_SMOKE_INSECURE }}
+        run: |
+          host_ip=$(nix run .#resolveIp)
+          if [ -z "$host_ip" ]; then
+            echo "Host IP was not resolved" >&2
+            exit 1
+          fi
+          echo "::add-mask::$host_ip"
+
+          frontend_url="${FRONTEND_URL:-http://$host_ip/}"
+          health_url="${HEALTH_URL:-http://$host_ip/api/health}"
+
+          retry_url() {
+            url="$1"
+            expected_body="${2:-}"
+            follow_redirects="${3:-false}"
+
+            for delay in 2 4 8 16 32; do
+              response_file="$(mktemp)"
+              curl_args=(-sS --max-time 20)
+              if [ "$follow_redirects" = "true" ]; then
+                curl_args+=(-L)
+              fi
+              if [ -n "$SMOKE_HOST" ]; then
+                curl_args+=(-H "Host: $SMOKE_HOST")
+              fi
+              if [ "$SMOKE_INSECURE" = "true" ]; then
+                curl_args+=(-k)
+              fi
+
+              status=$(curl "${curl_args[@]}" -o "$response_file" -w "%{http_code}" "$url" || true)
+              body=$(cat "$response_file")
+              rm -f "$response_file"
+
+              if [ "$status" = "200" ] && { [ -z "$expected_body" ] || [ "$body" = "$expected_body" ]; }; then
+                echo "Verified $url"
+                return 0
+              fi
+
+              echo "Waiting for $url: status=$status"
+              sleep "$delay"
+            done
+
+            echo "Smoke check failed for $url" >&2
+            return 1
+          }
+
+          retry_url "$frontend_url" "" true
+          retry_url "$health_url" "ok"
 
       - name: Cleanup SSH
         if: always()

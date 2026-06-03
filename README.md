@@ -110,15 +110,15 @@ nix run .#remote         # SSH
 nix run .#tfEditVars
 ```
 
-> **DANGER -- destructive: `nix run .#tfDestroy` permanently deletes the
-> environment's infrastructure.** It is not a routine command. Before running,
-> pin the target environment (e.g., `export ENV=staging`) and require an
-> explicit confirmation flag (e.g., `TF_DESTROY_CONFIRM=1` or `--confirm`).
-> Never run against `production` without a separate, written approval.
-
-```bash
-ENV=staging TF_DESTROY_CONFIRM=1 nix run .#tfDestroy -- --confirm
-```
-
 Infrastructure commands use age-encrypted state. The `-i` flag selects a custom
 SSH identity (defaults to `~/.ssh/id_ed25519`).
+
+`master` deploys automatically through the `Deploy` GitHub Actions workflow. The
+workflow pins the SSH host key from `keys.nix`, resolves the host IP from
+encrypted Terraform state, runs `nix run .#deployAll`, then the
+`post-deploy-smoke-test` job verifies the public frontend and `/api/health`. Set
+`DEPLOY_FRONTEND_URL` and `DEPLOY_HEALTH_URL` repository variables when the
+public checks should use a domain or HTTPS instead of the raw droplet IP.
+
+There is no standalone destroy command. To remove or reprovision resources, edit
+`infra/main.tf`, inspect `nix run .#tfPlan`, then apply the reviewed plan.

@@ -7,7 +7,7 @@ rec {
     ci =
       "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHww2/XOFuvQONtwbJF5SFWtKazncH82P7iUmWw1duc6";
     host =
-      "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIP68uagBaG5Gt5nLJ6G6esXs5fxLbItL3M1qfSrSSVGB";
+      "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAquGLnor6IRlNhpUuye7NIl/Kqm27+oKzglBXAMNAbj";
   };
 
   roles = with keys; {

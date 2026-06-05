@@ -83,10 +83,6 @@ export const usePortfolioState = () => {
   // Mutations
   const rebalancePositionsMutation = useRebalanceHyperliquidPositions()
 
-  ///////////////////////////
-  ///////START HERE//////////
-  ///////////////////////////
-
   const [currentPortfolio, setCurrentPortfolio] = createStore<
     Record<string, PortfolioInterface | undefined>
   >({})
@@ -106,10 +102,6 @@ export const usePortfolioState = () => {
 
   const [currentTotalNotional, setCurrentTotalNotional] = createSignal(0)
   const [targetTotalNotional, setTargetTotalNotional] = createSignal(0)
-
-  ///////////////////////////
-  ///////END HERE//////////
-  ///////////////////////////
 
   const [isRebalancingUi, setIsRebalancingUi] = createSignal(false)
 
@@ -552,12 +544,19 @@ export const usePortfolioState = () => {
     )
   }
 
-  // // createEffect: clear rebalancing UI state once staged trades are empty
-  // createEffect(() => {
-  //   if (!isRebalancingUi() || !positionsLoadedFromExchange()) {
-  //     return
-  //   }
-  // })
+  const resetPortfolioStateForNetworkChange = () => {
+    batch(() => {
+      setCurrentPortfolio(reconcile({}))
+      setTargetPortfolio(reconcile({}))
+      setDeletedArchive(reconcile({}))
+      setCurrentCrossAccountLeverage(DEFAULT_CROSS_ACCOUNT_LEVERAGE)
+      setTargetCrossAccountLeverage(DEFAULT_CROSS_ACCOUNT_LEVERAGE)
+      setCurrentTotalNotional(0)
+      setTargetTotalNotional(0)
+    })
+    setPositionsLoadedFromExchange(false)
+    setIsRebalancingUi(false)
+  }
 
   return {
     get accountValue() {
@@ -672,5 +671,6 @@ export const usePortfolioState = () => {
     removeReadonlyBtcAddress: readonlyPortfolio.removeAddress,
     setReadonlyBtcIncludeInBeta: readonlyPortfolio.setIncludeInBeta,
     handleDisconnect,
+    resetPortfolioStateForNetworkChange,
   }
 }

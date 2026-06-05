@@ -125,30 +125,7 @@
           };
         };
 
-        deps = with pkgs; [
-          cacert
-          clang
-          jdk17
-          zlib
-          libffi
-          gcc-unwrapped
-          stdenv.cc.cc.lib
-          openssl.dev
-          pkg-config
-          sqlite.dev
-        ];
-
-        # jdbcPath = "${pkgs.postgresql_jdbc}/share/java/postgresql-jdbc.jar";
-        # injectJdbc = " --driver-class-path ${jdbcPath} --jars ${jdbcPath}";
-        env = {
-          # JDBC_PATH = jdbcPath;
-          JAVA_HOME = pkgs.jdk17;
-          LD_LIBRARY_PATH = "${pkgs.lib.makeLibraryPath [
-            pkgs.zlib
-            pkgs.libffi
-            pkgs.stdenv.cc.cc.lib
-          ]}";
-        };
+        deps = with pkgs; [ cacert openssl.dev pkg-config sqlite.dev ];
 
         frontendShell = devenv.lib.mkShell {
           inherit inputs pkgs;
@@ -207,7 +184,7 @@
               # DATABASE_URL is read by sqlx for compile-time query verification
               # and by migration tooling. Runtime config uses database_url.
               # PATH so git-hooks:install finds git (common macOS paths; profile has git too).
-              env = env // {
+              env = {
                 DATABASE_URL = "sqlite:./moneymentum.db?mode=rwc";
                 PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin";
               };

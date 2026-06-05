@@ -68,6 +68,7 @@ const PortfolioPage = () => {
 
   const betaResult = useBeta(
     () => portfolio.targetPortfolio,
+    () => portfolio.targetTotalNotional,
     () => portfolio.readonlyBetaPositions,
   )
 
@@ -164,6 +165,7 @@ const PortfolioPage = () => {
                 deletedArchive={portfolio.deletedArchive}
                 isLoading={portfolio.isPositionsLoading}
                 fundingIsLoading={fundingRatesQuery.isLoading}
+                leverageLimitsIsLoading={portfolio.isLeverageLimitsLoading}
                 leverageLimitsMap={portfolio.leverageLimitsMap}
                 _isRebalancing={portfolio.isRebalancing}
                 isPrecise={portfolio.isPrecise}

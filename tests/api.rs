@@ -62,17 +62,19 @@ async fn mount_funding_mock(server: &MockServer) {
 }
 
 async fn create_test_client(mock_server: &MockServer, data_dir: &TempDir) -> Client {
+    let database_path = data_dir.path().join("moneymentum-test.db");
     let toml_str = format!(
         r#"
         port = 0
         data_dir = "{}"
-        database_url = "sqlite::memory:"
+        database_url = "sqlite://{}?mode=rwc"
         hyperliquid_base_url = "{}"
         log_level = "debug"
         max_concurrent_requests = 3
         max_retries = 2
         "#,
         data_dir.path().display(),
+        database_path.display(),
         mock_server.uri()
     );
     let config: Config = toml::from_str(&toml_str).unwrap();

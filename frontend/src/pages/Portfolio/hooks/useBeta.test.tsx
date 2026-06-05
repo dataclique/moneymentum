@@ -34,6 +34,7 @@ const targetPortfolio = (): Record<string, PortfolioInterface | undefined> => ({
     notional: 40,
   },
 })
+const targetTotalNotional = () => 100
 
 describe("useBeta", () => {
   const fetchMock = vi.fn()
@@ -62,7 +63,7 @@ describe("useBeta", () => {
     ]
 
     const { result } = renderHook(
-      () => useBeta(targetPortfolio, readonlyPositions),
+      () => useBeta(targetPortfolio, targetTotalNotional, readonlyPositions),
       { wrapper: createWrapper() },
     )
 
@@ -88,7 +89,7 @@ describe("useBeta", () => {
     ]
 
     const { result } = renderHook(
-      () => useBeta(targetPortfolio, readonlyPositions),
+      () => useBeta(targetPortfolio, targetTotalNotional, readonlyPositions),
       { wrapper: createWrapper() },
     )
 

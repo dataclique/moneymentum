@@ -14,9 +14,9 @@ Moneymentum makes those exposures legible and adjustable.
   cross-account leverage, staged trade preview, execution against Hyperliquid
   perps.
 - **Frontend prototype** at `/prototype`: design reference for the target UI.
-- **Backend** (active development): Rust + Rocket API, Polars analytics, cqrs-es
-  event store on SQLite. Ingests Hyperliquid OHLCV and funding rates; computes
-  rolling beta to BTC.
+- **Backend** (active development): Rust + Rocket API, Polars analytics,
+  SQLite-backed ingestion runs and job queue. Ingests Hyperliquid OHLCV and
+  funding rates; computes rolling beta to BTC.
 - **Vault program** (planned): Anchor program on Solana for non-custodial
   managed deposits with two-phase withdrawal.
 

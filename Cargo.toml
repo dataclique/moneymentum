@@ -11,7 +11,6 @@ backon = "1.6.0"
 bitcoin = "0.32.8"
 chrono = { version = "0.4.43", features = ["serde"] }
 clap = { version = "4.5.57", features = ["derive", "env"] }
-cqrs-es = "0.4.11"
 futures = "0.3.31"
 hyperliquid_rust_sdk = "0.6.0"
 polars = { version = "0.51", features = [
@@ -28,7 +27,6 @@ rocket = { version = "0.5.1", features = ["json"] }
 rust_decimal = { version = "1.40.0", features = ["serde-with-str"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
-sqlite-es = { git = "https://github.com/ST0x-Technology/st0x.issuance" }
 sqlx = { version = "0.8.6", features = [
   "sqlite",
   "runtime-tokio-rustls",

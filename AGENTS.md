@@ -99,6 +99,14 @@ sqlx migrate run                   # Applies pending migrations
 - All dependencies managed through Nix flake - do not use bun install, cargo
   install, or similar
 
+### Version control
+
+All write operations go through the GitButler CLI (`but`) -- never `git add`,
+`git commit`, `git push`, `git checkout`, `git rebase`, or other git writes.
+Read-only git inspection (`git status`, `git log`, `git diff`) is fine. See
+[ai/skills/gitbutler/SKILL.md](./ai/skills/gitbutler/SKILL.md) for the full
+command reference and workflow.
+
 ---
 
 ## Workflow & Policies

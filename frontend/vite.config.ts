@@ -8,6 +8,17 @@ import nodePolyfills from "vite-plugin-node-stdlib-browser"
 export default defineConfig({
   base: "/",
   plugins: [solid(), tailwindcss(), nodePolyfills()],
+  // Eagerly pre-bundle heavy Solana / Reown entry points so dev HMR does not
+  // leave the browser requesting stale hashes (504 Outdated Optimize Dep).
+  optimizeDeps: {
+    include: [
+      "@solana/web3.js",
+      "@solana/spl-token",
+      "@reown/appkit-utils/solana",
+      "@reown/appkit",
+      "@reown/appkit-adapter-solana",
+    ],
+  },
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),

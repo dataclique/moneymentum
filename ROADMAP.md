@@ -60,8 +60,10 @@ of them.
 - [x] Factor: Sharpe --
       [#259](https://github.com/data-cartel/moneymentum/issues/259) /
       [#260](https://github.com/data-cartel/moneymentum/pull/260)
-- [ ] Factor: Sortino (adds MAR -- Minimum Acceptable Return -- to
-      TimeframeConfig)
+- [x] Factor: Sortino (adds MAR -- Minimum Acceptable Return -- to
+      TimeframeConfig) --
+      [#261](https://github.com/data-cartel/moneymentum/issues/261) /
+      [#262](https://github.com/data-cartel/moneymentum/pull/262)
 - [ ] Factor: autocorrelation
 - [ ] Factor: information discreteness
 - [ ] Factor: carry (signed funding)

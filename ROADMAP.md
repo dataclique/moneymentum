@@ -28,19 +28,28 @@ user-facing endpoints tick their story items under those themes. This is an
 engineering track that runs in parallel to the product themes below, not ahead
 of them.
 
+- [x] Point user stories at the factors module --
+      [#304](https://github.com/data-cartel/moneymentum/issues/304) /
+      [#250](https://github.com/data-cartel/moneymentum/pull/250)
 - [x] Consolidate beta into a factors module --
       [#249](https://github.com/data-cartel/moneymentum/issues/249) /
-      [#250](https://github.com/data-cartel/moneymentum/pull/250)
-- [ ] Add TimeframeConfig (lookback, annualization, and MAR -- Minimum
-      Acceptable Return)
+      [#252](https://github.com/data-cartel/moneymentum/pull/252)
+- [x] Add TimeframeConfig (lookback + annualization) --
+      [#251](https://github.com/data-cartel/moneymentum/issues/251) /
+      [#254](https://github.com/data-cartel/moneymentum/pull/254)
 - [ ] Factor: returns
-- [ ] Factor: cum_return
-- [ ] Factor: volatility
+- [x] Factor: cum_return --
+      [#253](https://github.com/data-cartel/moneymentum/issues/253) /
+      [#254](https://github.com/data-cartel/moneymentum/pull/254)
+- [x] Factor: volatility --
+      [#251](https://github.com/data-cartel/moneymentum/issues/251) /
+      [#254](https://github.com/data-cartel/moneymentum/pull/254)
 - [ ] Factor: SMA
 - [ ] Factor: mean return
 - [ ] Factor: price z-score
 - [ ] Factor: Sharpe
-- [ ] Factor: Sortino
+- [ ] Factor: Sortino (adds MAR -- Minimum Acceptable Return -- to
+      TimeframeConfig)
 - [ ] Factor: autocorrelation
 - [ ] Factor: information discreteness
 - [ ] Factor: carry (signed funding)

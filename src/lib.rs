@@ -137,6 +137,21 @@ async fn get_candles(
         .ok_or(Status::NotFound)
 }
 
+#[get("/factors/<timeframe>")]
+async fn get_factors(
+    config: &State<Config>,
+    timeframe: Timeframe,
+) -> Result<RawJson<Vec<u8>>, Status> {
+    match factors::compute_factors_json(&config.data_dir, timeframe).await {
+        Ok(json) => Ok(RawJson(json)),
+        Err(factors::ReturnsError::NoData { .. }) => Err(Status::NotFound),
+        Err(err) => {
+            error!(error = %err, "failed to compute factors");
+            Err(Status::InternalServerError)
+        }
+    }
+}
+
 #[post("/ingest")]
 async fn start_ingestion(job_queue: &State<IngestionJobQueue>, pool: &State<SqlitePool>) -> Status {
     let run_id = match ingestion::create_run(pool).await {
@@ -429,6 +444,7 @@ pub async fn rocket(
             routes![
                 health,
                 get_candles,
+                get_factors,
                 start_ingestion,
                 get_ingestion_status,
                 post_beta,
@@ -480,7 +496,7 @@ mod tests {
         };
         rocket::build()
             .manage(config)
-            .mount("/", routes![health, get_candles])
+            .mount("/", routes![health, get_candles, get_factors])
     }
 
     proptest! {
@@ -550,6 +566,48 @@ mod tests {
         let response = client.get("/candles/1h").dispatch();
 
         assert_eq!(response.status(), Status::NotFound);
+    }
+
+    #[test]
+    fn get_factors_returns_404_when_no_data() {
+        let data_dir = TempDir::new().unwrap();
+        let client = Client::tracked(test_rocket(data_dir.path())).unwrap();
+        let response = client.get("/factors/1d").dispatch();
+
+        assert_eq!(response.status(), Status::NotFound);
+    }
+
+    #[test]
+    fn get_factors_returns_per_ticker_factor_scores_json() {
+        let data_dir = TempDir::new().unwrap();
+        std::fs::copy(
+            std::path::Path::new("fixtures/ohlcv_1d_beta.csv"),
+            data_dir.path().join("ohlcv_1d.csv"),
+        )
+        .unwrap();
+
+        let client = Client::tracked(test_rocket(data_dir.path())).unwrap();
+        let response = client.get("/factors/1d").dispatch();
+
+        assert_eq!(response.status(), Status::Ok);
+        let body = response.into_string().unwrap();
+        let rows: Vec<serde_json::Value> =
+            serde_json::from_str(&body).expect("factors body is a JSON array");
+        assert!(!rows.is_empty(), "expected a row per ticker");
+        assert!(
+            rows.iter()
+                .all(|row| row.get("annualized_volatility").is_some()),
+            "every row carries annualized_volatility"
+        );
+        assert!(
+            rows.iter().all(|row| row.get("cum_return").is_some()),
+            "every row carries cum_return"
+        );
+        assert!(
+            rows.iter()
+                .any(|row| row.get("ticker").and_then(|t| t.as_str()) == Some("BTC")),
+            "BTC is present in the factor scores"
+        );
     }
 
     #[test]

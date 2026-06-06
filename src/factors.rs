@@ -16,14 +16,15 @@ pub const LOG_RETURNS_LOOKBACK_CANDLES: usize = 366;
 
 use polars::datatypes::AnyValue;
 use polars::prelude::{
-    ChunkApply, DataFrame, DataFrameJoinOps, IntoLazy, IntoSeries, JoinArgs, JoinType, NamedFrom,
-    PolarsError, Series, SortMultipleOptions, SortOptions, col, lit,
+    ChunkApply, DataFrame, DataFrameJoinOps, IntoLazy, IntoSeries, JoinArgs, JoinType, JsonFormat,
+    JsonWriter, NamedFrom, PolarsError, SerWriter, Series, SortMultipleOptions, SortOptions, col,
+    lit,
 };
 use thiserror::Error;
 use tracing::{info, instrument};
 
 use crate::dataframe::DataFrameError;
-use crate::timeframe::Timeframe;
+use crate::timeframe::{Timeframe, TimeframeConfig};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct PortfolioBetaReport {
@@ -448,6 +449,81 @@ fn variance(benchmark: &Series) -> Result<f64, ReturnsError> {
     Ok(variance)
 }
 
+/// Per-ticker factor scores from a timeframe's candles.
+///
+/// For each ticker, over the last `lookback_periods` daily log returns:
+/// - `annualized_volatility` = sample stddev (ddof=1) * sqrt(annualized_factor)
+/// - `cum_return` = exp(sum of log returns) - 1 (cumulative / momentum return)
+///
+/// Returns a `DataFrame` keyed by `ticker`. New factors are added as columns.
+#[instrument(skip_all, fields(data_dir = %data_dir.display()))]
+pub(crate) async fn compute_factors(
+    data_dir: &Path,
+    timeframe: Timeframe,
+) -> Result<DataFrame, ReturnsError> {
+    let path = data_dir.join(timeframe.file_name());
+    let df = crate::dataframe::read_csv(path.clone()).await?;
+    let Some(df) = df else {
+        return Err(ReturnsError::NoData { path });
+    };
+    let config = timeframe.config();
+    let out = tokio::task::spawn_blocking(move || per_ticker_factors(&df, &config)).await??;
+    info!(tickers = out.height(), "factors computed");
+    Ok(out)
+}
+
+/// Synchronous core: log returns per ticker, then per-ticker factor scores over
+/// the last `lookback_periods` returns. Stddev uses ddof=1 to match the legacy
+/// Spark `stddev`; the cumulative return is `exp(sum) - 1`.
+fn per_ticker_factors(
+    candles: &DataFrame,
+    config: &TimeframeConfig,
+) -> Result<DataFrame, PolarsError> {
+    let with_returns = compute_log_returns(candles)?;
+    let lookback = config.lookback_periods;
+    let annualizer = config.annualized_factor.sqrt();
+    let mut factors = with_returns
+        .lazy()
+        .group_by([col("ticker")])
+        .agg([
+            (col("log_return").tail(Some(lookback)).std(1) * lit(annualizer))
+                .alias("annualized_volatility"),
+            col("log_return")
+                .tail(Some(lookback))
+                .sum()
+                .alias("cum_log_return"),
+        ])
+        .sort(["ticker"], SortMultipleOptions::default())
+        .collect()?;
+
+    // cum_return = exp(sum of log returns) - 1. exp is applied on the series
+    // (like compute_log_returns does for ln) to avoid a polars math-expr feature.
+    let cum_return = factors
+        .column("cum_log_return")?
+        .f64()?
+        .apply_values(f64::exp_m1)
+        .into_series()
+        .with_name("cum_return".into());
+    factors.with_column(cum_return)?;
+    factors.drop_in_place("cum_log_return")?;
+    Ok(factors)
+}
+
+/// Per-ticker factor scores serialized as a JSON array, for the `/factors`
+/// endpoint. Currently exposes `annualized_volatility`; further factors are
+/// added as columns here as they land.
+pub(crate) async fn compute_factors_json(
+    data_dir: &Path,
+    timeframe: Timeframe,
+) -> Result<Vec<u8>, ReturnsError> {
+    let mut factors = compute_factors(data_dir, timeframe).await?;
+    let mut buf = Vec::new();
+    JsonWriter::new(&mut buf)
+        .with_json_format(JsonFormat::Json)
+        .finish(&mut factors)?;
+    Ok(buf)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -513,6 +589,148 @@ mod tests {
                 &["portfolio beta calculated", "beta"]
             ));
         }
+    }
+
+    proptest! {
+        /// Volatility is a scaled standard deviation, so it is always finite and
+        /// non-negative for any positive close series.
+        #[test]
+        fn volatility_is_non_negative(
+            closes in prop::collection::vec(1.0_f64..1_000_000.0, 3..50),
+        ) {
+            let n = closes.len();
+            let timestamps: Vec<String> = (0..n).map(|i| format!("{i:04}")).collect();
+            let tickers = vec!["BTC"; n];
+            let candles = df! {
+                "timestamp" => timestamps,
+                "ticker" => tickers,
+                "close" => closes,
+            }
+            .unwrap();
+            let config = TimeframeConfig { lookback_periods: 100, annualized_factor: 365.0 };
+
+            let out = per_ticker_factors(&candles, &config).unwrap();
+            let vol = out
+                .column("annualized_volatility")
+                .unwrap()
+                .f64()
+                .unwrap()
+                .get(0)
+                .unwrap();
+            prop_assert!(vol >= 0.0, "volatility must be non-negative, got {vol}");
+            prop_assert!(vol.is_finite());
+
+            let cum = out
+                .column("cum_return")
+                .unwrap()
+                .f64()
+                .unwrap()
+                .get(0)
+                .unwrap();
+            prop_assert!(cum.is_finite(), "cum_return must be finite, got {cum}");
+        }
+    }
+
+    #[test]
+    fn per_ticker_factors_match_manual_values() {
+        let candles = df! {
+            "timestamp" => &["0", "1", "2", "3", "4"],
+            "ticker" => &["BTC", "BTC", "BTC", "BTC", "BTC"],
+            "close" => &[100.0, 101.0, 100.0, 101.0, 100.0_f64],
+        }
+        .unwrap();
+        let config = TimeframeConfig {
+            lookback_periods: 10,
+            annualized_factor: 365.0,
+        };
+
+        let out = per_ticker_factors(&candles, &config).unwrap();
+        let vol = out
+            .column("annualized_volatility")
+            .unwrap()
+            .f64()
+            .unwrap()
+            .get(0)
+            .unwrap();
+
+        // log returns are [a, -a, a, -a] with a = ln(1.01), mean 0, so the
+        // sample variance is 4a^2/3 and volatility = sqrt(4a^2/3) * sqrt(365).
+        let a = (101.0_f64 / 100.0).ln();
+        let expected = (4.0 * a * a / 3.0).sqrt() * 365.0_f64.sqrt();
+        assert!(
+            (vol - expected).abs() < 1e-10,
+            "vol {vol} != expected {expected}"
+        );
+
+        // log returns sum to a - a + a - a = 0, so cum_return = exp(0) - 1 = 0.
+        let cum = out
+            .column("cum_return")
+            .unwrap()
+            .f64()
+            .unwrap()
+            .get(0)
+            .unwrap();
+        assert!(cum.abs() < 1e-12, "cum_return should be ~0, got {cum}");
+    }
+
+    #[test]
+    fn per_ticker_factors_are_zero_for_constant_prices() {
+        let candles = df! {
+            "timestamp" => &["0", "1", "2", "3"],
+            "ticker" => &["BTC", "BTC", "BTC", "BTC"],
+            "close" => &[100.0, 100.0, 100.0, 100.0_f64],
+        }
+        .unwrap();
+        let config = TimeframeConfig {
+            lookback_periods: 10,
+            annualized_factor: 365.0,
+        };
+
+        let out = per_ticker_factors(&candles, &config).unwrap();
+        let vol = out
+            .column("annualized_volatility")
+            .unwrap()
+            .f64()
+            .unwrap()
+            .get(0)
+            .unwrap();
+        assert!(
+            vol.abs() < 1e-12,
+            "constant prices give zero volatility, got {vol}"
+        );
+
+        let cum = out
+            .column("cum_return")
+            .unwrap()
+            .f64()
+            .unwrap()
+            .get(0)
+            .unwrap();
+        assert!(
+            cum.abs() < 1e-12,
+            "constant prices give zero cum_return, got {cum}"
+        );
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn compute_factors_reads_candles_and_logs() {
+        let tmp_dir = TempDir::new().unwrap();
+        let src = Path::new("fixtures/ohlcv_1d_beta.csv");
+        let dst = tmp_dir.path().join("ohlcv_1d.csv");
+        fs::copy(src, &dst).unwrap();
+
+        let out = compute_factors(tmp_dir.path(), Timeframe::OneDay)
+            .await
+            .unwrap();
+
+        assert!(out.height() > 0, "expected a factor row per ticker");
+        assert!(out.column("annualized_volatility").is_ok());
+        assert!(out.column("cum_return").is_ok());
+        assert!(crate::logs_contain_at(
+            tracing::Level::INFO,
+            &["factors computed"]
+        ));
     }
 
     #[test]

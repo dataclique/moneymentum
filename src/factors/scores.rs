@@ -4,8 +4,9 @@
 use std::path::Path;
 
 use polars::prelude::{
-    ChunkApply, DataFrame, DataFrameJoinOps, IntoLazy, IntoSeries, JoinArgs, JoinType, JsonFormat,
-    JsonWriter, NULL, PolarsError, SerWriter, SortMultipleOptions, col, cols, lit, when,
+    ChunkApply, DataFrame, DataFrameJoinOps, DataType, IntoLazy, IntoSeries, JoinArgs, JoinType,
+    JsonFormat, JsonWriter, NULL, PolarsError, SerWriter, SortMultipleOptions, col, cols, lit,
+    when,
 };
 use tracing::{info, instrument};
 
@@ -18,8 +19,9 @@ const PRICE_STDDEV_EPS: f64 = 1e-8;
 
 /// Per-ticker factor scores serialized as a JSON array, for the `/factors`
 /// endpoint. Exposes `annualized_volatility`, `cum_return`, `sma`,
-/// `mean_return`, `price_zscore`, `annualized_return`, `sharpe`, `sortino`, and
-/// `autocorrelation`; further factors are added as columns as they land.
+/// `mean_return`, `price_zscore`, `annualized_return`, `sharpe`, `sortino`,
+/// `autocorrelation`, and `information_discreteness`; further factors are added
+/// as columns as they land.
 pub(crate) async fn compute_factors_json(
     data_dir: &Path,
     timeframe: Timeframe,
@@ -47,6 +49,8 @@ pub(crate) async fn compute_factors_json(
 ///   when there is no downside
 /// - `autocorrelation` = lag-1 autocorrelation of returns over the last
 ///   `lookback_periods` / 4 pairs; null when returns have no variation
+/// - `information_discreteness` = sign(`cum_return`) * (fraction of negative
+///   returns - fraction of positive returns); -1 for a smooth trend
 ///
 /// Returns a `DataFrame` keyed by `ticker`. New factors are added as columns.
 #[instrument(skip_all, fields(data_dir = %data_dir.display()))]
@@ -118,6 +122,12 @@ fn per_ticker_factors(
                 .tail(Some(lookback))
                 .count()
                 .alias("obs_count"),
+            (col("log_return").tail(Some(lookback)).gt(lit(0.0)))
+                .sum()
+                .alias("pos_count"),
+            (col("log_return").tail(Some(lookback)).lt(lit(0.0)))
+                .sum()
+                .alias("neg_count"),
         ])
         // price z-score = (latest close - SMA) / price stddev; undefined (null)
         // when there is no price dispersion (constant prices over the window).
@@ -146,8 +156,10 @@ fn per_ticker_factors(
 /// Derives the return and risk-adjusted factors from the aggregated columns and
 /// drops the intermediate sums/counts they were computed from.
 ///
-/// Adds `cum_return`, `annualized_return`, `sharpe`, and `sortino`.
-/// `sharpe`/`sortino` are null when their risk denominator is zero.
+/// Adds `cum_return`, `annualized_return`, `sharpe`, `sortino`, and
+/// `information_discreteness`. `sharpe`/`sortino` are null when their risk
+/// denominator is zero; `information_discreteness` is `sign(cum_return)` times
+/// the negative-minus-positive return fraction.
 fn add_return_and_risk_factors(
     mut factors: DataFrame,
     annualized_factor: f64,
@@ -188,10 +200,21 @@ fn add_return_and_risk_factors(
     factors.drop_in_place("price_stddev")?;
     factors.drop_in_place("last_close")?;
 
-    // sharpe = annualized_return / annualized_volatility (risk-free 0); sortino =
-    // annualized_return / downside deviation below the MAR. Both are undefined
-    // (null) when their risk denominator is zero.
     let downside_deviation = (col("downside_sq_sum") / col("obs_count")).pow(lit(0.5));
+
+    // information discreteness = sign(cum_return) * (pct_negative - pct_positive):
+    // -1 for a smooth one-directional trend, near 0 for choppy or flat returns.
+    let return_sign = when(col("cum_return").gt(lit(0.0)))
+        .then(lit(1.0))
+        .otherwise(
+            when(col("cum_return").lt(lit(0.0)))
+                .then(lit(-1.0))
+                .otherwise(lit(0.0)),
+        );
+    let pct_difference = (col("neg_count").cast(DataType::Float64)
+        - col("pos_count").cast(DataType::Float64))
+        / col("obs_count").cast(DataType::Float64);
+
     let factors = factors
         .lazy()
         .with_columns([
@@ -218,8 +241,25 @@ fn add_return_and_risk_factors(
             .then(col("annualized_return") / downside_deviation)
             .otherwise(lit(NULL))
             .alias("sortino"),
+            // NaN > 0.0 and NaN < 0.0 are both false, so a NaN-poisoned
+            // cum_return would slip through return_sign as a legitimate-looking
+            // 0.0 ("perfectly choppy") without the explicit finiteness guard
+            // its sibling factors all carry.
+            when(
+                col("obs_count")
+                    .gt(lit(0))
+                    .and(col("cum_return").is_finite()),
+            )
+            .then(return_sign * pct_difference)
+            .otherwise(lit(NULL))
+            .alias("information_discreteness"),
         ])
-        .drop(cols(["downside_sq_sum", "obs_count"]))
+        .drop(cols([
+            "downside_sq_sum",
+            "obs_count",
+            "pos_count",
+            "neg_count",
+        ]))
         .collect()?;
 
     Ok(factors)
@@ -315,6 +355,18 @@ mod tests {
                     "sortino must be finite when present, got {sortino}"
                 );
             }
+
+            let information_discreteness = out
+                .column("information_discreteness")
+                .unwrap()
+                .f64()
+                .unwrap()
+                .get(0)
+                .unwrap();
+            prop_assert!(
+                (-1.0 - 1e-9..=1.0 + 1e-9).contains(&information_discreteness),
+                "information_discreteness {information_discreteness} outside [-1, 1]"
+            );
         }
 
         /// For a strictly increasing close series the latest close is the maximum,
@@ -376,6 +428,20 @@ mod tests {
             prop_assert!(
                 sortino.is_none(),
                 "increasing closes have no downside, so sortino must be null, got {sortino:?}"
+            );
+
+            // A smooth uptrend is fully positive returns, so information
+            // discreteness is sign(+) * (0 - 1) = -1.
+            let information_discreteness = out
+                .column("information_discreteness")
+                .unwrap()
+                .f64()
+                .unwrap()
+                .get(0)
+                .unwrap();
+            prop_assert!(
+                (information_discreteness - (-1.0)).abs() < 1e-12,
+                "a smooth uptrend must give information_discreteness -1, got {information_discreteness}"
             );
         }
     }
@@ -481,6 +547,20 @@ mod tests {
             .get(0)
             .unwrap();
         assert!(sortino.abs() < 1e-12, "sortino should be ~0, got {sortino}");
+
+        // cum_return is 0, so sign(cum_return) is 0 and information discreteness
+        // is 0 regardless of the positive/negative return split.
+        let information_discreteness = out
+            .column("information_discreteness")
+            .unwrap()
+            .f64()
+            .unwrap()
+            .get(0)
+            .unwrap();
+        assert!(
+            information_discreteness.abs() < 1e-12,
+            "information_discreteness should be ~0, got {information_discreteness}"
+        );
     }
 
     #[test]
@@ -577,6 +657,20 @@ mod tests {
             autocorrelation.is_none(),
             "constant prices give an undefined (null) autocorrelation, got {autocorrelation:?}"
         );
+
+        // cum_return is 0 (sign 0) with no positive or negative returns, so
+        // information discreteness is exactly 0.
+        let information_discreteness = out
+            .column("information_discreteness")
+            .unwrap()
+            .f64()
+            .unwrap()
+            .get(0)
+            .unwrap();
+        assert!(
+            information_discreteness.abs() < 1e-12,
+            "constant prices give zero information_discreteness, got {information_discreteness}"
+        );
     }
 
     #[test]
@@ -642,6 +736,67 @@ mod tests {
         );
     }
 
+    #[test]
+    fn information_discreteness_matches_manual_value_for_mixed_signs() {
+        // Three up moves and one down move with a net-positive cum_return:
+        // sign(+) * (pct_negative - pct_positive) = 1 * (1/4 - 3/4) = -0.5.
+        let candles = df! {
+            "timestamp" => &["0", "1", "2", "3", "4"],
+            "ticker" => &["BTC", "BTC", "BTC", "BTC", "BTC"],
+            "close" => &[100.0, 102.0, 101.0, 103.0, 105.0_f64],
+        }
+        .unwrap();
+        let config = TimeframeConfig {
+            lookback_periods: 10,
+            annualized_factor: 365.0,
+            min_acceptable_return: 0.0,
+        };
+
+        let out = per_ticker_factors(&candles, &config).unwrap();
+        let information_discreteness = out
+            .column("information_discreteness")
+            .unwrap()
+            .f64()
+            .unwrap()
+            .get(0)
+            .unwrap();
+
+        assert!(
+            (information_discreteness - (-0.5)).abs() < 1e-12,
+            "1 down of 4 returns on a net uptrend must give -0.5, got {information_discreteness}"
+        );
+    }
+
+    #[test]
+    fn information_discreteness_is_minus_one_for_smooth_downtrend() {
+        // A smooth downtrend is fully negative returns, so information
+        // discreteness is sign(-) * (1 - 0) = -1, mirroring the uptrend case.
+        let candles = df! {
+            "timestamp" => &["0", "1", "2", "3"],
+            "ticker" => &["BTC", "BTC", "BTC", "BTC"],
+            "close" => &[100.0, 99.0, 98.0, 97.0_f64],
+        }
+        .unwrap();
+        let config = TimeframeConfig {
+            lookback_periods: 10,
+            annualized_factor: 365.0,
+            min_acceptable_return: 0.0,
+        };
+
+        let out = per_ticker_factors(&candles, &config).unwrap();
+        let information_discreteness = out
+            .column("information_discreteness")
+            .unwrap()
+            .f64()
+            .unwrap()
+            .get(0)
+            .unwrap();
+        assert!(
+            (information_discreteness - (-1.0)).abs() < 1e-12,
+            "a smooth downtrend must give information_discreteness -1, got {information_discreteness}"
+        );
+    }
+
     #[traced_test]
     #[tokio::test]
     async fn compute_factors_reads_candles_and_logs() {
@@ -664,6 +819,7 @@ mod tests {
         assert!(out.column("sharpe").is_ok());
         assert!(out.column("sortino").is_ok());
         assert!(out.column("autocorrelation").is_ok());
+        assert!(out.column("information_discreteness").is_ok());
         assert!(crate::logs_contain_at(
             tracing::Level::INFO,
             &["factors computed"]

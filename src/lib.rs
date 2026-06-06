@@ -1,6 +1,6 @@
-mod beta;
 mod candle;
 mod dataframe;
+mod factors;
 mod finance;
 mod funding;
 mod hyperliquid;
@@ -325,7 +325,8 @@ async fn post_beta(
         sorted_weights
     };
 
-    match beta::compute_portfolio_beta_report(&config.data_dir, &weights, &body.benchmark).await {
+    match factors::compute_portfolio_beta_report(&config.data_dir, &weights, &body.benchmark).await
+    {
         Ok(report) => Ok(Json(BetaResponse {
             beta: report.beta,
             excluded_symbols: report.excluded_tickers,

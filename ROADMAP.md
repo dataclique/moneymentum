@@ -202,6 +202,10 @@ result before sending trades.
 Portfolio risk assessment beyond beta and crash-specific simulations.
 
 - [ ] [Show Risk Analytics For Active Portfolio](./stories/0x01b.show-risk-analytics-for-active-portfolio.md)
+      -- measurement contract shipped
+      ([#283](https://github.com/data-cartel/moneymentum/issues/283) /
+      [#284](https://github.com/data-cartel/moneymentum/pull/284)); VaR/CVaR,
+      correlation, drawdown, ENB, Monte Carlo metrics and the frontend pending
 
 ---
 

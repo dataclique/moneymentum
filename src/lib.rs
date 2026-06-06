@@ -11,6 +11,7 @@ mod market_metadata;
 mod portfolio;
 mod portfolio_comparison;
 mod readonly_portfolio;
+mod risk;
 mod screener;
 mod simulation;
 mod timeframe;
@@ -217,6 +218,22 @@ async fn post_portfolio_simulate(
             Err(Status::InternalServerError)
         }
     }
+}
+
+#[post("/risk", data = "<body>")]
+fn post_risk(
+    body: Json<risk::RiskRequest>,
+) -> Result<Json<risk::MeasurementContract>, Custom<Json<ApiErrorResponse>>> {
+    risk::resolve_contract(&body.into_inner())
+        .map(Json)
+        .map_err(|err| {
+            Custom(
+                Status::UnprocessableEntity,
+                Json(ApiErrorResponse {
+                    error: err.to_string(),
+                }),
+            )
+        })
 }
 
 #[post("/ingest")]
@@ -937,6 +954,7 @@ pub async fn rocket(
                 post_screener,
                 post_portfolio_compare,
                 post_portfolio_simulate,
+                post_risk,
                 start_ingestion,
                 get_ingestion_status,
                 post_market_disable,
@@ -1000,7 +1018,8 @@ mod tests {
                 get_factors,
                 post_screener,
                 post_portfolio_compare,
-                post_portfolio_simulate
+                post_portfolio_simulate,
+                post_risk
             ],
         )
     }
@@ -1636,6 +1655,37 @@ mod tests {
         let staged = body["staged"]["beta"].as_f64().unwrap();
         assert!((current - 1.0).abs() < 1e-10);
         assert!((staged - 0.592_091_722_3).abs() < 1e-10);
+    }
+
+    #[test]
+    fn post_risk_returns_resolved_contract_baseline() {
+        let data_dir = TempDir::new().unwrap();
+        let client = Client::tracked(test_rocket(data_dir.path())).unwrap();
+        let response = client
+            .post("/risk")
+            .header(rocket::http::ContentType::JSON)
+            .body(r#"{"weights":{"BTC":0.6,"ETH":-0.4}}"#)
+            .dispatch();
+
+        assert_eq!(response.status(), Status::Ok);
+        let body: serde_json::Value =
+            serde_json::from_str(&response.into_string().unwrap()).unwrap();
+        assert_eq!(body["window"]["lookbackDays"].as_u64(), Some(90));
+        assert_eq!(body["samplingFrequency"].as_str(), Some("daily"));
+        assert_eq!(body["confidenceLevels"].as_array().map(Vec::len), Some(3));
+    }
+
+    #[test]
+    fn post_risk_rejects_invalid_request() {
+        let data_dir = TempDir::new().unwrap();
+        let client = Client::tracked(test_rocket(data_dir.path())).unwrap();
+        let response = client
+            .post("/risk")
+            .header(rocket::http::ContentType::JSON)
+            .body(r#"{"weights":{"BTC":1.0},"confidenceLevels":[0.8]}"#)
+            .dispatch();
+
+        assert_eq!(response.status(), Status::UnprocessableEntity);
     }
 
     #[test]

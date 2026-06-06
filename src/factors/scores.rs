@@ -17,8 +17,8 @@ const PRICE_STDDEV_EPS: f64 = 1e-8;
 
 /// Per-ticker factor scores serialized as a JSON array, for the `/factors`
 /// endpoint. Exposes `annualized_volatility`, `cum_return`, `sma`,
-/// `mean_return`, and `price_zscore`; further factors are added as columns as
-/// they land.
+/// `mean_return`, `price_zscore`, `annualized_return`, and `sharpe`; further
+/// factors are added as columns as they land.
 pub(crate) async fn compute_factors_json(
     data_dir: &Path,
     timeframe: Timeframe,
@@ -39,6 +39,9 @@ pub(crate) async fn compute_factors_json(
 /// - `sma` = simple moving average of close prices
 /// - `mean_return` = mean log return
 /// - `price_zscore` = (latest close - `sma`) / sample stddev of close prices
+/// - `annualized_return` = exp(`mean_return` * annualized_factor) - 1
+/// - `sharpe` = `annualized_return` / `annualized_volatility` (risk-free 0);
+///   null when there is no volatility
 ///
 /// Returns a `DataFrame` keyed by `ticker`. New factors are added as columns.
 #[instrument(skip_all, fields(data_dir = %data_dir.display()))]
@@ -96,7 +99,8 @@ fn per_ticker_factors(
         .sort(["ticker"], SortMultipleOptions::default())
         .collect()?;
 
-    // cum_return = exp(sum of log returns) - 1. exp is applied on the series
+    // cum_return = exp(sum of log returns) - 1, and annualized_return =
+    // exp(mean_return * annualized_factor) - 1. exp is applied on the series
     // (like compute_log_returns does for ln) to avoid a polars math-expr feature.
     let cum_return = factors
         .column("cum_log_return")?
@@ -105,9 +109,52 @@ fn per_ticker_factors(
         .into_series()
         .with_name("cum_return".into());
     factors.with_column(cum_return)?;
+
+    let annualized_factor = config.annualized_factor;
+    let annualized_return = factors
+        .column("mean_return")?
+        .f64()?
+        .apply_values(|mean| (mean * annualized_factor).exp_m1())
+        .into_series()
+        .with_name("annualized_return".into());
+    factors.with_column(annualized_return)?;
+
+    // An extreme mean return overflows exp() to a non-finite value; null it so
+    // the screener never ranks on inf. sharpe and sortino derive from
+    // annualized_return and stay null too.
+    let mut factors = factors
+        .lazy()
+        .with_column(
+            when(col("annualized_return").is_finite())
+                .then(col("annualized_return"))
+                .otherwise(lit(NULL))
+                .alias("annualized_return"),
+        )
+        .collect()?;
+
     factors.drop_in_place("cum_log_return")?;
     factors.drop_in_place("price_stddev")?;
     factors.drop_in_place("last_close")?;
+
+    // sharpe = annualized_return / annualized_volatility (risk-free 0); undefined
+    // (null) when there is no volatility to divide by.
+    let factors = factors
+        .lazy()
+        .with_column(
+            // NaN != 0.0 is true in IEEE 754, so a NaN volatility (e.g. from a
+            // corrupt zero close producing a -inf log return) must be rejected
+            // explicitly -- mirroring the price_zscore stddev guard.
+            when(
+                col("annualized_volatility")
+                    .is_finite()
+                    .and(col("annualized_volatility").neq(lit(0.0))),
+            )
+            .then(col("annualized_return") / col("annualized_volatility"))
+            .otherwise(lit(NULL))
+            .alias("sharpe"),
+        )
+        .collect()?;
+
     Ok(factors)
 }
 
@@ -177,12 +224,27 @@ mod tests {
                     "price_zscore must be finite when present, got {zscore}"
                 );
             }
+
+            if let Some(annualized_return) =
+                out.column("annualized_return").unwrap().f64().unwrap().get(0)
+            {
+                prop_assert!(
+                    annualized_return.is_finite(),
+                    "annualized_return must be finite when present, got {annualized_return}"
+                );
+            }
+
+            if let Some(sharpe) = out.column("sharpe").unwrap().f64().unwrap().get(0) {
+                prop_assert!(sharpe.is_finite(), "sharpe must be finite when present, got {sharpe}");
+            }
         }
 
         /// For a strictly increasing close series the latest close is the maximum,
-        /// so it sits above the moving average and the price z-score is positive.
+        /// so it sits above the moving average (positive z-score) and every log
+        /// return is positive, so the annualized return and (when volatility is
+        /// non-zero) the Sharpe ratio are positive too.
         #[test]
-        fn price_zscore_positive_for_strictly_increasing_closes(
+        fn increasing_closes_give_positive_momentum_factors(
             base in 1.0_f64..1000.0,
             increments in prop::collection::vec(0.01_f64..100.0, 3..40),
         ) {
@@ -206,6 +268,25 @@ mod tests {
             let out = per_ticker_factors(&candles, &config).unwrap();
             let zscore = out.column("price_zscore").unwrap().f64().unwrap().get(0).unwrap();
             prop_assert!(zscore > 0.0, "increasing closes must give a positive z-score, got {zscore}");
+
+            let annualized_return = out
+                .column("annualized_return")
+                .unwrap()
+                .f64()
+                .unwrap()
+                .get(0)
+                .unwrap();
+            prop_assert!(
+                annualized_return > 0.0,
+                "increasing closes must give a positive annualized_return, got {annualized_return}"
+            );
+
+            if let Some(sharpe) = out.column("sharpe").unwrap().f64().unwrap().get(0) {
+                prop_assert!(
+                    sharpe > 0.0,
+                    "positive return with volatility must give a positive sharpe, got {sharpe}"
+                );
+            }
         }
     }
 
@@ -281,6 +362,23 @@ mod tests {
             (zscore - expected_zscore).abs() < 1e-10,
             "zscore {zscore} != {expected_zscore}"
         );
+
+        // mean_return is 0, so annualized_return = exp(0) - 1 = 0 and, with a
+        // positive volatility, sharpe = 0 / vol = 0.
+        let annualized_return = out
+            .column("annualized_return")
+            .unwrap()
+            .f64()
+            .unwrap()
+            .get(0)
+            .unwrap();
+        assert!(
+            annualized_return.abs() < 1e-12,
+            "annualized_return should be ~0, got {annualized_return}"
+        );
+
+        let sharpe = out.column("sharpe").unwrap().f64().unwrap().get(0).unwrap();
+        assert!(sharpe.abs() < 1e-12, "sharpe should be ~0, got {sharpe}");
     }
 
     #[test]
@@ -342,6 +440,25 @@ mod tests {
             zscore.is_none(),
             "constant prices give an undefined (null) z-score, got {zscore:?}"
         );
+
+        let annualized_return = out
+            .column("annualized_return")
+            .unwrap()
+            .f64()
+            .unwrap()
+            .get(0)
+            .unwrap();
+        assert!(
+            annualized_return.abs() < 1e-12,
+            "constant prices give zero annualized_return, got {annualized_return}"
+        );
+
+        // Zero volatility means sharpe is undefined -> null.
+        let sharpe = out.column("sharpe").unwrap().f64().unwrap().get(0);
+        assert!(
+            sharpe.is_none(),
+            "constant prices give an undefined (null) sharpe, got {sharpe:?}"
+        );
     }
 
     #[test]
@@ -385,6 +502,8 @@ mod tests {
         assert!(out.column("sma").is_ok());
         assert!(out.column("mean_return").is_ok());
         assert!(out.column("price_zscore").is_ok());
+        assert!(out.column("annualized_return").is_ok());
+        assert!(out.column("sharpe").is_ok());
         assert!(crate::logs_contain_at(
             tracing::Level::INFO,
             &["factors computed"]

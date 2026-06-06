@@ -57,7 +57,9 @@ of them.
 - [x] Factor: price z-score --
       [#255](https://github.com/data-cartel/moneymentum/issues/255) /
       [#256](https://github.com/data-cartel/moneymentum/pull/256)
-- [ ] Factor: Sharpe
+- [x] Factor: Sharpe --
+      [#259](https://github.com/data-cartel/moneymentum/issues/259) /
+      [#260](https://github.com/data-cartel/moneymentum/pull/260)
 - [ ] Factor: Sortino (adds MAR -- Minimum Acceptable Return -- to
       TimeframeConfig)
 - [ ] Factor: autocorrelation

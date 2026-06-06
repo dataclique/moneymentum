@@ -28,7 +28,7 @@ mod scores;
 mod volume;
 
 pub(crate) use beta::compute_portfolio_beta_report;
-pub(crate) use scores::compute_factors_json;
+pub(crate) use scores::{compute_factors, compute_factors_json};
 
 use thiserror::Error;
 

@@ -152,7 +152,11 @@ Find assets by factor characteristics, stage portfolio changes, and simulate the
 result before sending trades.
 
 - [ ] [Compare Target vs Current Portfolio](./stories/0x01a.compare-target-vs-current-portfolio.md)
-- [ ] [Screen Perps By Factor](./stories/0x01c.screen-perps-by-factor.md)
+- [ ] [Screen Perps By Factor](./stories/0x01c.screen-perps-by-factor.md) --
+      backend rank API shipped
+      ([#273](https://github.com/data-cartel/moneymentum/issues/273) /
+      [#274](https://github.com/data-cartel/moneymentum/pull/274)); frontend
+      filter integration pending
 - [ ] [Simulate Staged Portfolio Metrics](./stories/0x01d.simulate-staged-portfolio-metrics.md)
 
 ---

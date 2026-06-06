@@ -6,6 +6,7 @@ mod funding;
 mod hyperliquid;
 mod ingestion;
 mod readonly_portfolio;
+mod screener;
 mod timeframe;
 
 use std::net::Ipv4Addr;
@@ -149,6 +150,24 @@ async fn get_factors(
         Err(factors::ReturnsError::NoData { .. }) => Err(Status::NotFound),
         Err(err) => {
             error!(error = %err, "failed to compute factors");
+            Err(Status::InternalServerError)
+        }
+    }
+}
+
+#[post("/screener/<timeframe>", data = "<body>")]
+async fn post_screener(
+    config: &State<Config>,
+    timeframe: Timeframe,
+    body: Json<screener::ScreenerRequest>,
+) -> Result<RawJson<Vec<u8>>, Status> {
+    match screener::screen(&config.data_dir, timeframe, &body).await {
+        Ok(json) => Ok(RawJson(json)),
+        Err(screener::ScreenerError::Factors(factors::ReturnsError::NoData { .. })) => {
+            Err(Status::NotFound)
+        }
+        Err(err) => {
+            error!(error = %err, "failed to screen perps");
             Err(Status::InternalServerError)
         }
     }
@@ -451,6 +470,7 @@ pub async fn rocket(
                 health,
                 get_candles,
                 get_factors,
+                post_screener,
                 start_ingestion,
                 get_ingestion_status,
                 post_beta,
@@ -501,9 +521,10 @@ mod tests {
             max_concurrent_requests: 3,
             max_retries: 5,
         };
-        rocket::build()
-            .manage(config)
-            .mount("/", routes![health, get_candles, get_factors])
+        rocket::build().manage(config).mount(
+            "/",
+            routes![health, get_candles, get_factors, post_screener],
+        )
     }
 
     proptest! {
@@ -746,6 +767,46 @@ mod tests {
             btc_row["carry"].is_null(),
             "carry must be null without funding data, got {:?}",
             btc_row["carry"]
+        );
+    }
+
+    #[test]
+    fn post_screener_returns_404_when_no_data() {
+        let data_dir = TempDir::new().unwrap();
+        let client = Client::tracked(test_rocket(data_dir.path())).unwrap();
+        let response = client
+            .post("/screener/1d")
+            .header(rocket::http::ContentType::JSON)
+            .body(r#"{"factor":"sharpe"}"#)
+            .dispatch();
+
+        assert_eq!(response.status(), Status::NotFound);
+    }
+
+    #[test]
+    fn post_screener_returns_ranked_rows_with_missing_flags() {
+        let data_dir = TempDir::new().unwrap();
+        std::fs::copy(
+            std::path::Path::new("fixtures/ohlcv_1d_beta.csv"),
+            data_dir.path().join("ohlcv_1d.csv"),
+        )
+        .unwrap();
+
+        let client = Client::tracked(test_rocket(data_dir.path())).unwrap();
+        let response = client
+            .post("/screener/1d")
+            .header(rocket::http::ContentType::JSON)
+            .body(r#"{"factor":"sharpe"}"#)
+            .dispatch();
+
+        assert_eq!(response.status(), Status::Ok);
+        let body = response.into_string().unwrap();
+        let rows: Vec<serde_json::Value> =
+            serde_json::from_str(&body).expect("screener body is a JSON array");
+        assert!(!rows.is_empty(), "expected ranked rows");
+        assert!(
+            rows.iter().all(|row| row.get("missing").is_some()),
+            "every ranked row carries a missing flag"
         );
     }
 

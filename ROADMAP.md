@@ -70,7 +70,9 @@ of them.
 - [x] Factor: information discreteness --
       [#265](https://github.com/data-cartel/moneymentum/issues/265) /
       [#266](https://github.com/data-cartel/moneymentum/pull/266)
-- [ ] Factor: carry (signed funding)
+- [x] Factor: carry (signed funding) --
+      [#267](https://github.com/data-cartel/moneymentum/issues/267) /
+      [#268](https://github.com/data-cartel/moneymentum/pull/268)
 - [ ] Markets metadata + persisted disable flag
 - [ ] Tradable filter wired into ingestion
 

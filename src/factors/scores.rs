@@ -12,6 +12,7 @@ use tracing::{info, instrument};
 
 use super::ReturnsError;
 use super::autocorrelation::autocorrelation_by_ticker;
+use super::carry::with_carry;
 use super::returns::compute_log_returns;
 use crate::timeframe::{Timeframe, TimeframeConfig};
 
@@ -20,8 +21,8 @@ const PRICE_STDDEV_EPS: f64 = 1e-8;
 /// Per-ticker factor scores serialized as a JSON array, for the `/factors`
 /// endpoint. Exposes `annualized_volatility`, `cum_return`, `sma`,
 /// `mean_return`, `price_zscore`, `annualized_return`, `sharpe`, `sortino`,
-/// `autocorrelation`, and `information_discreteness`; further factors are added
-/// as columns as they land.
+/// `autocorrelation`, `information_discreteness`, and `carry`; further factors
+/// are added as columns as they land.
 pub(crate) async fn compute_factors_json(
     data_dir: &Path,
     timeframe: Timeframe,
@@ -51,6 +52,8 @@ pub(crate) async fn compute_factors_json(
 ///   `lookback_periods` / 4 pairs; null when returns have no variation
 /// - `information_discreteness` = sign(`cum_return`) * (fraction of negative
 ///   returns - fraction of positive returns); -1 for a smooth trend
+/// - `carry` = latest signed funding rate from `funding_rate1h.csv`; null when
+///   no funding data is available
 ///
 /// Returns a `DataFrame` keyed by `ticker`. New factors are added as columns.
 #[instrument(skip_all, fields(data_dir = %data_dir.display()))]
@@ -60,8 +63,13 @@ async fn compute_factors(data_dir: &Path, timeframe: Timeframe) -> Result<DataFr
     let Some(df) = df else {
         return Err(ReturnsError::NoData { path });
     };
+    let funding = crate::dataframe::read_csv(data_dir.join(crate::funding::file_name())).await?;
     let config = timeframe.config();
-    let out = tokio::task::spawn_blocking(move || per_ticker_factors(&df, &config)).await??;
+    let out = tokio::task::spawn_blocking(move || {
+        let factors = per_ticker_factors(&df, &config)?;
+        with_carry(factors, funding.as_ref())
+    })
+    .await??;
     info!(tickers = out.height(), "factors computed");
     Ok(out)
 }
@@ -820,8 +828,46 @@ mod tests {
         assert!(out.column("sortino").is_ok());
         assert!(out.column("autocorrelation").is_ok());
         assert!(out.column("information_discreteness").is_ok());
+        assert!(out.column("carry").is_ok());
         assert!(crate::logs_contain_at(
             tracing::Level::INFO,
+            &["factors computed"]
+        ));
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn compute_factors_joins_latest_carry_from_funding_file() {
+        let tmp_dir = TempDir::new().unwrap();
+        fs::copy(
+            "fixtures/ohlcv_1d_beta.csv",
+            tmp_dir.path().join("ohlcv_1d.csv"),
+        )
+        .unwrap();
+        fs::write(
+            tmp_dir.path().join("funding_rate1h.csv"),
+            "timestamp,funding_rate,symbol\n\
+             2024-01-01T00:00:00Z,0.0001,BTC\n\
+             2024-01-02T00:00:00Z,0.0005,BTC\n",
+        )
+        .unwrap();
+
+        let out = compute_factors(tmp_dir.path(), Timeframe::OneDay)
+            .await
+            .unwrap();
+
+        let tickers = out.column("ticker").unwrap().str().unwrap();
+        let carry = out.column("carry").unwrap().f64().unwrap();
+        let btc_index = (0..tickers.len())
+            .find(|&index| tickers.get(index) == Some("BTC"))
+            .expect("BTC present");
+        assert!(
+            (carry.get(btc_index).unwrap() - 0.0005).abs() < 1e-12,
+            "BTC carry should be the latest funding rate 0.0005"
+        );
+
+        assert!(crate::logs_contain_at(
+            tracing::Level::DEBUG,
             &["factors computed"]
         ));
     }

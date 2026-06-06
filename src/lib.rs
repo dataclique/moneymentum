@@ -663,6 +663,10 @@ mod tests {
             "every row carries information_discreteness as a number (the fixture's returns all vary)"
         );
         assert!(
+            rows.iter().all(|row| row.get("carry").is_some()),
+            "every row carries carry"
+        );
+        assert!(
             rows.iter()
                 .any(|row| row.get("ticker").and_then(|t| t.as_str()) == Some("BTC")),
             "BTC is present in the factor scores"

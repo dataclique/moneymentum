@@ -15,9 +15,11 @@
 //!   mean return, price z-score), served by `GET /factors`.
 //! - [`autocorrelation`]: lag-1 autocorrelation of returns, joined into the
 //!   scores.
+//! - [`carry`]: latest signed funding rate, joined into the scores.
 
 mod autocorrelation;
 mod beta;
+mod carry;
 mod returns;
 mod scores;
 

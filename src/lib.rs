@@ -605,6 +605,25 @@ mod tests {
         );
         assert!(
             rows.iter()
+                .all(|row| row.get("sma").and_then(serde_json::Value::as_f64).is_some()),
+            "every row carries sma as a number"
+        );
+        assert!(
+            rows.iter().all(|row| row
+                .get("mean_return")
+                .and_then(serde_json::Value::as_f64)
+                .is_some()),
+            "every row carries mean_return as a number"
+        );
+        assert!(
+            rows.iter().all(|row| row
+                .get("price_zscore")
+                .and_then(serde_json::Value::as_f64)
+                .is_some()),
+            "every row carries price_zscore as a number (the fixture's prices all vary)"
+        );
+        assert!(
+            rows.iter()
                 .any(|row| row.get("ticker").and_then(|t| t.as_str()) == Some("BTC")),
             "BTC is present in the factor scores"
         );

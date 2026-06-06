@@ -44,9 +44,15 @@ of them.
 - [x] Factor: volatility --
       [#251](https://github.com/data-cartel/moneymentum/issues/251) /
       [#254](https://github.com/data-cartel/moneymentum/pull/254)
-- [ ] Factor: SMA
-- [ ] Factor: mean return
-- [ ] Factor: price z-score
+- [x] Factor: SMA --
+      [#255](https://github.com/data-cartel/moneymentum/issues/255) /
+      [#256](https://github.com/data-cartel/moneymentum/pull/256)
+- [x] Factor: mean return --
+      [#255](https://github.com/data-cartel/moneymentum/issues/255) /
+      [#256](https://github.com/data-cartel/moneymentum/pull/256)
+- [x] Factor: price z-score --
+      [#255](https://github.com/data-cartel/moneymentum/issues/255) /
+      [#256](https://github.com/data-cartel/moneymentum/pull/256)
 - [ ] Factor: Sharpe
 - [ ] Factor: Sortino (adds MAR -- Minimum Acceptable Return -- to
       TimeframeConfig)

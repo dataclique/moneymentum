@@ -2,6 +2,7 @@ use std::str::FromStr;
 
 use solana_pubkey::Pubkey;
 use solana_signature::Signature;
+use tracing::debug;
 use turnkey_api_key_stamper::Stamp;
 use turnkey_client::generated::immutable::activity::v1::{
     CreateWalletIntent, SignRawPayloadIntentV2, WalletAccountParams,
@@ -10,18 +11,33 @@ use turnkey_client::generated::immutable::common::v1::{
     AddressFormat, Curve, HashFunction, PathFormat, PayloadEncoding,
 };
 use turnkey_client::{TurnkeyClient, TurnkeyClientError};
+use uuid::Uuid;
 
 use crate::Wallet;
 
-/// Turnkey organization identifier. Wraps the UUID string that Turnkey uses to
-/// scope all API operations to a single organization.
+/// Turnkey organization identifier.
+///
+/// Wraps the UUID string that Turnkey uses to scope all API operations to a
+/// single organization. Constructed only through [`OrganizationId::new`], so an
+/// instance is always a syntactically valid UUID.
 #[derive(Debug, Clone)]
 pub struct OrganizationId(String);
 
 impl OrganizationId {
-    pub fn new(id: impl Into<String>) -> Self {
-        Self(id.into())
+    /// Parses a Turnkey organization id, rejecting anything that is not a UUID
+    /// so an invalid id cannot reach an API call and fail late.
+    pub fn new(id: impl Into<String>) -> Result<Self, OrganizationIdError> {
+        let id = id.into();
+        Uuid::parse_str(&id).map_err(|_| OrganizationIdError::NotAUuid)?;
+        Ok(Self(id))
     }
+}
+
+/// Error from constructing an [`OrganizationId`].
+#[derive(Debug, thiserror::Error)]
+pub enum OrganizationIdError {
+    #[error("organization id is not a valid UUID")]
+    NotAUuid,
 }
 
 /// Errors from Turnkey Solana wallet operations.
@@ -33,6 +49,8 @@ pub enum TurnkeyWalletError {
     Hex(#[from] hex::FromHexError),
     #[error("expected a 64-byte ed25519 signature, got {0} bytes")]
     SignatureLength(usize),
+    #[error("expected ed25519 scalar {component} to be 32 bytes, got {len} bytes")]
+    ScalarLength { component: &'static str, len: usize },
     #[error("turnkey returned no address for the provisioned wallet")]
     NoAddress,
     #[error(transparent)]
@@ -91,7 +109,9 @@ impl<S: Stamp + Send + Sync> Wallet for TurnkeySolanaWallet<S> {
             )
             .await?;
 
-        parse_signature(&result.result.r, &result.result.s)
+        let signature = parse_signature(&result.result.r, &result.result.s)?;
+        debug!(account = %self.account, "solana payload signed via turnkey");
+        Ok(signature)
     }
 }
 
@@ -130,17 +150,23 @@ pub async fn provision_solana_wallet<S: Stamp + Send + Sync>(
         )
         .await?;
 
-    Ok(ProvisionedSolanaWallet {
+    let wallet = ProvisionedSolanaWallet {
         wallet_id: result.result.wallet_id,
         address: first_solana_address(result.result.addresses)?,
-    })
+    };
+    debug!(
+        wallet_id = %wallet.wallet_id,
+        address = %wallet.address,
+        "provisioned solana wallet via turnkey"
+    );
+    Ok(wallet)
 }
 
 /// Joins Turnkey's hex-encoded `r` and `s` scalars into a 64-byte ed25519
 /// Solana signature.
 fn parse_signature(r_hex: &str, s_hex: &str) -> Result<Signature, TurnkeyWalletError> {
-    let mut bytes = decode_scalar(r_hex)?;
-    bytes.extend_from_slice(&decode_scalar(s_hex)?);
+    let mut bytes = decode_scalar("r", r_hex)?;
+    bytes.extend_from_slice(&decode_scalar("s", s_hex)?);
 
     let signature: [u8; 64] = bytes
         .as_slice()
@@ -150,8 +176,20 @@ fn parse_signature(r_hex: &str, s_hex: &str) -> Result<Signature, TurnkeyWalletE
     Ok(Signature::from(signature))
 }
 
-fn decode_scalar(scalar_hex: &str) -> Result<Vec<u8>, hex::FromHexError> {
-    hex::decode(scalar_hex.strip_prefix("0x").unwrap_or(scalar_hex))
+/// Decodes a single hex-encoded ed25519 scalar and enforces that it is exactly
+/// 32 bytes, so a malformed split (e.g. 31 + 33) cannot pass the combined
+/// 64-byte check and produce a misaligned signature.
+fn decode_scalar(component: &'static str, scalar_hex: &str) -> Result<Vec<u8>, TurnkeyWalletError> {
+    let scalar = hex::decode(scalar_hex.strip_prefix("0x").unwrap_or(scalar_hex))?;
+
+    if scalar.len() != 32 {
+        return Err(TurnkeyWalletError::ScalarLength {
+            component,
+            len: scalar.len(),
+        });
+    }
+
+    Ok(scalar)
 }
 
 /// Parses the first address Turnkey returned for a provisioned wallet as a
@@ -201,7 +239,26 @@ mod tests {
 
         assert!(matches!(
             parse_signature(&short, &short),
-            Err(TurnkeyWalletError::SignatureLength(32))
+            Err(TurnkeyWalletError::ScalarLength {
+                component: "r",
+                len: 16
+            })
+        ));
+    }
+
+    #[test]
+    fn parse_signature_rejects_a_misaligned_scalar_split() {
+        // 31-byte r + 33-byte s sums to 64, so a combined-length check passes,
+        // but the bytes are not a valid (32, 32) ed25519 signature.
+        let r = "ab".repeat(31);
+        let s = "cd".repeat(33);
+
+        assert!(matches!(
+            parse_signature(&r, &s),
+            Err(TurnkeyWalletError::ScalarLength {
+                component: "r",
+                len: 31
+            })
         ));
     }
 
@@ -212,6 +269,19 @@ mod tests {
         assert!(matches!(
             parse_signature("zz", &valid),
             Err(TurnkeyWalletError::Hex(_))
+        ));
+    }
+
+    #[test]
+    fn organization_id_accepts_a_valid_uuid() {
+        assert!(OrganizationId::new("550e8400-e29b-41d4-a716-446655440000").is_ok());
+    }
+
+    #[test]
+    fn organization_id_rejects_a_non_uuid() {
+        assert!(matches!(
+            OrganizationId::new("not-a-uuid"),
+            Err(OrganizationIdError::NotAUuid)
         ));
     }
 

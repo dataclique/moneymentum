@@ -7,8 +7,8 @@ mod turnkey_solana;
 pub use mock::MockWallet;
 #[cfg(feature = "turnkey")]
 pub use turnkey_solana::{
-    OrganizationId, ProvisionedSolanaWallet, TurnkeySolanaWallet, TurnkeyWalletError,
-    provision_solana_wallet,
+    OrganizationId, OrganizationIdError, ProvisionedSolanaWallet, TurnkeySolanaWallet,
+    TurnkeyWalletError, provision_solana_wallet,
 };
 
 /// Domain capability for transaction signing and address retrieval.

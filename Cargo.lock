@@ -7915,8 +7915,10 @@ dependencies = [
  "solana-signature",
  "thiserror 2.0.18",
  "tokio",
+ "tracing",
  "turnkey_api_key_stamper",
  "turnkey_client",
+ "uuid 1.23.3",
  "wallet",
 ]
 

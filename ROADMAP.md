@@ -37,6 +37,9 @@ of them.
 - [x] Add TimeframeConfig (lookback + annualization) --
       [#251](https://github.com/data-cartel/moneymentum/issues/251) /
       [#254](https://github.com/data-cartel/moneymentum/pull/254)
+- [x] Split the factor engine into returns/beta/scores submodules --
+      [#257](https://github.com/data-cartel/moneymentum/issues/257) /
+      [#258](https://github.com/data-cartel/moneymentum/pull/258)
 - [ ] Factor: returns
 - [x] Factor: cum_return --
       [#253](https://github.com/data-cartel/moneymentum/issues/253) /

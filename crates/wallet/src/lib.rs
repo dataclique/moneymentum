@@ -1,14 +1,21 @@
 #[cfg(feature = "mock")]
 mod mock;
 #[cfg(feature = "turnkey")]
+mod turnkey;
+#[cfg(feature = "turnkey")]
+mod turnkey_evm;
+#[cfg(feature = "turnkey")]
 mod turnkey_solana;
 
 #[cfg(feature = "mock")]
 pub use mock::MockWallet;
 #[cfg(feature = "turnkey")]
+pub use turnkey::{OrganizationId, OrganizationIdError};
+#[cfg(feature = "turnkey")]
+pub use turnkey_evm::{TurnkeyEvmWallet, TurnkeyEvmWalletError};
+#[cfg(feature = "turnkey")]
 pub use turnkey_solana::{
-    OrganizationId, OrganizationIdError, ProvisionedSolanaWallet, TurnkeySolanaWallet,
-    TurnkeyWalletError, provision_solana_wallet,
+    ProvisionedSolanaWallet, TurnkeySolanaWallet, TurnkeySolanaWalletError, provision_solana_wallet,
 };
 
 /// Domain capability for transaction signing and address retrieval.

@@ -64,7 +64,9 @@ of them.
       TimeframeConfig) --
       [#261](https://github.com/data-cartel/moneymentum/issues/261) /
       [#262](https://github.com/data-cartel/moneymentum/pull/262)
-- [ ] Factor: autocorrelation
+- [x] Factor: autocorrelation --
+      [#263](https://github.com/data-cartel/moneymentum/issues/263) /
+      [#264](https://github.com/data-cartel/moneymentum/pull/264)
 - [ ] Factor: information discreteness
 - [ ] Factor: carry (signed funding)
 - [ ] Markets metadata + persisted disable flag

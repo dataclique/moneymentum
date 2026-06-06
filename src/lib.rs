@@ -649,6 +649,13 @@ mod tests {
             "every row carries sortino as a number (every fixture ticker has downside)"
         );
         assert!(
+            rows.iter().all(|row| row
+                .get("autocorrelation")
+                .and_then(serde_json::Value::as_f64)
+                .is_some()),
+            "every row carries autocorrelation as a number (the fixture's returns all vary)"
+        );
+        assert!(
             rows.iter()
                 .any(|row| row.get("ticker").and_then(|t| t.as_str()) == Some("BTC")),
             "BTC is present in the factor scores"

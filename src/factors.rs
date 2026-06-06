@@ -13,7 +13,10 @@
 //!   served by `POST /beta`.
 //! - [`scores`]: per-ticker factor scores (volatility, cumulative return, SMA,
 //!   mean return, price z-score), served by `GET /factors`.
+//! - [`autocorrelation`]: lag-1 autocorrelation of returns, joined into the
+//!   scores.
 
+mod autocorrelation;
 mod beta;
 mod returns;
 mod scores;

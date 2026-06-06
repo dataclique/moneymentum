@@ -4,12 +4,13 @@
 use std::path::Path;
 
 use polars::prelude::{
-    ChunkApply, DataFrame, IntoLazy, IntoSeries, JsonFormat, JsonWriter, NULL, PolarsError,
-    SerWriter, SortMultipleOptions, col, lit, when,
+    ChunkApply, DataFrame, DataFrameJoinOps, IntoLazy, IntoSeries, JoinArgs, JoinType, JsonFormat,
+    JsonWriter, NULL, PolarsError, SerWriter, SortMultipleOptions, col, cols, lit, when,
 };
 use tracing::{info, instrument};
 
 use super::ReturnsError;
+use super::autocorrelation::autocorrelation_by_ticker;
 use super::returns::compute_log_returns;
 use crate::timeframe::{Timeframe, TimeframeConfig};
 
@@ -17,8 +18,8 @@ const PRICE_STDDEV_EPS: f64 = 1e-8;
 
 /// Per-ticker factor scores serialized as a JSON array, for the `/factors`
 /// endpoint. Exposes `annualized_volatility`, `cum_return`, `sma`,
-/// `mean_return`, `price_zscore`, `annualized_return`, `sharpe`, and `sortino`;
-/// further factors are added as columns as they land.
+/// `mean_return`, `price_zscore`, `annualized_return`, `sharpe`, `sortino`, and
+/// `autocorrelation`; further factors are added as columns as they land.
 pub(crate) async fn compute_factors_json(
     data_dir: &Path,
     timeframe: Timeframe,
@@ -44,6 +45,8 @@ pub(crate) async fn compute_factors_json(
 ///   null when there is no volatility
 /// - `sortino` = `annualized_return` / downside deviation below the MAR; null
 ///   when there is no downside
+/// - `autocorrelation` = lag-1 autocorrelation of returns over the last
+///   `lookback_periods` / 4 pairs; null when returns have no variation
 ///
 /// Returns a `DataFrame` keyed by `ticker`. New factors are added as columns.
 #[instrument(skip_all, fields(data_dir = %data_dir.display()))]
@@ -70,6 +73,17 @@ fn per_ticker_factors(
     let lookback = config.lookback_periods;
     let annualization_multiplier = config.annualized_factor.sqrt();
 
+    // Lag-1 autocorrelation needs its own complete-pairs pass over a shorter
+    // window, computed separately and joined back in by ticker below.
+    //
+    // The pair window is a quarter of the factor lookback (e.g. 22 pairs on
+    // the 90-period daily window): a shorter window makes the score track the
+    // recent regime instead of averaging lag-1 persistence over the whole
+    // lookback.
+    const AUTOCORRELATION_WINDOW_DIVISOR: usize = 4;
+    let autocorrelation =
+        autocorrelation_by_ticker(&with_returns, lookback / AUTOCORRELATION_WINDOW_DIVISOR)?;
+
     // Downside deviation inputs for Sortino: sum of squared shortfalls below the
     // minimum acceptable return, and the observation count to average over.
     let above_mar = col("log_return").tail(Some(lookback)) - lit(config.min_acceptable_return);
@@ -79,7 +93,7 @@ fn per_ticker_factors(
         .sum()
         .alias("downside_sq_sum");
 
-    let mut factors = with_returns
+    let factors = with_returns
         .lazy()
         .group_by([col("ticker")])
         .agg([
@@ -116,6 +130,28 @@ fn per_ticker_factors(
         .sort(["ticker"], SortMultipleOptions::default())
         .collect()?;
 
+    let factors = add_return_and_risk_factors(factors, config.annualized_factor)?;
+
+    let factors = factors.join(
+        &autocorrelation,
+        ["ticker"],
+        ["ticker"],
+        JoinArgs::new(JoinType::Left),
+        None,
+    )?;
+
+    Ok(factors)
+}
+
+/// Derives the return and risk-adjusted factors from the aggregated columns and
+/// drops the intermediate sums/counts they were computed from.
+///
+/// Adds `cum_return`, `annualized_return`, `sharpe`, and `sortino`.
+/// `sharpe`/`sortino` are null when their risk denominator is zero.
+fn add_return_and_risk_factors(
+    mut factors: DataFrame,
+    annualized_factor: f64,
+) -> Result<DataFrame, PolarsError> {
     // cum_return = exp(sum of log returns) - 1, and annualized_return =
     // exp(mean_return * annualized_factor) - 1. exp is applied on the series
     // (like compute_log_returns does for ln) to avoid a polars math-expr feature.
@@ -127,7 +163,6 @@ fn per_ticker_factors(
         .with_name("cum_return".into());
     factors.with_column(cum_return)?;
 
-    let annualized_factor = config.annualized_factor;
     let annualized_return = factors
         .column("mean_return")?
         .f64()?
@@ -157,7 +192,7 @@ fn per_ticker_factors(
     // annualized_return / downside deviation below the MAR. Both are undefined
     // (null) when their risk denominator is zero.
     let downside_deviation = (col("downside_sq_sum") / col("obs_count")).pow(lit(0.5));
-    let mut factors = factors
+    let factors = factors
         .lazy()
         .with_columns([
             // NaN != 0.0 is true in IEEE 754, so a NaN volatility (e.g. from a
@@ -184,9 +219,8 @@ fn per_ticker_factors(
             .otherwise(lit(NULL))
             .alias("sortino"),
         ])
+        .drop(cols(["downside_sq_sum", "obs_count"]))
         .collect()?;
-    factors.drop_in_place("downside_sq_sum")?;
-    factors.drop_in_place("obs_count")?;
 
     Ok(factors)
 }
@@ -536,6 +570,13 @@ mod tests {
             sortino.is_none(),
             "constant prices give an undefined (null) sortino, got {sortino:?}"
         );
+
+        // No return variation means autocorrelation is undefined -> null.
+        let autocorrelation = out.column("autocorrelation").unwrap().f64().unwrap().get(0);
+        assert!(
+            autocorrelation.is_none(),
+            "constant prices give an undefined (null) autocorrelation, got {autocorrelation:?}"
+        );
     }
 
     #[test]
@@ -622,6 +663,7 @@ mod tests {
         assert!(out.column("annualized_return").is_ok());
         assert!(out.column("sharpe").is_ok());
         assert!(out.column("sortino").is_ok());
+        assert!(out.column("autocorrelation").is_ok());
         assert!(crate::logs_contain_at(
             tracing::Level::INFO,
             &["factors computed"]

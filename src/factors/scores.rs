@@ -11,6 +11,7 @@ use polars::prelude::{
 use tracing::{info, instrument};
 
 use super::ReturnsError;
+use super::asset_beta::asset_beta_by_ticker;
 use super::autocorrelation::autocorrelation_by_ticker;
 use super::carry::with_carry;
 use super::returns::compute_log_returns;
@@ -18,11 +19,15 @@ use crate::timeframe::{Timeframe, TimeframeConfig};
 
 const PRICE_STDDEV_EPS: f64 = 1e-8;
 
+/// Benchmark asset for the per-ticker beta factor. Bitcoin beta is the SPEC's
+/// core risk metric, so the factor table's `beta` column is always beta to BTC.
+const BENCHMARK_TICKER: &str = "BTC";
+
 /// Per-ticker factor scores serialized as a JSON array, for the `/factors`
 /// endpoint. Exposes `annualized_volatility`, `cum_return`, `sma`,
 /// `mean_return`, `price_zscore`, `annualized_return`, `sharpe`, `sortino`,
-/// `autocorrelation`, `information_discreteness`, and `carry`; further factors
-/// are added as columns as they land.
+/// `autocorrelation`, `information_discreteness`, `carry`, and `beta`; further
+/// factors are added as columns as they land.
 pub(crate) async fn compute_factors_json(
     data_dir: &Path,
     timeframe: Timeframe,
@@ -54,6 +59,8 @@ pub(crate) async fn compute_factors_json(
 ///   returns - fraction of positive returns); -1 for a smooth trend
 /// - `carry` = latest signed funding rate from `funding_rate1h.csv`; null when
 ///   no funding data is available
+/// - `beta` = per-asset beta to the benchmark (BTC) over the lookback; null when
+///   the benchmark has no return variance
 ///
 /// Returns a `DataFrame` keyed by `ticker`. New factors are added as columns.
 #[instrument(skip_all, fields(data_dir = %data_dir.display()))]
@@ -85,8 +92,9 @@ fn per_ticker_factors(
     let lookback = config.lookback_periods;
     let annualization_multiplier = config.annualized_factor.sqrt();
 
-    // Lag-1 autocorrelation needs its own complete-pairs pass over a shorter
-    // window, computed separately and joined back in by ticker below.
+    // Lag-1 autocorrelation and per-asset beta each need their own pass (a
+    // shorter complete-pairs window, and a benchmark join), computed separately
+    // and joined back in by ticker below.
     //
     // The pair window is a quarter of the factor lookback (e.g. 22 pairs on
     // the 90-period daily window): a shorter window makes the score track the
@@ -95,6 +103,7 @@ fn per_ticker_factors(
     const AUTOCORRELATION_WINDOW_DIVISOR: usize = 4;
     let autocorrelation =
         autocorrelation_by_ticker(&with_returns, lookback / AUTOCORRELATION_WINDOW_DIVISOR)?;
+    let asset_beta = asset_beta_by_ticker(&with_returns, BENCHMARK_TICKER, lookback)?;
 
     // Downside deviation inputs for Sortino: sum of squared shortfalls below the
     // minimum acceptable return, and the observation count to average over.
@@ -152,6 +161,14 @@ fn per_ticker_factors(
 
     let factors = factors.join(
         &autocorrelation,
+        ["ticker"],
+        ["ticker"],
+        JoinArgs::new(JoinType::Left),
+        None,
+    )?;
+
+    let factors = factors.join(
+        &asset_beta,
         ["ticker"],
         ["ticker"],
         JoinArgs::new(JoinType::Left),
@@ -375,6 +392,10 @@ mod tests {
                 (-1.0 - 1e-9..=1.0 + 1e-9).contains(&information_discreteness),
                 "information_discreteness {information_discreteness} outside [-1, 1]"
             );
+
+            if let Some(beta) = out.column("beta").unwrap().f64().unwrap().get(0) {
+                prop_assert!(beta.is_finite(), "beta must be finite when present, got {beta}");
+            }
         }
 
         /// For a strictly increasing close series the latest close is the maximum,
@@ -679,6 +700,14 @@ mod tests {
             information_discreteness.abs() < 1e-12,
             "constant prices give zero information_discreteness, got {information_discreteness}"
         );
+
+        // BTC is the benchmark, so constant prices mean zero benchmark
+        // variance and the beta guard must fire through the full pipeline.
+        let beta = out.column("beta").unwrap().f64().unwrap().get(0);
+        assert!(
+            beta.is_none(),
+            "constant benchmark prices give undefined (null) beta, got {beta:?}"
+        );
     }
 
     #[test]
@@ -829,6 +858,7 @@ mod tests {
         assert!(out.column("autocorrelation").is_ok());
         assert!(out.column("information_discreteness").is_ok());
         assert!(out.column("carry").is_ok());
+        assert!(out.column("beta").is_ok());
         assert!(crate::logs_contain_at(
             tracing::Level::INFO,
             &["factors computed"]

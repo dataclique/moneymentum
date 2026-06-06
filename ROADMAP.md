@@ -73,6 +73,9 @@ of them.
 - [x] Factor: carry (signed funding) --
       [#267](https://github.com/data-cartel/moneymentum/issues/267) /
       [#268](https://github.com/data-cartel/moneymentum/pull/268)
+- [x] Factor: beta (per-asset, to benchmark) --
+      [#269](https://github.com/data-cartel/moneymentum/issues/269) /
+      [#270](https://github.com/data-cartel/moneymentum/pull/270)
 - [ ] Markets metadata + persisted disable flag
 - [ ] Tradable filter wired into ingestion
 

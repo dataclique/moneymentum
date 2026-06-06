@@ -662,9 +662,20 @@ mod tests {
                 .is_some()),
             "every row carries information_discreteness as a number (the fixture's returns all vary)"
         );
+        // The fixture ships no funding data, so carry is legitimately null --
+        // but the key itself must stay in the schema for every row.
         assert!(
-            rows.iter().all(|row| row.get("carry").is_some()),
-            "every row carries carry"
+            rows.iter()
+                .all(|row| row.get("carry").is_some_and(serde_json::Value::is_null)),
+            "carry key is present and null for every row without funding data"
+        );
+
+        assert!(
+            rows.iter().all(|row| row
+                .get("beta")
+                .and_then(serde_json::Value::as_f64)
+                .is_some()),
+            "every row carries beta as a number (prices vary and BTC is the benchmark)"
         );
         assert!(
             rows.iter()

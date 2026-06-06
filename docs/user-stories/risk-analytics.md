@@ -48,7 +48,7 @@ Frontend changes:
 - Render the dynamic matrix instead of the hardcoded one. The number of rows and
   columns should match the live asset list.
 
-Backend starting points: `src/beta.rs` (rolling window covariance/variance
+Backend starting points: `src/factors.rs` (rolling window covariance/variance
 pattern to adapt), `src/dataframe.rs` (Polars DataFrame operations).
 
 ### Tasks

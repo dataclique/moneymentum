@@ -79,7 +79,9 @@ of them.
 - [x] Factor: 24h volume (screener tie-break) --
       [#271](https://github.com/data-cartel/moneymentum/issues/271) /
       [#272](https://github.com/data-cartel/moneymentum/pull/272)
-- [ ] Markets metadata + persisted disable flag
+- [x] Markets metadata + persisted disable flag --
+      [#275](https://github.com/data-cartel/moneymentum/issues/275) /
+      [#276](https://github.com/data-cartel/moneymentum/pull/276)
 - [ ] Tradable filter wired into ingestion
 
 ---

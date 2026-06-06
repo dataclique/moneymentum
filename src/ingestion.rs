@@ -62,7 +62,14 @@ impl IngestionJob {
             services.max_concurrent_requests,
         );
 
-        match ingest_all(&candle_ingester, &funding_ingester, &services.data_dir).await {
+        match ingest_all(
+            services.hyperliquid.as_ref(),
+            &candle_ingester,
+            &funding_ingester,
+            &services.data_dir,
+        )
+        .await
+        {
             Ok(last_record) => {
                 if let Err(err) = complete_run(&pool, &self.run_id, last_record).await {
                     error!(error = %err, run_id = self.run_id.as_str(), "failed to record ingestion completion");
@@ -85,10 +92,12 @@ impl IngestionJob {
 }
 
 async fn ingest_all(
+    client: &dyn Hyperliquid,
     candle_ingester: &CandleIngester<dyn Hyperliquid>,
     funding_ingester: &FundingRateIngester<dyn Hyperliquid>,
     data_dir: &Path,
 ) -> Result<DateTime<Utc>, HyperliquidError> {
+    crate::market_metadata::refresh_markets(client, data_dir).await?;
     funding_ingester.ingest(data_dir).await?;
 
     for timeframe in TIMEFRAMES {
@@ -325,6 +334,15 @@ mod tests {
     impl Hyperliquid for MockHyperliquid {
         async fn list_markets(&self) -> Result<Vec<Market>, HyperliquidError> {
             Ok(vec![Market::new("BTC".into())])
+        }
+
+        async fn fetch_market_metadata(
+            &self,
+        ) -> Result<Vec<crate::market_metadata::MarketMetadata>, HyperliquidError> {
+            Ok(vec![crate::market_metadata::MarketMetadata {
+                symbol: Market::new("BTC".into()),
+                max_leverage: 50,
+            }])
         }
 
         async fn fetch_candles(

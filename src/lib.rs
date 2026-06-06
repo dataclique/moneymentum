@@ -5,6 +5,7 @@ mod finance;
 mod funding;
 mod hyperliquid;
 mod ingestion;
+mod market_metadata;
 mod readonly_portfolio;
 mod screener;
 mod timeframe;

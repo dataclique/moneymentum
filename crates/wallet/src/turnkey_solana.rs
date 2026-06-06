@@ -1,8 +1,14 @@
+use std::str::FromStr;
+
 use solana_pubkey::Pubkey;
 use solana_signature::Signature;
 use turnkey_api_key_stamper::Stamp;
-use turnkey_client::generated::immutable::activity::v1::SignRawPayloadIntentV2;
-use turnkey_client::generated::immutable::common::v1::{HashFunction, PayloadEncoding};
+use turnkey_client::generated::immutable::activity::v1::{
+    CreateWalletIntent, SignRawPayloadIntentV2, WalletAccountParams,
+};
+use turnkey_client::generated::immutable::common::v1::{
+    AddressFormat, Curve, HashFunction, PathFormat, PayloadEncoding,
+};
 use turnkey_client::{TurnkeyClient, TurnkeyClientError};
 
 use crate::Wallet;
@@ -27,6 +33,10 @@ pub enum TurnkeyWalletError {
     Hex(#[from] hex::FromHexError),
     #[error("expected a 64-byte ed25519 signature, got {0} bytes")]
     SignatureLength(usize),
+    #[error("turnkey returned no address for the provisioned wallet")]
+    NoAddress,
+    #[error(transparent)]
+    PubkeyParse(#[from] solana_pubkey::ParsePubkeyError),
 }
 
 /// Solana wallet backed by Turnkey's TEE-secured signing.
@@ -85,6 +95,47 @@ impl<S: Stamp + Send + Sync> Wallet for TurnkeySolanaWallet<S> {
     }
 }
 
+/// A Solana wallet provisioned in a Turnkey organization.
+pub struct ProvisionedSolanaWallet {
+    /// Turnkey's identifier for the created wallet.
+    pub wallet_id: String,
+    /// The wallet's on-chain Solana address.
+    pub address: Pubkey,
+}
+
+/// Provisions a fresh Solana wallet in the given Turnkey organization.
+///
+/// The wallet holds a single ed25519 account derived at the standard Solana
+/// BIP44 path. Returns Turnkey's wallet id and the on-chain address, which can
+/// then back a [`TurnkeySolanaWallet`] for signing.
+pub async fn provision_solana_wallet<S: Stamp + Send + Sync>(
+    client: &TurnkeyClient<S>,
+    organization_id: &OrganizationId,
+    wallet_name: impl Into<String> + Send,
+) -> Result<ProvisionedSolanaWallet, TurnkeyWalletError> {
+    let result = client
+        .create_wallet(
+            organization_id.0.clone(),
+            client.current_timestamp(),
+            CreateWalletIntent {
+                wallet_name: wallet_name.into(),
+                accounts: vec![WalletAccountParams {
+                    curve: Curve::Ed25519,
+                    path_format: PathFormat::Bip32,
+                    path: "m/44'/501'/0'/0'".to_owned(),
+                    address_format: AddressFormat::Solana,
+                }],
+                mnemonic_length: None,
+            },
+        )
+        .await?;
+
+    Ok(ProvisionedSolanaWallet {
+        wallet_id: result.result.wallet_id,
+        address: first_solana_address(result.result.addresses)?,
+    })
+}
+
 /// Joins Turnkey's hex-encoded `r` and `s` scalars into a 64-byte ed25519
 /// Solana signature.
 fn parse_signature(r_hex: &str, s_hex: &str) -> Result<Signature, TurnkeyWalletError> {
@@ -101,6 +152,17 @@ fn parse_signature(r_hex: &str, s_hex: &str) -> Result<Signature, TurnkeyWalletE
 
 fn decode_scalar(scalar_hex: &str) -> Result<Vec<u8>, hex::FromHexError> {
     hex::decode(scalar_hex.strip_prefix("0x").unwrap_or(scalar_hex))
+}
+
+/// Parses the first address Turnkey returned for a provisioned wallet as a
+/// Solana pubkey.
+fn first_solana_address(addresses: Vec<String>) -> Result<Pubkey, TurnkeyWalletError> {
+    let address = addresses
+        .into_iter()
+        .next()
+        .ok_or(TurnkeyWalletError::NoAddress)?;
+
+    Ok(Pubkey::from_str(&address)?)
 }
 
 #[cfg(test)]
@@ -150,6 +212,32 @@ mod tests {
         assert!(matches!(
             parse_signature("zz", &valid),
             Err(TurnkeyWalletError::Hex(_))
+        ));
+    }
+
+    #[test]
+    fn first_solana_address_parses_the_leading_address() {
+        let address = Pubkey::default().to_string();
+
+        assert_eq!(
+            first_solana_address(vec![address]).ok(),
+            Some(Pubkey::default())
+        );
+    }
+
+    #[test]
+    fn first_solana_address_rejects_an_empty_list() {
+        assert!(matches!(
+            first_solana_address(vec![]),
+            Err(TurnkeyWalletError::NoAddress)
+        ));
+    }
+
+    #[test]
+    fn first_solana_address_rejects_an_invalid_address() {
+        assert!(matches!(
+            first_solana_address(vec!["abc".to_owned()]),
+            Err(TurnkeyWalletError::PubkeyParse(_))
         ));
     }
 }

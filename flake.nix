@@ -31,10 +31,18 @@
 
     bun2nix.url = "github:nix-community/bun2nix?tag=2.0.7";
     bun2nix.inputs.nixpkgs.follows = "nixpkgs";
+
+    # The fund Solana program. Its toolchain pins versions this monorepo
+    # cannot use, so it stays in its own repository; all we consume is its
+    # `packages.idl` output (the Anchor IDL json client bindings are
+    # generated from). Pinned to the feat/idl-flake-output head until
+    # data-cartel/fund#22 merges, then this can track the default branch.
+    fund.url =
+      "github:data-cartel/fund/d6e791b4e527da86f8a7da62039aafa2ca98d2f3";
   };
 
   outputs = { self, nixpkgs, flake-utils, git-hooks, devenv, rust-overlay, crane
-    , ragenix, disko, nixos-anywhere, deploy-rs, bun2nix, ... }@inputs:
+    , ragenix, disko, nixos-anywhere, deploy-rs, bun2nix, fund, ... }@inputs:
     {
       nixosConfigurations.moneymentum = nixpkgs.lib.nixosSystem {
         system = "x86_64-linux";
@@ -188,6 +196,10 @@
               env = {
                 DATABASE_URL = "sqlite:./moneymentum.db?mode=rwc";
                 PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin";
+                # The fund program's Anchor IDL, for generating client
+                # bindings (anchor-lang declare_program! reads it at
+                # compile time).
+                FUND_IDL = "${fund.packages.${system}.idl}/idl/fund.json";
               };
 
               # Use pre-commit instead of git-hooks

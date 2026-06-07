@@ -104,6 +104,11 @@ fn parse_signature(
 mod tests {
     use super::*;
 
+    use tracing_test::traced_test;
+    use turnkey_client::TurnkeyP256ApiKey;
+    use wiremock::matchers::method;
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
     #[test]
     fn parse_signature_valid_with_raw_parity() {
         let r = "0x".to_owned() + &"ab".repeat(32);
@@ -150,5 +155,43 @@ mod tests {
             parse_signature(&r, &s, "zz"),
             Err(TurnkeyEvmWalletError::ParseInt(_))
         ));
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn sign_returns_the_turnkey_signature_and_logs_completion() {
+        let r = "ab".repeat(32);
+        let s = "cd".repeat(32);
+        let expected = parse_signature(&r, &s, "1b").expect("valid signature");
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "activity": {
+                    "type": "ACTIVITY_TYPE_SIGN_RAW_PAYLOAD_V2",
+                    "status": "ACTIVITY_STATUS_COMPLETED",
+                    "id": "01890000-0000-7000-8000-000000000002",
+                    "organizationId": "550e8400-e29b-41d4-a716-446655440000",
+                    "fingerprint": "fp",
+                    "result": { "signRawPayloadResult": { "r": r, "s": s, "v": "1b" } }
+                }
+            })))
+            .mount(&server)
+            .await;
+        let client = TurnkeyClient::<TurnkeyP256ApiKey>::builder()
+            .api_key(TurnkeyP256ApiKey::generate())
+            .base_url(server.uri())
+            .build()
+            .expect("client builds");
+
+        let organization_id =
+            OrganizationId::new("550e8400-e29b-41d4-a716-446655440000").expect("valid uuid");
+        let account = Address::from([0x42u8; 20]);
+        let wallet = TurnkeyEvmWallet::new(client, organization_id, account);
+
+        let signature = wallet.sign(&B256::from([0x11u8; 32])).await;
+
+        assert_eq!(signature.ok(), Some(expected));
+        assert!(logs_contain("evm payload signed via turnkey"));
     }
 }

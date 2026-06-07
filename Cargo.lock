@@ -8418,15 +8418,18 @@ dependencies = [
  "alloy-primitives",
  "async-trait",
  "hex",
+ "serde_json",
  "solana-pubkey",
  "solana-signature",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
+ "tracing-test",
  "turnkey_api_key_stamper",
  "turnkey_client",
  "uuid 1.23.3",
  "wallet",
+ "wiremock",
 ]
 
 [[package]]

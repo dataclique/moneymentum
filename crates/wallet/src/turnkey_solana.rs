@@ -185,6 +185,11 @@ fn first_solana_address(addresses: Vec<String>) -> Result<Pubkey, TurnkeySolanaW
 mod tests {
     use super::*;
 
+    use tracing_test::traced_test;
+    use turnkey_client::TurnkeyP256ApiKey;
+    use wiremock::matchers::method;
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
     #[test]
     fn parse_signature_joins_r_and_s() {
         let r = "ab".repeat(32);
@@ -274,5 +279,85 @@ mod tests {
             first_solana_address(vec!["abc".to_owned()]),
             Err(TurnkeySolanaWalletError::PubkeyParse(_))
         ));
+    }
+
+    fn organization_id() -> OrganizationId {
+        OrganizationId::new("550e8400-e29b-41d4-a716-446655440000").expect("valid uuid")
+    }
+
+    async fn turnkey_returning(
+        body: serde_json::Value,
+    ) -> (TurnkeyClient<TurnkeyP256ApiKey>, MockServer) {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(body))
+            .mount(&server)
+            .await;
+        let client = TurnkeyClient::<TurnkeyP256ApiKey>::builder()
+            .api_key(TurnkeyP256ApiKey::generate())
+            .base_url(server.uri())
+            .build()
+            .expect("client builds");
+        (client, server)
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn sign_returns_the_turnkey_signature_and_logs_completion() {
+        let r = "ab".repeat(32);
+        let s = "cd".repeat(32);
+        let (client, _server) = turnkey_returning(serde_json::json!({
+            "activity": {
+                "type": "ACTIVITY_TYPE_SIGN_RAW_PAYLOAD_V2",
+                "status": "ACTIVITY_STATUS_COMPLETED",
+                "id": "01890000-0000-7000-8000-000000000000",
+                "organizationId": "550e8400-e29b-41d4-a716-446655440000",
+                "fingerprint": "fp",
+                "result": { "signRawPayloadResult": { "r": r, "s": s, "v": "00" } }
+            }
+        }))
+        .await;
+
+        let account = Pubkey::new_from_array([7u8; 32]);
+        let wallet = TurnkeySolanaWallet::new(client, organization_id(), account);
+
+        let expected: [u8; 64] = std::array::from_fn(|index| if index < 32 { 0xab } else { 0xcd });
+        let signature = wallet.sign(&b"a serialized solana message".to_vec()).await;
+
+        assert_eq!(signature.ok(), Some(Signature::from(expected)));
+        assert!(logs_contain("solana payload signed via turnkey"));
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn provision_returns_the_wallet_and_logs_completion() {
+        let address = Pubkey::default().to_string();
+        let (client, _server) = turnkey_returning(serde_json::json!({
+            "activity": {
+                "type": "ACTIVITY_TYPE_CREATE_WALLET",
+                "status": "ACTIVITY_STATUS_COMPLETED",
+                "id": "01890000-0000-7000-8000-000000000001",
+                "organizationId": "550e8400-e29b-41d4-a716-446655440000",
+                "fingerprint": "fp",
+                "result": {
+                    "createWalletResult": {
+                        "walletId": "ac651e99-579f-5c7c-8e06-16430bc25dc1",
+                        "addresses": [address]
+                    }
+                }
+            }
+        }))
+        .await;
+
+        let provisioned = provision_solana_wallet(&client, &organization_id(), "test wallet")
+            .await
+            .expect("provisioning succeeds");
+
+        assert_eq!(
+            provisioned.wallet_id.to_string(),
+            "ac651e99-579f-5c7c-8e06-16430bc25dc1"
+        );
+        assert_eq!(provisioned.address, Pubkey::default());
+        assert!(logs_contain("provisioned solana wallet via turnkey"));
     }
 }

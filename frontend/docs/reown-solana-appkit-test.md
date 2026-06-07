@@ -19,6 +19,19 @@
 
 ---
 
+## Before you send
+
+Демо по умолчанию работает на **devnet**. Сначала проверьте весь сценарий там, и
+только потом переключайтесь на mainnet. Сеть задаётся через
+`getOrCreateSolanaAppKit`, а смена mainnet/devnet идёт через
+`reownNetworkForSolanaCluster` + `modal.switchNetwork`.
+
+Перед mainnet-отправкой вручную проверьте адрес получателя и начните с очень
+малой тестовой суммы. `sendUsdcTransfer` вызывает `provider.sendTransaction`;
+после подписи и отправки такая транзакция необратима.
+
+---
+
 ## Модуль `src/reown/solanaUsdc.ts`
 
 | Экспорт                                                                           | Назначение                                                                                 |

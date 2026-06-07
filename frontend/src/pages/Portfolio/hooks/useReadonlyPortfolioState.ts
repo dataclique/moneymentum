@@ -1,5 +1,4 @@
-import { createEffect, createMemo, createSignal } from "solid-js"
-import { createStore } from "solid-js/store"
+import { createMemo, createSignal } from "solid-js"
 import { useQuery } from "@tanstack/solid-query"
 
 import type { NetworkMode } from "@/contexts/wallet-context"
@@ -9,6 +8,21 @@ import { validateBitcoinAddress } from "./bitcoinAddress"
 
 const readonlyBtcStorageKey = (networkMode: NetworkMode): string =>
   `portfolio-readonly-btc-addresses:${networkMode}`
+
+const canonicalizeValidBitcoinAddress = (
+  address: string,
+  networkMode: NetworkMode,
+): string | null => {
+  const trimmedAddress = address.trim()
+  if (trimmedAddress.length === 0) return null
+
+  const validation = validateBitcoinAddress(trimmedAddress, networkMode)
+  if (!validation.ok) return null
+
+  return validation.kind === "bech32"
+    ? trimmedAddress.toLowerCase()
+    : trimmedAddress
+}
 
 interface ReadonlyBtcEntry {
   address: string
@@ -50,6 +64,15 @@ interface ReadonlyBetaPosition {
   includeInBeta: boolean
 }
 
+const deduplicateEntries = (entries: ReadonlyBtcEntry[]): ReadonlyBtcEntry[] =>
+  entries.reduce<ReadonlyBtcEntry[]>(
+    (uniqueEntries, entry) =>
+      uniqueEntries.some(uniqueEntry => uniqueEntry.address === entry.address)
+        ? uniqueEntries
+        : [...uniqueEntries, entry],
+    [],
+  )
+
 const readEntriesFromStorage = (
   networkMode: NetworkMode,
 ): ReadonlyBtcEntry[] => {
@@ -60,7 +83,7 @@ const readEntriesFromStorage = (
   try {
     const parsed = JSON.parse(rawValue) as unknown
     if (!Array.isArray(parsed)) return []
-    return parsed
+    const restoredEntries = parsed
       .filter((candidate): candidate is ReadonlyBtcEntry => {
         if (typeof candidate !== "object" || candidate === null) return false
         const address = (candidate as { address?: unknown }).address
@@ -68,15 +91,23 @@ const readEntriesFromStorage = (
           .includeInBeta
         return typeof address === "string" && typeof includeInBeta === "boolean"
       })
-      .map(entry => ({
-        address: entry.address.trim(),
-        includeInBeta: entry.includeInBeta,
-      }))
-      .filter(
-        entry =>
-          entry.address.length > 0 &&
-          validateBitcoinAddress(entry.address, networkMode).ok,
-      )
+      .flatMap(entry => {
+        const canonicalAddress = canonicalizeValidBitcoinAddress(
+          entry.address,
+          networkMode,
+        )
+
+        return canonicalAddress === null
+          ? []
+          : [
+              {
+                address: canonicalAddress,
+                includeInBeta: entry.includeInBeta,
+              },
+            ]
+      })
+
+    return deduplicateEntries(restoredEntries)
   } catch {
     return []
   }
@@ -150,31 +181,30 @@ const fetchExposure = async (
 
 export const useReadonlyPortfolioState = () => {
   const { networkMode } = useWallet()
-  const [entries, setEntries] = createStore<ReadonlyBtcEntry[]>(
-    readEntriesFromStorage(networkMode()),
-  )
+  const [entriesRevision, setEntriesRevision] = createSignal(0)
   const [validationError, setValidationError] = createSignal<string | null>(
     null,
   )
-
-  // createEffect: restore the address list whenever the active network changes.
-  createEffect(() => {
-    setEntries(readEntriesFromStorage(networkMode()))
-    setValidationError(null)
+  const refreshEntries = () => setEntriesRevision(revision => revision + 1)
+  const entries = createMemo<ReadonlyBtcEntry[]>(() => {
+    entriesRevision()
+    return readEntriesFromStorage(networkMode())
   })
 
   const query = useQuery(() => {
-    const readonlyAddresses = entries.map(entry => entry.address)
+    const currentEntries = entries()
+    const currentNetworkMode = networkMode()
+    const readonlyAddresses = currentEntries.map(entry => entry.address)
     const enabled = readonlyAddresses.length > 0
 
     return {
       queryKey: [
         "readonly-btc-exposure",
-        networkMode(),
+        currentNetworkMode,
         readonlyAddresses,
       ] as const,
       queryFn: (ctx: { signal: AbortSignal }) =>
-        fetchExposure(entries, networkMode(), ctx.signal),
+        fetchExposure(currentEntries, currentNetworkMode, ctx.signal),
       enabled,
       retry: 1,
       staleTime: 5 * 60 * 1000,
@@ -198,38 +228,44 @@ export const useReadonlyPortfolioState = () => {
       setValidationError(validation.error.message)
       return false
     }
-    if (entries.some(entry => entry.address === normalizedAddress)) {
+    const canonicalAddress =
+      validation.kind === "bech32"
+        ? normalizedAddress.toLowerCase()
+        : normalizedAddress
+
+    const currentEntries = entries()
+    if (currentEntries.some(entry => entry.address === canonicalAddress)) {
       setValidationError(null)
       return false
     }
 
     const nextEntries = [
-      ...entries,
-      { address: normalizedAddress, includeInBeta: true },
+      ...currentEntries,
+      { address: canonicalAddress, includeInBeta: true },
     ]
-    setEntries(nextEntries)
     writeEntriesToStorage(networkMode(), nextEntries)
+    refreshEntries()
     setValidationError(null)
     return true
   }
 
   const removeAddress = (address: string) => {
-    const nextEntries = entries.filter(entry => entry.address !== address)
-    setEntries(nextEntries)
+    const nextEntries = entries().filter(entry => entry.address !== address)
     writeEntriesToStorage(networkMode(), nextEntries)
+    refreshEntries()
   }
 
   const setIncludeInBeta = (address: string, includeInBeta: boolean) => {
-    const nextEntries = entries.map(entry =>
+    const nextEntries = entries().map(entry =>
       entry.address === address ? { ...entry, includeInBeta } : entry,
     )
-    setEntries(nextEntries)
     writeEntriesToStorage(networkMode(), nextEntries)
+    refreshEntries()
   }
 
   const clearAddresses = () => {
-    setEntries([])
     clearEntriesFromStorage(networkMode())
+    refreshEntries()
     setValidationError(null)
   }
 
@@ -242,7 +278,7 @@ export const useReadonlyPortfolioState = () => {
       exposurePositions.map(position => [position.source_id ?? "", position]),
     )
 
-    return entries.map(entry => {
+    return entries().map(entry => {
       const position = byAddress.get(entry.address)
       return {
         address: entry.address,

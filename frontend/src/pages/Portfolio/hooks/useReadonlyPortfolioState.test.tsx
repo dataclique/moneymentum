@@ -32,6 +32,8 @@ const storageKey = (networkMode: NetworkMode) =>
   `portfolio-readonly-btc-addresses:${networkMode}`
 
 const testnetAddress = "mipcBbFg9gMiCh81Kj8tqqdgoZub1ZJRfn"
+const testnetBech32Address =
+  "tb1qqltm70wyz734t9k8d9w70uuhyxnemyh56d5ra8rtw082ytd7ywmsqudq5e"
 const mainnetAddress = "1BoatSLRHtKNngkdXEeobR76b53LETtpyT"
 
 describe("useReadonlyPortfolioState", () => {
@@ -103,5 +105,32 @@ describe("useReadonlyPortfolioState", () => {
         includeInBeta: true,
       },
     ])
+  })
+
+  it("canonicalizes and deduplicates bech32 address casing when restoring entries", () => {
+    localStorage.setItem(
+      storageKey("testnet"),
+      JSON.stringify([
+        { address: testnetBech32Address.toUpperCase(), includeInBeta: true },
+        { address: testnetBech32Address, includeInBeta: false },
+      ]),
+    )
+
+    const { result } = renderHook(() => useReadonlyPortfolioState(), {
+      wrapper: createWrapper(),
+    })
+
+    expect(result.rows.map(row => row.address)).toEqual([testnetBech32Address])
+  })
+
+  it("deduplicates bech32 address casing variants when adding entries", () => {
+    const { result } = renderHook(() => useReadonlyPortfolioState(), {
+      wrapper: createWrapper(),
+    })
+
+    expect(result.addAddress(testnetBech32Address)).toBe(true)
+    expect(result.addAddress(testnetBech32Address.toUpperCase())).toBe(false)
+
+    expect(result.rows.map(row => row.address)).toEqual([testnetBech32Address])
   })
 })

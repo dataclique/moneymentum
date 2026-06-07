@@ -22,6 +22,7 @@ use rocket::http::Status;
 use rocket::request::FromParam;
 use rocket::response::content::RawJson;
 use rocket::response::status::Custom;
+use rocket::response::{Responder, Response};
 use rocket::serde::json::Json;
 use rocket::{Rocket, State, get, post, routes};
 use serde::Deserialize;
@@ -102,8 +103,30 @@ type IngestionJobQueue = SqliteStorage<IngestionJob>;
 type QueryDeps = Cons<Ingestion, Nil>;
 
 #[get("/health")]
-fn health() -> &'static str {
-    "ok"
+fn health() -> HealthJson {
+    HealthJson(Json(HealthResponse {
+        status: "ok",
+        version: env!("CARGO_PKG_VERSION"),
+    }))
+}
+
+#[derive(Debug, serde::Serialize)]
+struct HealthResponse {
+    status: &'static str,
+    version: &'static str,
+}
+
+struct HealthJson(Json<HealthResponse>);
+
+impl<'request> Responder<'request, 'static> for HealthJson {
+    fn respond_to(
+        self,
+        request: &'request rocket::request::Request<'_>,
+    ) -> rocket::response::Result<'static> {
+        Response::build_from(self.0.respond_to(request)?)
+            .raw_header("Cache-Control", "no-store")
+            .ok()
+    }
 }
 
 #[get("/candles/<timeframe>")]
@@ -492,13 +515,32 @@ mod tests {
     }
 
     #[test]
-    fn health_returns_ok() {
+    fn health_returns_json_contract() {
         let rocket = rocket::build().mount("/", routes![health]);
         let client = Client::tracked(rocket).unwrap();
         let response = client.get("/health").dispatch();
 
         assert_eq!(response.status(), Status::Ok);
-        assert_eq!(response.into_string(), Some("ok".to_owned()));
+        assert_eq!(
+            response.content_type(),
+            Some(rocket::http::ContentType::JSON)
+        );
+        assert_eq!(
+            response.headers().get_one("Cache-Control"),
+            Some("no-store")
+        );
+
+        let body = response.into_string().unwrap();
+        let payload: serde_json::Value = serde_json::from_str(&body).unwrap();
+
+        assert_eq!(
+            payload.get("status").and_then(serde_json::Value::as_str),
+            Some("ok")
+        );
+        assert_eq!(
+            payload.get("version").and_then(serde_json::Value::as_str),
+            Some(env!("CARGO_PKG_VERSION"))
+        );
     }
 
     #[test]

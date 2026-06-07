@@ -68,6 +68,7 @@ const PortfolioPage = () => {
 
   const betaResult = useBeta(
     () => portfolio.targetPortfolio,
+    () => portfolio.targetTotalNotional,
     () => portfolio.readonlyBetaPositions,
   )
 
@@ -104,7 +105,10 @@ const PortfolioPage = () => {
         <div class="flex items-center gap-5">
           <span class="font-semibold">Moneymentum</span>
           <div class="h-4 border-l border-border" />
-          <WalletHeader handleDisconnect={portfolio.handleDisconnect} />
+          <WalletHeader
+            handleDisconnect={portfolio.handleDisconnect}
+            handleNetworkSwitch={portfolio.resetPortfolioStateForNetworkChange}
+          />
           <div class="h-4 border-l border-border" />
           <div class="flex gap-1.5">
             <span class="text-muted-foreground">NAV</span>
@@ -164,6 +168,7 @@ const PortfolioPage = () => {
                 deletedArchive={portfolio.deletedArchive}
                 isLoading={portfolio.isPositionsLoading}
                 fundingIsLoading={fundingRatesQuery.isLoading}
+                leverageLimitsIsLoading={portfolio.isLeverageLimitsLoading}
                 leverageLimitsMap={portfolio.leverageLimitsMap}
                 _isRebalancing={portfolio.isRebalancing}
                 isPrecise={portfolio.isPrecise}

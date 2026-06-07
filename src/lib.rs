@@ -5,10 +5,8 @@ mod finance;
 mod funding;
 mod hyperliquid;
 mod ingestion;
-mod lifecycle;
 mod readonly_portfolio;
 mod timeframe;
-mod wire;
 
 use std::net::Ipv4Addr;
 use std::path::{Path, PathBuf};
@@ -16,7 +14,6 @@ use std::sync::Arc;
 
 use apalis::prelude::{Monitor, Storage, WorkerBuilder, WorkerFactoryFn};
 use apalis_sql::sqlite::SqliteStorage;
-use cqrs_es::persist::GenericQuery;
 use rocket::config::Config as RocketConfig;
 use rocket::http::Status;
 use rocket::request::FromParam;
@@ -31,9 +28,8 @@ use thiserror::Error;
 use tracing::{debug, error, info};
 use tracing_subscriber::EnvFilter;
 
-use ingestion::{Ingestion, IngestionId, IngestionJob, IngestionServices, IngestionStatus};
+use ingestion::{IngestionJob, IngestionRunError, IngestionServices, IngestionStatus};
 use timeframe::Timeframe;
-use wire::{Cons, Nil, UnwiredQuery};
 
 impl<'r> FromParam<'r> for Timeframe {
     type Error = &'r str;
@@ -97,10 +93,7 @@ pub enum ConfigError {
     Toml(#[from] toml::de::Error),
 }
 
-type IngestionCqrs = Arc<wire::Cqrs<Ingestion>>;
-type IngestionView = wire::View<Ingestion>;
 type IngestionJobQueue = SqliteStorage<IngestionJob>;
-type QueryDeps = Cons<Ingestion, Nil>;
 
 #[get("/health")]
 fn health() -> HealthJson {
@@ -145,27 +138,42 @@ async fn get_candles(
 }
 
 #[post("/ingest")]
-async fn start_ingestion(job_queue: &State<IngestionJobQueue>) -> Status {
-    if let Err(err) = job_queue.inner().clone().push(IngestionJob).await {
+async fn start_ingestion(job_queue: &State<IngestionJobQueue>, pool: &State<SqlitePool>) -> Status {
+    let run_id = match ingestion::create_run(pool).await {
+        Ok(run_id) => run_id,
+        Err(IngestionRunError::AlreadyRunning) => return Status::Conflict,
+        Err(err) => {
+            error!(error = %err, "failed to create ingestion run");
+            return Status::InternalServerError;
+        }
+    };
+
+    if let Err(err) = job_queue
+        .inner()
+        .clone()
+        .push(IngestionJob::new(run_id.clone()))
+        .await
+    {
         error!(error = %err, "failed to queue ingestion job");
+        if let Err(record_err) =
+            ingestion::fail_run(pool, &run_id, "failed to queue ingestion job").await
+        {
+            error!(error = %record_err, "failed to record ingestion queue failure");
+        }
         return Status::InternalServerError;
     }
+
     Status::Accepted
 }
 
 #[get("/ingestion/status")]
 async fn get_ingestion_status(
-    view: &State<IngestionView>,
+    pool: &State<SqlitePool>,
 ) -> Result<Json<Option<IngestionStatus>>, Status> {
-    let lifecycle = view.load::<IngestionId>(()).await.map_err(|err| {
-        error!(error = %err, "failed to load ingestion view");
+    let status = ingestion::latest_status(pool).await.map_err(|err| {
+        error!(error = %err, "failed to load ingestion status");
         Status::InternalServerError
     })?;
-
-    let status = lifecycle
-        .as_ref()
-        .and_then(|lifecycle| lifecycle.live().ok())
-        .map(|state| state.status);
 
     Ok(Json(status))
 }
@@ -355,23 +363,21 @@ pub async fn rocket(
     //
     // Solution: Run apalis first (if not already set up), then our migrations
     // with `ignore_missing` so we don't fail on apalis's migrations.
-    let apalis_tables_exist: bool = sqlx::query_scalar!(
-        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='Jobs')"
+    let apalis_tables_exist: i64 = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='Jobs')",
     )
     .fetch_one(&pool)
-    .await?
-        != 0;
+    .await?;
 
-    if !apalis_tables_exist {
+    if apalis_tables_exist == 0 {
         SqliteStorage::setup(&pool).await?;
     }
-    sqlx::migrate!().set_ignore_missing(true).run(&pool).await?;
-    debug!("migrations applied");
+    let mut migrations = sqlx::migrate!("./migrations");
+    migrations.set_ignore_missing(true).run(&pool).await?;
+    debug!(count = migrations.iter().count(), "migrations applied");
 
     let job_queue = SqliteStorage::<IngestionJob>::new(pool.clone());
-
-    let view: IngestionView = wire::View::new(pool.clone());
-    let query = GenericQuery::new(view.repo());
+    ingestion::recover_abandoned_runs(&pool).await?;
 
     let hyperliquid_client = hyperliquid::HyperliquidClient::new(
         config.hyperliquid_base_url.as_ref(),
@@ -384,29 +390,15 @@ pub async fn rocket(
         max_concurrent_requests: config.max_concurrent_requests,
     });
 
-    let unwired = UnwiredQuery::<_, QueryDeps>::new(query);
-    let (cqrs, (wired, ())) = wire::CqrsBuilder::<Ingestion>::new(pool)
-        .wire(unwired)
-        .build(IngestionServices {
-            hyperliquid: Arc::clone(&services.hyperliquid),
-            data_dir: services.data_dir.clone(),
-            max_concurrent_requests: services.max_concurrent_requests,
-        });
-
-    // Proves all query dependencies are satisfied at compile time
-    drop(wired.into_inner());
-
-    let cqrs: IngestionCqrs = Arc::new(cqrs);
-
     // Spawn apalis worker
     tokio::spawn({
-        let cqrs = Arc::clone(&cqrs);
+        let pool = pool.clone();
         let services = Arc::clone(&services);
         let job_queue = job_queue.clone();
         async move {
             let monitor = Monitor::new().register(
                 WorkerBuilder::new("ingestion")
-                    .data(cqrs)
+                    .data(pool)
                     .data(services)
                     .backend(job_queue)
                     .build_fn(IngestionJob::run),
@@ -421,8 +413,7 @@ pub async fn rocket(
     info!(port = config.port, "moneymentum ready");
     Ok(rocket::custom(rocket_config)
         .manage(config)
-        .manage(cqrs)
-        .manage(view)
+        .manage(pool)
         .manage(job_queue)
         .mount(
             "/",

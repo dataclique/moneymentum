@@ -18,6 +18,7 @@ interface PositionsPanelProps {
   deletedArchive: Record<string, PortfolioInterface | undefined>
   isLoading: boolean
   fundingIsLoading: boolean
+  leverageLimitsIsLoading: boolean
   leverageLimitsMap: Record<string, number>
   _isRebalancing?: boolean
   isPrecise: boolean
@@ -188,6 +189,9 @@ export const PositionsPanel = (props: PositionsPanelProps): JSX.Element => {
                             position={displayPosition}
                             status={status()}
                             maxLeverage={props.leverageLimitsMap[symbol]}
+                            leverageLimitsIsLoading={
+                              props.leverageLimitsIsLoading
+                            }
                             isPrecise={props.isPrecise}
                             fundingIsLoading={props.fundingIsLoading}
                             onRemove={props.onRemove}

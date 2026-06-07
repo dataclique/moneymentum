@@ -1,24 +1,20 @@
-//! Ingestion orchestration and CQRS aggregate.
+//! Ingestion orchestration and run-state persistence.
 //!
-//! The [`Ingestion`] aggregate tracks ingestion lifecycle (Running → Completed/Failed).
-//! Status transitions are persisted as events, enabling the API to report progress
-//! immediately rather than waiting for the entire operation to complete.
+//! Each ingestion attempt is stored as its own row in `ingestion_runs`. This
+//! makes failed and abandoned runs visible without requiring a database reset.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use apalis::prelude::Data;
-use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use cqrs_es::{Aggregate, DomainEvent};
 use serde::{Deserialize, Serialize};
+use sqlx::SqlitePool;
 use thiserror::Error;
-use tracing::{error, info};
+use tracing::{debug, error, info, warn};
 
 use crate::hyperliquid::{CandleIngester, FundingRateIngester, Hyperliquid, HyperliquidError};
-use crate::lifecycle::{Lifecycle, LifecycleError, Never};
 use crate::timeframe::Timeframe;
-use crate::wire::{AggregateId, Cqrs, ViewTable};
 
 const TIMEFRAMES: &[Timeframe] = &[
     Timeframe::FifteenMin,
@@ -26,21 +22,34 @@ const TIMEFRAMES: &[Timeframe] = &[
     Timeframe::OneDay,
     Timeframe::OneWeek,
 ];
+const ABANDONED_RUN_REASON: &str = "backend restarted before ingestion completed";
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct IngestionRunId(String);
+
+impl IngestionRunId {
+    fn new(started_at: DateTime<Utc>) -> Self {
+        Self(format!("ingestion-{}", started_at.timestamp_micros()))
+    }
+
+    fn as_str(&self) -> &str {
+        &self.0
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct IngestionJob;
+pub(crate) struct IngestionJob {
+    run_id: IngestionRunId,
+}
 
 impl IngestionJob {
-    pub(crate) async fn run(
-        self,
-        cqrs: Data<Arc<Cqrs<Ingestion>>>,
-        services: Data<Arc<IngestionServices>>,
-    ) {
-        if let Err(err) = cqrs
-            .execute::<IngestionId>((), IngestionCommand::Start)
-            .await
-        {
-            error!(error = %err, "failed to start ingestion");
+    pub(crate) fn new(run_id: IngestionRunId) -> Self {
+        Self { run_id }
+    }
+
+    pub(crate) async fn run(self, pool: Data<SqlitePool>, services: Data<Arc<IngestionServices>>) {
+        if let Err(err) = touch_run(&pool, &self.run_id).await {
+            error!(error = %err, run_id = self.run_id.as_str(), "failed to touch ingestion run");
             return;
         }
 
@@ -55,26 +64,20 @@ impl IngestionJob {
 
         match ingest_all(&candle_ingester, &funding_ingester, &services.data_dir).await {
             Ok(last_record) => {
-                info!("ingestion complete");
-                if let Err(err) = cqrs
-                    .execute::<IngestionId>((), IngestionCommand::Complete { last_record })
-                    .await
-                {
-                    error!(error = %err, "failed to record ingestion completion");
+                if let Err(err) = complete_run(&pool, &self.run_id, last_record).await {
+                    error!(error = %err, run_id = self.run_id.as_str(), "failed to record ingestion completion");
+                    return;
                 }
+                info!(run_id = self.run_id.as_str(), "ingestion complete");
             }
             Err(err) => {
-                error!(error = %err, "ingestion failed");
-                if let Err(err) = cqrs
-                    .execute::<IngestionId>(
-                        (),
-                        IngestionCommand::Fail {
-                            reason: err.to_string(),
-                        },
-                    )
-                    .await
-                {
-                    error!(error = %err, "failed to record ingestion failure");
+                error!(error = %err, run_id = self.run_id.as_str(), "ingestion failed");
+                if let Err(record_err) = fail_run(&pool, &self.run_id, &err.to_string()).await {
+                    error!(
+                        error = %record_err,
+                        run_id = self.run_id.as_str(),
+                        "failed to record ingestion failure"
+                    );
                 }
             }
         }
@@ -95,69 +98,45 @@ async fn ingest_all(
     Ok(Utc::now())
 }
 
-/// Type-safe aggregate ID for the singleton ingestion process.
-pub(crate) struct IngestionId;
-
-impl AggregateId<Ingestion> for IngestionId {
-    type Args = ();
-
-    fn aggregate_id((): ()) -> String {
-        "perp:hyperliquid".into()
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum IngestionStatus {
     Running,
     Completed,
     Failed,
+    Cancelled,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub(crate) struct IngestionState {
-    pub(crate) status: IngestionStatus,
-}
-
-pub(crate) type Ingestion = Lifecycle<IngestionState, Never>;
-
-#[derive(Debug, Serialize, Deserialize)]
-pub(crate) enum IngestionCommand {
-    Start,
-    Complete { last_record: DateTime<Utc> },
-    Fail { reason: String },
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub(crate) enum IngestionEvent {
-    Started {
-        started_at: chrono::DateTime<chrono::Utc>,
-    },
-    Completed {
-        last_record: chrono::DateTime<chrono::Utc>,
-    },
-    Failed {
-        reason: String,
-    },
-}
-
-impl DomainEvent for IngestionEvent {
-    fn event_type(&self) -> String {
+impl IngestionStatus {
+    fn as_db_str(self) -> &'static str {
         match self {
-            Self::Started { .. } => "Started".to_string(),
-            Self::Completed { .. } => "Completed".to_string(),
-            Self::Failed { .. } => "Failed".to_string(),
+            Self::Running => "running",
+            Self::Completed => "completed",
+            Self::Failed => "failed",
+            Self::Cancelled => "cancelled",
         }
     }
 
-    fn event_version(&self) -> String {
-        "1.0".to_string()
+    fn from_db_str(status: String) -> Result<Self, IngestionRunError> {
+        match status.as_str() {
+            "running" => Ok(Self::Running),
+            "completed" => Ok(Self::Completed),
+            "failed" => Ok(Self::Failed),
+            "cancelled" => Ok(Self::Cancelled),
+            _ => Err(IngestionRunError::UnknownStatus { status }),
+        }
     }
 }
 
 #[derive(Debug, Error)]
-pub(crate) enum IngestionError {
+pub(crate) enum IngestionRunError {
     #[error("ingestion already running")]
     AlreadyRunning,
+    #[error("ingestion run is not running: {run_id}")]
+    RunNotRunning { run_id: String },
+    #[error("unknown ingestion status: {status}")]
+    UnknownStatus { status: String },
+    #[error(transparent)]
+    Sqlx(#[from] sqlx::Error),
 }
 
 pub(crate) struct IngestionServices {
@@ -166,96 +145,179 @@ pub(crate) struct IngestionServices {
     pub(crate) max_concurrent_requests: usize,
 }
 
-#[async_trait]
-impl Aggregate for Ingestion {
-    type Command = IngestionCommand;
-    type Event = IngestionEvent;
-    type Error = IngestionError;
-    type Services = IngestionServices;
+pub(crate) async fn create_run(pool: &SqlitePool) -> Result<IngestionRunId, IngestionRunError> {
+    let started_at = Utc::now();
+    let run_id = IngestionRunId::new(started_at);
+    let timestamp = started_at.to_rfc3339();
 
-    fn aggregate_type() -> String {
-        "ingestion".to_string()
-    }
-
-    async fn handle(
-        &self,
-        command: Self::Command,
-        _services: &Self::Services,
-    ) -> Result<Vec<Self::Event>, Self::Error> {
-        match command {
-            IngestionCommand::Start => {
-                let is_running = matches!(
-                    self,
-                    Self::Live(IngestionState {
-                        status: IngestionStatus::Running
-                    })
-                );
-                if is_running {
-                    return Err(IngestionError::AlreadyRunning);
-                }
-
-                Ok(vec![IngestionEvent::Started {
-                    started_at: Utc::now(),
-                }])
-            }
-            IngestionCommand::Complete { last_record } => {
-                Ok(vec![IngestionEvent::Completed { last_record }])
-            }
-            IngestionCommand::Fail { reason } => Ok(vec![IngestionEvent::Failed { reason }]),
+    match sqlx::query(
+        r"
+        INSERT INTO ingestion_runs (id, status, started_at, heartbeat_at)
+        VALUES (?1, ?2, ?3, ?3)
+        ",
+    )
+    .bind(run_id.as_str())
+    .bind(IngestionStatus::Running.as_db_str())
+    .bind(timestamp)
+    .execute(pool)
+    .await
+    {
+        Ok(_) => {}
+        Err(sqlx::Error::Database(database_error)) if database_error.is_unique_violation() => {
+            return Err(IngestionRunError::AlreadyRunning);
         }
+        Err(err) => return Err(err.into()),
     }
 
-    fn apply(&mut self, event: Self::Event) {
-        *self = self
-            .clone()
-            .transition(&event, |incoming, current| match incoming {
-                IngestionEvent::Started { .. } => {
-                    // Started is only valid from Completed or Failed states (restart)
-                    if current.status == IngestionStatus::Running {
-                        Err(LifecycleError::AlreadyInitialized)
-                    } else {
-                        Ok(IngestionState {
-                            status: IngestionStatus::Running,
-                        })
-                    }
-                }
-                IngestionEvent::Completed { .. } => Ok(IngestionState {
-                    status: IngestionStatus::Completed,
-                }),
-                IngestionEvent::Failed { .. } => Ok(IngestionState {
-                    status: IngestionStatus::Failed,
-                }),
-            })
-            .or_initialize(&event, |incoming| match incoming {
-                IngestionEvent::Started { .. } => Ok(IngestionState {
-                    status: IngestionStatus::Running,
-                }),
-                _ => Err(LifecycleError::Uninitialized),
-            });
-    }
+    debug!(run_id = run_id.as_str(), "ingestion run created");
+    Ok(run_id)
 }
 
-impl ViewTable for Ingestion {
-    const TABLE: &'static str = "ingestion_view";
+pub(crate) async fn recover_abandoned_runs(pool: &SqlitePool) -> Result<u64, IngestionRunError> {
+    let timestamp = Utc::now().to_rfc3339();
+    let affected_rows = sqlx::query(
+        r"
+        UPDATE ingestion_runs
+        SET status = ?1,
+            finished_at = ?2,
+            heartbeat_at = ?2,
+            failure_reason = ?3
+        WHERE status = ?4
+        ",
+    )
+    .bind(IngestionStatus::Failed.as_db_str())
+    .bind(timestamp)
+    .bind(ABANDONED_RUN_REASON)
+    .bind(IngestionStatus::Running.as_db_str())
+    .execute(pool)
+    .await?
+    .rows_affected();
+
+    if affected_rows > 0 {
+        warn!(runs = affected_rows, "abandoned ingestion runs failed");
+    }
+
+    Ok(affected_rows)
+}
+
+pub(crate) async fn latest_status(
+    pool: &SqlitePool,
+) -> Result<Option<IngestionStatus>, IngestionRunError> {
+    sqlx::query_scalar(
+        r"
+        SELECT status
+        FROM ingestion_runs
+        ORDER BY started_at DESC
+        LIMIT 1
+        ",
+    )
+    .fetch_optional(pool)
+    .await?
+    .map(IngestionStatus::from_db_str)
+    .transpose()
+}
+
+async fn touch_run(pool: &SqlitePool, run_id: &IngestionRunId) -> Result<(), IngestionRunError> {
+    let timestamp = Utc::now().to_rfc3339();
+
+    let affected_rows = sqlx::query(
+        r"
+        UPDATE ingestion_runs
+        SET heartbeat_at = ?1
+        WHERE id = ?2
+          AND status = ?3
+        ",
+    )
+    .bind(timestamp)
+    .bind(run_id.as_str())
+    .bind(IngestionStatus::Running.as_db_str())
+    .execute(pool)
+    .await?
+    .rows_affected();
+
+    if affected_rows == 0 {
+        return Err(IngestionRunError::RunNotRunning {
+            run_id: run_id.as_str().to_string(),
+        });
+    }
+
+    Ok(())
+}
+
+async fn complete_run(
+    pool: &SqlitePool,
+    run_id: &IngestionRunId,
+    finished_at: DateTime<Utc>,
+) -> Result<(), IngestionRunError> {
+    let timestamp = finished_at.to_rfc3339();
+
+    sqlx::query(
+        r"
+        UPDATE ingestion_runs
+        SET status = ?1,
+            finished_at = ?2,
+            heartbeat_at = ?2
+        WHERE id = ?3
+          AND status = ?4
+        ",
+    )
+    .bind(IngestionStatus::Completed.as_db_str())
+    .bind(timestamp)
+    .bind(run_id.as_str())
+    .bind(IngestionStatus::Running.as_db_str())
+    .execute(pool)
+    .await?;
+
+    debug!(run_id = run_id.as_str(), "ingestion run completed");
+    Ok(())
+}
+
+pub(crate) async fn fail_run(
+    pool: &SqlitePool,
+    run_id: &IngestionRunId,
+    reason: &str,
+) -> Result<(), IngestionRunError> {
+    let timestamp = Utc::now().to_rfc3339();
+
+    sqlx::query(
+        r"
+        UPDATE ingestion_runs
+        SET status = ?1,
+            finished_at = ?2,
+            heartbeat_at = ?2,
+            failure_reason = ?3
+        WHERE id = ?4
+          AND status = ?5
+        ",
+    )
+    .bind(IngestionStatus::Failed.as_db_str())
+    .bind(timestamp)
+    .bind(reason)
+    .bind(run_id.as_str())
+    .bind(IngestionStatus::Running.as_db_str())
+    .execute(pool)
+    .await?;
+
+    debug!(run_id = run_id.as_str(), "ingestion run failed");
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use async_trait::async_trait;
     use chrono::{DateTime, TimeZone, Utc};
-    use cqrs_es::test::TestFramework;
-    use proptest::prelude::*;
-
     use rust_decimal_macros::dec;
+    use sqlx::SqlitePool;
+    use tracing::Level;
+    use tracing_test::traced_test;
 
     use super::*;
     use crate::candle::Candle;
     use crate::finance::{Market, Symbol};
     use crate::funding::FundingRate;
     use crate::hyperliquid::HyperliquidError;
+    use crate::logs_contain_at;
     use crate::timeframe::Timeframe;
-
-    type IngestionTestFramework = TestFramework<Ingestion>;
 
     struct MockHyperliquid;
 
@@ -296,18 +358,6 @@ mod tests {
         }
     }
 
-    fn sample_started() -> IngestionEvent {
-        IngestionEvent::Started {
-            started_at: Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
-        }
-    }
-
-    fn sample_completed() -> IngestionEvent {
-        IngestionEvent::Completed {
-            last_record: Utc.with_ymd_and_hms(2024, 1, 1, 1, 0, 0).unwrap(),
-        }
-    }
-
     fn test_services() -> IngestionServices {
         IngestionServices {
             hyperliquid: Arc::new(MockHyperliquid),
@@ -316,189 +366,135 @@ mod tests {
         }
     }
 
-    #[test]
-    fn start_emits_started() {
-        let events = IngestionTestFramework::with(test_services())
-            .given_no_previous_events()
-            .when(IngestionCommand::Start)
-            .inspect_result()
-            .expect("should emit events");
-
-        assert_eq!(events.len(), 1);
-        assert!(matches!(events[0], IngestionEvent::Started { .. }));
+    async fn setup_pool() -> SqlitePool {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        sqlx::query(
+            r"
+            CREATE TABLE ingestion_runs
+            (
+                id text NOT NULL,
+                status text NOT NULL CHECK (status IN ('running', 'completed', 'failed', 'cancelled')),
+                started_at text NOT NULL,
+                finished_at text,
+                heartbeat_at text NOT NULL,
+                failure_reason text,
+                PRIMARY KEY (id)
+            );
+            ",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            r"
+            CREATE UNIQUE INDEX one_running_ingestion
+            ON ingestion_runs(status)
+            WHERE status = 'running';
+            ",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        pool
     }
 
-    #[test]
-    fn complete_emits_completed() {
-        let last_record = Utc.with_ymd_and_hms(2024, 1, 1, 2, 0, 0).unwrap();
-        let events = IngestionTestFramework::with(test_services())
-            .given(vec![sample_started()])
-            .when(IngestionCommand::Complete { last_record })
-            .inspect_result()
-            .expect("should emit events");
+    #[traced_test]
+    #[tokio::test]
+    async fn create_run_stores_running_status_and_logs() {
+        let pool = setup_pool().await;
 
-        assert_eq!(events.len(), 1);
-        assert!(matches!(events[0], IngestionEvent::Completed { .. }));
+        let run_id = create_run(&pool).await.unwrap();
+        let status = latest_status(&pool).await.unwrap();
+
+        assert_eq!(status, Some(IngestionStatus::Running));
+        assert!(run_id.as_str().starts_with("ingestion-"));
+        assert!(logs_contain_at(
+            Level::DEBUG,
+            &["ingestion run created", run_id.as_str()]
+        ));
     }
 
-    #[test]
-    fn fail_emits_failed() {
-        let events = IngestionTestFramework::with(test_services())
-            .given(vec![sample_started()])
-            .when(IngestionCommand::Fail {
-                reason: "connection timeout".to_string(),
-            })
-            .inspect_result()
-            .expect("should emit events");
+    #[traced_test]
+    #[tokio::test]
+    async fn create_run_rejects_concurrent_running_run() {
+        let pool = setup_pool().await;
 
-        assert_eq!(events.len(), 1);
-        assert!(
-            matches!(&events[0], IngestionEvent::Failed { reason } if reason == "connection timeout")
-        );
+        let run_id = create_run(&pool).await.unwrap();
+        assert!(logs_contain_at(
+            Level::DEBUG,
+            &["ingestion run created", run_id.as_str()]
+        ));
+
+        let duplicate = create_run(&pool).await;
+
+        assert!(matches!(duplicate, Err(IngestionRunError::AlreadyRunning)));
     }
 
-    #[test]
-    fn start_when_running_returns_error() {
-        IngestionTestFramework::with(test_services())
-            .given(vec![sample_started()])
-            .when(IngestionCommand::Start)
-            .then_expect_error_message("ingestion already running");
+    #[traced_test]
+    #[tokio::test]
+    async fn recover_abandoned_runs_marks_running_rows_failed_and_logs() {
+        let pool = setup_pool().await;
+
+        create_run(&pool).await.unwrap();
+        let recovered = recover_abandoned_runs(&pool).await.unwrap();
+        let status = latest_status(&pool).await.unwrap();
+        let failure_reason: String =
+            sqlx::query_scalar("SELECT failure_reason FROM ingestion_runs LIMIT 1")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+
+        assert_eq!(recovered, 1);
+        assert_eq!(status, Some(IngestionStatus::Failed));
+        assert_eq!(failure_reason, ABANDONED_RUN_REASON);
+        assert!(logs_contain_at(
+            Level::WARN,
+            &["abandoned ingestion runs failed", "1"]
+        ));
     }
 
-    #[test]
-    fn can_restart_after_completion() {
-        let events = IngestionTestFramework::with(test_services())
-            .given(vec![sample_started(), sample_completed()])
-            .when(IngestionCommand::Start)
-            .inspect_result()
-            .expect("should emit events");
+    #[traced_test]
+    #[tokio::test]
+    async fn stale_job_for_recovered_run_does_not_execute() {
+        let pool = setup_pool().await;
+        let run_id = create_run(&pool).await.unwrap();
+        recover_abandoned_runs(&pool).await.unwrap();
+        let job = IngestionJob::new(run_id.clone());
 
-        assert_eq!(events.len(), 1);
-        assert!(matches!(events[0], IngestionEvent::Started { .. }));
+        job.run(
+            Data::new(pool.clone()),
+            Data::new(Arc::new(test_services())),
+        )
+        .await;
+
+        let status = latest_status(&pool).await.unwrap();
+
+        assert_eq!(status, Some(IngestionStatus::Failed));
+        assert!(logs_contain_at(
+            Level::ERROR,
+            &["failed to touch ingestion run", run_id.as_str()]
+        ));
     }
 
-    #[test]
-    fn can_restart_after_failure() {
-        let events = IngestionTestFramework::with(test_services())
-            .given(vec![
-                sample_started(),
-                IngestionEvent::Failed {
-                    reason: "oops".to_string(),
-                },
-            ])
-            .when(IngestionCommand::Start)
-            .inspect_result()
-            .expect("should emit events");
+    #[traced_test]
+    #[tokio::test]
+    async fn job_records_completed_run_and_logs() {
+        let pool = setup_pool().await;
+        let run_id = create_run(&pool).await.unwrap();
+        let job = IngestionJob::new(run_id.clone());
 
-        assert_eq!(events.len(), 1);
-        assert!(matches!(events[0], IngestionEvent::Started { .. }));
-    }
+        job.run(
+            Data::new(pool.clone()),
+            Data::new(Arc::new(test_services())),
+        )
+        .await;
 
-    #[test]
-    fn apply_replays_event_sequence_to_correct_state() {
-        use cqrs_es::Aggregate;
+        let status = latest_status(&pool).await.unwrap();
 
-        let mut ingestion = Ingestion::default();
-
-        // Apply Started -> should be Running
-        ingestion.apply(sample_started());
-        let state = ingestion.live().expect("should be live after Started");
-        assert_eq!(state.status, IngestionStatus::Running);
-
-        // Apply Completed -> should be Completed
-        ingestion.apply(sample_completed());
-        let state = ingestion.live().expect("should be live after Completed");
-        assert_eq!(state.status, IngestionStatus::Completed);
-
-        // Apply Started again (restart) -> should be Running
-        ingestion.apply(IngestionEvent::Started {
-            started_at: Utc.with_ymd_and_hms(2024, 1, 2, 0, 0, 0).unwrap(),
-        });
-        let state = ingestion.live().expect("should be live after restart");
-        assert_eq!(state.status, IngestionStatus::Running);
-    }
-
-    fn arbitrary_timestamp() -> impl Strategy<Value = DateTime<Utc>> {
-        (0i64..1_000_000_000_000i64).prop_map(|milliseconds| {
-            DateTime::from_timestamp_millis(milliseconds)
-                .unwrap_or_else(|| Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap())
-        })
-    }
-
-    proptest! {
-        #[test]
-        fn started_on_uninitialized_results_in_running(timestamp in arbitrary_timestamp()) {
-            use cqrs_es::Aggregate;
-
-            let mut ingestion = Ingestion::default();
-            ingestion.apply(IngestionEvent::Started { started_at: timestamp });
-
-            let state = ingestion.live().expect("should be live after Started");
-            prop_assert_eq!(state.status, IngestionStatus::Running);
-        }
-
-        #[test]
-        fn completed_after_started_results_in_completed(
-            started_at in arbitrary_timestamp(),
-            last_record in arbitrary_timestamp(),
-        ) {
-            use cqrs_es::Aggregate;
-
-            let mut ingestion = Ingestion::default();
-            ingestion.apply(IngestionEvent::Started { started_at });
-            ingestion.apply(IngestionEvent::Completed { last_record });
-
-            let state = ingestion.live().expect("should be live after Completed");
-            prop_assert_eq!(state.status, IngestionStatus::Completed);
-        }
-
-        #[test]
-        fn failed_after_started_results_in_failed(
-            started_at in arbitrary_timestamp(),
-            reason in ".*",
-        ) {
-            use cqrs_es::Aggregate;
-
-            let mut ingestion = Ingestion::default();
-            ingestion.apply(IngestionEvent::Started { started_at });
-            ingestion.apply(IngestionEvent::Failed { reason });
-
-            let state = ingestion.live().expect("should be live after Failed");
-            prop_assert_eq!(state.status, IngestionStatus::Failed);
-        }
-
-        #[test]
-        fn restart_from_completed_results_in_running(
-            first_started in arbitrary_timestamp(),
-            completed_at in arbitrary_timestamp(),
-            second_started in arbitrary_timestamp(),
-        ) {
-            use cqrs_es::Aggregate;
-
-            let mut ingestion = Ingestion::default();
-            ingestion.apply(IngestionEvent::Started { started_at: first_started });
-            ingestion.apply(IngestionEvent::Completed { last_record: completed_at });
-            ingestion.apply(IngestionEvent::Started { started_at: second_started });
-
-            let state = ingestion.live().expect("should be live after restart");
-            prop_assert_eq!(state.status, IngestionStatus::Running);
-        }
-
-        #[test]
-        fn restart_from_failed_results_in_running(
-            first_started in arbitrary_timestamp(),
-            reason in ".*",
-            second_started in arbitrary_timestamp(),
-        ) {
-            use cqrs_es::Aggregate;
-
-            let mut ingestion = Ingestion::default();
-            ingestion.apply(IngestionEvent::Started { started_at: first_started });
-            ingestion.apply(IngestionEvent::Failed { reason });
-            ingestion.apply(IngestionEvent::Started { started_at: second_started });
-
-            let state = ingestion.live().expect("should be live after restart from failed");
-            prop_assert_eq!(state.status, IngestionStatus::Running);
-        }
+        assert_eq!(status, Some(IngestionStatus::Completed));
+        assert!(logs_contain_at(
+            Level::INFO,
+            &["ingestion complete", run_id.as_str()]
+        ));
     }
 }

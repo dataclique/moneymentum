@@ -26,7 +26,8 @@ export const PositionsPanelRow = (props: {
   symbol: string
   position: () => PortfolioInterface
   status: "new" | "unchanged" | "changed" | "closing"
-  maxLeverage: number
+  maxLeverage?: number
+  leverageLimitsIsLoading: boolean
   isPrecise: boolean
   fundingIsLoading: boolean
   onRemove: (symbol: string) => void
@@ -118,17 +119,20 @@ export const PositionsPanelRow = (props: {
         isNew() && "bg-green-500/5",
       )}
     >
-      <td class="px-2 py-1 font-medium flex flex-row gap-[4px] pointer-events-auto">
-        <span class="font-medium">{baseSymbol()}</span>
-        <LeverageDialog
-          symbol={props.position().symbol}
-          leverage={props.position().leverage}
-          maxLeverage={props.maxLeverage}
-          disabled={isClosing()}
-          onLeverageChange={props.onLeverageChange}
-        />
+      <td class="px-2 py-1 align-middle font-medium pointer-events-auto">
+        <div class="flex flex-row items-center gap-[4px]">
+          <span class="font-medium">{baseSymbol()}</span>
+          <LeverageDialog
+            symbol={props.position().symbol}
+            leverage={props.position().leverage}
+            maxLeverage={props.maxLeverage}
+            leverageLimitsIsLoading={props.leverageLimitsIsLoading}
+            disabled={isClosing()}
+            onLeverageChange={props.onLeverageChange}
+          />
+        </div>
       </td>
-      <td class="px-2 py-1 pointer-events-auto">
+      <td class="px-2 py-1 align-middle pointer-events-auto">
         <select
           value={props.position().side}
           onChange={event => {
@@ -149,7 +153,7 @@ export const PositionsPanelRow = (props: {
           <option value="sell">SHORT</option>
         </select>
       </td>
-      <td class="px-2 py-1 text-right pointer-events-auto">
+      <td class="px-2 py-1 align-middle text-right pointer-events-auto">
         <Show
           when={!isClosing()}
           fallback={<span class="text-rose-500 text-[10px]">→ 0%</span>}
@@ -181,7 +185,7 @@ export const PositionsPanelRow = (props: {
           <span class="text-muted-foreground text-[10px] ml-0.5">%</span>
         </Show>
       </td>
-      <td class="px-2 py-1 text-right pointer-events-auto">
+      <td class="px-2 py-1 align-middle text-right pointer-events-auto">
         <span class="text-muted-foreground text-[10px]">$</span>
         <input
           type="number"
@@ -234,7 +238,7 @@ export const PositionsPanelRow = (props: {
       </td>
       <td
         class={cn(
-          "px-2 py-1 text-right font-mono text-[11px] w-[11ch]",
+          "px-2 py-1 align-middle text-right font-mono text-[11px] w-[11ch]",
           fundingClassName(),
         )}
       >
@@ -245,16 +249,16 @@ export const PositionsPanelRow = (props: {
           {fundingDisplay()}
         </Show>
       </td>
-      <td class="px-2 py-1 text-right font-mono text-[11px] text-muted-foreground">
+      <td class="px-2 py-1 align-middle text-right font-mono text-[11px] text-muted-foreground">
         0
       </td>
-      <td class="px-2 py-1 text-right font-mono text-[11px] text-muted-foreground">
+      <td class="px-2 py-1 align-middle text-right font-mono text-[11px] text-muted-foreground">
         0
       </td>
-      <td class="px-2 py-1 text-right font-mono text-[11px] text-muted-foreground">
+      <td class="px-2 py-1 align-middle text-right font-mono text-[11px] text-muted-foreground">
         0
       </td>
-      <td class="px-2 py-1 text-right">
+      <td class="px-2 py-1 align-middle text-right">
         <Button
           variant="ghost"
           size="icon"

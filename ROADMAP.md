@@ -144,14 +144,14 @@ primitives.
 
 ## Completed: Backend foundation and portfolio beta
 
-Rust backend with Rocket, Polars, CQRS/ES on SQLite. Ingestion pipeline fetches
-OHLCV and funding rates from Hyperliquid, stores as CSV. Beta calculation
-computes rolling covariance/variance against BTC. Deployed to DigitalOcean via
-NixOS + deploy-rs.
+Rust backend with Rocket, Polars, and SQLite-backed ingestion runs/job queue.
+Ingestion pipeline fetches OHLCV and funding rates from Hyperliquid, stores as
+CSV. Beta calculation computes rolling covariance/variance against BTC. Deployed
+to DigitalOcean via NixOS + deploy-rs.
 
 - [x] Cargo workspace + Nix flake + CI/CD
 - [x] Rocket HTTP server with health check
-- [x] CQRS event store + Apalis job queue (SQLite)
+- [x] Ingestion run ledger + Apalis job queue (SQLite)
 - [x] Hyperliquid OHLCV ingestion (15m, 1h, 1d candles)
 - [x] Funding rate ingestion
 - [x] Rolling beta calculation (`POST /beta`)

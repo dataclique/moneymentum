@@ -28,10 +28,12 @@ jobs:
       - uses: DeterminateSystems/magic-nix-cache-action@main
 
       - name: Setup SSH
+        env:
+          SSH_KEY: ${{ secrets.SSH_KEY }}
         run: |
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
-          echo "${{ secrets.SSH_KEY }}" > ~/.ssh/id_ed25519
+          printf '%s' "$SSH_KEY" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
 
       - name: Resolve host IP
@@ -60,6 +62,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - uses: DeterminateSystems/nix-installer-action@main
         with:
@@ -70,10 +74,12 @@ jobs:
       - uses: DeterminateSystems/magic-nix-cache-action@main
 
       - name: Setup SSH key for state decryption
+        env:
+          SSH_KEY: ${{ secrets.SSH_KEY }}
         run: |
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
-          echo "${{ secrets.SSH_KEY }}" > ~/.ssh/id_ed25519
+          printf '%s' "$SSH_KEY" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
 
       - name: Verify deployed frontend and backend
@@ -93,6 +99,36 @@ jobs:
           frontend_url="${FRONTEND_URL:-http://$host_ip/}"
           health_url="${HEALTH_URL:-http://$host_ip/api/health}"
 
+          health_response_ok() {
+            response_file="$1"
+            content_type="$2"
+
+            case "$content_type" in
+              application/json|application/json\;*) ;;
+              *) return 1 ;;
+            esac
+
+            python3 - "$response_file" <<'PY'
+          import json
+          import sys
+
+          try:
+              with open(sys.argv[1], encoding="utf-8") as response:
+                  payload = json.load(response)
+          except (OSError, json.JSONDecodeError):
+              sys.exit(1)
+
+          if not isinstance(payload, dict):
+              sys.exit(1)
+
+          version = payload.get("version")
+          if payload.get("status") == "ok" and isinstance(version, str) and version:
+              sys.exit(0)
+
+          sys.exit(1)
+          PY
+          }
+
           retry_url() {
             url="$1"
             expected_body="${2:-}"
@@ -111,17 +147,29 @@ jobs:
                 curl_args+=(-k)
               fi
 
-              status=$(curl "${curl_args[@]}" -o "$response_file" -w "%{http_code}" "$url" || true)
-              body=$(cat "$response_file")
-              rm -f "$response_file"
+              response_meta=$(curl "${curl_args[@]}" -o "$response_file" -w "%{http_code} %{content_type}" "$url" || true)
+              status="${response_meta%% *}"
+              content_type="${response_meta#* }"
 
-              if [ "$status" = "200" ] && { [ -z "$expected_body" ] || [ "$body" = "$expected_body" ]; }; then
+              if [ "$url" = "$health_url" ] && [ "$status" = "200" ] && health_response_ok "$response_file" "$content_type"; then
+                rm -f "$response_file"
                 echo "Verified $url"
                 return 0
               fi
 
+              body="$(<"$response_file")"
+              if [ "$url" != "$health_url" ] && [ "$status" = "200" ] && { [ -z "$expected_body" ] || [ "$body" = "$expected_body" ]; }; then
+                rm -f "$response_file"
+                echo "Verified $url"
+                return 0
+              fi
+
+              rm -f "$response_file"
+
               echo "Waiting for $url: status=$status"
-              sleep "$delay"
+              if [ "$delay" != "32" ]; then
+                sleep "$delay"
+              fi
             done
 
             echo "Smoke check failed for $url" >&2
@@ -129,7 +177,7 @@ jobs:
           }
 
           retry_url "$frontend_url" "" true
-          retry_url "$health_url" "ok"
+          retry_url "$health_url"
 
       - name: Cleanup SSH
         if: always()

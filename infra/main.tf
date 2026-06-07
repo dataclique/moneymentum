@@ -12,6 +12,7 @@ resource "digitalocean_volume" "data" {
 }
 
 resource "digitalocean_droplet" "nixos" {
+  # Keep digitalocean_droplet.nixos on Ubuntu; nixos-anywhere replaces it with NixOS.
   image    = "ubuntu-24-04-x64"
   name     = "moneymentum-nixos"
   region   = var.region

@@ -118,7 +118,11 @@ workflow pins the SSH host key from `keys.nix`, resolves the host IP from
 encrypted Terraform state, runs `nix run .#deployAll`, then the
 `post-deploy-smoke-test` job verifies the public frontend and `/api/health`. Set
 `DEPLOY_FRONTEND_URL` and `DEPLOY_HEALTH_URL` repository variables when the
-public checks should use a domain or HTTPS instead of the raw droplet IP.
+public checks should use a domain or HTTPS instead of the raw droplet IP. Set
+`DEPLOY_SMOKE_HOST` when the post-deploy smoke test needs an explicit `Host`
+header, such as targeting a domain behind a load balancer; set
+`DEPLOY_SMOKE_INSECURE` to `true` only when those frontend and `/api/health`
+checks must skip TLS verification for self-signed certificates.
 
 There is no standalone destroy command. To remove or reprovision resources, edit
 `infra/main.tf`, inspect `nix run .#tfPlan`, then apply the reviewed plan.

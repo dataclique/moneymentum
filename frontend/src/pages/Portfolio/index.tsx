@@ -20,7 +20,7 @@ import {
   PRECISE_TOGGLE_STORAGE_KEY,
   usePortfolioState,
 } from "./hooks/usePortfolioState"
-import { useBeta } from "./hooks/useBeta"
+import { useBeta, type BetaBenchmark } from "./hooks/useBeta"
 import {
   useHyperliquidTickers,
   useHyperliquidFundingRates,
@@ -35,6 +35,13 @@ import { RiskPanel } from "@/pages/Portfolio/components/RiskPanel"
 const LEVERAGE_MIN = 0.001
 const LEVERAGE_MAX = 5
 const LEVERAGE_STEP = 0.1
+
+const bitcoinBetaBenchmark: BetaBenchmark = {
+  symbol: "BTC",
+  label: "BTC perpetual on Hyperliquid",
+  interval: "daily log returns",
+  lookback: "365 calendar days",
+}
 
 const PortfolioPage = () => {
   const { isNetworkSwitching } = useNetwork()
@@ -70,6 +77,7 @@ const PortfolioPage = () => {
     () => portfolio.targetPortfolio,
     () => portfolio.targetTotalNotional,
     () => portfolio.readonlyBetaPositions,
+    () => bitcoinBetaBenchmark,
   )
 
   const tickersQuery = useHyperliquidTickers()

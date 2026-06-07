@@ -33,14 +33,18 @@ const defaultExposures: FactorExposure[] = [
   { name: "Volatility", value: PLACEHOLDER },
 ]
 
-const defaultAttribution: FactorAttribution[] = [
-  { factor: "B to BTC", contribution: PLACEHOLDER },
-  { factor: "B to SPY", contribution: PLACEHOLDER },
-  { factor: "Momentum", contribution: PLACEHOLDER },
-  { factor: "Carry", contribution: PLACEHOLDER },
-  { factor: "Volatility", contribution: PLACEHOLDER },
-  { factor: "Idiosyncratic", contribution: PLACEHOLDER },
-]
+const defaultAttribution = (betaExposureLabel: string): FactorAttribution[] =>
+  [
+    { factor: betaExposureLabel, contribution: PLACEHOLDER },
+    { factor: "B to SPY", contribution: PLACEHOLDER },
+    { factor: "Momentum", contribution: PLACEHOLDER },
+    { factor: "Carry", contribution: PLACEHOLDER },
+    { factor: "Volatility", contribution: PLACEHOLDER },
+    { factor: "Idiosyncratic", contribution: PLACEHOLDER },
+  ].filter(
+    (attribution, index) =>
+      index === 0 || attribution.factor !== betaExposureLabel,
+  )
 
 const defaultConcentration: ConcentrationMetric[] = [
   { metric: "Top Position", value: PLACEHOLDER },
@@ -56,6 +60,7 @@ interface FactorsPanelProps {
   betaError: unknown
   excludedBetaSymbols: string[]
   betaMethodology: {
+    exposureLabel: string
     benchmark: string
     interval: string
     lookback: string
@@ -67,7 +72,8 @@ interface FactorsPanelProps {
 
 export const FactorsPanel = (props: FactorsPanelProps) => {
   const exposures = () => props.exposures ?? defaultExposures
-  const attribution = () => props.attribution ?? defaultAttribution
+  const attribution = () =>
+    props.attribution ?? defaultAttribution(props.betaMethodology.exposureLabel)
   const concentration = () => props.concentration ?? defaultConcentration
   const betaHasError = () =>
     props.betaError !== null && props.betaError !== undefined
@@ -90,7 +96,7 @@ export const FactorsPanel = (props: FactorsPanelProps) => {
             <TooltipProvider>
               <Tooltip openDelay={0}>
                 <TooltipTrigger class="text-muted-foreground truncate">
-                  B to BTC
+                  {props.betaMethodology.exposureLabel}
                 </TooltipTrigger>
                 <TooltipContent class="max-w-[260px]">
                   <div>Benchmark: {props.betaMethodology.benchmark}</div>

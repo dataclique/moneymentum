@@ -267,7 +267,20 @@ fn compute_beta_report_from_log_returns(
                 })
         });
 
-    let effective_weights = renormalize_abs_weights(&included_weights)?;
+    let effective_weights = match renormalize_abs_weights(&included_weights) {
+        Ok(effective_weights) => effective_weights,
+        Err(ReturnsError::BetaUndefined) => {
+            return Ok(PortfolioBetaReport {
+                beta: None,
+                excluded_tickers: excluded_tickers
+                    .into_iter()
+                    .map(|(ticker, _weight)| ticker)
+                    .collect(),
+                effective_weights: BTreeMap::new(),
+            });
+        }
+        Err(err) => return Err(err),
+    };
     let beta_weights = effective_weights
         .iter()
         .map(|(ticker, weight)| (ticker.clone(), *weight))
@@ -493,6 +506,32 @@ mod tests {
         assert_eq!(report.effective_weights.get("ETH"), Some(&1.0));
         assert!((report.beta.expect("beta") - 1.0).abs() < 1e-10);
         assert!(crate::logs_contain_at(
+            tracing::Level::INFO,
+            &["portfolio beta calculated"]
+        ));
+    }
+
+    #[traced_test]
+    #[test]
+    fn beta_report_returns_none_when_all_portfolio_assets_are_excluded() {
+        let log_returns_df = df! {
+            "timestamp" => &[
+                "2024-01-01T00:00:00Z", "2024-01-02T00:00:00Z", "2024-01-03T00:00:00Z",
+                "2024-01-02T00:00:00Z",
+            ],
+            "ticker" => &["BTC", "BTC", "BTC", "DOGE"],
+            "log_return" => &[0.01_f64, -0.02, 0.015, 0.04],
+        }
+        .unwrap();
+        let weights = [("DOGE".to_string(), -1.0_f64)];
+
+        let report = compute_beta_report_from_log_returns(&log_returns_df, &weights, "BTC")
+            .expect("beta report");
+
+        assert_eq!(report.beta, None);
+        assert_eq!(report.excluded_tickers, vec!["DOGE"]);
+        assert!(report.effective_weights.is_empty());
+        assert!(!crate::logs_contain_at(
             tracing::Level::INFO,
             &["portfolio beta calculated"]
         ));

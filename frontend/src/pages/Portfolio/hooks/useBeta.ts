@@ -3,9 +3,12 @@ import { createMemo } from "solid-js"
 import type { PortfolioInterface } from "./usePortfolioState"
 import type { ReadonlyBetaPosition } from "./useReadonlyPortfolioState"
 
-const BETA_BENCHMARK = "BTC"
-const BETA_INTERVAL_LABEL = "daily log returns"
-const BETA_LOOKBACK_LABEL = "365 calendar days"
+export interface BetaBenchmark {
+  symbol: string
+  label: string
+  interval: string
+  lookback: string
+}
 
 const symbolToTicker = (symbol: string): string =>
   symbol.includes("/") ? (symbol.split("/")[0] ?? symbol) : symbol
@@ -88,6 +91,7 @@ export const useBeta = (
   portfolio: () => Record<string, PortfolioInterface | undefined>,
   portfolioTotalNotional: () => number,
   readonlyPositions: () => ReadonlyBetaPosition[],
+  selectedBenchmark: () => BetaBenchmark,
 ) => {
   const weights = createMemo(() =>
     weightsFromPortfolio(
@@ -97,16 +101,27 @@ export const useBeta = (
     ),
   )
   const weightsKey = createMemo(() => queryKeyFromWeights(weights()))
+  const methodology = createMemo(() => {
+    const benchmark = selectedBenchmark()
+
+    return {
+      exposureLabel: `B to ${benchmark.symbol}`,
+      benchmark: benchmark.label,
+      interval: benchmark.interval,
+      lookback: benchmark.lookback,
+    }
+  })
 
   const query = useQuery(() => {
     const currentWeights = weights()
     const currentWeightsKey = weightsKey()
+    const currentBenchmark = selectedBenchmark()
     const hasData = Object.keys(currentWeights).length > 0
 
     return {
-      queryKey: ["beta", BETA_BENCHMARK, currentWeightsKey] as const,
+      queryKey: ["beta", currentBenchmark.symbol, currentWeightsKey] as const,
       queryFn: (ctx: { signal: AbortSignal }) =>
-        fetchBeta(currentWeights, BETA_BENCHMARK, ctx.signal),
+        fetchBeta(currentWeights, currentBenchmark.symbol, ctx.signal),
       enabled: hasData,
       retry: 2,
     }
@@ -128,10 +143,8 @@ export const useBeta = (
     get effectiveWeights() {
       return query.data?.effective_weights ?? {}
     },
-    methodology: {
-      benchmark: "BTC perpetual on Hyperliquid",
-      interval: BETA_INTERVAL_LABEL,
-      lookback: BETA_LOOKBACK_LABEL,
+    get methodology() {
+      return methodology()
     },
   }
 }

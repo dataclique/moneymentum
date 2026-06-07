@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/solid-query"
 import type { ParentProps } from "solid-js"
 
 import type { PortfolioInterface } from "./usePortfolioState"
-import { useBeta } from "./useBeta"
+import { useBeta, type BetaBenchmark } from "./useBeta"
 import type { ReadonlyBetaPosition } from "./useReadonlyPortfolioState"
 
 const createWrapper = () => {
@@ -35,6 +35,13 @@ const targetPortfolio = (): Record<string, PortfolioInterface | undefined> => ({
   },
 })
 const targetTotalNotional = () => 100
+
+const bitcoinBetaBenchmark: BetaBenchmark = {
+  symbol: "BTC",
+  label: "BTC perpetual on Hyperliquid",
+  interval: "daily log returns",
+  lookback: "365 calendar days",
+}
 
 describe("useBeta", () => {
   const fetchMock = vi.fn()
@@ -67,7 +74,13 @@ describe("useBeta", () => {
     ]
 
     const { result } = renderHook(
-      () => useBeta(targetPortfolio, targetTotalNotional, readonlyPositions),
+      () =>
+        useBeta(
+          targetPortfolio,
+          targetTotalNotional,
+          readonlyPositions,
+          () => bitcoinBetaBenchmark,
+        ),
       { wrapper: createWrapper() },
     )
 
@@ -93,7 +106,13 @@ describe("useBeta", () => {
     ]
 
     const { result } = renderHook(
-      () => useBeta(targetPortfolio, targetTotalNotional, readonlyPositions),
+      () =>
+        useBeta(
+          targetPortfolio,
+          targetTotalNotional,
+          readonlyPositions,
+          () => bitcoinBetaBenchmark,
+        ),
       { wrapper: createWrapper() },
     )
 
@@ -119,7 +138,13 @@ describe("useBeta", () => {
     })
 
     const { result } = renderHook(
-      () => useBeta(targetPortfolio, targetTotalNotional, () => []),
+      () =>
+        useBeta(
+          targetPortfolio,
+          targetTotalNotional,
+          () => [],
+          () => bitcoinBetaBenchmark,
+        ),
       { wrapper: createWrapper() },
     )
 
@@ -129,5 +154,41 @@ describe("useBeta", () => {
 
     expect(result.excludedSymbols).toEqual(["NEWCOIN"])
     expect(result.effectiveWeights).toEqual({ BTC: 1 })
+  })
+
+  it("uses the selected benchmark for the request and methodology labels", async () => {
+    const selectedBenchmark: BetaBenchmark = {
+      symbol: "SPY",
+      label: "SPY ETF",
+      interval: "weekly log returns",
+      lookback: "52 calendar weeks",
+    }
+
+    const { result } = renderHook(
+      () =>
+        useBeta(
+          targetPortfolio,
+          targetTotalNotional,
+          () => [],
+          () => selectedBenchmark,
+        ),
+      { wrapper: createWrapper() },
+    )
+
+    await waitFor(() => {
+      expect(result.beta).toBe(1.23)
+    })
+
+    const callBody = JSON.parse(String(fetchMock.mock.lastCall?.[1]?.body)) as {
+      benchmark: string
+    }
+
+    expect(callBody.benchmark).toBe("SPY")
+    expect(result.methodology).toEqual({
+      exposureLabel: "B to SPY",
+      benchmark: "SPY ETF",
+      interval: "weekly log returns",
+      lookback: "52 calendar weeks",
+    })
   })
 })

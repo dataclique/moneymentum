@@ -770,6 +770,58 @@ mod tests {
         );
     }
 
+    #[traced_test]
+    #[tokio::test]
+    async fn testnet_mempool_failure_does_not_fallback_to_blockchain_info() {
+        let mock_server = MockServer::start().await;
+        let address =
+            BtcAddress::from_str("tb1qqltm70wyz734t9k8d9w70uuhyxnemyh56d5ra8rtw082ytd7ywmsqudq5e")
+                .unwrap();
+        let btc_base_url = Url::parse(&format!("{}/testnet/api/", mock_server.uri())).unwrap();
+        let blockchain_info_base_url = Url::parse(&mock_server.uri()).unwrap();
+        let address_base_url = btc_base_url_for_address(&btc_base_url, &address).unwrap();
+        let mempool_path = address_base_url
+            .join(&format!("address/{}", address.as_str()))
+            .unwrap()
+            .path()
+            .to_string();
+
+        Mock::given(method("GET"))
+            .and(path(mempool_path))
+            .respond_with(ResponseTemplate::new(503))
+            .mount(&mock_server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(format!("/rawaddr/{}", address.as_str())))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "final_balance": 0_u64
+            })))
+            .expect(0)
+            .mount(&mock_server)
+            .await;
+
+        let result = load_single_address_holding(
+            &client(),
+            &btc_base_url,
+            &blockchain_info_base_url,
+            &address,
+        )
+        .await;
+
+        assert!(matches!(
+            result,
+            Err(ReadonlyPortfolioError::BtcProvidersFailed {
+                ref fallback_error,
+                ..
+            }) if fallback_error == "blockchain.info does not support testnet addresses"
+        ));
+        assert!(!logs_contain_at(
+            Level::WARN,
+            &["primary btc provider failed, falling back to blockchain.info"]
+        ));
+        mock_server.verify().await;
+    }
+
     #[test]
     fn btc_address_rejects_empty_string() {
         assert!(matches!(

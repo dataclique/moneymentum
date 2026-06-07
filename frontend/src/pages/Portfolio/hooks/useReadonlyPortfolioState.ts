@@ -1,12 +1,14 @@
-import { createMemo, createSignal } from "solid-js"
+import { createEffect, createMemo, createSignal } from "solid-js"
 import { createStore } from "solid-js/store"
 import { useQuery } from "@tanstack/solid-query"
 
+import type { NetworkMode } from "@/contexts/wallet-context"
 import type { OrderSide } from "@/hooks/useTrading"
 import { useWallet } from "@/hooks/useWallet"
 import { validateBitcoinAddress } from "./bitcoinAddress"
 
-const READONLY_BTC_STORAGE_KEY = "portfolio-readonly-btc-addresses"
+const readonlyBtcStorageKey = (networkMode: NetworkMode): string =>
+  `portfolio-readonly-btc-addresses:${networkMode}`
 
 interface ReadonlyBtcEntry {
   address: string
@@ -48,9 +50,11 @@ interface ReadonlyBetaPosition {
   includeInBeta: boolean
 }
 
-const readEntriesFromStorage = (): ReadonlyBtcEntry[] => {
+const readEntriesFromStorage = (
+  networkMode: NetworkMode,
+): ReadonlyBtcEntry[] => {
   if (typeof localStorage === "undefined") return []
-  const rawValue = localStorage.getItem(READONLY_BTC_STORAGE_KEY)
+  const rawValue = localStorage.getItem(readonlyBtcStorageKey(networkMode))
   if (!rawValue) return []
 
   try {
@@ -68,20 +72,30 @@ const readEntriesFromStorage = (): ReadonlyBtcEntry[] => {
         address: entry.address.trim(),
         includeInBeta: entry.includeInBeta,
       }))
-      .filter(entry => entry.address.length > 0)
+      .filter(
+        entry =>
+          entry.address.length > 0 &&
+          validateBitcoinAddress(entry.address, networkMode).ok,
+      )
   } catch {
     return []
   }
 }
 
-const writeEntriesToStorage = (entries: ReadonlyBtcEntry[]): void => {
+const writeEntriesToStorage = (
+  networkMode: NetworkMode,
+  entries: ReadonlyBtcEntry[],
+): void => {
   if (typeof localStorage === "undefined") return
-  localStorage.setItem(READONLY_BTC_STORAGE_KEY, JSON.stringify(entries))
+  localStorage.setItem(
+    readonlyBtcStorageKey(networkMode),
+    JSON.stringify(entries),
+  )
 }
 
-const clearEntriesFromStorage = (): void => {
+const clearEntriesFromStorage = (networkMode: NetworkMode): void => {
   if (typeof localStorage === "undefined") return
-  localStorage.removeItem(READONLY_BTC_STORAGE_KEY)
+  localStorage.removeItem(readonlyBtcStorageKey(networkMode))
 }
 
 const fetchExposure = async (
@@ -137,11 +151,17 @@ const fetchExposure = async (
 export const useReadonlyPortfolioState = () => {
   const { networkMode } = useWallet()
   const [entries, setEntries] = createStore<ReadonlyBtcEntry[]>(
-    readEntriesFromStorage(),
+    readEntriesFromStorage(networkMode()),
   )
   const [validationError, setValidationError] = createSignal<string | null>(
     null,
   )
+
+  // createEffect: restore the address list whenever the active network changes.
+  createEffect(() => {
+    setEntries(readEntriesFromStorage(networkMode()))
+    setValidationError(null)
+  })
 
   const query = useQuery(() => {
     const readonlyAddresses = entries.map(entry => entry.address)
@@ -188,7 +208,7 @@ export const useReadonlyPortfolioState = () => {
       { address: normalizedAddress, includeInBeta: true },
     ]
     setEntries(nextEntries)
-    writeEntriesToStorage(nextEntries)
+    writeEntriesToStorage(networkMode(), nextEntries)
     setValidationError(null)
     return true
   }
@@ -196,7 +216,7 @@ export const useReadonlyPortfolioState = () => {
   const removeAddress = (address: string) => {
     const nextEntries = entries.filter(entry => entry.address !== address)
     setEntries(nextEntries)
-    writeEntriesToStorage(nextEntries)
+    writeEntriesToStorage(networkMode(), nextEntries)
   }
 
   const setIncludeInBeta = (address: string, includeInBeta: boolean) => {
@@ -204,12 +224,12 @@ export const useReadonlyPortfolioState = () => {
       entry.address === address ? { ...entry, includeInBeta } : entry,
     )
     setEntries(nextEntries)
-    writeEntriesToStorage(nextEntries)
+    writeEntriesToStorage(networkMode(), nextEntries)
   }
 
   const clearAddresses = () => {
     setEntries([])
-    clearEntriesFromStorage()
+    clearEntriesFromStorage(networkMode())
     setValidationError(null)
   }
 

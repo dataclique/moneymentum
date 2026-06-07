@@ -11,6 +11,7 @@ permissions:
 
 jobs:
   deploy:
+    if: github.ref == 'refs/heads/master'
     concurrency:
       # Shared with staging workflow -- deployAll touches staging too
       group: deploy-production
@@ -58,6 +59,7 @@ jobs:
         run: rm -rf ~/.ssh
 
   post-deploy-smoke-test:
+    if: github.ref == 'refs/heads/master'
     needs: deploy
     runs-on: ubuntu-latest
     steps:

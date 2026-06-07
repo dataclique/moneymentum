@@ -13,7 +13,7 @@ use turnkey_client::generated::immutable::common::v1::{
 use turnkey_client::{TurnkeyClient, TurnkeyClientError};
 
 use crate::Wallet;
-use crate::turnkey::OrganizationId;
+use crate::turnkey::{OrganizationId, WalletId};
 
 /// Errors from Turnkey Solana wallet operations.
 #[derive(Debug, thiserror::Error)]
@@ -93,7 +93,7 @@ impl<S: Stamp + Send + Sync> Wallet for TurnkeySolanaWallet<S> {
 /// A Solana wallet provisioned in a Turnkey organization.
 pub struct ProvisionedSolanaWallet {
     /// Turnkey's identifier for the created wallet.
-    pub wallet_id: String,
+    pub wallet_id: WalletId,
     /// The wallet's on-chain Solana address.
     pub address: Pubkey,
 }
@@ -126,7 +126,7 @@ pub async fn provision_solana_wallet<S: Stamp + Send + Sync>(
         .await?;
 
     let wallet = ProvisionedSolanaWallet {
-        wallet_id: result.result.wallet_id,
+        wallet_id: WalletId(result.result.wallet_id),
         address: first_solana_address(result.result.addresses)?,
     };
     debug!(

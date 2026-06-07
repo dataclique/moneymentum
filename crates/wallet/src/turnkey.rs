@@ -26,6 +26,22 @@ pub enum OrganizationIdError {
     NotAUuid,
 }
 
+/// Turnkey wallet identifier.
+///
+/// Wraps the id Turnkey assigns to a wallet at creation. Unlike
+/// [`OrganizationId`], a `WalletId` is produced by Turnkey rather than supplied
+/// by a caller, so it is trusted output and carries no construction-time
+/// validation; the newtype exists to keep wallet ids from being confused with
+/// other strings as they flow through provisioning and persistence.
+#[derive(Debug, Clone)]
+pub struct WalletId(pub String);
+
+impl std::fmt::Display for WalletId {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

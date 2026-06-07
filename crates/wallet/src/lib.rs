@@ -10,7 +10,7 @@ mod turnkey_solana;
 #[cfg(feature = "mock")]
 pub use mock::MockWallet;
 #[cfg(feature = "turnkey")]
-pub use turnkey::{OrganizationId, OrganizationIdError};
+pub use turnkey::{OrganizationId, OrganizationIdError, WalletId};
 #[cfg(feature = "turnkey")]
 pub use turnkey_evm::{TurnkeyEvmWallet, TurnkeyEvmWalletError};
 #[cfg(feature = "turnkey")]

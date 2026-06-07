@@ -770,6 +770,7 @@ mod tests {
         );
     }
 
+    #[traced_test]
     #[tokio::test]
     async fn testnet_mempool_failure_does_not_fallback_to_blockchain_info() {
         let mock_server = MockServer::start().await;
@@ -813,6 +814,10 @@ mod tests {
                 ref fallback_error,
                 ..
             }) if fallback_error == "blockchain.info does not support testnet addresses"
+        ));
+        assert!(!logs_contain_at(
+            Level::WARN,
+            &["primary btc provider failed, falling back to blockchain.info"]
         ));
         mock_server.verify().await;
     }

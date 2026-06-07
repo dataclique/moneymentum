@@ -225,4 +225,40 @@ describe("useBeta", () => {
     expect(result.dataAgeHours).toBe(24)
     expect(result.isDataStale).toBe(false)
   })
+
+  it("uses the selected benchmark for the request and methodology labels", async () => {
+    const selectedBenchmark: BetaBenchmark = {
+      symbol: "SPY",
+      label: "SPY ETF",
+      interval: "weekly log returns",
+      lookback: "52 calendar weeks",
+    }
+
+    const { result } = renderHook(
+      () =>
+        useBeta(
+          targetPortfolio,
+          targetTotalNotional,
+          () => [],
+          () => selectedBenchmark,
+        ),
+      { wrapper: createWrapper() },
+    )
+
+    await waitFor(() => {
+      expect(result.beta).toBe(1.23)
+    })
+
+    const callBody = JSON.parse(String(fetchMock.mock.lastCall?.[1]?.body)) as {
+      benchmark: string
+    }
+
+    expect(callBody.benchmark).toBe("SPY")
+    expect(result.methodology).toEqual({
+      exposureLabel: "B to SPY",
+      benchmark: "SPY ETF",
+      interval: "weekly log returns",
+      lookback: "52 calendar weeks",
+    })
+  })
 })

@@ -50,12 +50,20 @@
           inherit system;
           overlays = [ rust-overlay.overlays.default ];
           config.allowUnfreePredicate = pkg:
-            builtins.elem (pkgs.lib.getName pkg) [ "terraform" ];
+            builtins.elem (pkgs.lib.getName pkg) [
+              "terraform"
+              "gitbutler-cli"
+            ];
         };
 
         rustToolchain = pkgs.rust-bin.stable.latest.default;
         craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
         rustPkgs = pkgs.callPackage ./rust.nix { inherit craneLib; };
+
+        gitbutler-cli = import ./pkgs/gitbutler {
+          inherit pkgs;
+          inherit (pkgs) lib;
+        };
 
         frontendPkgs = pkgs.callPackage ./frontend {
           bun2nix = bun2nix.packages.${system}.default;
@@ -155,6 +163,7 @@
               packages = with pkgs;
                 deps ++ [
                   git
+                  gitbutler-cli
                   ragenix.packages.${system}.default
                   sqlx-cli
                   doctl
@@ -216,6 +225,8 @@
           moneymentum = rustPkgs.package;
           moneymentum-test = rustPkgs.test;
           moneymentum-clippy = rustPkgs.clippy;
+
+          inherit gitbutler-cli;
 
           frontend = frontendPkgs.package;
           frontend-lint = frontendPkgs.lint;

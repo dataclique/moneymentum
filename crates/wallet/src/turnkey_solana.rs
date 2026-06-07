@@ -126,7 +126,7 @@ pub async fn provision_solana_wallet<S: Stamp + Send + Sync>(
         .await?;
 
     let wallet = ProvisionedSolanaWallet {
-        wallet_id: WalletId(result.result.wallet_id),
+        wallet_id: WalletId::new(result.result.wallet_id),
         address: first_solana_address(result.result.addresses)?,
     };
     debug!(

@@ -34,7 +34,15 @@ pub enum OrganizationIdError {
 /// validation; the newtype exists to keep wallet ids from being confused with
 /// other strings as they flow through provisioning and persistence.
 #[derive(Debug, Clone)]
-pub struct WalletId(pub String);
+pub struct WalletId(String);
+
+impl WalletId {
+    /// Wraps the id Turnkey returns when a wallet is created. Crate-internal so
+    /// only provisioning, which receives the id from Turnkey, can mint one.
+    pub(crate) fn new(id: String) -> Self {
+        Self(id)
+    }
+}
 
 impl std::fmt::Display for WalletId {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

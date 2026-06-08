@@ -26,8 +26,8 @@ interface ConcentrationMetric {
 
 const PLACEHOLDER = "--"
 
-const defaultExposures: FactorExposure[] = [
-  { name: "B to SPY", value: PLACEHOLDER },
+const defaultExposures = (betaExposureLabel: string): FactorExposure[] => [
+  { name: betaExposureLabel, value: PLACEHOLDER },
   { name: "Momentum", value: PLACEHOLDER },
   { name: "Carry", value: PLACEHOLDER },
   { name: "Volatility", value: PLACEHOLDER },
@@ -73,7 +73,8 @@ interface FactorsPanelProps {
 }
 
 export const FactorsPanel = (props: FactorsPanelProps) => {
-  const exposures = () => props.exposures ?? defaultExposures
+  const exposures = () =>
+    props.exposures ?? defaultExposures(props.betaMethodology.exposureLabel)
   const attribution = () =>
     props.attribution ?? defaultAttribution(props.betaMethodology.exposureLabel)
   const concentration = () => props.concentration ?? defaultConcentration

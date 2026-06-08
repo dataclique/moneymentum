@@ -87,7 +87,8 @@
           eslint = {
             enable = true;
             files = "^frontend/.*\\.(ts|tsx|js|jsx)$";
-            entry = "${pkgs.bun}/bin/bun --cwd frontend run lint";
+            entry =
+              "${pkgs.bash}/bin/bash -c 'cd frontend && ${pkgs.bun}/bin/bun run lint'";
             pass_filenames = false;
           };
           prettier = {
@@ -152,6 +153,8 @@
                 install.enable = true;
               };
             };
+
+            git-hooks = { inherit hooks; };
           }];
         };
 

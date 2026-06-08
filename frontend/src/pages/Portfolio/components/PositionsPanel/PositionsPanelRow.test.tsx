@@ -189,7 +189,7 @@ describe("PositionsPanelRow", () => {
 
     await user.keyboard("{Escape}")
 
-    expect(screen.queryByRole("combobox")).not.toBeInTheDocument()
+    expect(screen.getByRole("combobox")).toBeInTheDocument()
     expect(assetCell).not.toHaveAttribute("colspan")
     expect(
       screen.queryByLabelText("Leverage for ETH/USDC:USDC"),

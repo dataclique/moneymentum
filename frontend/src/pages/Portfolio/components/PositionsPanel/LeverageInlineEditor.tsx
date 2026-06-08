@@ -126,8 +126,6 @@ export const LeverageSliderEditor = (
         value={[props.leverage]}
         onChange={selectedLeverages => {
           const selectedLeverage = selectedLeverages[0]
-          if (selectedLeverage === undefined) return
-
           props.onLeverageChange(props.symbol, selectedLeverage)
         }}
         minValue={1}

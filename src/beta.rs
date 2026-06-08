@@ -314,6 +314,7 @@ fn compute_beta_report_from_log_returns(
                     .map(|(ticker, _weight)| ticker)
                     .collect(),
                 effective_weights: BTreeMap::new(),
+                data_age_hours,
             });
         }
         Err(err) => return Err(err),
@@ -601,12 +602,13 @@ mod tests {
         .unwrap();
         let weights = [("DOGE".to_string(), -1.0_f64)];
 
-        let report = compute_beta_report_from_log_returns(&log_returns_df, &weights, "BTC")
+        let report = compute_beta_report_from_log_returns(&log_returns_df, &weights, "BTC", 2)
             .expect("beta report");
 
         assert_eq!(report.beta, None);
         assert_eq!(report.excluded_tickers, vec!["DOGE"]);
         assert!(report.effective_weights.is_empty());
+        assert_eq!(report.data_age_hours, 2);
         assert!(!crate::logs_contain_at(
             tracing::Level::INFO,
             &["portfolio beta calculated"]

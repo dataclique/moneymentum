@@ -10,6 +10,27 @@ const betaMethodology = {
 }
 
 describe("FactorsPanel", () => {
+  it("uses the selected beta exposure label in default exposures", () => {
+    render(() => (
+      <FactorsPanel
+        beta={0.59}
+        isBetaLoading={false}
+        betaError={null}
+        excludedBetaSymbols={[]}
+        betaDataAgeHours={2}
+        isBetaDataStale={false}
+        betaMethodology={{
+          exposureLabel: "B to QQQ",
+          benchmark: "QQQ ETF",
+          interval: "weekly log returns",
+          lookback: "52 calendar weeks",
+        }}
+      />
+    ))
+
+    expect(screen.getAllByText("B to QQQ")).toHaveLength(3)
+  })
+
   it("warns when beta data is stale", () => {
     render(() => (
       <FactorsPanel

@@ -80,6 +80,9 @@ export const FactorsPanel = (props: FactorsPanelProps) => {
   const concentration = () => props.concentration ?? defaultConcentration
   const betaHasError = () =>
     props.betaError !== null && props.betaError !== undefined
+  const betaHasKnownAge = () => props.betaDataAgeHours !== null
+  const betaCanRender = () =>
+    !props.isBetaLoading && !betaHasError() && betaHasKnownAge()
 
   return (
     <div class="shrink-0 border border-border rounded flex flex-col min-w-[25%] relative">
@@ -110,12 +113,17 @@ export const FactorsPanel = (props: FactorsPanelProps) => {
             </TooltipProvider>
             <span class="font-mono">
               <Show
-                when={!props.isBetaLoading && !betaHasError()}
+                when={betaCanRender()}
                 fallback={
                   <Show
                     when={betaHasError()}
                     fallback={
-                      <Skeleton class="inline-block h-3 w-10 align-middle" />
+                      <Show
+                        when={props.isBetaLoading}
+                        fallback={<span class="text-muted-foreground">--</span>}
+                      >
+                        <Skeleton class="inline-block h-3 w-10 align-middle" />
+                      </Show>
                     }
                   >
                     <span class="text-[10px] text-rose-500">unavailable</span>
@@ -123,7 +131,7 @@ export const FactorsPanel = (props: FactorsPanelProps) => {
                 }
               >
                 <Show
-                  when={props.beta !== null}
+                  when={props.beta !== null && betaHasKnownAge()}
                   fallback={<span class="text-muted-foreground">--</span>}
                 >
                   <span

@@ -4,6 +4,7 @@ import { render, screen } from "@solidjs/testing-library"
 import { FactorsPanel } from "./FactorsPanel"
 
 const betaMethodology = {
+  exposureLabel: "B to BTC",
   benchmark: "BTC perpetual on Hyperliquid",
   interval: "daily log returns",
   lookback: "365 calendar days",
@@ -77,5 +78,22 @@ describe("FactorsPanel", () => {
     ))
 
     expect(screen.queryByText(/Beta data is .* old/)).not.toBeInTheDocument()
+  })
+
+  it("does not render numeric beta when beta data age is unknown", () => {
+    render(() => (
+      <FactorsPanel
+        beta={0.59}
+        isBetaLoading={false}
+        betaError={null}
+        excludedBetaSymbols={[]}
+        betaDataAgeHours={null}
+        isBetaDataStale={false}
+        betaMethodology={betaMethodology}
+      />
+    ))
+
+    expect(screen.queryByText("+0.59")).not.toBeInTheDocument()
+    expect(screen.getAllByText("--").length).toBeGreaterThan(0)
   })
 })

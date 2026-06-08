@@ -116,6 +116,11 @@
             pass_filenames = true;
           };
         };
+        hooksForChecks = hooks // {
+          eslint = hooks.eslint // {
+            entry = "${pkgs.bash}/bin/bash -c 'test -e ${frontendPkgs.lint}'";
+          };
+        };
 
         deps = with pkgs; [
           cacert
@@ -219,7 +224,7 @@
 
         checks = {
           git-hooks = git-hooks.lib.${system}.run {
-            inherit hooks;
+            hooks = hooksForChecks;
             src = self;
           };
         };

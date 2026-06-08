@@ -118,7 +118,10 @@
         };
         hooksForChecks = hooks // {
           eslint = hooks.eslint // {
-            entry = "${pkgs.bash}/bin/bash -c 'test -e ${frontendPkgs.lint}'";
+            # The CI frontend job runs eslint inside the frontend shell with Bun
+            # dependencies installed. Keeping eslint in this pure Nix hook check
+            # forces a cold bun2nix dependency build and duplicates that gate.
+            enable = false;
           };
         };
 

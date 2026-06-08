@@ -189,6 +189,7 @@ struct BetaResponse {
     beta: Option<f64>,
     excluded_symbols: Vec<String>,
     effective_weights: std::collections::BTreeMap<String, f64>,
+    data_age_hours: i64,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -329,6 +330,7 @@ async fn post_beta(
             beta: report.beta,
             excluded_symbols: report.excluded_tickers,
             effective_weights: report.effective_weights,
+            data_age_hours: report.data_age_hours,
         })),
         Err(err) => {
             error!(error = %err, "beta calculation failed");

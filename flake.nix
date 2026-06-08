@@ -87,7 +87,8 @@
           eslint = {
             enable = true;
             files = "^frontend/.*\\.(ts|tsx|js|jsx)$";
-            entry = "${pkgs.bun}/bin/bun --cwd frontend run lint";
+            entry =
+              "${pkgs.bash}/bin/bash -c 'cd frontend && ${pkgs.bun}/bin/bun run lint'";
             pass_filenames = false;
           };
           prettier = {
@@ -113,6 +114,14 @@
             entry = "${rustToolchain}/bin/cargo fmt --";
             files = "\\.rs$";
             pass_filenames = true;
+          };
+        };
+        hooksForChecks = hooks // {
+          eslint = hooks.eslint // {
+            # The CI frontend job runs eslint inside the frontend shell with Bun
+            # dependencies installed. Keeping eslint in this pure Nix hook check
+            # forces a cold bun2nix dependency build and duplicates that gate.
+            enable = false;
           };
         };
 
@@ -152,6 +161,8 @@
                 install.enable = true;
               };
             };
+
+            git-hooks = { inherit hooks; };
           }];
         };
 
@@ -216,7 +227,7 @@
 
         checks = {
           git-hooks = git-hooks.lib.${system}.run {
-            inherit hooks;
+            hooks = hooksForChecks;
             src = self;
           };
         };

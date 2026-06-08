@@ -6,6 +6,8 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 
+use chrono::{DateTime, Utc};
+
 /// Daily candles needed for a 365-calendar-day log-return window.
 pub const LOG_RETURNS_LOOKBACK_CANDLES: usize = 366;
 
@@ -25,6 +27,7 @@ pub struct PortfolioBetaReport {
     pub beta: Option<f64>,
     pub excluded_tickers: Vec<String>,
     pub effective_weights: BTreeMap<String, f64>,
+    pub data_age_hours: i64,
 }
 
 #[derive(Debug, Error)]
@@ -37,6 +40,12 @@ pub enum ReturnsError {
     Join(#[from] tokio::task::JoinError),
     #[error("no daily candle data at {path}")]
     NoData { path: std::path::PathBuf },
+    #[error("daily candle data has no timestamps")]
+    NoTimestamps,
+    #[error("invalid candle timestamp: {timestamp}")]
+    InvalidTimestamp { timestamp: String },
+    #[error("future candle timestamp: {timestamp}")]
+    FutureTimestamp { timestamp: String },
     #[error("benchmark variance is zero or insufficient data for beta")]
     BetaUndefined,
 }
@@ -87,6 +96,7 @@ pub async fn compute_portfolio_beta_report(
     let Some(df) = df else {
         return Err(ReturnsError::NoData { path: path.clone() });
     };
+    let data_age_hours = data_age_hours_at(&df, Utc::now())?;
     let weights_clone = weights.to_vec();
     let benchmark_ticker_clone = benchmark_ticker.to_string();
     let lookback = LOG_RETURNS_LOOKBACK_CANDLES;
@@ -94,12 +104,38 @@ pub async fn compute_portfolio_beta_report(
         load_log_returns_last_n_candles(&df, &weights_clone, &benchmark_ticker_clone, lookback)
     })
     .await??;
-    compute_beta_report_from_log_returns(&log_returns_df, weights, benchmark_ticker)
+    compute_beta_report_from_log_returns(&log_returns_df, weights, benchmark_ticker, data_age_hours)
 }
 
 /// Path of the daily candles file relative to the data directory.
 fn daily_candles_path(data_dir: &Path) -> std::path::PathBuf {
     data_dir.join(Timeframe::OneDay.file_name())
+}
+
+fn data_age_hours_at(df: &DataFrame, now: DateTime<Utc>) -> Result<i64, ReturnsError> {
+    let timestamp_col = df.column("timestamp")?;
+    let latest_timestamp = any_value_to_string(timestamp_col.max_reduce()?.as_any_value())
+        .ok_or(ReturnsError::NoTimestamps)?;
+    let latest_timestamp = DateTime::parse_from_rfc3339(&latest_timestamp)
+        .map(|parsed_timestamp| parsed_timestamp.with_timezone(&Utc))
+        .map_err(|_| ReturnsError::InvalidTimestamp {
+            timestamp: latest_timestamp,
+        })?;
+    if latest_timestamp > now {
+        return Err(ReturnsError::FutureTimestamp {
+            timestamp: latest_timestamp.to_rfc3339(),
+        });
+    }
+
+    Ok(now.signed_duration_since(latest_timestamp).num_hours())
+}
+
+fn any_value_to_string(value: AnyValue<'_>) -> Option<String> {
+    match value {
+        AnyValue::String(timestamp) => Some(timestamp.to_string()),
+        AnyValue::StringOwned(timestamp) => Some(timestamp.to_string()),
+        _ => None,
+    }
 }
 
 /// Filters to tickers in `weights` and `benchmark_ticker`, keeps last `lookback` timestamps,
@@ -249,6 +285,7 @@ fn compute_beta_report_from_log_returns(
     log_returns_df: &DataFrame,
     weights: &[(String, f64)],
     benchmark_ticker: &str,
+    data_age_hours: i64,
 ) -> Result<PortfolioBetaReport, ReturnsError> {
     let return_timestamps = finite_return_timestamps_by_ticker(log_returns_df)?;
     let benchmark_return_timestamps = return_timestamps
@@ -277,6 +314,7 @@ fn compute_beta_report_from_log_returns(
                     .map(|(ticker, _weight)| ticker)
                     .collect(),
                 effective_weights: BTreeMap::new(),
+                data_age_hours,
             });
         }
         Err(err) => return Err(err),
@@ -294,6 +332,7 @@ fn compute_beta_report_from_log_returns(
             .map(|(ticker, _weight)| ticker)
             .collect(),
         effective_weights,
+        data_age_hours,
     })
 }
 
@@ -449,6 +488,43 @@ mod tests {
         assert!((r2 - (99.0_f64 / 102.0).ln()).abs() < 1e-10);
     }
 
+    #[test]
+    fn data_age_hours_uses_most_recent_candle_timestamp() {
+        let df = df! {
+            "timestamp" => &["2024-01-01T00:00:00.000Z", "2024-01-02T00:00:00.000Z"],
+            "ticker" => &["BTC", "ETH"],
+            "close" => &[100.0, 200.0],
+        }
+        .unwrap();
+        let now = DateTime::parse_from_rfc3339("2024-01-03T12:00:00.000Z")
+            .unwrap()
+            .with_timezone(&Utc);
+
+        let age_hours = data_age_hours_at(&df, now).unwrap();
+
+        assert_eq!(age_hours, 36);
+    }
+
+    #[test]
+    fn data_age_hours_rejects_future_candle_timestamp() {
+        let df = df! {
+            "timestamp" => &["2024-01-04T00:00:00.000Z"],
+            "ticker" => &["BTC"],
+            "close" => &[100.0],
+        }
+        .unwrap();
+        let now = DateTime::parse_from_rfc3339("2024-01-03T12:00:00.000Z")
+            .unwrap()
+            .with_timezone(&Utc);
+
+        let age_hours = data_age_hours_at(&df, now);
+
+        assert!(matches!(
+            age_hours,
+            Err(ReturnsError::FutureTimestamp { .. })
+        ));
+    }
+
     #[traced_test]
     #[test]
     fn compute_beta_from_log_returns_portfolio_vs_self_benchmark_is_one() {
@@ -499,11 +575,12 @@ mod tests {
         .unwrap();
         let weights = [("ETH".to_string(), 0.4_f64), ("DOGE".to_string(), -0.6_f64)];
 
-        let report = compute_beta_report_from_log_returns(&log_returns_df, &weights, "BTC")
+        let report = compute_beta_report_from_log_returns(&log_returns_df, &weights, "BTC", 12)
             .expect("beta report");
 
         assert_eq!(report.excluded_tickers, vec!["DOGE"]);
         assert_eq!(report.effective_weights.get("ETH"), Some(&1.0));
+        assert_eq!(report.data_age_hours, 12);
         assert!((report.beta.expect("beta") - 1.0).abs() < 1e-10);
         assert!(crate::logs_contain_at(
             tracing::Level::INFO,
@@ -525,12 +602,13 @@ mod tests {
         .unwrap();
         let weights = [("DOGE".to_string(), -1.0_f64)];
 
-        let report = compute_beta_report_from_log_returns(&log_returns_df, &weights, "BTC")
+        let report = compute_beta_report_from_log_returns(&log_returns_df, &weights, "BTC", 2)
             .expect("beta report");
 
         assert_eq!(report.beta, None);
         assert_eq!(report.excluded_tickers, vec!["DOGE"]);
         assert!(report.effective_weights.is_empty());
+        assert_eq!(report.data_age_hours, 2);
         assert!(!crate::logs_contain_at(
             tracing::Level::INFO,
             &["portfolio beta calculated"]
@@ -552,11 +630,12 @@ mod tests {
         .unwrap();
         let weights = [("ETH".to_string(), 0.4_f64), ("DOGE".to_string(), -0.6_f64)];
 
-        let report = compute_beta_report_from_log_returns(&log_returns_df, &weights, "BTC")
+        let report = compute_beta_report_from_log_returns(&log_returns_df, &weights, "BTC", 12)
             .expect("beta report");
 
         assert_eq!(report.excluded_tickers, vec!["DOGE"]);
         assert_eq!(report.effective_weights.get("ETH"), Some(&1.0));
+        assert_eq!(report.data_age_hours, 12);
         assert!((report.beta.expect("beta") - 1.0).abs() < 1e-10);
         assert!(crate::logs_contain_at(
             tracing::Level::INFO,

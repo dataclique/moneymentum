@@ -334,6 +334,8 @@ const PortfolioPage = () => {
                   isBetaLoading={betaResult.isLoading}
                   betaError={betaResult.error}
                   excludedBetaSymbols={betaResult.excludedSymbols}
+                  betaDataAgeHours={betaResult.dataAgeHours}
+                  isBetaDataStale={betaResult.isDataStale}
                   betaMethodology={betaResult.methodology}
                 />
               </div>

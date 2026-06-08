@@ -26,8 +26,8 @@ interface ConcentrationMetric {
 
 const PLACEHOLDER = "--"
 
-const defaultExposures: FactorExposure[] = [
-  { name: "B to SPY", value: PLACEHOLDER },
+const defaultExposures = (betaExposureLabel: string): FactorExposure[] => [
+  { name: betaExposureLabel, value: PLACEHOLDER },
   { name: "Momentum", value: PLACEHOLDER },
   { name: "Carry", value: PLACEHOLDER },
   { name: "Volatility", value: PLACEHOLDER },
@@ -59,6 +59,8 @@ interface FactorsPanelProps {
   isBetaLoading: boolean
   betaError: unknown
   excludedBetaSymbols: string[]
+  betaDataAgeHours: number | null
+  isBetaDataStale: boolean
   betaMethodology: {
     exposureLabel: string
     benchmark: string
@@ -71,12 +73,16 @@ interface FactorsPanelProps {
 }
 
 export const FactorsPanel = (props: FactorsPanelProps) => {
-  const exposures = () => props.exposures ?? defaultExposures
+  const exposures = () =>
+    props.exposures ?? defaultExposures(props.betaMethodology.exposureLabel)
   const attribution = () =>
     props.attribution ?? defaultAttribution(props.betaMethodology.exposureLabel)
   const concentration = () => props.concentration ?? defaultConcentration
   const betaHasError = () =>
     props.betaError !== null && props.betaError !== undefined
+  const betaHasKnownAge = () => props.betaDataAgeHours !== null
+  const betaCanRender = () =>
+    !props.isBetaLoading && !betaHasError() && betaHasKnownAge()
 
   return (
     <div class="shrink-0 border border-border rounded flex flex-col min-w-[25%] relative">
@@ -107,12 +113,17 @@ export const FactorsPanel = (props: FactorsPanelProps) => {
             </TooltipProvider>
             <span class="font-mono">
               <Show
-                when={!props.isBetaLoading && !betaHasError()}
+                when={betaCanRender()}
                 fallback={
                   <Show
                     when={betaHasError()}
                     fallback={
-                      <Skeleton class="inline-block h-3 w-10 align-middle" />
+                      <Show
+                        when={props.isBetaLoading}
+                        fallback={<span class="text-muted-foreground">--</span>}
+                      >
+                        <Skeleton class="inline-block h-3 w-10 align-middle" />
+                      </Show>
                     }
                   >
                     <span class="text-[10px] text-rose-500">unavailable</span>
@@ -120,7 +131,7 @@ export const FactorsPanel = (props: FactorsPanelProps) => {
                 }
               >
                 <Show
-                  when={props.beta !== null}
+                  when={props.beta !== null && betaHasKnownAge()}
                   fallback={<span class="text-muted-foreground">--</span>}
                 >
                   <span
@@ -141,6 +152,11 @@ export const FactorsPanel = (props: FactorsPanelProps) => {
           <Show when={props.excludedBetaSymbols.length > 0}>
             <div class="text-[10px] text-amber-500">
               Renormalized without {props.excludedBetaSymbols.join(", ")}
+            </div>
+          </Show>
+          <Show when={props.isBetaDataStale && props.betaDataAgeHours !== null}>
+            <div class="text-[10px] text-amber-500">
+              Beta data is {props.betaDataAgeHours}h old
             </div>
           </Show>
           <For each={exposures()}>

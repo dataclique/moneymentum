@@ -108,6 +108,15 @@ export const diffPortfolios = (
       continue
     }
 
+    if (currentPosition && targetPosition.notional <= NOTIONAL_EPSILON) {
+      actions.push({
+        kind: "close",
+        symbol,
+        side: currentPosition.side,
+      })
+      continue
+    }
+
     const leverageChanged =
       currentPosition?.leverage !== targetPosition.leverage
     const hasSignificantDelta = deltaAbs > NOTIONAL_EPSILON

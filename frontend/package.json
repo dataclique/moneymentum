@@ -28,6 +28,7 @@
     "decimal.js": "^10.6.0",
     "lightweight-charts": "^5.1.0",
     "lucide-solid": "^0.577.0",
+    "multicoin-address-validator": "^0.5.26",
     "protobufjs": "^8.0.0",
     "solid-js": "^1.9.5",
     "solid-sonner": "^0.3.1",

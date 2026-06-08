@@ -187,6 +187,8 @@ struct BetaRequest {
 #[derive(Debug, serde::Serialize)]
 struct BetaResponse {
     beta: Option<f64>,
+    excluded_symbols: Vec<String>,
+    effective_weights: std::collections::BTreeMap<String, f64>,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -322,8 +324,12 @@ async fn post_beta(
         sorted_weights
     };
 
-    match beta::compute_portfolio_beta(&config.data_dir, &weights, &body.benchmark).await {
-        Ok(beta) => Ok(Json(BetaResponse { beta })),
+    match beta::compute_portfolio_beta_report(&config.data_dir, &weights, &body.benchmark).await {
+        Ok(report) => Ok(Json(BetaResponse {
+            beta: report.beta,
+            excluded_symbols: report.excluded_tickers,
+            effective_weights: report.effective_weights,
+        })),
         Err(err) => {
             error!(error = %err, "beta calculation failed");
             Err(Status::InternalServerError)

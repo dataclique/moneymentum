@@ -25,15 +25,24 @@ vi.mock("@/hooks/useWallet", () => ({
   })),
 }))
 
+const readonlyPortfolioActions = vi.hoisted(() => ({
+  addAddress: vi.fn(),
+  removeAddress: vi.fn(),
+  setIncludeInBeta: vi.fn(),
+  clearAddresses: vi.fn(),
+}))
+
 vi.mock("./useReadonlyPortfolioState", () => ({
   useReadonlyPortfolioState: vi.fn(() => ({
     rows: [],
     betaPositions: [],
     isLoading: false,
     error: null,
-    addAddress: vi.fn(),
-    removeAddress: vi.fn(),
-    setIncludeInBeta: vi.fn(),
+    validationError: null,
+    addAddress: readonlyPortfolioActions.addAddress,
+    removeAddress: readonlyPortfolioActions.removeAddress,
+    setIncludeInBeta: readonlyPortfolioActions.setIncludeInBeta,
+    clearAddresses: readonlyPortfolioActions.clearAddresses,
   })),
 }))
 
@@ -226,6 +235,34 @@ describe("usePortfolioState", () => {
       800,
       3,
     )
+  })
+
+  it("clears readonly btc addresses when resetting for network change", async () => {
+    const { result } = renderHook(() => usePortfolioState(), {
+      wrapper: createWrapper(),
+    })
+
+    await waitFor(() => {
+      expect(Object.keys(result.targetPortfolio)).toHaveLength(2)
+    })
+
+    result.resetPortfolioStateForNetworkChange()
+
+    expect(readonlyPortfolioActions.clearAddresses).toHaveBeenCalledOnce()
+  })
+
+  it("clears readonly btc addresses when disconnecting", async () => {
+    const { result } = renderHook(() => usePortfolioState(), {
+      wrapper: createWrapper(),
+    })
+
+    await waitFor(() => {
+      expect(Object.keys(result.targetPortfolio)).toHaveLength(2)
+    })
+
+    result.handleDisconnect()
+
+    expect(readonlyPortfolioActions.clearAddresses).toHaveBeenCalledOnce()
   })
 
   it("submits rebalance payload with actions; precise toggle shapes diff not the API body", async () => {

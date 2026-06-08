@@ -24,7 +24,7 @@ jobs:
 
       - name: Pre-commit hooks
         # Pure flake check -- runs the same hooks without the heavy devShell
-        run: nix run nixpkgs#nushell -- .github/nix-build-quiet.nu .#checks.x86_64-linux.git-hooks
+        run: nix build -L --log-format raw .#checks.x86_64-linux.git-hooks
 
   backend:
     runs-on: ubuntu-latest
@@ -40,10 +40,10 @@ jobs:
       - uses: DeterminateSystems/magic-nix-cache-action@main
 
       - name: Test
-        run: nix run nixpkgs#nushell -- .github/nix-build-quiet.nu .#moneymentum-test
+        run: nix build -L --log-format raw .#moneymentum-test
 
       - name: Clippy
-        run: nix run nixpkgs#nushell -- .github/nix-build-quiet.nu .#moneymentum-clippy
+        run: nix build -L --log-format raw .#moneymentum-clippy
 
   frontend:
     runs-on: ubuntu-latest
@@ -58,8 +58,21 @@ jobs:
 
       - uses: DeterminateSystems/magic-nix-cache-action@main
 
+      - name: Cache Bun dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.bun/install/cache
+            frontend/node_modules
+          key: ${{ runner.os }}-bun-${{ hashFiles('frontend/bun.lock', 'frontend/package.json') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-
+
+      - name: Install dependencies
+        run: nix develop --impure .#frontend --command bash -c 'cd frontend && bun install --frozen-lockfile'
+
       - name: Lint
-        run: nix run nixpkgs#nushell -- .github/nix-build-quiet.nu .#frontend-lint
+        run: nix develop --impure .#frontend --command bash -c 'cd frontend && bun run lint'
 
       - name: Test
-        run: nix run nixpkgs#nushell -- .github/nix-build-quiet.nu .#frontend-test
+        run: nix develop --impure .#frontend --command bash -c 'cd frontend && bun run test --run'

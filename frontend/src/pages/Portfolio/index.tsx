@@ -20,7 +20,7 @@ import {
   PRECISE_TOGGLE_STORAGE_KEY,
   usePortfolioState,
 } from "./hooks/usePortfolioState"
-import { useBeta } from "./hooks/useBeta"
+import { useBeta, type BetaBenchmark } from "./hooks/useBeta"
 import {
   useHyperliquidTickers,
   useHyperliquidFundingRates,
@@ -35,6 +35,13 @@ import { RiskPanel } from "@/pages/Portfolio/components/RiskPanel"
 const LEVERAGE_MIN = 0.001
 const LEVERAGE_MAX = 5
 const LEVERAGE_STEP = 0.1
+
+const bitcoinBetaBenchmark: BetaBenchmark = {
+  symbol: "BTC",
+  label: "BTC perpetual on Hyperliquid",
+  interval: "daily log returns",
+  lookback: "365 calendar days",
+}
 
 const PortfolioPage = () => {
   const { isNetworkSwitching } = useNetwork()
@@ -70,6 +77,7 @@ const PortfolioPage = () => {
     () => portfolio.targetPortfolio,
     () => portfolio.targetTotalNotional,
     () => portfolio.readonlyBetaPositions,
+    () => bitcoinBetaBenchmark,
   )
 
   const tickersQuery = useHyperliquidTickers()
@@ -187,6 +195,9 @@ const PortfolioPage = () => {
                 readonlyBtcRows={portfolio.readonlyBtcRows}
                 isReadonlyBtcLoading={portfolio.isReadonlyBtcLoading}
                 readonlyBtcError={portfolio.readonlyBtcError}
+                readonlyBtcValidationError={
+                  portfolio.readonlyBtcValidationError
+                }
                 onAddReadonlyBtcAddress={portfolio.addReadonlyBtcAddress}
                 onRemoveReadonlyBtcAddress={portfolio.removeReadonlyBtcAddress}
                 onReadonlyBtcIncludeInBetaChange={
@@ -321,6 +332,9 @@ const PortfolioPage = () => {
                 <FactorsPanel
                   beta={betaResult.beta}
                   isBetaLoading={betaResult.isLoading}
+                  betaError={betaResult.error}
+                  excludedBetaSymbols={betaResult.excludedSymbols}
+                  betaMethodology={betaResult.methodology}
                 />
               </div>
               <div class="flex-1 min-w-0">

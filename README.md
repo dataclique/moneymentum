@@ -116,7 +116,7 @@ SSH identity (defaults to `~/.ssh/id_ed25519`).
 `master` deploys automatically through the `Deploy` GitHub Actions workflow. The
 workflow pins the SSH host key from `keys.nix`, resolves the host IP from
 encrypted Terraform state, builds the frontend with Bun and cached dependencies,
-runs `nix run .#deployAll` for NixOS and backend services, then runs
+runs `nix run .#deployServer` for NixOS and backend services, then runs
 `nix run .#deployFrontend` to publish the static frontend files. The
 `post-deploy-smoke-test` job verifies the public frontend and `/api/health`.
 
@@ -124,7 +124,7 @@ Manual deployment uses the same split flow:
 
 ```bash
 nix develop --impure .#frontend --command bash -c 'cd frontend && bun install --frozen-lockfile && bun run build'
-nix run .#deployAll
+nix run .#deployServer
 nix run .#deployFrontend
 ```
 

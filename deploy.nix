@@ -100,8 +100,8 @@ in {
         '';
       };
 
-      deployAll = pkgs.writeShellApplication {
-        name = "deploy-all";
+      deployServer = pkgs.writeShellApplication {
+        name = "deploy-server";
         runtimeInputs = deployInputs ++ [ pkgs.openssh ];
         text = ''
           ${deployPreamble}

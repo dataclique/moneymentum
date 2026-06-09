@@ -181,7 +181,7 @@
                   infraPkgs.remote
                   deployPkgs.deployNixos
                   deployPkgs.deployService
-                  deployPkgs.deployAll
+                  deployPkgs.deployServer
                   deployPkgs.deployFrontend
                 ];
 
@@ -257,7 +257,7 @@
             tfInit tfPlan tfApply tfImport tfEditVars tfCreateVars tfRekey rekey
             bootstrap remote;
           inherit (deployPkgs)
-            deployNixos deployService deployAll deployFrontend;
+            deployNixos deployService deployServer deployFrontend;
         };
       });
 

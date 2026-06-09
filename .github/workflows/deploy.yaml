@@ -28,6 +28,19 @@ jobs:
 
       - uses: DeterminateSystems/magic-nix-cache-action@main
 
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+
+      - name: Cache Bun dependencies
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            ~/.bun/install/cache
+            frontend/node_modules
+          key: ${{ runner.os }}-bun-${{ hashFiles('frontend/bun.lock', 'frontend/package.json') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-
+
       - name: Setup SSH
         env:
           SSH_KEY: ${{ secrets.SSH_KEY }}
@@ -51,8 +64,17 @@ jobs:
 
           echo "$host_ip $host_key" > ~/.ssh/known_hosts
 
-      - name: Deploy
+      - name: Build frontend
+        run: |
+          cd frontend
+          bun install --frozen-lockfile
+          bun run build
+
+      - name: Deploy system and backend
         run: nix run .#deployAll
+
+      - name: Deploy frontend
+        run: nix run .#deployFrontend
 
       - name: Cleanup SSH
         if: always()

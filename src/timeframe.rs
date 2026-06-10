@@ -54,11 +54,62 @@ impl Timeframe {
             Self::OneWeek => "ohlcv_1w.csv",
         }
     }
+
+    /// Factor-engine parameters for this timeframe, ported from the legacy
+    /// `util.py` `TIMEFRAME_CONFIGS`. Fields are added as factors that consume
+    /// them land (e.g. `min_acceptable_return` arrives with the Sortino factor).
+    pub(crate) fn config(self) -> TimeframeConfig {
+        match self {
+            Self::FifteenMin => TimeframeConfig {
+                lookback_periods: 7 * 24 * 4,
+                annualized_factor: 365.0 * 24.0 * 4.0,
+            },
+            Self::OneHour => TimeframeConfig {
+                lookback_periods: 7 * 24,
+                annualized_factor: 365.0 * 24.0,
+            },
+            Self::OneDay => TimeframeConfig {
+                lookback_periods: 90,
+                annualized_factor: 365.0,
+            },
+            Self::OneWeek => TimeframeConfig {
+                lookback_periods: 52,
+                annualized_factor: 52.0,
+            },
+        }
+    }
+}
+
+/// Per-timeframe parameters that drive the factor engine's windowed math.
+pub(crate) struct TimeframeConfig {
+    /// Number of candles in the lookback window for rolling factor math.
+    pub(crate) lookback_periods: usize,
+    /// Scaling factor to annualize per-period returns and volatility.
+    pub(crate) annualized_factor: f64,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn config_matches_legacy_timeframe_constants() {
+        let fifteen = Timeframe::FifteenMin.config();
+        assert_eq!(fifteen.lookback_periods, 672);
+        assert!((fifteen.annualized_factor - 35040.0).abs() < f64::EPSILON);
+
+        let hour = Timeframe::OneHour.config();
+        assert_eq!(hour.lookback_periods, 168);
+        assert!((hour.annualized_factor - 8760.0).abs() < f64::EPSILON);
+
+        let day = Timeframe::OneDay.config();
+        assert_eq!(day.lookback_periods, 90);
+        assert!((day.annualized_factor - 365.0).abs() < f64::EPSILON);
+
+        let week = Timeframe::OneWeek.config();
+        assert_eq!(week.lookback_periods, 52);
+        assert!((week.annualized_factor - 52.0).abs() < f64::EPSILON);
+    }
 
     #[test]
     fn interval_strings_are_valid() {

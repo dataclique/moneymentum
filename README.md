@@ -16,7 +16,8 @@ Moneymentum makes those exposures legible and adjustable.
 - **Frontend prototype** at `/prototype`: design reference for the target UI.
 - **Backend** (active development): Rust + Rocket API, Polars analytics,
   SQLite-backed ingestion runs and job queue. Ingests Hyperliquid OHLCV and
-  funding rates; computes rolling beta to BTC.
+  funding rates; computes rolling beta to BTC and serves per-asset factor scores
+  via `GET /factors/<timeframe>`.
 - **Vault program** (planned): Anchor program on Solana for non-custodial
   managed deposits with two-phase withdrawal.
 

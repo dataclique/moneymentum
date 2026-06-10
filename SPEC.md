@@ -285,11 +285,11 @@ solidify.
 ## Analytics Capabilities
 
 **Factor Engine**: Computes per-asset factor scores (beta, momentum, carry,
-volatility, Sharpe) over the tradable universe. The backend already computes
-rolling beta to BTC; momentum, carry, and volatility follow the same pattern
-(rolling windows over ingested OHLCV and funding-rate data). Outputs feed the
-screener (rank/filter assets by factor) and the rebalancer (target factor
-exposures, not symbols).
+volatility, Sharpe) over the tradable universe. The backend computes rolling
+beta to BTC and serves per-asset factor scores via `GET /factors/<timeframe>`;
+factors land incrementally as columns (rolling windows over ingested OHLCV and
+funding-rate data). Outputs feed the screener (rank/filter assets by factor) and
+the rebalancer (target factor exposures, not symbols).
 
 The portfolio-weighted beta is exposed via `POST /beta`, which accepts a set of
 position weights plus a benchmark symbol and returns a single beta value

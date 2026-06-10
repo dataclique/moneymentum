@@ -106,7 +106,7 @@ mod tests {
 
     use tracing_test::traced_test;
     use turnkey_client::TurnkeyP256ApiKey;
-    use wiremock::matchers::method;
+    use wiremock::matchers::{body_partial_json, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     #[test]
@@ -164,8 +164,20 @@ mod tests {
         let s = "cd".repeat(32);
         let expected = parse_signature(&r, &s, "1b").expect("valid signature");
 
+        let account = Address::from([0x42u8; 20]);
+        let payload = B256::from([0x11u8; 32]);
+
         let server = MockServer::start().await;
         Mock::given(method("POST"))
+            .and(path("/public/v1/submit/sign_raw_payload"))
+            .and(body_partial_json(serde_json::json!({
+                "parameters": {
+                    "signWith": account.to_checksum(None),
+                    "payload": hex::encode_prefixed(payload),
+                    "encoding": "PAYLOAD_ENCODING_HEXADECIMAL",
+                    "hashFunction": "HASH_FUNCTION_NO_OP"
+                }
+            })))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "activity": {
                     "type": "ACTIVITY_TYPE_SIGN_RAW_PAYLOAD_V2",
@@ -186,10 +198,9 @@ mod tests {
 
         let organization_id =
             OrganizationId::new("550e8400-e29b-41d4-a716-446655440000").expect("valid uuid");
-        let account = Address::from([0x42u8; 20]);
         let wallet = TurnkeyEvmWallet::new(client, organization_id, account);
 
-        let signature = wallet.sign(&B256::from([0x11u8; 32])).await;
+        let signature = wallet.sign(&payload).await;
 
         assert_eq!(signature.ok(), Some(expected));
         assert!(logs_contain("evm payload signed via turnkey"));

@@ -160,7 +160,7 @@ applies to:
 
 - Clippy lints (`#[allow(clippy::*)]`)
 - Compiler warnings (`#[allow(dead_code)]`, `#[allow(unused)]`)
-- All linters in all languages (eslint, ruff, etc.)
+- All linters in all languages (eslint, clippy, etc.)
 - Test coverage - should not decrease without permission
 
 Fix the underlying code, don't suppress warnings.

@@ -46,7 +46,7 @@ funding_rate: f64 | null }>`.
 Volatility: 30-day realized annualized volatility =
 `std(daily_returns) *
 sqrt(252)` over the last 30 days. This is computable from
-existing OHLCV data in Polars — see `src/beta.rs` for the pattern.
+existing OHLCV data in Polars — see `src/factors.rs` for the pattern.
 
 Frontend changes:
 

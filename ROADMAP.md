@@ -18,10 +18,41 @@ the order within each theme.
 
 ---
 
+## Dev: finish the Python -> Rust analytics migration
+
+Port the deleted Python quant analytics to Rust as the factor and risk engine
+that powers the "Screener and staged simulation" and "Risk analytics" themes
+below. The autonomous trader's auto-pick/execute loop is out of scope --
+execution stays in the frontend. Delivered as a stack of small PRs; the
+user-facing endpoints tick their story items under those themes. This is an
+engineering track that runs in parallel to the product themes below, not ahead
+of them.
+
+- [x] Consolidate beta into a factors module --
+      [#249](https://github.com/data-cartel/moneymentum/issues/249) /
+      [#250](https://github.com/data-cartel/moneymentum/pull/250)
+- [ ] Add TimeframeConfig (lookback, annualization, and MAR -- Minimum
+      Acceptable Return)
+- [ ] Factor: returns
+- [ ] Factor: cum_return
+- [ ] Factor: volatility
+- [ ] Factor: SMA
+- [ ] Factor: mean return
+- [ ] Factor: price z-score
+- [ ] Factor: Sharpe
+- [ ] Factor: Sortino
+- [ ] Factor: autocorrelation
+- [ ] Factor: information discreteness
+- [ ] Factor: carry (signed funding)
+- [ ] Markets metadata + persisted disable flag
+- [ ] Tradable filter wired into ingestion
+
+---
+
 ## Usable production deployment
 
 Users need to reach the app before any portfolio feature matters. Deployment is
-the next implementation priority.
+the next user-facing priority; it runs in parallel to the Dev track above.
 
 - [ ] [Keep The App Deployed And Reachable](./stories/0x008.keep-app-deployed-and-reachable.md)
 - [ ] [Verify Deployed Hyperliquid Long-Short Rebalancing](./stories/0x00a.verify-deployed-hyperliquid-long-short-rebalancing.md)

@@ -1,7 +1,10 @@
-//! Log returns from daily OHLCV candles.
+//! Factor engine: per-asset factor math over ingested OHLCV/funding data.
 //!
-//! Reads `ohlcv_1d.csv` from a data directory and computes per-ticker log returns:
-//! `log_return = ln(close_t / close_{t-1})` within each ticker's time series.
+//! Currently computes per-ticker log returns
+//! (`log_return = ln(close_t / close_{t-1})`) and portfolio beta
+//! (`Cov(portfolio, benchmark) / Var(benchmark)`) from `ohlcv_1d.csv`.
+//! Additional factors (volatility, Sharpe, ...) are added in this module so
+//! they share the same returns/covariance primitives.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
@@ -38,7 +41,7 @@ pub enum ReturnsError {
     Polars(#[from] PolarsError),
     #[error(transparent)]
     Join(#[from] tokio::task::JoinError),
-    #[error("no daily candle data at {path}")]
+    #[error("no candle data at {path}")]
     NoData { path: std::path::PathBuf },
     #[error("daily candle data has no timestamps")]
     NoTimestamps,
@@ -449,9 +452,68 @@ fn variance(benchmark: &Series) -> Result<f64, ReturnsError> {
 mod tests {
     use super::*;
     use polars::prelude::df;
+    use proptest::prelude::*;
     use std::fs;
     use tempfile::TempDir;
     use tracing_test::traced_test;
+
+    proptest! {
+        /// `log_return` equals `ln(close_t / close_{t-1})` for any positive close series.
+        #[test]
+        fn log_returns_are_ln_of_close_ratio(
+            closes in prop::collection::vec(1.0_f64..1_000_000.0, 2..30),
+        ) {
+            let n = closes.len();
+            let timestamps: Vec<String> = (0..n).map(|i| format!("{i:04}")).collect();
+            let tickers = vec!["BTC"; n];
+            let frame = df! {
+                "timestamp" => timestamps,
+                "ticker" => tickers,
+                "close" => closes.clone(),
+            }
+            .unwrap();
+
+            let out = compute_log_returns(&frame).unwrap();
+            let log_return = out.column("log_return").unwrap();
+
+            prop_assert!(log_return.get(0).unwrap().is_null());
+            for (idx, pair) in closes.windows(2).enumerate() {
+                let expected = (pair[1] / pair[0]).ln();
+                let actual = log_return.get(idx + 1).unwrap().try_extract::<f64>().unwrap();
+                prop_assert!((actual - expected).abs() < 1e-9);
+            }
+        }
+
+        /// For a single-ticker portfolio measured against that same ticker,
+        /// `beta = Cov(w*r, r) / Var(r) = w` whenever `Var(r) > 0`.
+        #[traced_test]
+        #[test]
+        fn single_ticker_beta_equals_weight(
+            returns in prop::collection::vec(-0.5_f64..0.5, 3..40),
+            weight in -5.0_f64..5.0,
+        ) {
+            prop_assume!(returns.windows(2).any(|pair| (pair[0] - pair[1]).abs() > 1e-6));
+            let n = returns.len();
+            let timestamps: Vec<String> = (0..n).map(|i| format!("{i:04}")).collect();
+            let tickers = vec!["BTC"; n];
+            let frame = df! {
+                "timestamp" => timestamps,
+                "ticker" => tickers,
+                "log_return" => returns,
+            }
+            .unwrap();
+
+            let weights = [("BTC".to_string(), weight)];
+            let beta = compute_beta_from_log_returns(&frame, &weights, "BTC")
+                .unwrap()
+                .unwrap();
+            prop_assert!((beta - weight).abs() < 1e-9, "beta {beta} != weight {weight}");
+            prop_assert!(crate::logs_contain_at(
+                tracing::Level::INFO,
+                &["portfolio beta calculated", "beta"]
+            ));
+        }
+    }
 
     #[test]
     fn daily_candles_path_uses_ohlcv_1d() {
@@ -609,9 +671,17 @@ mod tests {
         assert_eq!(report.excluded_tickers, vec!["DOGE"]);
         assert!(report.effective_weights.is_empty());
         assert_eq!(report.data_age_hours, 2);
+
+        // The log buffer is process-global, so other tests legitimately logging
+        // "portfolio beta calculated" would trip a bare negative assertion.
+        // Scope it to this test's own span (traced_test prefixes every line
+        // emitted here with the test name).
         assert!(!crate::logs_contain_at(
             tracing::Level::INFO,
-            &["portfolio beta calculated"]
+            &[
+                "beta_report_returns_none_when_all_portfolio_assets_are_excluded",
+                "portfolio beta calculated",
+            ]
         ));
     }
 

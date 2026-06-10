@@ -6,7 +6,6 @@ let
   profileBase = "/nix/var/nix/profiles/per-service";
 
   moneymentumPackage = self.packages.${system}.moneymentum;
-  frontendPackage = self.packages.${system}.frontend;
 
   services = import ./services.nix;
   enabledServices = builtins.filter (name: services.${name}.enabled)
@@ -34,20 +33,10 @@ in {
       sshUser = "root";
       user = "root";
 
-      profilesOrder = [ "system" "frontend" ] ++ enabledServices;
+      profilesOrder = [ "system" ] ++ enabledServices;
 
       profiles = {
         system.path = activate.nixos self.nixosConfigurations.moneymentum;
-
-        frontend = {
-          path = activate.custom frontendPackage ''
-            mkdir -p /var/lib/moneymentum
-            rm -rf /var/lib/moneymentum/frontend
-            cp -rL ${frontendPackage} /var/lib/moneymentum/frontend
-            nginx -s reload || true
-          '';
-          profilePath = "${profileBase}/frontend";
-        };
       } // builtins.listToAttrs (map (name: {
         inherit name;
         value = mkProfile name;
@@ -63,13 +52,17 @@ in {
       deployInputs =
         [ pkgs.rage pkgs.jq deploy-rs.packages.${localSystem}.deploy-rs ];
 
-      deployPreamble = ''
+      resolvePreamble = ''
         ${infraPkgs.resolveIp}
 
         if [ -z "$host_ip" ]; then
           echo "ERROR: host_ip not resolved -- check resolveIp or --hostname flag" >&2
           exit 1
         fi
+      '';
+
+      deployPreamble = ''
+        ${resolvePreamble}
 
         ssh_flag=""
         if [ "$identity" != "$HOME/.ssh/id_ed25519" ]; then
@@ -107,8 +100,8 @@ in {
         '';
       };
 
-      deployAll = pkgs.writeShellApplication {
-        name = "deploy-all";
+      deployServer = pkgs.writeShellApplication {
+        name = "deploy-server";
         runtimeInputs = deployInputs ++ [ pkgs.openssh ];
         text = ''
           ${deployPreamble}
@@ -116,6 +109,38 @@ in {
           ssh -i "$identity" "root@$host_ip" '${serviceCleanup}'
 
           deploy ${deployFlags} --hostname "$host_ip" ''${ssh_flag:+"$ssh_flag"} "$@" .#moneymentum
+        '';
+      };
+
+      deployFrontend = pkgs.writeShellApplication {
+        name = "deploy-frontend";
+        runtimeInputs = deployInputs ++ [ pkgs.openssh pkgs.rsync ];
+        text = ''
+          if [ "$#" -ne 0 ] && [ "''${1:-}" != "-i" ]; then
+            echo "usage: deploy-frontend [-i identity]" >&2
+            exit 1
+          fi
+
+          if [ "''${1:-}" = "-i" ] && [ "$#" -ne 2 ]; then
+            echo "usage: deploy-frontend [-i identity]" >&2
+            exit 1
+          fi
+
+          if [ ! -f frontend/dist/index.html ]; then
+            echo "ERROR: frontend/dist/index.html missing -- run 'cd frontend && bun run build' first" >&2
+            exit 1
+          fi
+
+          ${resolvePreamble}
+
+          if [ "$#" -ne 0 ]; then
+            echo "usage: deploy-frontend [-i identity]" >&2
+            exit 1
+          fi
+
+          ssh -i "$identity" "root@$host_ip" 'mkdir -p /var/lib/moneymentum/frontend'
+          rsync -az --delete -e "ssh -i $identity" frontend/dist/ "root@$host_ip:/var/lib/moneymentum/frontend/"
+          ssh -i "$identity" "root@$host_ip" 'nginx -s reload || true'
         '';
       };
     };

@@ -181,7 +181,8 @@
                   infraPkgs.remote
                   deployPkgs.deployNixos
                   deployPkgs.deployService
-                  deployPkgs.deployAll
+                  deployPkgs.deployServer
+                  deployPkgs.deployFrontend
                 ];
 
               languages = {
@@ -255,7 +256,8 @@
           inherit (infraPkgs)
             tfInit tfPlan tfApply tfImport tfEditVars tfCreateVars tfRekey rekey
             bootstrap remote;
-          inherit (deployPkgs) deployNixos deployService deployAll;
+          inherit (deployPkgs)
+            deployNixos deployService deployServer deployFrontend;
         };
       });
 

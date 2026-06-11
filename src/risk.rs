@@ -3,8 +3,8 @@
 //! Every metric shares one measurement contract -- the window, sampling
 //! frequency, and confidence levels -- so they describe the same portfolio under
 //! the same assumptions. This module owns that contract and its validation, and
-//! the metrics computed under it; remaining metric math (correlation, ENB,
-//! Monte Carlo) is added on top as it lands.
+//! the metrics computed under it; remaining metric math (Monte Carlo) is added
+//! on top as it lands.
 //!
 //! Return convention (methodology doc, "Shared foundation"): per-asset returns
 //! are log returns for estimation, but the portfolio aggregates in
@@ -201,6 +201,25 @@ pub(crate) struct CorrelationReport {
     shrinkage_intensity: f64,
 }
 
+/// Effective number of bets for the active weights -- true diversification
+/// accounting for correlations (ten assets that all move together are one
+/// bet).
+///
+/// `meucci` is the exponential entropy of the diversification distribution
+/// over the principal portfolios of the shrunk covariance (Meucci 2009): 1
+/// means all variance sits in one principal direction, the position count
+/// means an even spread. `stressed_meucci` recomputes it with every
+/// off-diagonal correlation forced to 0.85, showing the diversification left
+/// in a co-crash. `inverse_herfindahl` is the correlation-blind
+/// `1 / sum(u_i^2)` cross-check over normalized absolute weights.
+#[derive(Debug, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct EffectiveBets {
+    meucci: f64,
+    stressed_meucci: f64,
+    inverse_herfindahl: f64,
+}
+
 /// Risk analytics for the active portfolio: the resolved measurement contract
 /// plus every metric computed under it.
 #[derive(Debug, Serialize)]
@@ -210,6 +229,7 @@ pub(crate) struct RiskResponse {
     tail_risk: Vec<TailRisk>,
     drawdown: Drawdown,
     correlation: CorrelationReport,
+    effective_bets: EffectiveBets,
 }
 
 /// Errors from assessing risk: contract validation, candle data access, or a
@@ -232,6 +252,8 @@ pub(crate) enum RiskAssessmentError {
     InsufficientObservations { observations: usize },
     #[error("ticker {ticker} has zero return variance in the window, correlation is undefined")]
     ZeroVarianceTicker { ticker: String },
+    #[error("portfolio variance is zero under the estimated covariance, effective bets undefined")]
+    DegenerateCovariance,
 }
 
 /// Assesses the active portfolio's risk: resolves the measurement contract,
@@ -252,12 +274,15 @@ pub(crate) async fn assess_risk(
     let portfolio_returns = aggregate_in_simple_space(&log_returns_by_ticker, &request.weights)?;
     let tail_risk = compute_tail_risk(&portfolio_returns, &contract.confidence_levels)?;
     let drawdown = compute_drawdown(&portfolio_returns);
-    let correlation = compute_correlation(&log_returns_by_ticker)?;
+    let shrunk = shrunk_covariance(&log_returns_by_ticker)?;
+    let correlation = compute_correlation(&shrunk);
+    let effective_bets = compute_effective_bets(&shrunk, &request.weights)?;
     debug!(
         observations = portfolio_returns.len(),
         levels = tail_risk.len(),
         max_drawdown = drawdown.max_drawdown,
         shrinkage_intensity = correlation.shrinkage_intensity,
+        effective_bets = effective_bets.meucci,
         "risk metrics computed"
     );
 
@@ -266,6 +291,7 @@ pub(crate) async fn assess_risk(
         tail_risk,
         drawdown,
         correlation,
+        effective_bets,
     })
 }
 
@@ -370,9 +396,51 @@ fn log_returns_in_window(
 /// constant-correlation target with the closed-form optimal intensity
 /// (Ledoit & Wolf 2004, "Honey, I Shrunk the Sample Covariance Matrix"), then
 /// converted to a correlation matrix.
-fn compute_correlation(
+fn compute_correlation(shrunk: &ShrunkCovariance) -> CorrelationReport {
+    let variances = covariance_diagonal(&shrunk.covariance);
+    let matrix: Vec<Vec<f64>> = variances
+        .iter()
+        .zip(&shrunk.covariance)
+        .enumerate()
+        .map(|(row_index, (left_variance, covariance_row))| {
+            variances
+                .iter()
+                .zip(covariance_row)
+                .enumerate()
+                .map(|(col_index, (right_variance, entry))| {
+                    if row_index == col_index {
+                        1.0
+                    } else {
+                        entry / (left_variance * right_variance).sqrt()
+                    }
+                })
+                .collect()
+        })
+        .collect();
+
+    CorrelationReport {
+        tickers: shrunk.tickers.clone(),
+        matrix,
+        shrinkage_intensity: shrunk.shrinkage_intensity,
+    }
+}
+
+/// The Ledoit-Wolf-shrunk covariance over the tickers' log returns on their
+/// common dates -- the regularized estimate shared by the correlation matrix
+/// and the effective-number-of-bets calculation.
+struct ShrunkCovariance {
+    tickers: Vec<String>,
+    /// Row-major shrunk covariance entries ordered like `tickers`; the
+    /// diagonal carries the sample variances (the constant-correlation target
+    /// leaves variances untouched), all strictly positive.
+    covariance: Vec<Vec<f64>>,
+    shrinkage_intensity: f64,
+}
+
+/// Estimates the Ledoit-Wolf-shrunk covariance of the tickers' log returns.
+fn shrunk_covariance(
     log_returns_by_ticker: &BTreeMap<String, BTreeMap<NaiveDate, f64>>,
-) -> Result<CorrelationReport, RiskAssessmentError> {
+) -> Result<ShrunkCovariance, RiskAssessmentError> {
     let DemeanedReturns {
         tickers,
         demeaned_columns,
@@ -412,7 +480,7 @@ fn compute_correlation(
         scale,
     );
 
-    let matrix: Vec<Vec<f64>> = variances
+    let shrunk_entries: Vec<Vec<f64>> = variances
         .iter()
         .zip(&covariance)
         .enumerate()
@@ -423,24 +491,157 @@ fn compute_correlation(
                 .enumerate()
                 .map(|(col_index, (right_variance, sample_entry))| {
                     if row_index == col_index {
-                        return 1.0;
+                        return *sample_entry;
                     }
-                    let denominator = (left_variance * right_variance).sqrt();
-                    let target_entry = average_correlation * denominator;
-                    let shrunk_entry =
-                        shrinkage_intensity.mul_add(target_entry - sample_entry, *sample_entry);
+                    let target_entry =
+                        average_correlation * (left_variance * right_variance).sqrt();
 
-                    shrunk_entry / denominator
+                    shrinkage_intensity.mul_add(target_entry - sample_entry, *sample_entry)
                 })
                 .collect()
         })
         .collect();
 
-    Ok(CorrelationReport {
+    Ok(ShrunkCovariance {
         tickers,
-        matrix,
+        covariance: shrunk_entries,
         shrinkage_intensity,
     })
+}
+
+/// Off-diagonal correlation every pair is forced to in the stressed ENB,
+/// approximating crypto's co-crash regime (methodology doc, decision 2).
+const STRESSED_CORRELATION: f64 = 0.85;
+/// Relative floor applied to eigenvalues before the entropy calculation, so a
+/// rank-deficient sample covariance (more assets than observations) cannot
+/// produce negative variance contributions (methodology must-fix: positive
+/// definiteness before eigendecomposition).
+const RELATIVE_EIGENVALUE_FLOOR: f64 = 1e-12;
+
+/// Effective number of bets for the active weights under the shrunk
+/// covariance: the Meucci entropy headline, its stressed-correlation variant,
+/// and the inverse-Herfindahl cross-check.
+fn compute_effective_bets(
+    shrunk: &ShrunkCovariance,
+    weights: &HashMap<String, f64>,
+) -> Result<EffectiveBets, RiskAssessmentError> {
+    let weight_vector: Vec<f64> = shrunk
+        .tickers
+        .iter()
+        .map(|ticker| {
+            weights
+                .get(ticker)
+                .copied()
+                .ok_or_else(|| RiskAssessmentError::MissingTickerData {
+                    ticker: ticker.clone(),
+                })
+        })
+        .collect::<Result<_, _>>()?;
+
+    let meucci = meucci_effective_bets(&shrunk.covariance, &weight_vector)?;
+    let stressed_meucci =
+        meucci_effective_bets(&stressed_covariance(&shrunk.covariance), &weight_vector)?;
+
+    let absolute_weight_sum: f64 = weight_vector.iter().map(|weight| weight.abs()).sum();
+    let herfindahl: f64 = weight_vector
+        .iter()
+        .map(|weight| (weight.abs() / absolute_weight_sum).powi(2))
+        .sum();
+    let inverse_herfindahl = herfindahl.recip();
+
+    Ok(EffectiveBets {
+        meucci,
+        stressed_meucci,
+        inverse_herfindahl,
+    })
+}
+
+/// Exponential Shannon entropy of the diversification distribution over the
+/// covariance's principal portfolios (Meucci 2009, "Managing Diversification").
+///
+/// Eigenvalues are floored at `RELATIVE_EIGENVALUE_FLOOR` of the largest
+/// before computing variance contributions `lambda_i * w~_i^2`.
+fn meucci_effective_bets(
+    covariance: &[Vec<f64>],
+    weight_vector: &[f64],
+) -> Result<f64, RiskAssessmentError> {
+    let dimension = weight_vector.len();
+    let matrix = nalgebra::DMatrix::from_row_iterator(
+        dimension,
+        dimension,
+        covariance.iter().flat_map(|row| row.iter().copied()),
+    );
+    let eigen = matrix.symmetric_eigen();
+    let largest_eigenvalue = eigen
+        .eigenvalues
+        .iter()
+        .fold(0.0_f64, |largest, eigenvalue| largest.max(*eigenvalue));
+    if largest_eigenvalue <= 0.0 {
+        return Err(RiskAssessmentError::DegenerateCovariance);
+    }
+    let eigenvalue_floor = largest_eigenvalue * RELATIVE_EIGENVALUE_FLOOR;
+
+    let principal_weights =
+        eigen.eigenvectors.transpose() * nalgebra::DVector::from_column_slice(weight_vector);
+    let variance_contributions: Vec<f64> = eigen
+        .eigenvalues
+        .iter()
+        .zip(principal_weights.iter())
+        .map(|(eigenvalue, principal_weight)| {
+            eigenvalue.max(eigenvalue_floor) * principal_weight * principal_weight
+        })
+        .collect();
+    let total_variance: f64 = variance_contributions.iter().sum();
+    if total_variance <= 0.0 {
+        return Err(RiskAssessmentError::DegenerateCovariance);
+    }
+
+    let entropy: f64 = variance_contributions
+        .iter()
+        .map(|contribution| {
+            let probability = contribution / total_variance;
+            if probability > 0.0 {
+                -probability * probability.ln()
+            } else {
+                0.0
+            }
+        })
+        .sum();
+
+    Ok(entropy.exp())
+}
+
+/// The covariance with every pairwise correlation forced to
+/// [`STRESSED_CORRELATION`], keeping the original variances.
+fn stressed_covariance(covariance: &[Vec<f64>]) -> Vec<Vec<f64>> {
+    let variances = covariance_diagonal(covariance);
+
+    variances
+        .iter()
+        .enumerate()
+        .map(|(row_index, left_variance)| {
+            variances
+                .iter()
+                .enumerate()
+                .map(|(col_index, right_variance)| {
+                    if row_index == col_index {
+                        *left_variance
+                    } else {
+                        STRESSED_CORRELATION * (left_variance * right_variance).sqrt()
+                    }
+                })
+                .collect()
+        })
+        .collect()
+}
+
+/// The diagonal of a row-major square matrix.
+fn covariance_diagonal(covariance: &[Vec<f64>]) -> Vec<f64> {
+    covariance
+        .iter()
+        .enumerate()
+        .filter_map(|(index, row)| row.get(index).copied())
+        .collect()
 }
 
 /// Per-ticker demeaned log-return columns on the dates shared by every ticker.
@@ -1336,6 +1537,15 @@ mod tests {
             .collect()
     }
 
+    /// Shrinks and converts to correlations in one step, as `assess_risk` does.
+    fn correlation_for(
+        log_returns_by_ticker: &BTreeMap<String, BTreeMap<NaiveDate, f64>>,
+    ) -> Result<CorrelationReport, RiskAssessmentError> {
+        Ok(compute_correlation(&shrunk_covariance(
+            log_returns_by_ticker,
+        )?))
+    }
+
     /// Pearson correlation with maximum-likelihood (`1/T`) normalization, as a
     /// reference for the two-asset case where shrinkage is a no-op.
     fn sample_correlation(left: &[f64], right: &[f64]) -> f64 {
@@ -1371,7 +1581,7 @@ mod tests {
         let eth_returns = [0.02, 0.01, -0.02, 0.01];
         let log_returns = log_returns_map(&[("BTC", &btc_returns), ("ETH", &eth_returns)]);
 
-        let report = compute_correlation(&log_returns).unwrap();
+        let report = correlation_for(&log_returns).unwrap();
 
         let expected = sample_correlation(&btc_returns, &eth_returns);
         assert_eq!(report.tickers, vec!["BTC", "ETH"]);
@@ -1390,7 +1600,7 @@ mod tests {
             ("CCC", &shared_returns),
         ]);
 
-        let report = compute_correlation(&log_returns).unwrap();
+        let report = correlation_for(&log_returns).unwrap();
 
         // Perfectly correlated assets already sit on the constant-correlation
         // target, so the intensity is zero and every entry is 1.
@@ -1411,7 +1621,7 @@ mod tests {
         let flat_returns = [0.0, 0.0, 0.0, 0.0];
         let log_returns = log_returns_map(&[("BTC", &btc_returns), ("USDC", &flat_returns)]);
 
-        let result = compute_correlation(&log_returns);
+        let result = correlation_for(&log_returns);
 
         assert!(matches!(
             result,
@@ -1425,9 +1635,7 @@ mod tests {
         let second = [-0.01, 0.02, -0.02, 0.03, -0.01, 0.01, 0.02, -0.02];
         let third = [0.03, 0.01, -0.01, 0.02, -0.03, 0.02, 0.01, -0.01];
         let log_returns = log_returns_map(&[("AAA", &first), ("BBB", &second), ("CCC", &third)]);
-        let intensity = compute_correlation(&log_returns)
-            .unwrap()
-            .shrinkage_intensity;
+        let intensity = correlation_for(&log_returns).unwrap().shrinkage_intensity;
         assert!(
             intensity > 0.0 && intensity < 1.0,
             "fixture must produce an interior intensity, got {intensity}"
@@ -1441,9 +1649,7 @@ mod tests {
             ("BBB", &repeat(&second)),
             ("CCC", &repeat(&third)),
         ]);
-        let duplicated_intensity = compute_correlation(&duplicated)
-            .unwrap()
-            .shrinkage_intensity;
+        let duplicated_intensity = correlation_for(&duplicated).unwrap().shrinkage_intensity;
 
         assert!(
             (duplicated_intensity - intensity / 10.0).abs() < 1e-12,
@@ -1483,7 +1689,7 @@ mod tests {
 
             let log_returns =
                 log_returns_map(&[("AAA", &first), ("BBB", &second), ("CCC", &third)]);
-            let report = compute_correlation(&log_returns).unwrap();
+            let report = correlation_for(&log_returns).unwrap();
 
             prop_assert!((0.0..=1.0).contains(&report.shrinkage_intensity));
             for (row_index, row) in report.matrix.iter().enumerate() {
@@ -1497,6 +1703,108 @@ mod tests {
                         );
                     }
                 }
+            }
+        }
+    }
+
+    /// Shrinks and computes effective bets in one step, as `assess_risk` does.
+    fn effective_bets_for(
+        log_returns_by_ticker: &BTreeMap<String, BTreeMap<NaiveDate, f64>>,
+        weights: &[(&str, f64)],
+    ) -> Result<EffectiveBets, RiskAssessmentError> {
+        let weights: HashMap<String, f64> = weights
+            .iter()
+            .map(|(ticker, weight)| ((*ticker).to_string(), *weight))
+            .collect();
+
+        compute_effective_bets(&shrunk_covariance(log_returns_by_ticker)?, &weights)
+    }
+
+    #[test]
+    fn uncorrelated_equal_variance_assets_count_as_independent_bets() {
+        // Orthogonal demeaned series with equal variance: two genuine bets.
+        let first = [0.02, -0.02, 0.02, -0.02];
+        let second = [0.02, 0.02, -0.02, -0.02];
+        let log_returns = log_returns_map(&[("AAA", &first), ("BBB", &second)]);
+
+        let bets = effective_bets_for(&log_returns, &[("AAA", 0.5), ("BBB", 0.5)]).unwrap();
+
+        assert!((bets.meucci - 2.0).abs() < 1e-9, "got {}", bets.meucci);
+        assert!((bets.inverse_herfindahl - 2.0).abs() < 1e-12);
+        // Forcing the pair toward 0.85 correlation concentrates the variance
+        // in one principal direction: the stressed count must drop.
+        assert!(
+            bets.stressed_meucci < bets.meucci && bets.stressed_meucci >= 1.0,
+            "stressed {} vs meucci {}",
+            bets.stressed_meucci,
+            bets.meucci
+        );
+    }
+
+    #[test]
+    fn perfectly_correlated_assets_count_as_one_bet() {
+        let shared_returns = [0.01, -0.02, 0.03, 0.005];
+        let log_returns = log_returns_map(&[("AAA", &shared_returns), ("BBB", &shared_returns)]);
+
+        let bets = effective_bets_for(&log_returns, &[("AAA", 0.5), ("BBB", 0.5)]).unwrap();
+
+        // The SPEC's framing: assets that all move together are one bet, even
+        // though the correlation-blind cross-check still reports two.
+        assert!((bets.meucci - 1.0).abs() < 1e-6, "got {}", bets.meucci);
+        assert!((bets.inverse_herfindahl - 2.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn inverse_herfindahl_uses_normalized_absolute_weights() {
+        let first = [0.02, -0.02, 0.02, -0.02];
+        let second = [0.02, 0.02, -0.02, -0.02];
+        let log_returns = log_returns_map(&[("AAA", &first), ("BBB", &second)]);
+
+        let bets = effective_bets_for(&log_returns, &[("AAA", 0.6), ("BBB", -0.4)]).unwrap();
+
+        // 1 / (0.6^2 + 0.4^2) = 1 / 0.52.
+        assert!((bets.inverse_herfindahl - 1.0 / 0.52).abs() < 1e-12);
+    }
+
+    proptest! {
+        /// Every effective-bets variant lies within [1, N] for any portfolio
+        /// of N varying assets.
+        #[test]
+        fn effective_bets_lie_between_one_and_position_count(
+            first in prop::collection::vec(-0.2_f64..0.2, 6..30),
+            jitter in prop::collection::vec(-0.05_f64..0.05, 6..30),
+            raw_weight in 0.05_f64..0.95,
+        ) {
+            let observations = first.len().min(jitter.len());
+            prop_assume!(observations >= 6);
+            let first: Vec<f64> = first.iter().copied().take(observations).collect();
+            prop_assume!(
+                first.windows(2).any(|pair| (pair[0] - pair[1]).abs() > 1e-6)
+            );
+            let second: Vec<f64> = first
+                .iter()
+                .zip(&jitter)
+                .map(|(base, noise)| -base + noise + 0.001)
+                .collect();
+            let third: Vec<f64> = first
+                .iter()
+                .zip(jitter.iter().rev())
+                .map(|(base, noise)| 0.5 * base + 2.0 * noise - 0.002)
+                .collect();
+            prop_assume!(second.windows(2).any(|pair| (pair[0] - pair[1]).abs() > 1e-6));
+            prop_assume!(third.windows(2).any(|pair| (pair[0] - pair[1]).abs() > 1e-6));
+
+            let log_returns =
+                log_returns_map(&[("AAA", &first), ("BBB", &second), ("CCC", &third)]);
+            let remainder = (1.0 - raw_weight) / 2.0;
+            let bets = effective_bets_for(
+                &log_returns,
+                &[("AAA", raw_weight), ("BBB", remainder), ("CCC", remainder)],
+            )
+            .unwrap();
+
+            for count in [bets.meucci, bets.stressed_meucci, bets.inverse_herfindahl] {
+                prop_assert!((1.0 - 1e-9..=3.0 + 1e-9).contains(&count), "count {count}");
             }
         }
     }
@@ -1581,6 +1889,16 @@ mod tests {
             response.correlation.matrix[0][1]
         );
         assert!((0.0..=1.0).contains(&response.correlation.shrinkage_intensity));
+        for count in [
+            response.effective_bets.meucci,
+            response.effective_bets.stressed_meucci,
+            response.effective_bets.inverse_herfindahl,
+        ] {
+            assert!(
+                (1.0 - 1e-9..=2.0 + 1e-9).contains(&count),
+                "effective bets must lie within [1, 2] for two positions, got {count}"
+            );
+        }
         assert!(logs_contain_at(
             Level::DEBUG,
             &["risk metrics computed", "observations=", "max_drawdown="]

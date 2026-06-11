@@ -17,6 +17,7 @@ cron = "=0.16.0"
 event-sorcery = { git = "https://github.com/ST0X-Technology/event-sorcery", tag = "0.2.0-rc2", version = "0.1.0" }
 futures = "0.3.31"
 hyperliquid_rust_sdk = "0.6.0"
+nalgebra = "0.35.0"
 polars = { version = "0.51", features = [
   "parquet",
   "lazy",

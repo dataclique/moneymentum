@@ -1736,6 +1736,14 @@ mod tests {
             body["correlation"]["shrinkageIntensity"].as_f64().is_some(),
             "shrinkageIntensity is a number"
         );
+
+        for bets_key in ["meucci", "stressedMeucci", "inverseHerfindahl"] {
+            let count = body["effectiveBets"][bets_key].as_f64().unwrap_or(f64::NAN);
+            assert!(
+                (1.0 - 1e-9..=2.0 + 1e-9).contains(&count),
+                "effectiveBets.{bets_key} must be a number within [1, 2], got {count}"
+            );
+        }
     }
 
     #[test]

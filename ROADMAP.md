@@ -76,6 +76,9 @@ of them.
 - [x] Factor: beta (per-asset, to benchmark) --
       [#269](https://github.com/data-cartel/moneymentum/issues/269) /
       [#270](https://github.com/data-cartel/moneymentum/pull/270)
+- [x] Factor: 24h volume (screener tie-break) --
+      [#271](https://github.com/data-cartel/moneymentum/issues/271) /
+      [#272](https://github.com/data-cartel/moneymentum/pull/272)
 - [ ] Markets metadata + persisted disable flag
 - [ ] Tradable filter wired into ingestion
 

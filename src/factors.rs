@@ -17,6 +17,7 @@
 //!   scores.
 //! - [`carry`]: latest signed funding rate, joined into the scores.
 //! - [`asset_beta`]: per-asset beta to the benchmark, joined into the scores.
+//! - [`volume`]: trailing 24h volume, joined into the scores.
 
 mod asset_beta;
 mod autocorrelation;
@@ -24,6 +25,7 @@ mod beta;
 mod carry;
 mod returns;
 mod scores;
+mod volume;
 
 pub(crate) use beta::compute_portfolio_beta_report;
 pub(crate) use scores::compute_factors_json;

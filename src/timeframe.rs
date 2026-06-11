@@ -55,6 +55,17 @@ impl Timeframe {
         }
     }
 
+    /// Number of candles spanning roughly 24 hours, used to sum trailing 24h
+    /// volume. Weekly candles are coarser than a day, so it is 1 (the latest
+    /// weekly candle's volume).
+    pub(crate) fn candles_per_day(self) -> usize {
+        match self {
+            Self::FifteenMin => 24 * 4,
+            Self::OneHour => 24,
+            Self::OneDay | Self::OneWeek => 1,
+        }
+    }
+
     /// Factor-engine parameters for this timeframe, ported from the legacy
     /// `util.py` `TIMEFRAME_CONFIGS`.
     pub(crate) fn config(self) -> TimeframeConfig {
@@ -86,7 +97,10 @@ impl Timeframe {
 
 /// Per-timeframe parameters that drive the factor engine's windowed math.
 pub(crate) struct TimeframeConfig {
-    /// Number of candles in the lookback window for rolling factor math.
+    /// Number of trailing rows in the per-ticker lookback window for rolling
+    /// factor math. Return-based factors window the last N log returns
+    /// (spanning N+1 candles); price-based factors (SMA, price z-score) window
+    /// the last N closes.
     pub(crate) lookback_periods: usize,
     /// Scaling factor to annualize per-period returns and volatility.
     pub(crate) annualized_factor: f64,
@@ -159,6 +173,33 @@ mod tests {
         assert!(
             (compounded_back_to_hourly - hour.min_acceptable_return).abs() < 1e-12,
             "four compounded 15m MARs must reproduce the hourly MAR"
+        );
+    }
+
+    #[test]
+    fn candles_per_day_spans_roughly_one_day() {
+        // Assert the property (window covers one day of intra-day candles)
+        // rather than re-typing the lookup table's literals.
+        const MINUTES_PER_DAY: usize = 24 * 60;
+        assert_eq!(
+            Timeframe::FifteenMin.candles_per_day() * 15,
+            MINUTES_PER_DAY,
+            "15m candles must cover one full day"
+        );
+        assert_eq!(
+            Timeframe::OneHour.candles_per_day() * 60,
+            MINUTES_PER_DAY,
+            "1h candles must cover one full day"
+        );
+        assert_eq!(
+            Timeframe::OneDay.candles_per_day() * MINUTES_PER_DAY,
+            MINUTES_PER_DAY,
+            "a daily candle covers exactly one day"
+        );
+        assert_eq!(
+            Timeframe::OneWeek.candles_per_day(),
+            1,
+            "weekly candles are coarser than a day, so the window is the latest candle"
         );
     }
 

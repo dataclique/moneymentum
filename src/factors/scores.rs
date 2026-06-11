@@ -8,13 +8,14 @@ use polars::prelude::{
     JsonFormat, JsonWriter, NULL, PolarsError, SerWriter, SortMultipleOptions, col, cols, lit,
     when,
 };
-use tracing::{info, instrument};
+use tracing::{debug, instrument};
 
 use super::ReturnsError;
 use super::asset_beta::asset_beta_by_ticker;
 use super::autocorrelation::autocorrelation_by_ticker;
 use super::carry::with_carry;
-use super::returns::compute_log_returns;
+use super::returns::{chronological, compute_log_returns};
+use super::volume::with_volume_24h;
 use crate::timeframe::{Timeframe, TimeframeConfig};
 
 const PRICE_STDDEV_EPS: f64 = 1e-8;
@@ -26,8 +27,8 @@ const BENCHMARK_TICKER: &str = "BTC";
 /// Per-ticker factor scores serialized as a JSON array, for the `/factors`
 /// endpoint. Exposes `annualized_volatility`, `cum_return`, `sma`,
 /// `mean_return`, `price_zscore`, `annualized_return`, `sharpe`, `sortino`,
-/// `autocorrelation`, `information_discreteness`, `carry`, and `beta`; further
-/// factors are added as columns as they land.
+/// `autocorrelation`, `information_discreteness`, `carry`, `beta`, and
+/// `volume_24h`; further factors are added as columns as they land.
 pub(crate) async fn compute_factors_json(
     data_dir: &Path,
     timeframe: Timeframe,
@@ -61,6 +62,9 @@ pub(crate) async fn compute_factors_json(
 ///   no funding data is available
 /// - `beta` = per-asset beta to the benchmark (BTC) over the lookback; null when
 ///   the benchmark has no return variance
+/// - `volume_24h` = quote notional (`volume * close`) summed over the
+///   dataset's trailing day of candles; null for a ticker with no candles in
+///   that window. On 1w this is the latest weekly candle -- a week's notional
 ///
 /// Returns a `DataFrame` keyed by `ticker`. New factors are added as columns.
 #[instrument(skip_all, fields(data_dir = %data_dir.display()))]
@@ -72,12 +76,14 @@ async fn compute_factors(data_dir: &Path, timeframe: Timeframe) -> Result<DataFr
     };
     let funding = crate::dataframe::read_csv(data_dir.join(crate::funding::file_name())).await?;
     let config = timeframe.config();
+    let candles_per_day = timeframe.candles_per_day();
     let out = tokio::task::spawn_blocking(move || {
         let factors = per_ticker_factors(&df, &config)?;
+        let factors = with_volume_24h(&factors, &df, candles_per_day)?;
         with_carry(factors, funding.as_ref())
     })
     .await??;
-    info!(tickers = out.height(), "factors computed");
+    debug!(tickers = out.height(), "factors computed");
     Ok(out)
 }
 
@@ -105,9 +111,14 @@ fn per_ticker_factors(
         autocorrelation_by_ticker(&with_returns, lookback / AUTOCORRELATION_WINDOW_DIVISOR)?;
     let asset_beta = asset_beta_by_ticker(&with_returns, BENCHMARK_TICKER, lookback)?;
 
+    // Every factor must window the same trailing rows: single-source the two
+    // window expressions so one factor cannot silently diverge from the rest.
+    let trailing_returns = || chronological("log_return").tail(Some(lookback));
+    let trailing_closes = || chronological("close").tail(Some(lookback));
+
     // Downside deviation inputs for Sortino: sum of squared shortfalls below the
     // minimum acceptable return, and the observation count to average over.
-    let above_mar = col("log_return").tail(Some(lookback)) - lit(config.min_acceptable_return);
+    let above_mar = trailing_returns() - lit(config.min_acceptable_return);
     let downside_sq_sum = when(above_mar.clone().lt(lit(0.0)))
         .then(above_mar.pow(lit(2)))
         .otherwise(lit(0.0))
@@ -118,42 +129,33 @@ fn per_ticker_factors(
         .lazy()
         .group_by([col("ticker")])
         .agg([
-            (col("log_return").tail(Some(lookback)).std(1) * lit(annualization_multiplier))
+            (trailing_returns().std(1) * lit(annualization_multiplier))
                 .alias("annualized_volatility"),
-            col("log_return")
-                .tail(Some(lookback))
-                .sum()
-                .alias("cum_log_return"),
-            col("close").tail(Some(lookback)).mean().alias("sma"),
-            col("log_return")
-                .tail(Some(lookback))
-                .mean()
-                .alias("mean_return"),
-            col("close")
-                .tail(Some(lookback))
-                .std(1)
-                .alias("price_stddev"),
-            col("close").last().alias("last_close"),
+            trailing_returns().sum().alias("cum_log_return"),
+            trailing_closes().mean().alias("sma"),
+            trailing_returns().mean().alias("mean_return"),
+            trailing_closes().std(1).alias("price_stddev"),
+            chronological("close").last().alias("last_close"),
             downside_sq_sum,
-            col("log_return")
-                .tail(Some(lookback))
-                .count()
-                .alias("obs_count"),
-            (col("log_return").tail(Some(lookback)).gt(lit(0.0)))
-                .sum()
-                .alias("pos_count"),
-            (col("log_return").tail(Some(lookback)).lt(lit(0.0)))
-                .sum()
-                .alias("neg_count"),
+            trailing_returns().count().alias("obs_count"),
+            (trailing_returns().gt(lit(0.0))).sum().alias("pos_count"),
+            (trailing_returns().lt(lit(0.0))).sum().alias("neg_count"),
         ])
         // price z-score = (latest close - SMA) / price stddev; undefined (null)
-        // when there is no price dispersion (constant prices over the window).
+        // when there is no price dispersion (constant prices over the window)
+        // or no measurable dispersion at all (a NaN stddev must never pass the
+        // guard, mirroring the annualized_return finiteness guard).
         .with_column(
-            when(col("price_stddev").gt(lit(PRICE_STDDEV_EPS)))
-                .then((col("last_close") - col("sma")) / col("price_stddev"))
-                .otherwise(lit(NULL))
-                .alias("price_zscore"),
+            when(
+                col("price_stddev")
+                    .is_finite()
+                    .and(col("price_stddev").gt(lit(PRICE_STDDEV_EPS))),
+            )
+            .then((col("last_close") - col("sma")) / col("price_stddev"))
+            .otherwise(lit(NULL))
+            .alias("price_zscore"),
         )
+        .drop(cols(["price_stddev", "last_close"]))
         .sort(["ticker"], SortMultipleOptions::default())
         .collect()?;
 
@@ -222,8 +224,6 @@ fn add_return_and_risk_factors(
         .collect()?;
 
     factors.drop_in_place("cum_log_return")?;
-    factors.drop_in_place("price_stddev")?;
-    factors.drop_in_place("last_close")?;
 
     let downside_deviation = (col("downside_sq_sum") / col("obs_count")).pow(lit(0.5));
 
@@ -473,6 +473,230 @@ mod tests {
                 "a smooth uptrend must give information_discreteness -1, got {information_discreteness}"
             );
         }
+    }
+
+    #[test]
+    fn factor_windows_select_the_chronologically_latest_returns() {
+        // 8 candles per ticker with a lookback of 3: the first five closes are
+        // flat (zero returns), the last three returns are ln(1.1), ln(1/1.1),
+        // ln(1.1). A stale window of zeros gives cum_return 0 instead of 0.1,
+        // and while one other window ([0, 0, ln(1.1)]) also sums to ln(1.1),
+        // the sma assertion below discriminates it (its closes average lower
+        // than the trailing window's).
+        let candles = df! {
+            "timestamp" => &[
+                "0", "1", "2", "3", "4", "5", "6", "7",
+                "0", "1", "2", "3", "4", "5", "6", "7",
+            ],
+            "ticker" => &["BTC"; 8].iter().chain(&["ETH"; 8]).copied().collect::<Vec<_>>(),
+            "close" => &[
+                100.0, 100.0, 100.0, 100.0, 100.0, 110.0, 100.0, 110.0,
+                200.0, 200.0, 200.0, 200.0, 200.0, 220.0, 200.0, 220.0_f64,
+            ],
+        }
+        .unwrap();
+        let config = TimeframeConfig {
+            lookback_periods: 3,
+            annualized_factor: 365.0,
+            min_acceptable_return: 0.0,
+        };
+
+        let out = per_ticker_factors(&candles, &config).unwrap();
+
+        let ticker_column = out.column("ticker").unwrap().str().unwrap();
+        for (ticker, expected_sma) in [
+            ("BTC", (110.0 + 100.0 + 110.0) / 3.0),
+            ("ETH", (220.0 + 200.0 + 220.0) / 3.0),
+        ] {
+            let row_index = (0..out.height())
+                .find(|row| ticker_column.get(*row) == Some(ticker))
+                .expect("ticker row present in the factor output");
+
+            let cum_return = out
+                .column("cum_return")
+                .unwrap()
+                .f64()
+                .unwrap()
+                .get(row_index)
+                .unwrap();
+            assert!(
+                (cum_return - 0.1).abs() < 1e-12,
+                "{ticker}: trailing-window cum_return must be 0.1, got {cum_return}"
+            );
+
+            let sma = out
+                .column("sma")
+                .unwrap()
+                .f64()
+                .unwrap()
+                .get(row_index)
+                .unwrap();
+            assert!(
+                (sma - expected_sma).abs() < 1e-9,
+                "{ticker}: sma over the trailing window must be {expected_sma}, got {sma}"
+            );
+        }
+    }
+
+    #[test]
+    fn per_ticker_factors_sharpe_is_null_when_a_zero_close_poisons_volatility() {
+        // A zero close produces a -inf log return: std over the window goes
+        // NaN while annualized_return collapses to a finite -1, so only the
+        // is_finite() denominator guard stands between this input and a NaN
+        // sharpe in the /factors JSON.
+        let candles = df! {
+            "timestamp" => &["0", "1", "2"],
+            "ticker" => &["BTC", "BTC", "BTC"],
+            "close" => &[100.0, 0.0, 101.0],
+        }
+        .unwrap();
+        let config = TimeframeConfig {
+            lookback_periods: 10,
+            annualized_factor: 365.0,
+            min_acceptable_return: 0.0,
+        };
+
+        let out = per_ticker_factors(&candles, &config).unwrap();
+
+        let sharpe = out.column("sharpe").unwrap().f64().unwrap().get(0);
+        assert!(
+            sharpe.is_none_or(|value| !value.is_nan()),
+            "a NaN volatility must never produce a NaN sharpe, got {sharpe:?}"
+        );
+
+        let information_discreteness = out
+            .column("information_discreteness")
+            .unwrap()
+            .f64()
+            .unwrap()
+            .get(0);
+        assert!(
+            information_discreteness.is_none(),
+            "a NaN cum_return is unmeasurable, not \"perfectly choppy\": \
+             information_discreteness must be null, got {information_discreteness:?}"
+        );
+    }
+
+    #[test]
+    fn per_ticker_factors_sharpe_is_negative_for_a_downtrend() {
+        // Every other sharpe test uses a non-negative return, so a sign error
+        // in the formula (e.g. an accidental abs on the numerator) would pass
+        // the whole suite while misranking every asset in a drawdown.
+        let candles = df! {
+            "timestamp" => &["0", "1", "2", "3"],
+            "ticker" => &["BTC", "BTC", "BTC", "BTC"],
+            "close" => &[100.0, 99.0, 97.5, 95.0],
+        }
+        .unwrap();
+        let config = TimeframeConfig {
+            lookback_periods: 10,
+            annualized_factor: 365.0,
+            min_acceptable_return: 0.0,
+        };
+
+        let out = per_ticker_factors(&candles, &config).unwrap();
+
+        let sharpe = out
+            .column("sharpe")
+            .unwrap()
+            .f64()
+            .unwrap()
+            .get(0)
+            .expect("a varying downtrend has non-zero volatility");
+        assert!(
+            sharpe < 0.0,
+            "a losing asset must have a negative sharpe, got {sharpe}"
+        );
+    }
+
+    #[test]
+    fn per_ticker_factors_nulls_annualized_return_when_exp_overflows() {
+        // exp(mean_return * annualized_factor) overflows f64 for an extreme
+        // mean return; the guard must surface null, never inf, which would
+        // corrupt screener rankings and is unrepresentable in JSON. Two
+        // distinct returns keep the volatility finite and non-zero, so the
+        // sharpe assertion below genuinely tests null propagation from
+        // annualized_return rather than a null-volatility shortcut.
+        let candles = df! {
+            "timestamp" => &["0", "1", "2"],
+            "ticker" => &["BTC", "BTC", "BTC"],
+            "close" => &[1.0, 1e100, 1e150_f64],
+        }
+        .unwrap();
+        let config = TimeframeConfig {
+            lookback_periods: 10,
+            annualized_factor: 365.0,
+            min_acceptable_return: 0.0,
+        };
+
+        let out = per_ticker_factors(&candles, &config).unwrap();
+
+        let annualized_return = out
+            .column("annualized_return")
+            .unwrap()
+            .f64()
+            .unwrap()
+            .get(0);
+        assert!(
+            annualized_return.is_none(),
+            "an overflowing annualized return must be null, got {annualized_return:?}"
+        );
+        let sharpe = out.column("sharpe").unwrap().f64().unwrap().get(0);
+        assert!(
+            sharpe.is_none(),
+            "sharpe derives from annualized_return and must be null too, got {sharpe:?}"
+        );
+    }
+
+    #[test]
+    fn per_ticker_factors_zscore_is_null_when_a_close_is_nan() {
+        // A NaN close poisons the window's stddev to NaN, and NaN != 0.0 is
+        // true in IEEE 754 - without the is_finite() guard the z-score would
+        // serialize as NaN and silently dominate any z-score-ranked output.
+        let candles = df! {
+            "timestamp" => &["0", "1", "2"],
+            "ticker" => &["BTC", "BTC", "BTC"],
+            "close" => &[100.0, f64::NAN, 101.0],
+        }
+        .unwrap();
+        let config = TimeframeConfig {
+            lookback_periods: 10,
+            annualized_factor: 365.0,
+            min_acceptable_return: 0.0,
+        };
+
+        let out = per_ticker_factors(&candles, &config).unwrap();
+
+        let zscore = out.column("price_zscore").unwrap().f64().unwrap().get(0);
+        assert!(
+            zscore.is_none(),
+            "a NaN close gives no measurable dispersion, so price_zscore must be null, got {zscore:?}"
+        );
+    }
+
+    #[test]
+    fn per_ticker_factors_zscore_is_null_for_a_single_candle_ticker() {
+        // A single observation yields a null (not NaN) stddev from std(ddof=1);
+        // pin the documented null so the edge stays covered.
+        let candles = df! {
+            "timestamp" => &["0"],
+            "ticker" => &["BTC"],
+            "close" => &[100.0_f64],
+        }
+        .unwrap();
+        let config = TimeframeConfig {
+            lookback_periods: 10,
+            annualized_factor: 365.0,
+            min_acceptable_return: 0.0,
+        };
+
+        let out = per_ticker_factors(&candles, &config).unwrap();
+
+        let zscore = out.column("price_zscore").unwrap().f64().unwrap().get(0);
+        assert!(
+            zscore.is_none(),
+            "a single candle has no price dispersion, so price_zscore must be null, got {zscore:?}"
+        );
     }
 
     #[test]
@@ -847,20 +1071,75 @@ mod tests {
             .unwrap();
 
         assert!(out.height() > 0, "expected a factor row per ticker");
-        assert!(out.column("annualized_volatility").is_ok());
-        assert!(out.column("cum_return").is_ok());
-        assert!(out.column("sma").is_ok());
-        assert!(out.column("mean_return").is_ok());
-        assert!(out.column("price_zscore").is_ok());
-        assert!(out.column("annualized_return").is_ok());
-        assert!(out.column("sharpe").is_ok());
-        assert!(out.column("sortino").is_ok());
-        assert!(out.column("autocorrelation").is_ok());
-        assert!(out.column("information_discreteness").is_ok());
-        assert!(out.column("carry").is_ok());
-        assert!(out.column("beta").is_ok());
+
+        // Pin real values for a known fixture ticker (the value lookups also
+        // prove every column exists); schema presence alone would pass on
+        // all-NaN output.
+        let ticker_column = out.column("ticker").unwrap().str().unwrap();
+        let btc_row = (0..out.height())
+            .find(|row| ticker_column.get(*row) == Some("BTC"))
+            .expect("BTC present in the fixture");
+        let btc_volatility = out
+            .column("annualized_volatility")
+            .unwrap()
+            .f64()
+            .unwrap()
+            .get(btc_row)
+            .expect("BTC volatility computed");
+        assert!(
+            btc_volatility.is_finite() && btc_volatility > 0.0,
+            "BTC volatility must be a positive finite number, got {btc_volatility}"
+        );
+        let btc_cum_return = out
+            .column("cum_return")
+            .unwrap()
+            .f64()
+            .unwrap()
+            .get(btc_row)
+            .expect("BTC cum_return computed");
+        assert!(
+            btc_cum_return.is_finite() && btc_cum_return > 0.0,
+            "the fixture's BTC closes rise over the lookback window, so \
+             cum_return must be positive, got {btc_cum_return}"
+        );
+
+        // The fixture's BTC series varies, so every series-derived factor must
+        // be a real number for BTC, not null.
+        for factor_column in [
+            "sma",
+            "mean_return",
+            "price_zscore",
+            "annualized_return",
+            "sharpe",
+            "sortino",
+            "autocorrelation",
+            "information_discreteness",
+            "beta",
+            "volume_24h",
+        ] {
+            let value = out
+                .column(factor_column)
+                .unwrap()
+                .f64()
+                .unwrap()
+                .get(btc_row);
+            assert!(
+                value.is_some_and(f64::is_finite),
+                "BTC {factor_column} must be a finite number, got {value:?}"
+            );
+        }
+
+        // No funding file was written, so carry must be null - the documented
+        // no-funding-data behavior (the carry join is covered with real data by
+        // compute_factors_joins_latest_carry_from_funding_file).
+        let btc_carry = out.column("carry").unwrap().f64().unwrap().get(btc_row);
+        assert!(
+            btc_carry.is_none(),
+            "carry must be null without funding data, got {btc_carry:?}"
+        );
+
         assert!(crate::logs_contain_at(
-            tracing::Level::INFO,
+            tracing::Level::DEBUG,
             &["factors computed"]
         ));
     }

@@ -1713,6 +1713,15 @@ mod tests {
             assert!(value_at_risk > 0.0, "VaR must be a positive loss fraction");
             assert!(conditional >= value_at_risk, "CVaR must dominate VaR");
         }
+
+        let max_drawdown = body["drawdown"]["maxDrawdown"]
+            .as_f64()
+            .expect("maxDrawdown is a number");
+        assert!((0.0..=1.0).contains(&max_drawdown));
+        assert!(
+            body["drawdown"]["peakToTroughPeriods"].as_u64().is_some(),
+            "peakToTroughPeriods is an integer"
+        );
     }
 
     #[test]

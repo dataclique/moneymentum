@@ -183,6 +183,24 @@ pub(crate) struct Drawdown {
     peak_to_trough_periods: usize,
 }
 
+/// The shrunk correlation matrix across held positions over the measurement
+/// window.
+///
+/// Estimated on per-asset log returns: the sample covariance is shrunk toward
+/// the constant-correlation target with the closed-form Ledoit-Wolf intensity
+/// before converting to correlations, regularizing near-degenerate sample
+/// estimates (methodology doc, decision 2). The reported matrix is the shrunk
+/// one; `shrinkage_intensity` in `[0, 1]` says how far it moved from the
+/// sample estimate (`0` = pure sample covariance).
+#[derive(Debug, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct CorrelationReport {
+    tickers: Vec<String>,
+    /// Row-major entries ordered like `tickers`; symmetric with unit diagonal.
+    matrix: Vec<Vec<f64>>,
+    shrinkage_intensity: f64,
+}
+
 /// Risk analytics for the active portfolio: the resolved measurement contract
 /// plus every metric computed under it.
 #[derive(Debug, Serialize)]
@@ -191,6 +209,7 @@ pub(crate) struct RiskResponse {
     contract: MeasurementContract,
     tail_risk: Vec<TailRisk>,
     drawdown: Drawdown,
+    correlation: CorrelationReport,
 }
 
 /// Errors from assessing risk: contract validation, candle data access, or a
@@ -211,6 +230,8 @@ pub(crate) enum RiskAssessmentError {
         "only {observations} portfolio returns in the window, need at least {MIN_PORTFOLIO_RETURNS}"
     )]
     InsufficientObservations { observations: usize },
+    #[error("ticker {ticker} has zero return variance in the window, correlation is undefined")]
+    ZeroVarianceTicker { ticker: String },
 }
 
 /// Assesses the active portfolio's risk: resolves the measurement contract,
@@ -227,13 +248,16 @@ pub(crate) async fn assess_risk(
         .await?
         .ok_or(RiskAssessmentError::NoData { path })?;
 
-    let portfolio_returns = portfolio_simple_returns(&candles, &contract, &request.weights)?;
+    let log_returns_by_ticker = log_returns_in_window(&candles, &contract, &request.weights)?;
+    let portfolio_returns = aggregate_in_simple_space(&log_returns_by_ticker, &request.weights)?;
     let tail_risk = compute_tail_risk(&portfolio_returns, &contract.confidence_levels)?;
     let drawdown = compute_drawdown(&portfolio_returns);
+    let correlation = compute_correlation(&log_returns_by_ticker)?;
     debug!(
         observations = portfolio_returns.len(),
         levels = tail_risk.len(),
         max_drawdown = drawdown.max_drawdown,
+        shrinkage_intensity = correlation.shrinkage_intensity,
         "risk metrics computed"
     );
 
@@ -241,6 +265,7 @@ pub(crate) async fn assess_risk(
         contract,
         tail_risk,
         drawdown,
+        correlation,
     })
 }
 
@@ -326,21 +351,307 @@ fn parse_date(value: &str) -> Result<NaiveDate, RiskError> {
     })
 }
 
-/// The portfolio's simple-return series over the contract window at the
-/// contract sampling frequency, ordered chronologically.
-///
-/// Per-asset log returns are aggregated in simple-return space
-/// (`sum_i w_i * (exp(r_i) - 1)`) on the dates where every weighted ticker has
-/// a return.
-fn portfolio_simple_returns(
+/// Each weighted ticker's log returns over the contract window at the contract
+/// sampling frequency -- the shared estimation input for every metric.
+fn log_returns_in_window(
     candles: &DataFrame,
     contract: &MeasurementContract,
     weights: &HashMap<String, f64>,
-) -> Result<Vec<f64>, RiskAssessmentError> {
+) -> Result<BTreeMap<String, BTreeMap<NaiveDate, f64>>, RiskAssessmentError> {
     let closes_by_ticker = window_closes_by_ticker(candles, contract.window, weights)?;
     let sampled_closes = sample_closes(closes_by_ticker, contract.sampling_frequency);
-    let log_returns_by_ticker = per_ticker_log_returns(sampled_closes);
-    aggregate_in_simple_space(&log_returns_by_ticker, weights)
+    Ok(per_ticker_log_returns(sampled_closes))
+}
+
+/// The Ledoit-Wolf-shrunk correlation matrix over the tickers' log returns on
+/// their common dates.
+///
+/// The sample covariance (maximum-likelihood, `1/T`) is shrunk toward the
+/// constant-correlation target with the closed-form optimal intensity
+/// (Ledoit & Wolf 2004, "Honey, I Shrunk the Sample Covariance Matrix"), then
+/// converted to a correlation matrix.
+fn compute_correlation(
+    log_returns_by_ticker: &BTreeMap<String, BTreeMap<NaiveDate, f64>>,
+) -> Result<CorrelationReport, RiskAssessmentError> {
+    let DemeanedReturns {
+        tickers,
+        demeaned_columns,
+        observations,
+    } = demeaned_return_columns(log_returns_by_ticker)?;
+    let scale = f64::from(observations);
+
+    let covariance: Vec<Vec<f64>> = demeaned_columns
+        .iter()
+        .map(|left_column| {
+            demeaned_columns
+                .iter()
+                .map(|right_column| inner_product(left_column, right_column) / scale)
+                .collect()
+        })
+        .collect();
+    let variances: Vec<f64> = demeaned_columns
+        .iter()
+        .map(|column| inner_product(column, column) / scale)
+        .collect();
+    if let Some((ticker, _)) = tickers
+        .iter()
+        .zip(&variances)
+        .find(|(_, variance)| **variance <= 0.0)
+    {
+        return Err(RiskAssessmentError::ZeroVarianceTicker {
+            ticker: ticker.clone(),
+        });
+    }
+
+    let average_correlation = average_pairwise_correlation(&covariance, &variances);
+    let shrinkage_intensity = ledoit_wolf_intensity(
+        &demeaned_columns,
+        &covariance,
+        &variances,
+        average_correlation,
+        scale,
+    );
+
+    let matrix: Vec<Vec<f64>> = variances
+        .iter()
+        .zip(&covariance)
+        .enumerate()
+        .map(|(row_index, (left_variance, covariance_row))| {
+            variances
+                .iter()
+                .zip(covariance_row)
+                .enumerate()
+                .map(|(col_index, (right_variance, sample_entry))| {
+                    if row_index == col_index {
+                        return 1.0;
+                    }
+                    let denominator = (left_variance * right_variance).sqrt();
+                    let target_entry = average_correlation * denominator;
+                    let shrunk_entry =
+                        shrinkage_intensity.mul_add(target_entry - sample_entry, *sample_entry);
+
+                    shrunk_entry / denominator
+                })
+                .collect()
+        })
+        .collect();
+
+    Ok(CorrelationReport {
+        tickers,
+        matrix,
+        shrinkage_intensity,
+    })
+}
+
+/// Per-ticker demeaned log-return columns on the dates shared by every ticker.
+struct DemeanedReturns {
+    tickers: Vec<String>,
+    demeaned_columns: Vec<Vec<f64>>,
+    observations: u32,
+}
+
+/// Demeans each ticker's log returns on the dates shared by every ticker.
+fn demeaned_return_columns(
+    log_returns_by_ticker: &BTreeMap<String, BTreeMap<NaiveDate, f64>>,
+) -> Result<DemeanedReturns, RiskAssessmentError> {
+    let common_dates: BTreeSet<NaiveDate> = log_returns_by_ticker
+        .values()
+        .map(|log_returns| log_returns.keys().copied().collect::<BTreeSet<NaiveDate>>())
+        .reduce(|common, dates| common.intersection(&dates).copied().collect())
+        .unwrap_or_default();
+    let observations = common_dates.len();
+    if observations < MIN_PORTFOLIO_RETURNS {
+        return Err(RiskAssessmentError::InsufficientObservations { observations });
+    }
+    let observations = u32::try_from(observations)
+        .map_err(|_| RiskAssessmentError::InsufficientObservations { observations: 0 })?;
+    let scale = f64::from(observations);
+
+    let tickers: Vec<String> = log_returns_by_ticker.keys().cloned().collect();
+    let demeaned_columns: Vec<Vec<f64>> = log_returns_by_ticker
+        .values()
+        .map(|log_returns| {
+            let column: Vec<f64> = common_dates
+                .iter()
+                .filter_map(|date| log_returns.get(date).copied())
+                .collect();
+            let mean: f64 = column.iter().sum::<f64>() / scale;
+
+            column.iter().map(|log_return| log_return - mean).collect()
+        })
+        .collect();
+
+    Ok(DemeanedReturns {
+        tickers,
+        demeaned_columns,
+        observations,
+    })
+}
+
+/// Sum of elementwise products of two equally long columns.
+fn inner_product(left_column: &[f64], right_column: &[f64]) -> f64 {
+    left_column
+        .iter()
+        .zip(right_column)
+        .map(|(left_value, right_value)| left_value * right_value)
+        .sum()
+}
+
+/// Mean of the sample correlations over distinct ticker pairs; zero for a
+/// single-ticker portfolio, where the constant-correlation target has no
+/// off-diagonal entries.
+fn average_pairwise_correlation(covariance: &[Vec<f64>], variances: &[f64]) -> f64 {
+    let pair_correlations: Vec<f64> = covariance
+        .iter()
+        .zip(variances)
+        .enumerate()
+        .flat_map(|(row_index, (covariance_row, left_variance))| {
+            covariance_row
+                .iter()
+                .zip(variances)
+                .skip(row_index + 1)
+                .map(move |(sample_entry, right_variance)| {
+                    sample_entry / (left_variance * right_variance).sqrt()
+                })
+        })
+        .collect();
+    if pair_correlations.is_empty() {
+        return 0.0;
+    }
+
+    let pair_count = u32::try_from(pair_correlations.len()).unwrap_or(u32::MAX);
+    pair_correlations.iter().sum::<f64>() / f64::from(pair_count)
+}
+
+/// The closed-form optimal shrinkage intensity toward the constant-correlation
+/// target (Ledoit & Wolf 2004): `clamp(((pi - rho) / gamma) / T, 0, 1)`, where
+/// `pi` estimates the variance of the sample covariance entries, `rho` its
+/// covariance with the target, and `gamma` the target's distance from the
+/// sample. A sample already on the target (`gamma = 0`) needs no shrinkage.
+fn ledoit_wolf_intensity(
+    demeaned_columns: &[Vec<f64>],
+    covariance: &[Vec<f64>],
+    variances: &[f64],
+    average_correlation: f64,
+    scale: f64,
+) -> f64 {
+    let pi_estimate: f64 = demeaned_columns
+        .iter()
+        .zip(covariance)
+        .map(|(left_column, covariance_row)| {
+            demeaned_columns
+                .iter()
+                .zip(covariance_row)
+                .map(|(right_column, sample_entry)| {
+                    left_column
+                        .iter()
+                        .zip(right_column)
+                        .map(|(left_value, right_value)| {
+                            (left_value * right_value - sample_entry).powi(2)
+                        })
+                        .sum::<f64>()
+                        / scale
+                })
+                .sum::<f64>()
+        })
+        .sum();
+
+    let rho_diagonal: f64 = demeaned_columns
+        .iter()
+        .zip(variances)
+        .map(|(column, variance)| {
+            column
+                .iter()
+                .map(|value| (value * value - variance).powi(2))
+                .sum::<f64>()
+                / scale
+        })
+        .sum();
+    let rho_off_diagonal: f64 = demeaned_columns
+        .iter()
+        .zip(variances)
+        .zip(covariance)
+        .enumerate()
+        .map(
+            |(row_index, ((left_column, left_variance), covariance_row))| {
+                demeaned_columns
+                    .iter()
+                    .zip(variances)
+                    .zip(covariance_row)
+                    .enumerate()
+                    .filter(|(col_index, _)| *col_index != row_index)
+                    .map(|(_, ((right_column, right_variance), sample_entry))| {
+                        let theta_left = asymptotic_covariance_with_variance(
+                            left_column,
+                            right_column,
+                            *left_variance,
+                            *sample_entry,
+                            scale,
+                        );
+                        let theta_right = asymptotic_covariance_with_variance(
+                            right_column,
+                            left_column,
+                            *right_variance,
+                            *sample_entry,
+                            scale,
+                        );
+
+                        (average_correlation / 2.0)
+                            * (right_variance / left_variance).sqrt().mul_add(
+                                theta_left,
+                                (left_variance / right_variance).sqrt() * theta_right,
+                            )
+                    })
+                    .sum::<f64>()
+            },
+        )
+        .sum();
+    let rho_estimate = rho_diagonal + rho_off_diagonal;
+
+    let gamma_estimate: f64 = variances
+        .iter()
+        .zip(covariance)
+        .enumerate()
+        .map(|(row_index, (left_variance, covariance_row))| {
+            variances
+                .iter()
+                .zip(covariance_row)
+                .enumerate()
+                .filter(|(col_index, _)| *col_index != row_index)
+                .map(|(_, (right_variance, sample_entry))| {
+                    average_correlation
+                        .mul_add((left_variance * right_variance).sqrt(), -sample_entry)
+                        .powi(2)
+                })
+                .sum::<f64>()
+        })
+        .sum();
+
+    if gamma_estimate <= f64::EPSILON {
+        return 0.0;
+    }
+
+    (((pi_estimate - rho_estimate) / gamma_estimate) / scale).clamp(0.0, 1.0)
+}
+
+/// `theta` term of the Ledoit-Wolf `rho`: the asymptotic covariance between a
+/// ticker's sample variance and a pair's sample covariance,
+/// `(1/T) sum_t (x_t^2 - s_xx)(x_t y_t - s_xy)`.
+fn asymptotic_covariance_with_variance(
+    own_column: &[f64],
+    other_column: &[f64],
+    own_variance: f64,
+    sample_entry: f64,
+    scale: f64,
+) -> f64 {
+    own_column
+        .iter()
+        .zip(other_column)
+        .map(|(own_value, other_value)| {
+            (own_value * own_value - own_variance) * (own_value * other_value - sample_entry)
+        })
+        .sum::<f64>()
+        / scale
 }
 
 /// Historical VaR and Acerbi-Tasche CVaR of the portfolio return series at
@@ -818,6 +1129,17 @@ mod tests {
         .unwrap()
     }
 
+    /// Runs the shared return pipeline (window, sampling, log returns) and the
+    /// simple-space aggregation for a request, as `assess_risk` does.
+    fn portfolio_returns_for(
+        candles: &DataFrame,
+        request: &RiskRequest,
+    ) -> Result<Vec<f64>, RiskAssessmentError> {
+        let contract = resolve_contract(request).unwrap();
+        let log_returns = log_returns_in_window(candles, &contract, &request.weights)?;
+        aggregate_in_simple_space(&log_returns, &request.weights)
+    }
+
     #[test]
     fn aggregates_portfolio_returns_in_simple_space() {
         let candles = candle_frame(&[
@@ -829,9 +1151,8 @@ mod tests {
             ("2024-01-03", "ETH", 189.0),
         ]);
         let request = request_with(&[("BTC", 0.5), ("ETH", 0.5)]);
-        let contract = resolve_contract(&request).unwrap();
 
-        let returns = portfolio_simple_returns(&candles, &contract, &request.weights).unwrap();
+        let returns = portfolio_returns_for(&candles, &request).unwrap();
 
         // Simple-space aggregation: r_p = sum_i w_i * (close_t/close_{t-1} - 1),
         // NOT exp(sum of weighted log returns) - 1.
@@ -853,9 +1174,8 @@ mod tests {
         let candles = candle_frame(&rows);
         let mut request = request_with(&[("BTC", 1.0)]);
         request.sampling_frequency = Some(SamplingFrequency::Weekly);
-        let contract = resolve_contract(&request).unwrap();
 
-        let returns = portfolio_simple_returns(&candles, &contract, &request.weights).unwrap();
+        let returns = portfolio_returns_for(&candles, &request).unwrap();
 
         // Week-end closes are Jan 7 (107), Jan 14 (114), Jan 15 (115).
         assert_eq!(returns.len(), 2);
@@ -878,9 +1198,8 @@ mod tests {
         let candles = candle_frame(&rows);
         let mut request = request_with(&[("BTC", 1.0)]);
         request.lookback_days = Some(30);
-        let contract = resolve_contract(&request).unwrap();
 
-        let returns = portfolio_simple_returns(&candles, &contract, &request.weights).unwrap();
+        let returns = portfolio_returns_for(&candles, &request).unwrap();
 
         // 30 lookback days anchored on the latest close keep 31 closes -> 30 returns.
         assert_eq!(returns.len(), 30);
@@ -902,9 +1221,8 @@ mod tests {
         let mut request = request_with(&[("BTC", 1.0)]);
         request.start_date = Some("2024-01-01".to_string());
         request.end_date = Some("2024-01-31".to_string());
-        let contract = resolve_contract(&request).unwrap();
 
-        let returns = portfolio_simple_returns(&candles, &contract, &request.weights).unwrap();
+        let returns = portfolio_returns_for(&candles, &request).unwrap();
 
         // Jan 1 through Jan 31 inclusive is 31 closes -> 30 returns.
         assert_eq!(returns.len(), 30);
@@ -914,9 +1232,8 @@ mod tests {
     fn errors_when_a_weighted_ticker_has_no_data_in_window() {
         let candles = candle_frame(&[("2024-01-01", "BTC", 100.0), ("2024-01-02", "BTC", 110.0)]);
         let request = request_with(&[("BTC", 0.5), ("DOGE", 0.5)]);
-        let contract = resolve_contract(&request).unwrap();
 
-        let result = portfolio_simple_returns(&candles, &contract, &request.weights);
+        let result = portfolio_returns_for(&candles, &request);
 
         assert!(matches!(
             result,
@@ -928,9 +1245,8 @@ mod tests {
     fn errors_when_the_window_yields_too_few_returns() {
         let candles = candle_frame(&[("2024-01-01", "BTC", 100.0), ("2024-01-02", "BTC", 110.0)]);
         let request = request_with(&[("BTC", 1.0)]);
-        let contract = resolve_contract(&request).unwrap();
 
-        let result = portfolio_simple_returns(&candles, &contract, &request.weights);
+        let result = portfolio_returns_for(&candles, &request);
 
         assert!(matches!(
             result,
@@ -996,6 +1312,191 @@ mod tests {
                 prop_assert!(
                     pair[1].conditional_value_at_risk >= pair[0].conditional_value_at_risk - 1e-12
                 );
+            }
+        }
+    }
+
+    /// Builds the per-ticker log-return map [`compute_correlation`] consumes,
+    /// with each series keyed on consecutive dates from 2024-01-01.
+    fn log_returns_map(series: &[(&str, &[f64])]) -> BTreeMap<String, BTreeMap<NaiveDate, f64>> {
+        series
+            .iter()
+            .map(|(ticker, log_returns)| {
+                let by_date = log_returns
+                    .iter()
+                    .enumerate()
+                    .map(|(day_offset, log_return)| {
+                        let date = NaiveDate::from_ymd_opt(2024, 1, 1).unwrap()
+                            + chrono::Days::new(u64::try_from(day_offset).unwrap());
+                        (date, *log_return)
+                    })
+                    .collect();
+                ((*ticker).to_string(), by_date)
+            })
+            .collect()
+    }
+
+    /// Pearson correlation with maximum-likelihood (`1/T`) normalization, as a
+    /// reference for the two-asset case where shrinkage is a no-op.
+    fn sample_correlation(left: &[f64], right: &[f64]) -> f64 {
+        let observations = u32::try_from(left.len()).unwrap();
+        let scale = f64::from(observations);
+        let left_mean: f64 = left.iter().sum::<f64>() / scale;
+        let right_mean: f64 = right.iter().sum::<f64>() / scale;
+        let covariance: f64 = left
+            .iter()
+            .zip(right)
+            .map(|(left_value, right_value)| (left_value - left_mean) * (right_value - right_mean))
+            .sum::<f64>()
+            / scale;
+        let left_variance: f64 = left
+            .iter()
+            .map(|value| (value - left_mean).powi(2))
+            .sum::<f64>()
+            / scale;
+        let right_variance: f64 = right
+            .iter()
+            .map(|value| (value - right_mean).powi(2))
+            .sum::<f64>()
+            / scale;
+
+        covariance / (left_variance * right_variance).sqrt()
+    }
+
+    #[test]
+    fn two_asset_shrunk_correlation_equals_sample_correlation() {
+        // With two assets the constant-correlation target equals the sample
+        // covariance, so shrinkage cannot move the estimate.
+        let btc_returns = [0.01, 0.02, -0.01, 0.03];
+        let eth_returns = [0.02, 0.01, -0.02, 0.01];
+        let log_returns = log_returns_map(&[("BTC", &btc_returns), ("ETH", &eth_returns)]);
+
+        let report = compute_correlation(&log_returns).unwrap();
+
+        let expected = sample_correlation(&btc_returns, &eth_returns);
+        assert_eq!(report.tickers, vec!["BTC", "ETH"]);
+        assert!((report.matrix[0][1] - expected).abs() < 1e-12);
+        assert!((report.matrix[1][0] - expected).abs() < 1e-12);
+        assert!((report.matrix[0][0] - 1.0).abs() < 1e-12);
+        assert!((report.matrix[1][1] - 1.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn identical_assets_report_unit_correlation_without_shrinkage() {
+        let shared_returns = [0.01, -0.02, 0.03, 0.005];
+        let log_returns = log_returns_map(&[
+            ("AAA", &shared_returns),
+            ("BBB", &shared_returns),
+            ("CCC", &shared_returns),
+        ]);
+
+        let report = compute_correlation(&log_returns).unwrap();
+
+        // Perfectly correlated assets already sit on the constant-correlation
+        // target, so the intensity is zero and every entry is 1.
+        assert!(report.shrinkage_intensity.abs() < 1e-12);
+        for row in &report.matrix {
+            for entry in row {
+                assert!(
+                    (entry - 1.0).abs() < 1e-9,
+                    "expected unit correlation, got {entry}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn zero_variance_ticker_makes_correlation_undefined() {
+        let btc_returns = [0.01, 0.02, -0.01, 0.03];
+        let flat_returns = [0.0, 0.0, 0.0, 0.0];
+        let log_returns = log_returns_map(&[("BTC", &btc_returns), ("USDC", &flat_returns)]);
+
+        let result = compute_correlation(&log_returns);
+
+        assert!(matches!(
+            result,
+            Err(RiskAssessmentError::ZeroVarianceTicker { ticker }) if ticker == "USDC"
+        ));
+    }
+
+    #[test]
+    fn shrinkage_intensity_scales_inversely_with_observations() {
+        let first = [0.02, -0.01, 0.03, -0.02, 0.01, 0.04, -0.03, 0.02];
+        let second = [-0.01, 0.02, -0.02, 0.03, -0.01, 0.01, 0.02, -0.02];
+        let third = [0.03, 0.01, -0.01, 0.02, -0.03, 0.02, 0.01, -0.01];
+        let log_returns = log_returns_map(&[("AAA", &first), ("BBB", &second), ("CCC", &third)]);
+        let intensity = compute_correlation(&log_returns)
+            .unwrap()
+            .shrinkage_intensity;
+        assert!(
+            intensity > 0.0 && intensity < 1.0,
+            "fixture must produce an interior intensity, got {intensity}"
+        );
+
+        // Duplicating the sample tenfold leaves every moment estimate unchanged
+        // but divides the optimal intensity kappa/T by ten.
+        let repeat = |values: &[f64]| -> Vec<f64> { values.repeat(10) };
+        let duplicated = log_returns_map(&[
+            ("AAA", &repeat(&first)),
+            ("BBB", &repeat(&second)),
+            ("CCC", &repeat(&third)),
+        ]);
+        let duplicated_intensity = compute_correlation(&duplicated)
+            .unwrap()
+            .shrinkage_intensity;
+
+        assert!(
+            (duplicated_intensity - intensity / 10.0).abs() < 1e-12,
+            "expected {}, got {duplicated_intensity}",
+            intensity / 10.0
+        );
+    }
+
+    proptest! {
+        /// The shrunk correlation matrix is symmetric with a unit diagonal,
+        /// every entry within [-1, 1], and an intensity within [0, 1].
+        #[test]
+        fn shrunk_correlation_is_symmetric_bounded_with_unit_diagonal(
+            first in prop::collection::vec(-0.2_f64..0.2, 6..30),
+            jitter in prop::collection::vec(-0.05_f64..0.05, 6..30),
+        ) {
+            let observations = first.len().min(jitter.len());
+            prop_assume!(observations >= 6);
+            let first: Vec<f64> = first.iter().copied().take(observations).collect();
+            prop_assume!(
+                first.windows(2).any(|pair| (pair[0] - pair[1]).abs() > 1e-6)
+            );
+            // Derive two more series with index-dependent tilts so every
+            // column varies and no pair is exactly collinear.
+            let second: Vec<f64> = first
+                .iter()
+                .zip(&jitter)
+                .map(|(base, noise)| -base + noise + 0.001)
+                .collect();
+            let third: Vec<f64> = first
+                .iter()
+                .zip(jitter.iter().rev())
+                .map(|(base, noise)| 0.5 * base + 2.0 * noise - 0.002)
+                .collect();
+            prop_assume!(second.windows(2).any(|pair| (pair[0] - pair[1]).abs() > 1e-6));
+            prop_assume!(third.windows(2).any(|pair| (pair[0] - pair[1]).abs() > 1e-6));
+
+            let log_returns =
+                log_returns_map(&[("AAA", &first), ("BBB", &second), ("CCC", &third)]);
+            let report = compute_correlation(&log_returns).unwrap();
+
+            prop_assert!((0.0..=1.0).contains(&report.shrinkage_intensity));
+            for (row_index, row) in report.matrix.iter().enumerate() {
+                for (col_index, entry) in row.iter().enumerate() {
+                    if row_index == col_index {
+                        prop_assert!((entry - 1.0).abs() < 1e-12);
+                    } else {
+                        prop_assert!(entry.abs() <= 1.0 + 1e-9);
+                        prop_assert!(
+                            (entry - report.matrix[col_index][row_index]).abs() < 1e-12
+                        );
+                    }
+                }
             }
         }
     }
@@ -1073,6 +1574,13 @@ mod tests {
             "the fixture's oscillating closes must produce a real drawdown, got {}",
             response.drawdown.max_drawdown
         );
+        assert_eq!(response.correlation.tickers, vec!["BTC", "ETH"]);
+        assert!(
+            response.correlation.matrix[0][1].abs() <= 1.0,
+            "off-diagonal correlation must be within [-1, 1], got {}",
+            response.correlation.matrix[0][1]
+        );
+        assert!((0.0..=1.0).contains(&response.correlation.shrinkage_intensity));
         assert!(logs_contain_at(
             Level::DEBUG,
             &["risk metrics computed", "observations=", "max_drawdown="]

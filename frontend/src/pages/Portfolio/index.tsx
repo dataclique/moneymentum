@@ -12,6 +12,7 @@ import {
   writePreciseToggle,
 } from "./hooks/usePortfolioState"
 import { useBeta, type BetaBenchmark } from "./hooks/useBeta"
+import { useRisk } from "./hooks/useRisk"
 import {
   useHyperliquidTickers,
   useHyperliquidFundingRates,
@@ -51,6 +52,12 @@ const PortfolioPage = () => {
     () => portfolio.targetTotalNotional,
     () => portfolio.readonlyBetaPositions,
     () => bitcoinBetaBenchmark,
+  )
+
+  const riskResult = useRisk(
+    () => portfolio.targetPortfolio,
+    () => portfolio.targetTotalNotional,
+    () => portfolio.readonlyBetaPositions,
   )
 
   const tickersQuery = useHyperliquidTickers()
@@ -270,7 +277,7 @@ const PortfolioPage = () => {
                 />
               </div>
               <div class="flex-1 min-w-0">
-                <RiskPanel />
+                <RiskPanel risk={riskResult} />
               </div>
             </div>
           </div>

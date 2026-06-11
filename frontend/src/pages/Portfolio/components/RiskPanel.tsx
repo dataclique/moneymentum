@@ -1,56 +1,31 @@
-import { For } from "solid-js"
-
-const COMING_SOON = "coming soon..."
-
-const mockRiskMetrics = {
-  var95: COMING_SOON,
-  var99: COMING_SOON,
-  diversificationRatio: COMING_SOON,
-  effectiveBets: COMING_SOON,
-}
+import { For, Match, Show, Switch } from "solid-js"
+import { Skeleton } from "@/components/ui/skeleton"
+import type {
+  RiskMeasurementContract,
+  RiskReport,
+  RiskResult,
+} from "../hooks/useRisk"
 
 const mockStressTests = [
-  { scenario: "BTC -20%", portfolioImpact: COMING_SOON },
-  { scenario: "SPX -10%", portfolioImpact: COMING_SOON },
-  { scenario: "Rates +200bps", portfolioImpact: COMING_SOON },
+  { scenario: "BTC -20%", portfolioImpact: "TODO" },
+  { scenario: "SPX -10%", portfolioImpact: "TODO" },
+  { scenario: "Rates +200bps", portfolioImpact: "TODO" },
 ]
 
-const mockMonteCarlo = [
-  { bucket: -0.3, frequency: 2 },
-  { bucket: -0.2, frequency: 5 },
-  { bucket: -0.1, frequency: 9 },
-  { bucket: 0, frequency: 12 },
-  { bucket: 0.1, frequency: 8 },
-  { bucket: 0.2, frequency: 4 },
-]
+const formatPercent = (fraction: number): string =>
+  `${(fraction * 100).toFixed(1)}%`
 
-const monteCarloMaxFreq = Math.max(
-  ...mockMonteCarlo.map(monteCarloPoint => monteCarloPoint.frequency),
-)
+const formatConfidence = (confidenceLevel: number): string =>
+  `${Math.round(confidenceLevel * 100)}%`
 
-const correlationAssets = ["BTC", "ETH", "SPX", "GLD"]
+const describeContract = (contract: RiskMeasurementContract): string => {
+  const window =
+    contract.window.lookbackDays !== undefined
+      ? `${contract.window.lookbackDays}d`
+      : `${contract.window.startDate ?? "?"} → ${contract.window.endDate ?? "?"}`
 
-const correlationValues: Record<string, number> = {
-  "BTC|BTC": 1,
-  "BTC|ETH": 0.8,
-  "BTC|SPX": 0.3,
-  "BTC|GLD": 0.1,
-  "ETH|BTC": 0.8,
-  "ETH|ETH": 1,
-  "ETH|SPX": 0.25,
-  "ETH|GLD": 0.05,
-  "SPX|BTC": 0.3,
-  "SPX|ETH": 0.25,
-  "SPX|SPX": 1,
-  "SPX|GLD": -0.2,
-  "GLD|BTC": 0.1,
-  "GLD|ETH": 0.05,
-  "GLD|SPX": -0.2,
-  "GLD|GLD": 1,
+  return `${window} · ${contract.samplingFrequency}`
 }
-
-const getCorrelation = (a1: string, a2: string): number =>
-  correlationValues[`${a1}|${a2}`] ?? 0
 
 const getCorrelationColor = (value: number): string => {
   if (value >= 0.75) return "bg-emerald-500/70 text-emerald-50"
@@ -62,39 +37,167 @@ const getCorrelationColor = (value: number): string => {
   return "bg-muted text-foreground"
 }
 
-export const RiskPanel = () => {
+const RiskMetrics = (props: { report: RiskReport }) => (
+  <>
+    {/* Tail risk at each contract confidence level */}
+    <table class="w-full">
+      <thead>
+        <tr>
+          <th class="p-0.5 text-[10px] text-muted-foreground font-medium text-left">
+            Level
+          </th>
+          <th class="p-0.5 text-[10px] text-muted-foreground font-medium text-right">
+            VaR
+          </th>
+          <th class="p-0.5 text-[10px] text-muted-foreground font-medium text-right">
+            CVaR
+          </th>
+        </tr>
+      </thead>
+      <tbody>
+        <For each={props.report.tailRisk}>
+          {tailRisk => (
+            <tr>
+              <td class="p-0.5 text-muted-foreground">
+                {formatConfidence(tailRisk.confidenceLevel)}
+              </td>
+              <td class="p-0.5 text-right text-red-400 font-mono">
+                {formatPercent(tailRisk.var)}
+              </td>
+              <td class="p-0.5 text-right text-red-400 font-mono">
+                {formatPercent(tailRisk.cvar)}
+              </td>
+            </tr>
+          )}
+        </For>
+      </tbody>
+    </table>
+
+    {/* Drawdown and diversification */}
+    <div class="border-t border-border/50 pt-2 grid grid-cols-2 gap-x-4 gap-y-1">
+      <div class="flex justify-between">
+        <span class="text-muted-foreground">Max DD</span>
+        <span class="text-red-400 font-mono">
+          {formatPercent(props.report.drawdown.maxDrawdown)}
+        </span>
+      </div>
+      <div class="flex justify-between">
+        <span class="text-muted-foreground">DD Length</span>
+        <span class="font-mono">
+          {props.report.drawdown.peakToTroughPeriods}p
+        </span>
+      </div>
+      <div class="flex justify-between">
+        <span class="text-muted-foreground">Bets</span>
+        <span class="font-mono">
+          {props.report.effectiveBets.meucci.toFixed(2)}
+        </span>
+      </div>
+      <div class="flex justify-between">
+        <span class="text-muted-foreground">Bets (stress)</span>
+        <span class="font-mono">
+          {props.report.effectiveBets.stressedMeucci.toFixed(2)}
+        </span>
+      </div>
+      <div class="flex justify-between">
+        <span class="text-muted-foreground">1/HHI</span>
+        <span class="font-mono">
+          {props.report.effectiveBets.inverseHerfindahl.toFixed(2)}
+        </span>
+      </div>
+    </div>
+
+    {/* Correlation heatmap (Ledoit-Wolf shrunk) */}
+    <div class="border-t border-border/50 pt-2">
+      <div class="text-[10px] text-muted-foreground font-medium mb-1.5">
+        Correlation (shrunk{" "}
+        {formatPercent(props.report.correlation.shrinkageIntensity)})
+      </div>
+      <table class="w-full">
+        <thead>
+          <tr>
+            <th class="p-0.5" />
+            <For each={props.report.correlation.tickers}>
+              {columnTicker => (
+                <th class="p-0.5 text-[10px] text-muted-foreground font-medium text-center">
+                  {columnTicker}
+                </th>
+              )}
+            </For>
+          </tr>
+        </thead>
+        <tbody>
+          <For each={props.report.correlation.matrix}>
+            {(matrixRow, rowIndex) => (
+              <tr>
+                <td class="p-0.5 text-[10px] text-muted-foreground font-medium">
+                  {props.report.correlation.tickers[rowIndex()]}
+                </td>
+                <For each={matrixRow}>
+                  {(correlation, columnIndex) => (
+                    <td class="p-0.5 text-center">
+                      <div
+                        class={`w-full h-4 flex items-center justify-center rounded text-[9px] font-mono ${getCorrelationColor(
+                          correlation,
+                        )} ${rowIndex() === columnIndex() ? "opacity-40" : ""}`}
+                      >
+                        {correlation.toFixed(1)}
+                      </div>
+                    </td>
+                  )}
+                </For>
+              </tr>
+            )}
+          </For>
+        </tbody>
+      </table>
+    </div>
+  </>
+)
+
+export const RiskPanel = (props: { risk: RiskResult }) => {
   return (
     <div class="flex-1 border border-border rounded flex flex-col min-w-0">
-      <div class="px-2 py-1 border-b border-border bg-muted/30 font-medium">
-        RISK
+      <div class="px-2 py-1 border-b border-border bg-muted/30 font-medium flex items-center justify-between">
+        <span>RISK</span>
+        <Show when={props.risk.report}>
+          {report => (
+            <span class="text-[10px] text-muted-foreground font-normal">
+              {describeContract(report().contract)}
+            </span>
+          )}
+        </Show>
       </div>
       <div class="flex-1 flex flex-col p-2 gap-3 overflow-auto scrollbar-hide">
-        {/* Top metrics */}
-        <div class="grid grid-cols-2 gap-x-4 gap-y-1">
-          <div class="flex justify-between">
-            <span class="text-muted-foreground">VaR 95%</span>
-            <span class="text-red-400 font-mono">{mockRiskMetrics.var95}</span>
-          </div>
-          <div class="flex justify-between">
-            <span class="text-muted-foreground">VaR 99%</span>
-            <span class="text-red-400 font-mono">{mockRiskMetrics.var99}</span>
-          </div>
-          <div class="flex justify-between">
-            <span class="text-muted-foreground">Diversification</span>
-            <span class="font-mono">
-              {mockRiskMetrics.diversificationRatio}
-            </span>
-          </div>
-          <div class="flex justify-between">
-            <span class="text-muted-foreground">Effective Bets</span>
-            <span class="font-mono">{mockRiskMetrics.effectiveBets}</span>
-          </div>
-        </div>
+        <Switch>
+          <Match when={props.risk.isLoading}>
+            <div class="space-y-2" data-testid="risk-loading">
+              <Skeleton class="h-4 w-full" />
+              <Skeleton class="h-4 w-3/4" />
+              <Skeleton class="h-4 w-5/6" />
+            </div>
+          </Match>
+          <Match when={props.risk.error}>
+            {error => (
+              <div class="text-red-400" data-testid="risk-error">
+                Risk metrics unavailable: {error().message}
+              </div>
+            )}
+          </Match>
+          <Match when={props.risk.report}>
+            {report => <RiskMetrics report={report()} />}
+          </Match>
+          <Match when={true}>
+            <div class="text-muted-foreground">
+              Add positions to see risk metrics
+            </div>
+          </Match>
+        </Switch>
 
-        {/* Stress tests */}
+        {/* Stress tests (not implemented in the backend yet) */}
         <div class="border-t border-border/50 pt-2">
           <div class="text-[10px] text-muted-foreground font-medium mb-1.5">
-            Stress Tests
+            Stress Tests TODO
           </div>
           <div class="space-y-1">
             <For each={mockStressTests}>
@@ -110,77 +213,6 @@ export const RiskPanel = () => {
               )}
             </For>
           </div>
-        </div>
-
-        {/* Monte Carlo */}
-        <div class="border-t border-border/50 pt-2">
-          <div class="text-[10px] text-muted-foreground font-medium mb-1.5">
-            Monte Carlo (1 Year) — coming soon...
-          </div>
-          <div class="flex items-end gap-px h-12">
-            <For each={mockMonteCarlo}>
-              {monteCarloPoint => (
-                <div
-                  class="flex-1"
-                  style={{
-                    "height": `${
-                      (monteCarloPoint.frequency / monteCarloMaxFreq) * 100
-                    }%`,
-                    "background-color":
-                      monteCarloPoint.bucket >= 0 ? "#22c55e" : "#ef4444",
-                  }}
-                />
-              )}
-            </For>
-          </div>
-        </div>
-
-        {/* Correlation heatmap */}
-        <div class="border-t border-border/50 pt-2">
-          <div class="text-[10px] text-muted-foreground font-medium mb-1.5">
-            Correlation — coming soon...
-          </div>
-          <table class="w-full">
-            <thead>
-              <tr>
-                <th class="p-0.5" />
-                <For each={correlationAssets}>
-                  {columnAsset => (
-                    <th class="p-0.5 text-[10px] text-muted-foreground font-medium text-center">
-                      {columnAsset}
-                    </th>
-                  )}
-                </For>
-              </tr>
-            </thead>
-            <tbody>
-              <For each={correlationAssets}>
-                {rowAsset => (
-                  <tr>
-                    <td class="p-0.5 text-[10px] text-muted-foreground font-medium">
-                      {rowAsset}
-                    </td>
-                    <For each={correlationAssets}>
-                      {colAsset => {
-                        const corr = getCorrelation(rowAsset, colAsset)
-                        return (
-                          <td class="p-0.5 text-center">
-                            <div
-                              class={`w-full h-4 flex items-center justify-center rounded text-[9px] font-mono ${getCorrelationColor(
-                                corr,
-                              )} ${rowAsset === colAsset ? "opacity-40" : ""}`}
-                            >
-                              {corr.toFixed(1)}
-                            </div>
-                          </td>
-                        )
-                      }}
-                    </For>
-                  </tr>
-                )}
-              </For>
-            </tbody>
-          </table>
         </div>
       </div>
     </div>

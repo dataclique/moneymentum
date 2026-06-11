@@ -111,6 +111,9 @@ of them.
 - [x] Move user stories from repo files to GitHub issues --
       [#341](https://github.com/dataclique/moneymentum/issues/341) /
       [#342](https://github.com/dataclique/moneymentum/pull/342)
+- [x] Risk metrics: historical VaR/CVaR --
+      [#343](https://github.com/dataclique/moneymentum/issues/343) /
+      [#344](https://github.com/dataclique/moneymentum/pull/344)
 
 ---
 
@@ -208,8 +211,11 @@ Portfolio risk assessment beyond beta and crash-specific simulations.
 - [ ] [Show Risk Analytics For Active Portfolio](https://github.com/data-cartel/moneymentum/issues/331)
       -- measurement contract shipped
       ([#283](https://github.com/data-cartel/moneymentum/issues/283) /
-      [#284](https://github.com/data-cartel/moneymentum/pull/284)); VaR/CVaR,
-      correlation, drawdown, ENB, Monte Carlo metrics and the frontend pending
+      [#284](https://github.com/data-cartel/moneymentum/pull/284)); historical
+      VaR/CVaR shipped
+      ([#343](https://github.com/data-cartel/moneymentum/issues/343) /
+      [#344](https://github.com/data-cartel/moneymentum/pull/344)); correlation,
+      drawdown, ENB, Monte Carlo metrics and the frontend pending
 
 ---
 

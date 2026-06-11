@@ -15,6 +15,8 @@ use chrono::{DateTime, Utc};
 /// Daily candles needed for a 365-calendar-day log-return window.
 pub const LOG_RETURNS_LOOKBACK_CANDLES: usize = 366;
 
+const PRICE_STDDEV_EPS: f64 = 1e-8;
+
 use polars::datatypes::AnyValue;
 use polars::prelude::{
     ChunkApply, DataFrame, DataFrameJoinOps, IntoLazy, IntoSeries, JoinArgs, JoinType, JsonFormat,
@@ -510,7 +512,7 @@ fn per_ticker_factors(
         // price z-score = (latest close - SMA) / price stddev; undefined (null)
         // when there is no price dispersion (constant prices over the window).
         .with_column(
-            when(col("price_stddev").neq(lit(0.0)))
+            when(col("price_stddev").gt(lit(PRICE_STDDEV_EPS)))
                 .then((col("last_close") - col("sma")) / col("price_stddev"))
                 .otherwise(lit(NULL))
                 .alias("price_zscore"),
@@ -837,6 +839,29 @@ mod tests {
         assert!(
             zscore.is_none(),
             "constant prices give an undefined (null) z-score, got {zscore:?}"
+        );
+    }
+
+    #[test]
+    fn per_ticker_factors_treat_near_zero_price_stddev_as_undefined_zscore() {
+        let tiny_move = PRICE_STDDEV_EPS / 100.0;
+        let candles = df! {
+            "timestamp" => &["0", "1", "2", "3"],
+            "ticker" => &["BTC", "BTC", "BTC", "BTC"],
+            "close" => &[100.0, 100.0 + tiny_move, 100.0, 100.0 + tiny_move],
+        }
+        .unwrap();
+        let config = TimeframeConfig {
+            lookback_periods: 10,
+            annualized_factor: 365.0,
+        };
+
+        let out = per_ticker_factors(&candles, &config).unwrap();
+        let zscore = out.column("price_zscore").unwrap().f64().unwrap().get(0);
+
+        assert!(
+            zscore.is_none(),
+            "near-zero price dispersion gives an undefined (null) z-score, got {zscore:?}"
         );
     }
 

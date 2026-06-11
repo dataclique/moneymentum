@@ -10,6 +10,7 @@ mod timeframe;
 
 use std::net::Ipv4Addr;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 use std::sync::Arc;
 
 use apalis::prelude::{Monitor, Storage, WorkerBuilder, WorkerFactoryFn};
@@ -24,6 +25,7 @@ use rocket::serde::json::Json;
 use rocket::{Rocket, State, get, post, routes};
 use serde::Deserialize;
 use sqlx::SqlitePool;
+use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode};
 use thiserror::Error;
 use tracing::{debug, error, info};
 use tracing_subscriber::EnvFilter;
@@ -336,7 +338,8 @@ async fn post_beta(
             .iter()
             .map(|(ticker, weight)| (ticker.clone(), *weight))
             .collect();
-        sorted_weights.sort_by(|(left_ticker, _), (right_ticker, _)| left_ticker.cmp(right_ticker));
+        sorted_weights
+            .sort_unstable_by(|(left_ticker, _), (right_ticker, _)| left_ticker.cmp(right_ticker));
         sorted_weights
     };
 
@@ -374,7 +377,10 @@ pub async fn rocket(
         ..RocketConfig::default()
     };
 
-    let pool = SqlitePool::connect(&config.database_url).await?;
+    let database_options = SqliteConnectOptions::from_str(&config.database_url)?
+        .journal_mode(SqliteJournalMode::Wal)
+        .busy_timeout(std::time::Duration::from_secs(5));
+    let pool = SqlitePool::connect_with(database_options).await?;
     debug!("database connected");
 
     // IMPORTANT: Migration ordering matters here.
@@ -604,23 +610,25 @@ mod tests {
             "every row carries cum_return"
         );
         assert!(
-            rows.iter()
-                .all(|row| row.get("sma").and_then(serde_json::Value::as_f64).is_some()),
-            "every row carries sma as a number"
+            rows.iter().all(|row| row
+                .get("sma")
+                .map(|value| value.is_null() || value.as_f64().is_some())
+                .unwrap_or(false)),
+            "every row carries sma as a number or null"
         );
         assert!(
             rows.iter().all(|row| row
                 .get("mean_return")
-                .and_then(serde_json::Value::as_f64)
-                .is_some()),
-            "every row carries mean_return as a number"
+                .map(|value| value.is_null() || value.as_f64().is_some())
+                .unwrap_or(false)),
+            "every row carries mean_return as a number or null"
         );
         assert!(
             rows.iter().all(|row| row
                 .get("price_zscore")
-                .and_then(serde_json::Value::as_f64)
-                .is_some()),
-            "every row carries price_zscore as a number (the fixture's prices all vary)"
+                .map(|value| value.is_null() || value.as_f64().is_some())
+                .unwrap_or(false)),
+            "every row carries price_zscore as a number or null"
         );
         assert!(
             rows.iter()

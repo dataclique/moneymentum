@@ -120,6 +120,31 @@ fn load_log_returns_last_n_candles(
     benchmark_ticker: &str,
     lookback: usize,
 ) -> Result<DataFrame, ReturnsError> {
+    let benchmark_ticker_df = DataFrame::new(vec![
+        Series::new("ticker".into(), vec![benchmark_ticker.to_string()]).into(),
+    ])?;
+    let benchmark_rows = df.join(
+        &benchmark_ticker_df,
+        ["ticker"],
+        ["ticker"],
+        JoinArgs::new(JoinType::Inner),
+        None,
+    )?;
+    let benchmark_timestamp_col = benchmark_rows.column("timestamp")?;
+    let benchmark_unique_timestamps = benchmark_timestamp_col
+        .unique()?
+        .sort(SortOptions::default())?;
+    let benchmark_timestamp_series = benchmark_unique_timestamps.as_materialized_series().clone();
+    let timestamp_count = benchmark_timestamp_series.len();
+    let start = i64::try_from(timestamp_count.saturating_sub(lookback)).unwrap_or(0);
+    let last_benchmark_timestamps =
+        benchmark_timestamp_series.slice(start, lookback.min(timestamp_count));
+    let ts_window_df = DataFrame::new(vec![
+        last_benchmark_timestamps
+            .with_name("timestamp".into())
+            .into(),
+    ])?;
+
     let tickers: Vec<String> = weights
         .iter()
         .map(|(ticker, _)| ticker.clone())
@@ -136,14 +161,6 @@ fn load_log_returns_last_n_candles(
         JoinArgs::new(JoinType::Inner),
         None,
     )?;
-
-    let ts_col = filtered.column("timestamp")?;
-    let unique_ts = ts_col.unique()?.sort(SortOptions::default())?;
-    let ts_series = unique_ts.as_materialized_series().clone();
-    let n_ts = ts_series.len();
-    let start = i64::try_from(n_ts.saturating_sub(lookback)).unwrap_or(0);
-    let last_ts_series = ts_series.slice(start, lookback.min(n_ts));
-    let ts_window_df = DataFrame::new(vec![last_ts_series.with_name("timestamp".into()).into()])?;
 
     let windowed = filtered.join(
         &ts_window_df,
@@ -501,6 +518,59 @@ mod tests {
         let weights = [("BTC".to_string(), 1.0)];
         let result = compute_beta_from_log_returns(&log_returns_df, &weights, "BTC");
         assert!(matches!(result, Err(ReturnsError::BetaUndefined)));
+    }
+
+    #[traced_test]
+    #[test]
+    fn load_log_returns_window_uses_benchmark_timestamps() {
+        let candles = df! {
+            "timestamp" => &[
+                "2024-01-01T00:00:00Z", "2024-01-02T00:00:00Z", "2024-01-03T00:00:00Z",
+                "2024-01-01T00:00:00Z", "2024-01-02T00:00:00Z", "2024-01-03T00:00:00Z",
+                "2024-01-04T00:00:00Z", "2024-01-05T00:00:00Z",
+            ],
+            "ticker" => &["BTC", "BTC", "BTC", "ETH", "ETH", "ETH", "ETH", "ETH"],
+            "close" => &[100.0_f64, 101.0, 102.0, 50.0, 51.0, 52.0, 53.0, 54.0],
+        }
+        .unwrap();
+        let weights = [("ETH".to_string(), 1.0_f64)];
+
+        let log_returns = load_log_returns_last_n_candles(&candles, &weights, "BTC", 3).unwrap();
+        let timestamp_col = log_returns.column("timestamp").unwrap();
+        let ticker_col = log_returns.column("ticker").unwrap();
+
+        let expected_timestamps = vec![
+            "2024-01-01T00:00:00Z".to_string(),
+            "2024-01-02T00:00:00Z".to_string(),
+            "2024-01-03T00:00:00Z".to_string(),
+        ];
+        let timestamps_for_ticker = |target_ticker: &str| {
+            (0..log_returns.height())
+                .filter_map(|row_index| {
+                    let ticker = ticker_col
+                        .get(row_index)
+                        .ok()
+                        .and_then(any_value_to_string)?;
+                    if ticker != target_ticker {
+                        return None;
+                    }
+
+                    timestamp_col
+                        .get(row_index)
+                        .ok()
+                        .and_then(any_value_to_string)
+                })
+                .collect::<Vec<_>>()
+        };
+        let benchmark_timestamps = timestamps_for_ticker("BTC");
+        let portfolio_timestamps = timestamps_for_ticker("ETH");
+
+        assert_eq!(benchmark_timestamps, expected_timestamps);
+        assert_eq!(portfolio_timestamps, expected_timestamps);
+        assert!(crate::logs_contain_at(
+            tracing::Level::DEBUG,
+            &["log returns computed", "rows=6"]
+        ));
     }
 
     #[traced_test]

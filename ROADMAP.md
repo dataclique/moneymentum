@@ -37,7 +37,11 @@ of them.
 - [x] Add TimeframeConfig (lookback + annualization) --
       [#251](https://github.com/data-cartel/moneymentum/issues/251) /
       [#254](https://github.com/data-cartel/moneymentum/pull/254)
-- [ ] Factor: returns
+- [x] Split the factor engine into returns/beta/scores submodules --
+      [#257](https://github.com/data-cartel/moneymentum/issues/257) /
+      [#258](https://github.com/data-cartel/moneymentum/pull/258)
+- [x] Factor: returns shared primitive --
+      [`src/factors/returns.rs`](./src/factors/returns.rs)
 - [x] Factor: cum_return --
       [#253](https://github.com/data-cartel/moneymentum/issues/253) /
       [#254](https://github.com/data-cartel/moneymentum/pull/254)
@@ -53,9 +57,13 @@ of them.
 - [x] Factor: price z-score --
       [#255](https://github.com/data-cartel/moneymentum/issues/255) /
       [#256](https://github.com/data-cartel/moneymentum/pull/256)
-- [ ] Factor: Sharpe
-- [ ] Factor: Sortino (adds MAR -- Minimum Acceptable Return -- to
-      TimeframeConfig)
+- [x] Factor: Sharpe --
+      [#259](https://github.com/data-cartel/moneymentum/issues/259) /
+      [#260](https://github.com/data-cartel/moneymentum/pull/260)
+- [x] Factor: Sortino (adds MAR -- Minimum Acceptable Return -- to
+      TimeframeConfig) --
+      [#261](https://github.com/data-cartel/moneymentum/issues/261) /
+      [#262](https://github.com/data-cartel/moneymentum/pull/262)
 - [ ] Factor: autocorrelation
 - [ ] Factor: information discreteness
 - [ ] Factor: carry (signed funding)

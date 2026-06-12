@@ -56,25 +56,29 @@ impl Timeframe {
     }
 
     /// Factor-engine parameters for this timeframe, ported from the legacy
-    /// `util.py` `TIMEFRAME_CONFIGS`. Fields are added as factors that consume
-    /// them land (e.g. `min_acceptable_return` arrives with the Sortino factor).
+    /// `util.py` `TIMEFRAME_CONFIGS`.
     pub(crate) fn config(self) -> TimeframeConfig {
         match self {
             Self::FifteenMin => TimeframeConfig {
                 lookback_periods: 7 * 24 * 4,
                 annualized_factor: 365.0 * 24.0 * 4.0,
+                // The geometric 15m fraction of the hourly MAR.
+                min_acceptable_return: 1.000_012_5_f64.sqrt().sqrt() - 1.0,
             },
             Self::OneHour => TimeframeConfig {
                 lookback_periods: 7 * 24,
                 annualized_factor: 365.0 * 24.0,
+                min_acceptable_return: 0.000_012_5,
             },
             Self::OneDay => TimeframeConfig {
                 lookback_periods: 90,
                 annualized_factor: 365.0,
+                min_acceptable_return: 0.000_3,
             },
             Self::OneWeek => TimeframeConfig {
                 lookback_periods: 52,
                 annualized_factor: 52.0,
+                min_acceptable_return: 0.002_1,
             },
         }
     }
@@ -86,6 +90,14 @@ pub(crate) struct TimeframeConfig {
     pub(crate) lookback_periods: usize,
     /// Scaling factor to annualize per-period returns and volatility.
     pub(crate) annualized_factor: f64,
+    /// Minimum acceptable per-period return below which a return counts as
+    /// downside risk (the MAR in the Sortino ratio). Derived from Hyperliquid's
+    /// neutral funding interest-rate component of 0.01% per 8 hours (0.00125%
+    /// per hour), per
+    /// <https://hyperliquid.gitbook.io/hyperliquid-docs/trading/funding>:
+    /// 1h = 1.25e-5, 1d = 24x that, 1w = 7x daily, 15m = the geometric quarter
+    /// of the hourly rate.
+    pub(crate) min_acceptable_return: f64,
 }
 
 #[cfg(test)]
@@ -109,6 +121,45 @@ mod tests {
         let week = Timeframe::OneWeek.config();
         assert_eq!(week.lookback_periods, 52);
         assert!((week.annualized_factor - 52.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn mar_constants_derive_from_the_hyperliquid_neutral_funding_rate() {
+        // Asserting the relationships to the documented venue rate (0.01% per
+        // 8 hours, paid hourly) rather than re-typing the source literals, so
+        // a mistyped constant cannot agree with its own copy in the test.
+        let documented_hourly_rate = 0.01 / 100.0 / 8.0;
+
+        let hour = Timeframe::OneHour.config();
+        assert!(
+            (hour.min_acceptable_return - documented_hourly_rate).abs() < 1e-12,
+            "hourly MAR must equal Hyperliquid's 0.00125% hourly neutral rate"
+        );
+
+        let day = Timeframe::OneDay.config();
+        assert!(
+            24.0f64
+                .mul_add(-hour.min_acceptable_return, day.min_acceptable_return)
+                .abs()
+                < 1e-12,
+            "daily MAR must be 24x the hourly rate"
+        );
+
+        let week = Timeframe::OneWeek.config();
+        assert!(
+            7.0f64
+                .mul_add(-day.min_acceptable_return, week.min_acceptable_return)
+                .abs()
+                < 1e-12,
+            "weekly MAR must be 7x the daily rate"
+        );
+
+        let fifteen = Timeframe::FifteenMin.config();
+        let compounded_back_to_hourly = (1.0 + fifteen.min_acceptable_return).powi(4) - 1.0;
+        assert!(
+            (compounded_back_to_hourly - hour.min_acceptable_return).abs() < 1e-12,
+            "four compounded 15m MARs must reproduce the hourly MAR"
+        );
     }
 
     #[test]

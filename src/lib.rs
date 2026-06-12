@@ -612,22 +612,19 @@ mod tests {
         assert!(
             rows.iter().all(|row| row
                 .get("sma")
-                .map(|value| value.is_null() || value.as_f64().is_some())
-                .unwrap_or(false)),
+                .is_some_and(|value| value.is_null() || value.as_f64().is_some())),
             "every row carries sma as a number or null"
         );
         assert!(
             rows.iter().all(|row| row
                 .get("mean_return")
-                .map(|value| value.is_null() || value.as_f64().is_some())
-                .unwrap_or(false)),
+                .is_some_and(|value| value.is_null() || value.as_f64().is_some())),
             "every row carries mean_return as a number or null"
         );
         assert!(
             rows.iter().all(|row| row
                 .get("price_zscore")
-                .map(|value| value.is_null() || value.as_f64().is_some())
-                .unwrap_or(false)),
+                .is_some_and(|value| value.is_null() || value.as_f64().is_some())),
             "every row carries price_zscore as a number or null"
         );
         assert!(

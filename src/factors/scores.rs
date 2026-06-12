@@ -63,12 +63,12 @@ fn per_ticker_factors(
 ) -> Result<DataFrame, PolarsError> {
     let with_returns = compute_log_returns(candles)?;
     let lookback = config.lookback_periods;
-    let annualizer = config.annualized_factor.sqrt();
+    let annualization_multiplier = config.annualized_factor.sqrt();
     let mut factors = with_returns
         .lazy()
         .group_by([col("ticker")])
         .agg([
-            (col("log_return").tail(Some(lookback)).std(1) * lit(annualizer))
+            (col("log_return").tail(Some(lookback)).std(1) * lit(annualization_multiplier))
                 .alias("annualized_volatility"),
             col("log_return")
                 .tail(Some(lookback))

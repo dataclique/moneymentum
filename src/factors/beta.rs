@@ -174,23 +174,11 @@ fn build_portfolio_and_benchmark_df(
     let mut returns_by_timestamp: BTreeMap<String, HashMap<String, f64>> = BTreeMap::new();
 
     for row_idx in 0..log_returns_df.height() {
-        let Some(ts_value) = ts_col.get(row_idx).ok() else {
+        let Some(timestamp) = ts_col.get(row_idx).ok().and_then(any_value_to_string) else {
             continue;
         };
-        let timestamp = match ts_value {
-            AnyValue::String(timestamp) => timestamp.to_string(),
-            AnyValue::StringOwned(timestamp) => timestamp.to_string(),
-            _ => continue,
-        };
 
-        let ticker = ticker_col
-            .get(row_idx)
-            .ok()
-            .and_then(|any_value| match any_value {
-                AnyValue::String(ticker) => Some(ticker.to_string()),
-                AnyValue::StringOwned(ticker) => Some(ticker.to_string()),
-                _ => None,
-            });
+        let ticker = ticker_col.get(row_idx).ok().and_then(any_value_to_string);
         let Some(ticker) = ticker else {
             continue;
         };
@@ -302,23 +290,12 @@ fn finite_return_timestamps_by_ticker(
         let timestamp = timestamp_col
             .get(row_index)
             .ok()
-            .and_then(|value| match value {
-                AnyValue::String(timestamp) => Some(timestamp.to_string()),
-                AnyValue::StringOwned(timestamp) => Some(timestamp.to_string()),
-                _ => None,
-            });
+            .and_then(any_value_to_string);
         let Some(timestamp) = timestamp else {
             continue;
         };
 
-        let ticker = ticker_col
-            .get(row_index)
-            .ok()
-            .and_then(|value| match value {
-                AnyValue::String(ticker) => Some(ticker.to_string()),
-                AnyValue::StringOwned(ticker) => Some(ticker.to_string()),
-                _ => None,
-            });
+        let ticker = ticker_col.get(row_index).ok().and_then(any_value_to_string);
         let Some(ticker) = ticker else {
             continue;
         };

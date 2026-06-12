@@ -3,8 +3,10 @@
 //! `log_return = ln(close_t / close_{t-1})`, computed per ticker.
 
 use polars::prelude::{
-    ChunkApply, DataFrame, IntoLazy, IntoSeries, PolarsError, SortMultipleOptions, col, lit,
+    ChunkApply, DataFrame, IntoLazy, IntoSeries, NULL, PolarsError, SortMultipleOptions, col, lit,
+    when,
 };
+use tracing::debug;
 
 /// Daily candles needed for a 365-calendar-day log-return window.
 pub(super) const LOG_RETURNS_LOOKBACK_CANDLES: usize = 366;
@@ -16,12 +18,15 @@ pub(super) const LOG_RETURNS_LOOKBACK_CANDLES: usize = 366;
 pub(super) fn compute_log_returns(df: &DataFrame) -> Result<DataFrame, PolarsError> {
     let close_prev = col("close").shift(lit(1)).over([col("ticker")]);
     let ratio = col("close") / close_prev;
+    let guarded_ratio = when(ratio.clone().gt(lit(0)).and(ratio.clone().is_finite()))
+        .then(ratio)
+        .otherwise(lit(NULL));
 
     let mut out = df
         .clone()
         .lazy()
         .sort(["ticker", "timestamp"], SortMultipleOptions::default())
-        .with_columns([ratio.alias("_ratio")])
+        .with_columns([guarded_ratio.alias("_ratio")])
         .collect()?;
 
     let ratio_series = out.column("_ratio")?;
@@ -33,6 +38,7 @@ pub(super) fn compute_log_returns(df: &DataFrame) -> Result<DataFrame, PolarsErr
     out.with_column(log_return_series)?;
     out.drop_in_place("_ratio")?;
 
+    debug!(rows = out.height(), "log returns computed");
     Ok(out)
 }
 
@@ -41,9 +47,12 @@ mod tests {
     use super::*;
     use polars::prelude::df;
     use proptest::prelude::*;
+    use tracing::Level;
+    use tracing_test::traced_test;
 
     proptest! {
         /// `log_return` equals `ln(close_t / close_{t-1})` for any positive close series.
+        #[traced_test]
         #[test]
         fn log_returns_are_ln_of_close_ratio(
             closes in prop::collection::vec(1.0_f64..1_000_000.0, 2..30),
@@ -67,9 +76,11 @@ mod tests {
                 let actual = log_return.get(idx + 1).unwrap().try_extract::<f64>().unwrap();
                 prop_assert!((actual - expected).abs() < 1e-9);
             }
+            prop_assert!(crate::logs_contain_at(Level::DEBUG, &["log returns computed", "rows="]));
         }
     }
 
+    #[traced_test]
     #[test]
     fn compute_log_returns_produces_ln_ratio() {
         let df = df! {
@@ -89,5 +100,59 @@ mod tests {
         let r2 = log_return.get(2).unwrap().try_extract::<f64>().unwrap();
         assert!((r1 - (102.0_f64 / 100.0).ln()).abs() < 1e-10);
         assert!((r2 - (99.0_f64 / 102.0).ln()).abs() < 1e-10);
+        assert!(crate::logs_contain_at(
+            Level::DEBUG,
+            &["log returns computed", "rows=3"]
+        ));
+    }
+
+    #[traced_test]
+    #[test]
+    fn compute_log_returns_nulls_invalid_ratios() {
+        let df = df! {
+            "timestamp" => &[
+                "2024-01-01T00:00:00Z",
+                "2024-01-02T00:00:00Z",
+                "2024-01-03T00:00:00Z",
+                "2024-01-04T00:00:00Z",
+                "2024-01-05T00:00:00Z",
+                "2024-01-06T00:00:00Z",
+            ],
+            "ticker" => &["BTC", "BTC", "BTC", "BTC", "BTC", "BTC"],
+            "close" => &[100.0, 0.0, 50.0, -25.0, f64::INFINITY, 125.0],
+        }
+        .unwrap();
+
+        let out = compute_log_returns(&df).unwrap();
+        let log_return = out.column("log_return").unwrap();
+
+        assert!(
+            log_return.get(0).unwrap().is_null(),
+            "first row has no previous close"
+        );
+        assert!(
+            log_return.get(1).unwrap().is_null(),
+            "zero ratio is invalid"
+        );
+        assert!(
+            log_return.get(2).unwrap().is_null(),
+            "ratio with zero previous close is invalid"
+        );
+        assert!(
+            log_return.get(3).unwrap().is_null(),
+            "negative ratio is invalid"
+        );
+        assert!(
+            log_return.get(4).unwrap().is_null(),
+            "non-finite ratio is invalid"
+        );
+        assert!(
+            log_return.get(5).unwrap().is_null(),
+            "ratio with non-finite previous close is invalid"
+        );
+        assert!(crate::logs_contain_at(
+            Level::DEBUG,
+            &["log returns computed", "rows=6"]
+        ));
     }
 }

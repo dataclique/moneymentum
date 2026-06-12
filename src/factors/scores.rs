@@ -17,8 +17,8 @@ const PRICE_STDDEV_EPS: f64 = 1e-8;
 
 /// Per-ticker factor scores serialized as a JSON array, for the `/factors`
 /// endpoint. Exposes `annualized_volatility`, `cum_return`, `sma`,
-/// `mean_return`, `price_zscore`, `annualized_return`, and `sharpe`; further
-/// factors are added as columns as they land.
+/// `mean_return`, `price_zscore`, `annualized_return`, `sharpe`, and `sortino`;
+/// further factors are added as columns as they land.
 pub(crate) async fn compute_factors_json(
     data_dir: &Path,
     timeframe: Timeframe,
@@ -42,6 +42,8 @@ pub(crate) async fn compute_factors_json(
 /// - `annualized_return` = exp(`mean_return` * annualized_factor) - 1
 /// - `sharpe` = `annualized_return` / `annualized_volatility` (risk-free 0);
 ///   null when there is no volatility
+/// - `sortino` = `annualized_return` / downside deviation below the MAR; null
+///   when there is no downside
 ///
 /// Returns a `DataFrame` keyed by `ticker`. New factors are added as columns.
 #[instrument(skip_all, fields(data_dir = %data_dir.display()))]
@@ -67,6 +69,16 @@ fn per_ticker_factors(
     let with_returns = compute_log_returns(candles)?;
     let lookback = config.lookback_periods;
     let annualization_multiplier = config.annualized_factor.sqrt();
+
+    // Downside deviation inputs for Sortino: sum of squared shortfalls below the
+    // minimum acceptable return, and the observation count to average over.
+    let above_mar = col("log_return").tail(Some(lookback)) - lit(config.min_acceptable_return);
+    let downside_sq_sum = when(above_mar.clone().lt(lit(0.0)))
+        .then(above_mar.pow(lit(2)))
+        .otherwise(lit(0.0))
+        .sum()
+        .alias("downside_sq_sum");
+
     let mut factors = with_returns
         .lazy()
         .group_by([col("ticker")])
@@ -87,6 +99,11 @@ fn per_ticker_factors(
                 .std(1)
                 .alias("price_stddev"),
             col("close").last().alias("last_close"),
+            downside_sq_sum,
+            col("log_return")
+                .tail(Some(lookback))
+                .count()
+                .alias("obs_count"),
         ])
         // price z-score = (latest close - SMA) / price stddev; undefined (null)
         // when there is no price dispersion (constant prices over the window).
@@ -136,11 +153,13 @@ fn per_ticker_factors(
     factors.drop_in_place("price_stddev")?;
     factors.drop_in_place("last_close")?;
 
-    // sharpe = annualized_return / annualized_volatility (risk-free 0); undefined
-    // (null) when there is no volatility to divide by.
-    let factors = factors
+    // sharpe = annualized_return / annualized_volatility (risk-free 0); sortino =
+    // annualized_return / downside deviation below the MAR. Both are undefined
+    // (null) when their risk denominator is zero.
+    let downside_deviation = (col("downside_sq_sum") / col("obs_count")).pow(lit(0.5));
+    let mut factors = factors
         .lazy()
-        .with_column(
+        .with_columns([
             // NaN != 0.0 is true in IEEE 754, so a NaN volatility (e.g. from a
             // corrupt zero close producing a -inf log return) must be rejected
             // explicitly -- mirroring the price_zscore stddev guard.
@@ -152,8 +171,22 @@ fn per_ticker_factors(
             .then(col("annualized_return") / col("annualized_volatility"))
             .otherwise(lit(NULL))
             .alias("sharpe"),
-        )
+            // Same NaN hazard as the sharpe guard: a single-candle ticker
+            // yields sqrt(0/0) = NaN downside deviation, and NaN != 0.0 is
+            // true, so the zero check alone would emit a NaN sortino.
+            when(
+                downside_deviation
+                    .clone()
+                    .is_finite()
+                    .and(downside_deviation.clone().neq(lit(0.0))),
+            )
+            .then(col("annualized_return") / downside_deviation)
+            .otherwise(lit(NULL))
+            .alias("sortino"),
+        ])
         .collect()?;
+    factors.drop_in_place("downside_sq_sum")?;
+    factors.drop_in_place("obs_count")?;
 
     Ok(factors)
 }
@@ -186,7 +219,11 @@ mod tests {
                 "close" => closes,
             }
             .unwrap();
-            let config = TimeframeConfig { lookback_periods: 100, annualized_factor: 365.0 };
+            let config = TimeframeConfig {
+                lookback_periods: 100,
+                annualized_factor: 365.0,
+                min_acceptable_return: 0.0,
+            };
 
             let out = per_ticker_factors(&candles, &config).unwrap();
             let vol = out
@@ -237,6 +274,13 @@ mod tests {
             if let Some(sharpe) = out.column("sharpe").unwrap().f64().unwrap().get(0) {
                 prop_assert!(sharpe.is_finite(), "sharpe must be finite when present, got {sharpe}");
             }
+
+            if let Some(sortino) = out.column("sortino").unwrap().f64().unwrap().get(0) {
+                prop_assert!(
+                    sortino.is_finite(),
+                    "sortino must be finite when present, got {sortino}"
+                );
+            }
         }
 
         /// For a strictly increasing close series the latest close is the maximum,
@@ -263,7 +307,11 @@ mod tests {
                 "close" => closes,
             }
             .unwrap();
-            let config = TimeframeConfig { lookback_periods: 100, annualized_factor: 365.0 };
+            let config = TimeframeConfig {
+                lookback_periods: 100,
+                annualized_factor: 365.0,
+                min_acceptable_return: 0.0,
+            };
 
             let out = per_ticker_factors(&candles, &config).unwrap();
             let zscore = out.column("price_zscore").unwrap().f64().unwrap().get(0).unwrap();
@@ -287,6 +335,14 @@ mod tests {
                     "positive return with volatility must give a positive sharpe, got {sharpe}"
                 );
             }
+
+            // Every return is above the MAR (0), so there is no downside and
+            // sortino is undefined -> null.
+            let sortino = out.column("sortino").unwrap().f64().unwrap().get(0);
+            prop_assert!(
+                sortino.is_none(),
+                "increasing closes have no downside, so sortino must be null, got {sortino:?}"
+            );
         }
     }
 
@@ -301,6 +357,7 @@ mod tests {
         let config = TimeframeConfig {
             lookback_periods: 10,
             annualized_factor: 365.0,
+            min_acceptable_return: 0.0,
         };
 
         let out = per_ticker_factors(&candles, &config).unwrap();
@@ -379,6 +436,17 @@ mod tests {
 
         let sharpe = out.column("sharpe").unwrap().f64().unwrap().get(0).unwrap();
         assert!(sharpe.abs() < 1e-12, "sharpe should be ~0, got {sharpe}");
+
+        // There is downside (the -a returns), so sortino is defined; with a zero
+        // annualized_return it is 0 / downside_deviation = 0.
+        let sortino = out
+            .column("sortino")
+            .unwrap()
+            .f64()
+            .unwrap()
+            .get(0)
+            .unwrap();
+        assert!(sortino.abs() < 1e-12, "sortino should be ~0, got {sortino}");
     }
 
     #[test]
@@ -392,6 +460,7 @@ mod tests {
         let config = TimeframeConfig {
             lookback_periods: 10,
             annualized_factor: 365.0,
+            min_acceptable_return: 0.0,
         };
 
         let out = per_ticker_factors(&candles, &config).unwrap();
@@ -459,6 +528,53 @@ mod tests {
             sharpe.is_none(),
             "constant prices give an undefined (null) sharpe, got {sharpe:?}"
         );
+
+        // No returns fall below the MAR, so downside deviation is zero and
+        // sortino is undefined -> null.
+        let sortino = out.column("sortino").unwrap().f64().unwrap().get(0);
+        assert!(
+            sortino.is_none(),
+            "constant prices give an undefined (null) sortino, got {sortino:?}"
+        );
+    }
+
+    #[test]
+    fn per_ticker_sortino_matches_manual_downside_deviation() {
+        // closes [100, 99, 101] give log returns [-p, q] with p = ln(100/99)
+        // (a down move below the MAR of 0) and q = ln(101/99) (an up move).
+        let candles = df! {
+            "timestamp" => &["0", "1", "2"],
+            "ticker" => &["BTC", "BTC", "BTC"],
+            "close" => &[100.0, 99.0, 101.0_f64],
+        }
+        .unwrap();
+        // annualized_factor 1 keeps annualized_return = exp(mean_return) - 1.
+        let config = TimeframeConfig {
+            lookback_periods: 10,
+            annualized_factor: 1.0,
+            min_acceptable_return: 0.0,
+        };
+
+        let out = per_ticker_factors(&candles, &config).unwrap();
+        let sortino = out
+            .column("sortino")
+            .unwrap()
+            .f64()
+            .unwrap()
+            .get(0)
+            .unwrap();
+
+        let down_move = (100.0_f64 / 99.0).ln();
+        let up_move = (101.0_f64 / 99.0).ln();
+        let mean_return = f64::midpoint(-down_move, up_move);
+        let annualized_return = mean_return.exp_m1();
+        // Only the down move is below the MAR, so downside variance = p^2 / 2.
+        let downside_deviation = (down_move * down_move / 2.0).sqrt();
+        let expected_sortino = annualized_return / downside_deviation;
+        assert!(
+            (sortino - expected_sortino).abs() < 1e-12,
+            "sortino {sortino} != expected {expected_sortino}"
+        );
     }
 
     #[test]
@@ -473,6 +589,7 @@ mod tests {
         let config = TimeframeConfig {
             lookback_periods: 10,
             annualized_factor: 365.0,
+            min_acceptable_return: 0.0,
         };
 
         let out = per_ticker_factors(&candles, &config).unwrap();
@@ -504,6 +621,7 @@ mod tests {
         assert!(out.column("price_zscore").is_ok());
         assert!(out.column("annualized_return").is_ok());
         assert!(out.column("sharpe").is_ok());
+        assert!(out.column("sortino").is_ok());
         assert!(crate::logs_contain_at(
             tracing::Level::INFO,
             &["factors computed"]

@@ -231,3 +231,29 @@ to DigitalOcean via NixOS + deploy-rs.
 - [x] Rolling beta calculation (`POST /beta`)
 - [x] Candle API (`GET /candles/<timeframe>`)
 - [x] Ingestion status API (`GET /ingestion/status`)
+
+---
+
+## Completed: GitButler CLI for stacked PRs
+
+- [x] Package the GitButler CLI via Nix --
+      [#243](https://github.com/data-cartel/moneymentum/issues/243) /
+      [#238](https://github.com/data-cartel/moneymentum/pull/238)
+- [x] Add a GitButler skill for coding agents --
+      [#244](https://github.com/data-cartel/moneymentum/issues/244) /
+      [#240](https://github.com/data-cartel/moneymentum/pull/240)
+
+## Completed: Finish Python/Spark removal
+
+- [x] Remove dead Python linter tooling --
+      [#245](https://github.com/data-cartel/moneymentum/issues/245) /
+      [#241](https://github.com/data-cartel/moneymentum/pull/241)
+- [x] Strip unused JVM/Spark deps from the dev shell --
+      [#246](https://github.com/data-cartel/moneymentum/issues/246) /
+      [#242](https://github.com/data-cartel/moneymentum/pull/242)
+
+## Completed: Per-PR issue and roadmap tracking
+
+- [x] Document and automate the issue-and-roadmap-per-PR rule --
+      [#247](https://github.com/data-cartel/moneymentum/issues/247) /
+      [#248](https://github.com/data-cartel/moneymentum/pull/248)

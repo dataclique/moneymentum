@@ -123,6 +123,33 @@ Never add "Generated with [Tool Name]" to commits, PRs, or code.
 
 Explain WHY the PR exists, not what changed.
 
+### Every PR is tracked by an issue and the roadmap
+
+Every PR `Closes` a problem-only GitHub issue, and that issue is a checklist
+item in the relevant [ROADMAP.md](./ROADMAP.md) section linking the issue and
+the PR. Keep the roadmap in lockstep: the entry and its tick land on the feature
+PR itself, so the roadmap always matches what merged. The `pr-tracking` skill
+makes a whole stack conform.
+
+### Every stacked PR carries the GitButler stack footer
+
+Every PR that belongs to a multi-branch stack must carry the GitButler
+stack-navigation footer -- the
+`This is part X of N in a stack made with
+GitButler:` block (between the
+`<!-- GitButler Footer Boundary -->` markers) listing the stack's PRs
+top-to-bottom with the current one marked. It orients reviewers in the stack and
+links the sibling PRs.
+
+GitButler writes this footer when it opens or pushes a PR, but it **drifts**: a
+no-op push does not rewrite it, so after a rebase, a branch add/remove, or a
+merge it goes stale (lists merged PRs, wrong `N`, wrong position) or is missing
+entirely on PRs that were not opened through GitButler. There is no `but`
+command to refresh it. Keep every stacked PR's footer current by running
+`nix run .#pr-stack-footer` (`scripts/pr-stack-footer.nu`), which rebuilds each
+stack's footer from the live workspace and splices it into the PR bodies. Run it
+after any operation that reshapes the stack.
+
 ### Documentation stays in lockstep with the code
 
 Every PR must leave the documentation in a true state. Before handing off work

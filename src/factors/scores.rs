@@ -68,7 +68,10 @@ pub(crate) async fn compute_factors_json(
 ///
 /// Returns a `DataFrame` keyed by `ticker`. New factors are added as columns.
 #[instrument(skip_all, fields(data_dir = %data_dir.display()))]
-async fn compute_factors(data_dir: &Path, timeframe: Timeframe) -> Result<DataFrame, ReturnsError> {
+pub(crate) async fn compute_factors(
+    data_dir: &Path,
+    timeframe: Timeframe,
+) -> Result<DataFrame, ReturnsError> {
     let path = data_dir.join(timeframe.file_name());
     let df = crate::dataframe::read_csv(path.clone()).await?;
     let Some(df) = df else {

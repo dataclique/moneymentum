@@ -64,11 +64,27 @@ of them.
       TimeframeConfig) --
       [#261](https://github.com/data-cartel/moneymentum/issues/261) /
       [#262](https://github.com/data-cartel/moneymentum/pull/262)
-- [ ] Factor: autocorrelation
-- [ ] Factor: information discreteness
-- [ ] Factor: carry (signed funding)
-- [ ] Markets metadata + persisted disable flag
-- [ ] Tradable filter wired into ingestion
+- [x] Factor: autocorrelation --
+      [#263](https://github.com/data-cartel/moneymentum/issues/263) /
+      [#264](https://github.com/data-cartel/moneymentum/pull/264)
+- [x] Factor: information discreteness --
+      [#265](https://github.com/data-cartel/moneymentum/issues/265) /
+      [#266](https://github.com/data-cartel/moneymentum/pull/266)
+- [x] Factor: carry (signed funding) --
+      [#267](https://github.com/data-cartel/moneymentum/issues/267) /
+      [#268](https://github.com/data-cartel/moneymentum/pull/268)
+- [x] Factor: beta (per-asset, to benchmark) --
+      [#269](https://github.com/data-cartel/moneymentum/issues/269) /
+      [#270](https://github.com/data-cartel/moneymentum/pull/270)
+- [x] Factor: 24h volume (screener tie-break) --
+      [#271](https://github.com/data-cartel/moneymentum/issues/271) /
+      [#272](https://github.com/data-cartel/moneymentum/pull/272)
+- [x] Markets metadata + persisted disable flag --
+      [#275](https://github.com/data-cartel/moneymentum/issues/275) /
+      [#276](https://github.com/data-cartel/moneymentum/pull/276)
+- [x] Tradable filter wired into ingestion --
+      [#277](https://github.com/data-cartel/moneymentum/issues/277) /
+      [#278](https://github.com/data-cartel/moneymentum/pull/278)
 
 ---
 
@@ -140,7 +156,11 @@ Find assets by factor characteristics, stage portfolio changes, and simulate the
 result before sending trades.
 
 - [ ] [Compare Target vs Current Portfolio](./stories/0x01a.compare-target-vs-current-portfolio.md)
-- [ ] [Screen Perps By Factor](./stories/0x01c.screen-perps-by-factor.md)
+- [ ] [Screen Perps By Factor](./stories/0x01c.screen-perps-by-factor.md) --
+      backend rank API shipped
+      ([#273](https://github.com/data-cartel/moneymentum/issues/273) /
+      [#274](https://github.com/data-cartel/moneymentum/pull/274)); frontend
+      filter integration pending
 - [ ] [Simulate Staged Portfolio Metrics](./stories/0x01d.simulate-staged-portfolio-metrics.md)
 
 ---

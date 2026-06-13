@@ -5,7 +5,9 @@ mod finance;
 mod funding;
 mod hyperliquid;
 mod ingestion;
+mod market_metadata;
 mod readonly_portfolio;
+mod screener;
 mod timeframe;
 
 use std::net::Ipv4Addr;
@@ -149,6 +151,24 @@ async fn get_factors(
         Err(factors::ReturnsError::NoData { .. }) => Err(Status::NotFound),
         Err(err) => {
             error!(error = %err, "failed to compute factors");
+            Err(Status::InternalServerError)
+        }
+    }
+}
+
+#[post("/screener/<timeframe>", data = "<body>")]
+async fn post_screener(
+    config: &State<Config>,
+    timeframe: Timeframe,
+    body: Json<screener::ScreenerRequest>,
+) -> Result<RawJson<Vec<u8>>, Status> {
+    match screener::screen(&config.data_dir, timeframe, &body).await {
+        Ok(json) => Ok(RawJson(json)),
+        Err(screener::ScreenerError::Factors(factors::ReturnsError::NoData { .. })) => {
+            Err(Status::NotFound)
+        }
+        Err(err) => {
+            error!(error = %err, "failed to screen perps");
             Err(Status::InternalServerError)
         }
     }
@@ -451,6 +471,7 @@ pub async fn rocket(
                 health,
                 get_candles,
                 get_factors,
+                post_screener,
                 start_ingestion,
                 get_ingestion_status,
                 post_beta,
@@ -489,6 +510,7 @@ mod tests {
     use proptest::prelude::*;
     use rocket::local::blocking::Client;
     use tempfile::TempDir;
+    use tracing_test::traced_test;
 
     fn test_rocket(data_dir: &std::path::Path) -> rocket::Rocket<rocket::Build> {
         let config = Config {
@@ -500,9 +522,10 @@ mod tests {
             max_concurrent_requests: 3,
             max_retries: 5,
         };
-        rocket::build()
-            .manage(config)
-            .mount("/", routes![health, get_candles, get_factors])
+        rocket::build().manage(config).mount(
+            "/",
+            routes![health, get_candles, get_factors, post_screener],
+        )
     }
 
     proptest! {
@@ -583,6 +606,7 @@ mod tests {
         assert_eq!(response.status(), Status::NotFound);
     }
 
+    #[traced_test]
     #[test]
     fn get_factors_returns_per_ticker_factor_scores_json() {
         let data_dir = TempDir::new().unwrap();
@@ -649,9 +673,141 @@ mod tests {
             "every row carries sortino as a number (every fixture ticker has downside)"
         );
         assert!(
+            rows.iter().all(|row| row
+                .get("autocorrelation")
+                .and_then(serde_json::Value::as_f64)
+                .is_some()),
+            "every row carries autocorrelation as a number (the fixture's returns all vary)"
+        );
+        assert!(
+            rows.iter().all(|row| row
+                .get("information_discreteness")
+                .and_then(serde_json::Value::as_f64)
+                .is_some()),
+            "every row carries information_discreteness as a number (the fixture's returns all vary)"
+        );
+        // The fixture ships no funding data, so carry is legitimately null --
+        // but the key itself must stay in the schema for every row.
+        assert!(
             rows.iter()
-                .any(|row| row.get("ticker").and_then(|t| t.as_str()) == Some("BTC")),
-            "BTC is present in the factor scores"
+                .all(|row| row.get("carry").is_some_and(serde_json::Value::is_null)),
+            "carry key is present and null for every row without funding data"
+        );
+
+        assert!(
+            rows.iter().all(|row| row
+                .get("beta")
+                .and_then(serde_json::Value::as_f64)
+                .is_some()),
+            "every row carries beta as a number (prices vary and BTC is the benchmark)"
+        );
+        assert!(
+            rows.iter().all(|row| row
+                .get("volume_24h")
+                .and_then(serde_json::Value::as_f64)
+                .is_some()),
+            "every row carries volume_24h as a number (every fixture ticker has current candles)"
+        );
+        assert_btc_factor_values_are_real(&rows);
+
+        assert!(logs_contain_at(
+            tracing::Level::DEBUG,
+            &["factors computed"]
+        ));
+    }
+
+    /// Key presence alone would pass if every factor serialized as null; pin
+    /// BTC's values so a serialization regression fails the factors route test.
+    fn assert_btc_factor_values_are_real(rows: &[serde_json::Value]) {
+        let btc_row = rows
+            .iter()
+            .find(|row| row.get("ticker").and_then(|ticker| ticker.as_str()) == Some("BTC"))
+            .expect("BTC is present in the factor scores");
+
+        let btc_volatility = btc_row["annualized_volatility"]
+            .as_f64()
+            .expect("BTC annualized_volatility is a number");
+        assert!(
+            btc_volatility > 0.0,
+            "BTC annualized_volatility must be positive, got {btc_volatility}"
+        );
+        for factor_key in [
+            "cum_return",
+            "sma",
+            "mean_return",
+            "price_zscore",
+            "annualized_return",
+            "sharpe",
+            "sortino",
+            "autocorrelation",
+            "information_discreteness",
+            "beta",
+            "volume_24h",
+        ] {
+            let value = btc_row[factor_key].as_f64();
+            assert!(
+                value.is_some_and(f64::is_finite),
+                "BTC {factor_key} must be a finite number, got {value:?}"
+            );
+        }
+
+        // Pin the unit conversion: the fixture's latest BTC candle is 1400
+        // base units against a ~$46.7k close, so notional must be tens of
+        // millions -- a raw base-unit sum (~1400) fails this by four orders
+        // of magnitude.
+        let btc_volume = btc_row["volume_24h"]
+            .as_f64()
+            .expect("BTC volume_24h is a number");
+        assert!(
+            btc_volume > 1e6,
+            "volume_24h must be quote notional, not base units, got {btc_volume}"
+        );
+        // No funding fixture is staged, so carry serializes as null - the
+        // documented no-funding-data behavior.
+        assert!(
+            btc_row["carry"].is_null(),
+            "carry must be null without funding data, got {:?}",
+            btc_row["carry"]
+        );
+    }
+
+    #[test]
+    fn post_screener_returns_404_when_no_data() {
+        let data_dir = TempDir::new().unwrap();
+        let client = Client::tracked(test_rocket(data_dir.path())).unwrap();
+        let response = client
+            .post("/screener/1d")
+            .header(rocket::http::ContentType::JSON)
+            .body(r#"{"factor":"sharpe"}"#)
+            .dispatch();
+
+        assert_eq!(response.status(), Status::NotFound);
+    }
+
+    #[test]
+    fn post_screener_returns_ranked_rows_with_missing_flags() {
+        let data_dir = TempDir::new().unwrap();
+        std::fs::copy(
+            std::path::Path::new("fixtures/ohlcv_1d_beta.csv"),
+            data_dir.path().join("ohlcv_1d.csv"),
+        )
+        .unwrap();
+
+        let client = Client::tracked(test_rocket(data_dir.path())).unwrap();
+        let response = client
+            .post("/screener/1d")
+            .header(rocket::http::ContentType::JSON)
+            .body(r#"{"factor":"sharpe"}"#)
+            .dispatch();
+
+        assert_eq!(response.status(), Status::Ok);
+        let body = response.into_string().unwrap();
+        let rows: Vec<serde_json::Value> =
+            serde_json::from_str(&body).expect("screener body is a JSON array");
+        assert!(!rows.is_empty(), "expected ranked rows");
+        assert!(
+            rows.iter().all(|row| row.get("missing").is_some()),
+            "every ranked row carries a missing flag"
         );
     }
 

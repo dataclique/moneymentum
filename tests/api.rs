@@ -21,7 +21,7 @@ async fn mount_meta_mock(server: &MockServer) {
         .and(path("/info"))
         .and(body_partial_json(json!({"type": "meta"})))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "universe": [{"name": "BTC", "szDecimals": 8}]
+            "universe": [{"name": "BTC", "szDecimals": 8, "maxLeverage": 50}]
         })))
         .mount(server)
         .await;

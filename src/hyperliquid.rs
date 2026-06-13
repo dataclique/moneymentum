@@ -23,6 +23,7 @@ use crate::candle::{Candle, CandleError, candles_to_dataframe};
 use crate::dataframe::{self, DataFrameError};
 use crate::finance::{Market, Symbol};
 use crate::funding::{self, FundingError, FundingRate};
+use crate::market_metadata::MarketMetadata;
 use crate::timeframe::Timeframe;
 
 /// Maximum number of data points returned by Hyperliquid's historical data endpoints.
@@ -44,6 +45,10 @@ pub(crate) enum HyperliquidError {
     Sdk(#[from] hyperliquid_rust_sdk::Error),
     #[error(transparent)]
     IntConversion(#[from] TryFromIntError),
+    #[error(transparent)]
+    Http(#[from] reqwest::Error),
+    #[error(transparent)]
+    Polars(#[from] polars::prelude::PolarsError),
 }
 
 /// Abstraction over Hyperliquid's market data API.
@@ -51,7 +56,7 @@ pub(crate) enum HyperliquidError {
 /// Enables testing with mock implementations.
 #[async_trait]
 pub(crate) trait Hyperliquid: Send + Sync {
-    async fn list_markets(&self) -> Result<Vec<Market>, HyperliquidError>;
+    async fn fetch_market_metadata(&self) -> Result<Vec<MarketMetadata>, HyperliquidError>;
 
     async fn fetch_candles(
         &self,
@@ -95,15 +100,58 @@ impl HyperliquidClient {
 #[async_trait]
 impl Hyperliquid for HyperliquidClient {
     #[instrument(skip(self))]
-    async fn list_markets(&self) -> Result<Vec<Market>, HyperliquidError> {
-        let meta = self.info.meta().await?;
-        let markets: Vec<Market> = meta
+    async fn fetch_market_metadata(&self) -> Result<Vec<MarketMetadata>, HyperliquidError> {
+        // The SDK's typed `meta()` drops `maxLeverage`, so request the raw `meta`
+        // info payload and parse the fields we need ourselves.
+        #[derive(serde::Serialize)]
+        struct MetaRequest {
+            #[serde(rename = "type")]
+            request_type: &'static str,
+        }
+        #[derive(serde::Deserialize)]
+        struct RawMeta {
+            universe: Vec<RawAsset>,
+        }
+        #[derive(serde::Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct RawAsset {
+            name: String,
+            max_leverage: u32,
+        }
+
+        let url = format!("{}/info", self.info.http_client.base_url);
+        let raw = (|| async {
+            reqwest::Client::new()
+                .post(&url)
+                .json(&MetaRequest {
+                    request_type: "meta",
+                })
+                .send()
+                .await?
+                .error_for_status()?
+                .json::<RawMeta>()
+                .await
+        })
+        .retry(
+            ExponentialBuilder::default()
+                .with_jitter()
+                .with_max_times(self.max_retries),
+        )
+        .notify(|err, dur| {
+            debug!(error = %err, delay = ?dur, "retrying market metadata fetch");
+        })
+        .await?;
+
+        let metadata: Vec<MarketMetadata> = raw
             .universe
             .into_iter()
-            .map(|asset| Market::new(asset.name))
+            .map(|asset| MarketMetadata {
+                symbol: Market::new(asset.name),
+                max_leverage: asset.max_leverage,
+            })
             .collect();
-        debug!(count = markets.len(), "fetched markets");
-        Ok(markets)
+        debug!(count = metadata.len(), "fetched market metadata");
+        Ok(metadata)
     }
 
     #[instrument(skip(self))]
@@ -225,17 +273,6 @@ impl<H: ?Sized + Hyperliquid> CandleIngester<H> {
         }
     }
 
-    #[instrument(skip(self, data_dir), fields(timeframe = ?timeframe))]
-    pub(crate) async fn ingest(
-        &self,
-        timeframe: Timeframe,
-        data_dir: &Path,
-    ) -> Result<(), HyperliquidError> {
-        let markets = self.client.list_markets().await?;
-        self.ingest_with_markets(timeframe, data_dir, &markets)
-            .await
-    }
-
     #[instrument(skip(self, data_dir, markets), fields(timeframe = ?timeframe))]
     pub(crate) async fn ingest_with_markets(
         &self,
@@ -326,14 +363,8 @@ impl<H: ?Sized + Hyperliquid> FundingRateIngester<H> {
         }
     }
 
-    #[instrument(skip(self, data_dir))]
-    pub(crate) async fn ingest(&self, data_dir: &Path) -> Result<(), HyperliquidError> {
-        let markets = self.client.list_markets().await?;
-        self.ingest_with_markets(data_dir, &markets).await
-    }
-
     #[instrument(skip(self, data_dir, markets))]
-    async fn ingest_with_markets(
+    pub(crate) async fn ingest_with_markets(
         &self,
         data_dir: &Path,
         markets: &[Market],
@@ -417,17 +448,24 @@ mod tests {
     use crate::logs_contain_at;
 
     struct MockHyperliquid {
-        markets: Vec<Market>,
+        market_metadata: Vec<MarketMetadata>,
         candles: Vec<Candle>,
         funding_rates: Vec<FundingRate>,
         fetch_candles_calls: AtomicUsize,
         fetch_funding_calls: AtomicUsize,
     }
 
+    fn btc_markets() -> Vec<Market> {
+        vec![Market::new("BTC".to_string())]
+    }
+
     impl MockHyperliquid {
         fn new() -> Self {
             Self {
-                markets: vec![Market::new("BTC".to_string())],
+                market_metadata: vec![MarketMetadata {
+                    symbol: Market::new("BTC".to_string()),
+                    max_leverage: 50,
+                }],
                 candles: vec![Candle {
                     timestamp: Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
                     open: 42000.0,
@@ -457,8 +495,8 @@ mod tests {
 
     #[async_trait]
     impl Hyperliquid for MockHyperliquid {
-        async fn list_markets(&self) -> Result<Vec<Market>, HyperliquidError> {
-            Ok(self.markets.clone())
+        async fn fetch_market_metadata(&self) -> Result<Vec<MarketMetadata>, HyperliquidError> {
+            Ok(self.market_metadata.clone())
         }
 
         async fn fetch_candles(
@@ -489,7 +527,7 @@ mod tests {
         let ingester = CandleIngester::new(mock, 10);
 
         ingester
-            .ingest(Timeframe::OneHour, data_dir.path())
+            .ingest_with_markets(Timeframe::OneHour, data_dir.path(), &btc_markets())
             .await
             .unwrap();
 
@@ -509,7 +547,7 @@ mod tests {
         let ingester = CandleIngester::new(mock, 10);
 
         ingester
-            .ingest(Timeframe::OneHour, data_dir.path())
+            .ingest_with_markets(Timeframe::OneHour, data_dir.path(), &btc_markets())
             .await
             .unwrap();
 
@@ -523,7 +561,10 @@ mod tests {
         let mock = Arc::new(MockHyperliquid::new());
         let ingester = FundingRateIngester::new(mock, 10);
 
-        ingester.ingest(data_dir.path()).await.unwrap();
+        ingester
+            .ingest_with_markets(data_dir.path(), &btc_markets())
+            .await
+            .unwrap();
 
         let csv_path = data_dir.path().join("funding_rate1h.csv");
         assert!(csv_path.exists(), "CSV file should be created");
@@ -549,7 +590,10 @@ mod tests {
         let mock = Arc::new(MockHyperliquid::new().with_empty_data());
         let ingester = FundingRateIngester::new(mock, 10);
 
-        ingester.ingest(data_dir.path()).await.unwrap();
+        ingester
+            .ingest_with_markets(data_dir.path(), &btc_markets())
+            .await
+            .unwrap();
 
         assert!(logs_contain_at(Level::INFO, &["no new funding rates"]));
     }
@@ -557,19 +601,17 @@ mod tests {
     #[tokio::test]
     async fn candle_ingester_fetches_for_each_market() {
         let data_dir = TempDir::new().unwrap();
-        let mock = Arc::new(MockHyperliquid {
-            markets: vec![
-                Market::new("BTC".to_string()),
-                Market::new("ETH".to_string()),
-                Market::new("SOL".to_string()),
-            ],
-            ..MockHyperliquid::new()
-        });
+        let markets = vec![
+            Market::new("BTC".to_string()),
+            Market::new("ETH".to_string()),
+            Market::new("SOL".to_string()),
+        ];
+        let mock = Arc::new(MockHyperliquid::new());
         let call_count = Arc::clone(&mock);
         let ingester = CandleIngester::new(mock, 10);
 
         ingester
-            .ingest(Timeframe::OneHour, data_dir.path())
+            .ingest_with_markets(Timeframe::OneHour, data_dir.path(), &markets)
             .await
             .unwrap();
 
@@ -583,17 +625,18 @@ mod tests {
     #[tokio::test]
     async fn funding_ingester_fetches_for_each_market() {
         let data_dir = TempDir::new().unwrap();
-        let mock = Arc::new(MockHyperliquid {
-            markets: vec![
-                Market::new("BTC".to_string()),
-                Market::new("ETH".to_string()),
-            ],
-            ..MockHyperliquid::new()
-        });
+        let markets = vec![
+            Market::new("BTC".to_string()),
+            Market::new("ETH".to_string()),
+        ];
+        let mock = Arc::new(MockHyperliquid::new());
         let call_count = Arc::clone(&mock);
         let ingester = FundingRateIngester::new(mock, 10);
 
-        ingester.ingest(data_dir.path()).await.unwrap();
+        ingester
+            .ingest_with_markets(data_dir.path(), &markets)
+            .await
+            .unwrap();
 
         assert_eq!(
             call_count.fetch_funding_calls.load(Ordering::Relaxed),
@@ -614,7 +657,9 @@ mod tests {
         let mock = Arc::new(MockHyperliquid::new());
         let ingester = CandleIngester::new(mock, 10);
 
-        let result = ingester.ingest(Timeframe::OneHour, data_dir.path()).await;
+        let result = ingester
+            .ingest_with_markets(Timeframe::OneHour, data_dir.path(), &btc_markets())
+            .await;
 
         assert!(
             result.is_ok(),
@@ -631,7 +676,7 @@ mod tests {
         let ingester = CandleIngester::new(mock, 10);
 
         ingester
-            .ingest(Timeframe::OneHour, data_dir.path())
+            .ingest_with_markets(Timeframe::OneHour, data_dir.path(), &btc_markets())
             .await
             .unwrap();
 
@@ -664,7 +709,9 @@ mod tests {
         let mock = Arc::new(MockHyperliquid::new());
         let ingester = FundingRateIngester::new(mock, 10);
 
-        let result = ingester.ingest(data_dir.path()).await;
+        let result = ingester
+            .ingest_with_markets(data_dir.path(), &btc_markets())
+            .await;
 
         assert!(
             result.is_ok(),
@@ -680,7 +727,10 @@ mod tests {
         let mock = Arc::new(MockHyperliquid::new());
         let ingester = FundingRateIngester::new(mock, 10);
 
-        ingester.ingest(data_dir.path()).await.unwrap();
+        ingester
+            .ingest_with_markets(data_dir.path(), &btc_markets())
+            .await
+            .unwrap();
 
         let csv_content =
             std::fs::read_to_string(data_dir.path().join("funding_rate1h.csv")).unwrap();

@@ -3,13 +3,23 @@
 //! `log_return = ln(close_t / close_{t-1})`, computed per ticker.
 
 use polars::prelude::{
-    ChunkApply, DataFrame, IntoLazy, IntoSeries, NULL, PolarsError, SortMultipleOptions, col, lit,
-    when,
+    ChunkApply, DataFrame, Expr, IntoLazy, IntoSeries, NULL, PolarsError, SortMultipleOptions, col,
+    lit, when,
 };
 use tracing::debug;
 
 /// Daily candles needed for a 365-calendar-day log-return window.
 pub(super) const LOG_RETURNS_LOOKBACK_CANDLES: usize = 366;
+
+/// A column's values sorted by candle timestamp, for use inside `group_by`
+/// aggregations.
+///
+/// Polars does not document the order of values gathered per group, so any
+/// trailing-window selection (`tail`, `last`) must sort explicitly instead of
+/// relying on the input frame's row order surviving the grouping.
+pub(super) fn chronological(column: &str) -> Expr {
+    col(column).sort_by([col("timestamp")], SortMultipleOptions::default())
+}
 
 /// Sort by ticker and timestamp, then add a per-ticker `log_return` column.
 ///

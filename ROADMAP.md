@@ -82,7 +82,9 @@ of them.
 - [x] Markets metadata + persisted disable flag --
       [#275](https://github.com/data-cartel/moneymentum/issues/275) /
       [#276](https://github.com/data-cartel/moneymentum/pull/276)
-- [ ] Tradable filter wired into ingestion
+- [x] Tradable filter wired into ingestion --
+      [#277](https://github.com/data-cartel/moneymentum/issues/277) /
+      [#278](https://github.com/data-cartel/moneymentum/pull/278)
 
 ---
 

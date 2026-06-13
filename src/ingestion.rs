@@ -97,11 +97,16 @@ async fn ingest_all(
     funding_ingester: &FundingRateIngester<dyn Hyperliquid>,
     data_dir: &Path,
 ) -> Result<DateTime<Utc>, HyperliquidError> {
-    crate::market_metadata::refresh_markets(client, data_dir).await?;
-    funding_ingester.ingest(data_dir).await?;
+    let markets = crate::market_metadata::refresh_markets(client, data_dir).await?;
+
+    funding_ingester
+        .ingest_with_markets(data_dir, &markets)
+        .await?;
 
     for timeframe in TIMEFRAMES {
-        candle_ingester.ingest(*timeframe, data_dir).await?;
+        candle_ingester
+            .ingest_with_markets(*timeframe, data_dir, &markets)
+            .await?;
     }
 
     Ok(Utc::now())
@@ -332,10 +337,6 @@ mod tests {
 
     #[async_trait]
     impl Hyperliquid for MockHyperliquid {
-        async fn list_markets(&self) -> Result<Vec<Market>, HyperliquidError> {
-            Ok(vec![Market::new("BTC".into())])
-        }
-
         async fn fetch_market_metadata(
             &self,
         ) -> Result<Vec<crate::market_metadata::MarketMetadata>, HyperliquidError> {

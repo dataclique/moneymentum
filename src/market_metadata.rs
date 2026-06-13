@@ -26,19 +26,44 @@ pub(crate) fn file_name() -> &'static str {
     "markets.csv"
 }
 
-/// Fetches the current markets metadata, merges it with the persisted ledger
-/// (preserving the `disable` flag), and writes `markets.csv`.
+/// Refreshes `markets.csv` from the live exchange and returns the tradable
+/// markets: every fetched market that is not disabled.
+///
+/// Market discovery is driven by the exchange fetch; the ledger only persists
+/// the operator-controlled `disable` flags. Ingestion consumes the returned
+/// list directly, so it never depends on re-reading the CSV.
 pub(crate) async fn refresh_markets(
     client: &dyn Hyperliquid,
     data_dir: &Path,
-) -> Result<(), HyperliquidError> {
+) -> Result<Vec<Market>, HyperliquidError> {
     let fetched = client.fetch_market_metadata().await?;
     let path = data_dir.join(file_name());
     let existing = crate::dataframe::read_csv(path.clone()).await?;
     let frame = build_markets_frame(&fetched, existing.as_ref())?;
+    let tradable = tradable_from_frame(&frame)?;
     crate::dataframe::write_csv(path, frame).await?;
-    info!(markets = fetched.len(), "markets metadata refreshed");
-    Ok(())
+    info!(
+        markets = fetched.len(),
+        tradable = tradable.len(),
+        "markets metadata refreshed"
+    );
+    Ok(tradable)
+}
+
+/// The tradable markets in a freshly built ledger frame: every market whose
+/// `disable` flag is not set.
+fn tradable_from_frame(frame: &DataFrame) -> Result<Vec<Market>, PolarsError> {
+    let symbols = frame.column("symbol")?.str()?;
+    let disable = frame.column("disable")?.bool()?;
+    let markets: Vec<Market> = (0..symbols.len())
+        .filter(|&index| disable.get(index) == Some(false))
+        .filter_map(|index| {
+            symbols
+                .get(index)
+                .map(|symbol| Market::new(symbol.to_string()))
+        })
+        .collect();
+    Ok(markets)
 }
 
 /// Builds the markets ledger `DataFrame` (`symbol`, `max_leverage`, `disable`)
@@ -113,10 +138,6 @@ mod tests {
 
     #[async_trait]
     impl Hyperliquid for StubClient {
-        async fn list_markets(&self) -> Result<Vec<Market>, HyperliquidError> {
-            Ok(vec![])
-        }
-
         async fn fetch_market_metadata(&self) -> Result<Vec<MarketMetadata>, HyperliquidError> {
             Ok(self.metadata.clone())
         }
@@ -193,7 +214,12 @@ mod tests {
             metadata: vec![metadata("BTC", 50), metadata("ETH", 25)],
         };
 
-        refresh_markets(&client, data_dir.path()).await.unwrap();
+        let tradable = refresh_markets(&client, data_dir.path()).await.unwrap();
+        assert_eq!(
+            tradable.len(),
+            2,
+            "both markets are tradable on first refresh"
+        );
         assert!(data_dir.path().join("markets.csv").exists());
         assert!(crate::logs_contain_at(
             Level::INFO,
@@ -212,7 +238,12 @@ mod tests {
             .unwrap();
         crate::dataframe::write_csv(path, edited).await.unwrap();
 
-        refresh_markets(&client, data_dir.path()).await.unwrap();
+        let tradable = refresh_markets(&client, data_dir.path()).await.unwrap();
+        assert_eq!(
+            tradable.iter().map(Market::as_str).collect::<Vec<_>>(),
+            vec!["ETH"],
+            "BTC is excluded from the tradable set once disabled"
+        );
 
         let reloaded = crate::dataframe::read_csv(data_dir.path().join(file_name()))
             .await
@@ -220,5 +251,65 @@ mod tests {
             .unwrap();
         assert_eq!(disable_for(&reloaded, "BTC"), Some(true));
         assert_eq!(disable_for(&reloaded, "ETH"), Some(false));
+    }
+
+    #[test]
+    fn tradable_from_frame_excludes_disabled_markets() {
+        let frame = df! {
+            "symbol" => &["BTC", "ETH", "SOL"],
+            "max_leverage" => &[50_u32, 25, 20],
+            "disable" => &[false, true, false],
+        }
+        .unwrap();
+
+        let markets = tradable_from_frame(&frame).unwrap();
+        let symbols: Vec<&str> = markets.iter().map(Market::as_str).collect();
+
+        assert_eq!(markets.len(), 2, "the disabled market is excluded");
+        assert!(symbols.contains(&"BTC"));
+        assert!(symbols.contains(&"SOL"));
+        assert!(!symbols.contains(&"ETH"), "ETH is disabled");
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn refresh_discovers_markets_from_the_exchange_not_the_ledger() {
+        let data_dir = TempDir::new().unwrap();
+        // The persisted ledger only knows BTC, which the operator disabled.
+        let existing = df! {
+            "symbol" => &["BTC"],
+            "max_leverage" => &[40_u32],
+            "disable" => &[true],
+        }
+        .unwrap();
+        crate::dataframe::write_csv(data_dir.path().join(file_name()), existing)
+            .await
+            .unwrap();
+
+        // The exchange now lists BTC, ETH, and SOL.
+        let client = StubClient {
+            metadata: vec![
+                metadata("BTC", 50),
+                metadata("ETH", 25),
+                metadata("SOL", 20),
+            ],
+        };
+
+        let tradable = refresh_markets(&client, data_dir.path()).await.unwrap();
+        let symbols: Vec<&str> = tradable.iter().map(Market::as_str).collect();
+
+        // ETH and SOL are discovered from the live fetch even though the ledger
+        // never listed them; BTC stays excluded by its persisted disable flag.
+        assert_eq!(tradable.len(), 2, "newly listed markets are discovered");
+        assert!(symbols.contains(&"ETH"));
+        assert!(symbols.contains(&"SOL"));
+        assert!(
+            !symbols.contains(&"BTC"),
+            "operator-disabled BTC stays excluded"
+        );
+        assert!(crate::logs_contain_at(
+            Level::INFO,
+            &["markets metadata refreshed"]
+        ));
     }
 }

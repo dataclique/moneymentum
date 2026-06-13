@@ -867,7 +867,7 @@ mod tests {
         );
 
         assert!(crate::logs_contain_at(
-            tracing::Level::DEBUG,
+            tracing::Level::INFO,
             &["factors computed"]
         ));
     }

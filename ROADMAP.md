@@ -67,8 +67,18 @@ of them.
 - [x] Factor: autocorrelation --
       [#263](https://github.com/data-cartel/moneymentum/issues/263) /
       [#264](https://github.com/data-cartel/moneymentum/pull/264)
-- [ ] Factor: information discreteness
-- [ ] Factor: carry (signed funding)
+- [x] Factor: information discreteness --
+      [#265](https://github.com/data-cartel/moneymentum/issues/265) /
+      [#266](https://github.com/data-cartel/moneymentum/pull/266)
+- [x] Factor: carry (signed funding) --
+      [#267](https://github.com/data-cartel/moneymentum/issues/267) /
+      [#268](https://github.com/data-cartel/moneymentum/pull/268)
+- [x] Factor: beta (per-asset, to benchmark) --
+      [#269](https://github.com/data-cartel/moneymentum/issues/269) /
+      [#270](https://github.com/data-cartel/moneymentum/pull/270)
+- [x] Factor: 24h volume (screener tie-break) --
+      [#271](https://github.com/data-cartel/moneymentum/issues/271) /
+      [#272](https://github.com/data-cartel/moneymentum/pull/272)
 - [ ] Markets metadata + persisted disable flag
 - [ ] Tradable filter wired into ingestion
 

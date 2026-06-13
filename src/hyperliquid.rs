@@ -23,6 +23,7 @@ use crate::candle::{Candle, CandleError, candles_to_dataframe};
 use crate::dataframe::{self, DataFrameError};
 use crate::finance::{Market, Symbol};
 use crate::funding::{self, FundingError, FundingRate};
+use crate::market_metadata::MarketMetadata;
 use crate::timeframe::Timeframe;
 
 /// Maximum number of data points returned by Hyperliquid's historical data endpoints.
@@ -44,6 +45,10 @@ pub(crate) enum HyperliquidError {
     Sdk(#[from] hyperliquid_rust_sdk::Error),
     #[error(transparent)]
     IntConversion(#[from] TryFromIntError),
+    #[error(transparent)]
+    Http(#[from] reqwest::Error),
+    #[error(transparent)]
+    Polars(#[from] polars::prelude::PolarsError),
 }
 
 /// Abstraction over Hyperliquid's market data API.
@@ -52,6 +57,8 @@ pub(crate) enum HyperliquidError {
 #[async_trait]
 pub(crate) trait Hyperliquid: Send + Sync {
     async fn list_markets(&self) -> Result<Vec<Market>, HyperliquidError>;
+
+    async fn fetch_market_metadata(&self) -> Result<Vec<MarketMetadata>, HyperliquidError>;
 
     async fn fetch_candles(
         &self,
@@ -104,6 +111,61 @@ impl Hyperliquid for HyperliquidClient {
             .collect();
         debug!(count = markets.len(), "fetched markets");
         Ok(markets)
+    }
+
+    #[instrument(skip(self))]
+    async fn fetch_market_metadata(&self) -> Result<Vec<MarketMetadata>, HyperliquidError> {
+        // The SDK's typed `meta()` drops `maxLeverage`, so request the raw `meta`
+        // info payload and parse the fields we need ourselves.
+        #[derive(serde::Serialize)]
+        struct MetaRequest {
+            #[serde(rename = "type")]
+            request_type: &'static str,
+        }
+        #[derive(serde::Deserialize)]
+        struct RawMeta {
+            universe: Vec<RawAsset>,
+        }
+        #[derive(serde::Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct RawAsset {
+            name: String,
+            max_leverage: u32,
+        }
+
+        let url = format!("{}/info", self.info.http_client.base_url);
+        let raw = (|| async {
+            reqwest::Client::new()
+                .post(&url)
+                .json(&MetaRequest {
+                    request_type: "meta",
+                })
+                .send()
+                .await?
+                .error_for_status()?
+                .json::<RawMeta>()
+                .await
+        })
+        .retry(
+            ExponentialBuilder::default()
+                .with_jitter()
+                .with_max_times(self.max_retries),
+        )
+        .notify(|err, dur| {
+            debug!(error = %err, delay = ?dur, "retrying market metadata fetch");
+        })
+        .await?;
+
+        let metadata: Vec<MarketMetadata> = raw
+            .universe
+            .into_iter()
+            .map(|asset| MarketMetadata {
+                symbol: Market::new(asset.name),
+                max_leverage: asset.max_leverage,
+            })
+            .collect();
+        debug!(count = metadata.len(), "fetched market metadata");
+        Ok(metadata)
     }
 
     #[instrument(skip(self))]
@@ -418,6 +480,7 @@ mod tests {
 
     struct MockHyperliquid {
         markets: Vec<Market>,
+        market_metadata: Vec<MarketMetadata>,
         candles: Vec<Candle>,
         funding_rates: Vec<FundingRate>,
         fetch_candles_calls: AtomicUsize,
@@ -428,6 +491,10 @@ mod tests {
         fn new() -> Self {
             Self {
                 markets: vec![Market::new("BTC".to_string())],
+                market_metadata: vec![MarketMetadata {
+                    symbol: Market::new("BTC".to_string()),
+                    max_leverage: 50,
+                }],
                 candles: vec![Candle {
                     timestamp: Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
                     open: 42000.0,
@@ -459,6 +526,10 @@ mod tests {
     impl Hyperliquid for MockHyperliquid {
         async fn list_markets(&self) -> Result<Vec<Market>, HyperliquidError> {
             Ok(self.markets.clone())
+        }
+
+        async fn fetch_market_metadata(&self) -> Result<Vec<MarketMetadata>, HyperliquidError> {
+            Ok(self.market_metadata.clone())
         }
 
         async fn fetch_candles(

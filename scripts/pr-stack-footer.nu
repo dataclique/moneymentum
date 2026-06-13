@@ -78,8 +78,9 @@ export def splice-footer [body: string, footer: string]: nothing -> string {
   }
 }
 
-# PR numbers per stack, ordered base -> tip, for stacks carrying at least
-# two PRs (a single-PR lane is not a stack and gets no footer).
+# PR numbers per stack, ordered base -> tip. Every stack carrying at least
+# one PR gets a footer -- including single-PR lanes, which render as a
+# "part 1 of 1" footer so every PR in the forest carries the section.
 export def stacks-with-prs []: record -> list {
   $in.stacks
   | each {|stack|
@@ -88,7 +89,7 @@ export def stacks-with-prs []: record -> list {
       | each {|branch| $branch.reviewId? | parse-pr-number }
       | compact
     }
-  | where {|prs| ($prs | length) >= 2}
+  | where {|prs| ($prs | length) >= 1}
 }
 
 # Extract the integer PR number from a GitButler reviewId like "(#352)".

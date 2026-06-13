@@ -28,6 +28,11 @@ assert ((build-footer [264 266 268] 268) | str contains "part 3 of 3")
 assert equal ((build-footer [264 266 268] 266) | split row "👈" | length) 2
 assert ((build-footer [264 266 268] 268) | str contains "#268 👈")
 
+# A single-PR lane renders as a 1-of-1 footer so every forest PR carries one.
+assert ((build-footer [286] 286) | str contains "part 1 of 1")
+assert ((build-footer [286] 286) | str contains "#286 👈")
+assert equal ((build-footer [286] 286) | lines | where ($it | str starts-with "- ") | length) 1
+
 # splice-footer replaces an existing footer region and keeps the prose.
 let body_with_footer = "## Motivation
 

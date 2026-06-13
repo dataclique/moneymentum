@@ -122,6 +122,12 @@
           runtimeInputs = [ gitbutler-cli ];
         };
 
+        # Refresh the GitButler stack footer on every stacked PR.
+        pr-stack-footer = mkNuScript {
+          name = "pr-stack-footer";
+          runtimeInputs = [ gitbutler-cli pkgs.gh ];
+        };
+
         hooks = {
           # Nix
           nil.enable = true;
@@ -197,6 +203,7 @@
                   git
                   gitbutler-cli
                   gitbutler-stack
+                  pr-stack-footer
                   nushell
                   ragenix.packages.${system}.default
                   sqlx-cli
@@ -260,6 +267,7 @@
           };
 
           inherit gitbutler-stack;
+          inherit pr-stack-footer;
         };
         packages = {
           default = rustPkgs.package;
@@ -269,6 +277,7 @@
 
           inherit gitbutler-cli;
           inherit gitbutler-stack;
+          inherit pr-stack-footer;
 
           frontend = frontendPkgs.package;
           frontend-lint = frontendPkgs.lint;

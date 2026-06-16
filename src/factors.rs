@@ -27,6 +27,9 @@ mod returns;
 mod scores;
 mod volume;
 
+#[cfg(test)]
+mod fixture_tests;
+
 pub(crate) use beta::compute_portfolio_beta_report;
 pub(crate) use scores::{compute_factors, compute_factors_json};
 

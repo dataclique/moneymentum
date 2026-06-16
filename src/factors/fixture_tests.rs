@@ -164,12 +164,12 @@ fn factor_value(
     row_index: usize,
     factor_name: &str,
 ) -> Result<f64, FixtureTestError> {
-    let value = frame
+    let factor_numeric_value = frame
         .column(factor_name)?
         .get(row_index)?
         .try_extract::<f64>()?;
 
-    Ok(value)
+    Ok(factor_numeric_value)
 }
 
 fn assert_approx(actual: f64, expected: f64, tolerance: f64, label: &str) {

@@ -1,14 +1,17 @@
 { pkgs, craneLib }:
 
 let
-  # Include fixtures and migrations alongside standard Cargo sources for tests
+  # Include fixtures, spreadsheet regression data, and migrations alongside
+  # standard Cargo sources for tests.
   src = pkgs.lib.cleanSourceWith {
     src = ./.;
     filter = path: type:
       let base = builtins.baseNameOf path;
       in (craneLib.filterCargoSources path type) || base == "fixtures" || base
-      == "migrations" || (pkgs.lib.hasPrefix (toString ./fixtures) path)
-      || (pkgs.lib.hasPrefix (toString ./migrations) path);
+      == "migrations" || base == "data_test"
+      || (pkgs.lib.hasPrefix (toString ./fixtures) path)
+      || (pkgs.lib.hasPrefix (toString ./migrations) path)
+      || (pkgs.lib.hasPrefix (toString ./data_test) path);
   };
 
   # Cargo manifests only -- deps derivation hash changes only when dependencies change

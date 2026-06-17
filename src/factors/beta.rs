@@ -50,7 +50,7 @@ pub(crate) async fn compute_portfolio_beta_report(
 ///
 /// Takes long-format log returns (`timestamp`, `ticker`, `log_return`) and weights,
 /// and returns beta = Cov(portfolio, benchmark) / Var(benchmark).
-fn compute_beta_from_log_returns(
+pub(super) fn compute_beta_from_log_returns(
     log_returns_df: &DataFrame,
     weights: &[(String, f64)],
     benchmark_ticker: &str,
@@ -82,7 +82,7 @@ fn compute_beta_from_log_returns(
 }
 
 /// Path of the daily candles file relative to the data directory.
-fn daily_candles_path(data_dir: &Path) -> std::path::PathBuf {
+pub(super) fn daily_candles_path(data_dir: &Path) -> std::path::PathBuf {
     data_dir.join(Timeframe::OneDay.file_name())
 }
 

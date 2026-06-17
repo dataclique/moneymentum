@@ -48,7 +48,7 @@ pub(crate) async fn compute_factors_json(
 /// - `cum_return` = exp(sum of log returns) - 1 (cumulative / momentum return)
 /// - `sma` = simple moving average of close prices
 /// - `mean_return` = mean log return
-/// - `price_zscore` = (latest close - `sma`) / sample stddev of close prices
+/// - `price_zscore` = (latest close - `sma`) / population stddev of close prices
 /// - `annualized_return` = exp(`mean_return` * annualized_factor) - 1
 /// - `sharpe` = `annualized_return` / `annualized_volatility` (risk-free 0);
 ///   null when there is no volatility
@@ -56,8 +56,9 @@ pub(crate) async fn compute_factors_json(
 ///   when there is no downside
 /// - `autocorrelation` = lag-1 autocorrelation of returns over the last
 ///   `lookback_periods` / 4 pairs; null when returns have no variation
-/// - `information_discreteness` = sign(`cum_return`) * (fraction of negative
-///   returns - fraction of positive returns); -1 for a smooth trend
+/// - `information_discreteness` = sign(`cum_return`) * (bear candle fraction
+///   - bull candle fraction) over the lookback, where bear = `close < open` and
+///   bull = `close > open`
 /// - `carry` = latest signed funding rate from `funding_rate1h.csv`; null when
 ///   no funding data is available
 /// - `beta` = per-asset beta to the benchmark (BTC) over the lookback; null when
@@ -93,7 +94,7 @@ pub(crate) async fn compute_factors(
 /// Synchronous core: log returns per ticker, then per-ticker factor scores over
 /// the last `lookback_periods` candles. Stddev uses ddof=1 to match the legacy
 /// Spark `stddev`; the cumulative return is `exp(sum) - 1`.
-fn per_ticker_factors(
+pub(super) fn per_ticker_factors(
     candles: &DataFrame,
     config: &TimeframeConfig,
 ) -> Result<DataFrame, PolarsError> {
@@ -118,6 +119,7 @@ fn per_ticker_factors(
     // window expressions so one factor cannot silently diverge from the rest.
     let trailing_returns = || chronological("log_return").tail(Some(lookback));
     let trailing_closes = || chronological("close").tail(Some(lookback));
+    let trailing_opens = || chronological("open").tail(Some(lookback));
 
     // Downside deviation inputs for Sortino: sum of squared shortfalls below the
     // minimum acceptable return, and the observation count to average over.
@@ -137,12 +139,16 @@ fn per_ticker_factors(
             trailing_returns().sum().alias("cum_log_return"),
             trailing_closes().mean().alias("sma"),
             trailing_returns().mean().alias("mean_return"),
-            trailing_closes().std(1).alias("price_stddev"),
+            trailing_closes().std(0).alias("price_stddev"),
             chronological("close").last().alias("last_close"),
             downside_sq_sum,
             trailing_returns().count().alias("obs_count"),
-            (trailing_returns().gt(lit(0.0))).sum().alias("pos_count"),
-            (trailing_returns().lt(lit(0.0))).sum().alias("neg_count"),
+            (trailing_closes().gt(trailing_opens()))
+                .sum()
+                .alias("bull_candle_count"),
+            (trailing_closes().lt(trailing_opens()))
+                .sum()
+                .alias("bear_candle_count"),
         ])
         // price z-score = (latest close - SMA) / price stddev; undefined (null)
         // when there is no price dispersion (constant prices over the window)
@@ -162,7 +168,7 @@ fn per_ticker_factors(
         .sort(["ticker"], SortMultipleOptions::default())
         .collect()?;
 
-    let factors = add_return_and_risk_factors(factors, config.annualized_factor)?;
+    let factors = add_return_and_risk_factors(factors, config.annualized_factor, lookback)?;
 
     let factors = factors.join(
         &autocorrelation,
@@ -189,10 +195,12 @@ fn per_ticker_factors(
 /// Adds `cum_return`, `annualized_return`, `sharpe`, `sortino`, and
 /// `information_discreteness`. `sharpe`/`sortino` are null when their risk
 /// denominator is zero; `information_discreteness` is `sign(cum_return)` times
-/// the negative-minus-positive return fraction.
+/// (bear candle count - bull candle count) / `lookback_periods`, counting
+/// `close < open` as bear and `close > open` as bull over the trailing window.
 fn add_return_and_risk_factors(
     mut factors: DataFrame,
     annualized_factor: f64,
+    lookback_periods: usize,
 ) -> Result<DataFrame, PolarsError> {
     // cum_return = exp(sum of log returns) - 1, and annualized_return =
     // exp(mean_return * annualized_factor) - 1. exp is applied on the series
@@ -230,8 +238,8 @@ fn add_return_and_risk_factors(
 
     let downside_deviation = (col("downside_sq_sum") / col("obs_count")).pow(lit(0.5));
 
-    // information discreteness = sign(cum_return) * (pct_negative - pct_positive):
-    // -1 for a smooth one-directional trend, near 0 for choppy or flat returns.
+    // information discreteness = sign(cum_return) * (bear - bull) / lookback:
+    // smooth uptrends have more bull candles than bear, so the score is negative.
     let return_sign = when(col("cum_return").gt(lit(0.0)))
         .then(lit(1.0))
         .otherwise(
@@ -239,9 +247,11 @@ fn add_return_and_risk_factors(
                 .then(lit(-1.0))
                 .otherwise(lit(0.0)),
         );
-    let pct_difference = (col("neg_count").cast(DataType::Float64)
-        - col("pos_count").cast(DataType::Float64))
-        / col("obs_count").cast(DataType::Float64);
+    let pct_difference = (col("bear_candle_count").cast(DataType::Float64)
+        - col("bull_candle_count").cast(DataType::Float64))
+        / lit(f64::from(
+            u32::try_from(lookback_periods).unwrap_or(u32::MAX),
+        ));
 
     let factors = factors
         .lazy()
@@ -285,8 +295,8 @@ fn add_return_and_risk_factors(
         .drop(cols([
             "downside_sq_sum",
             "obs_count",
-            "pos_count",
-            "neg_count",
+            "bull_candle_count",
+            "bear_candle_count",
         ]))
         .collect()?;
 
@@ -302,6 +312,14 @@ mod tests {
     use tempfile::TempDir;
     use tracing_test::traced_test;
 
+    fn opens_for_bull_candles(closes: &[f64]) -> Vec<f64> {
+        closes.iter().map(|close| close * 0.99).collect()
+    }
+
+    fn opens_for_bear_candles(closes: &[f64]) -> Vec<f64> {
+        closes.iter().map(|close| close + 1.0).collect()
+    }
+
     proptest! {
         /// Volatility is a scaled standard deviation, so it is always finite and
         /// non-negative for any positive close series; the SMA stays within the
@@ -315,9 +333,11 @@ mod tests {
             let max_close = closes.iter().copied().fold(f64::NEG_INFINITY, f64::max);
             let timestamps: Vec<String> = (0..n).map(|i| format!("{i:04}")).collect();
             let tickers = vec!["BTC"; n];
+            let opens = opens_for_bull_candles(&closes);
             let candles = df! {
                 "timestamp" => timestamps,
                 "ticker" => tickers,
+                "open" => opens,
                 "close" => closes,
             }
             .unwrap();
@@ -419,9 +439,11 @@ mod tests {
             let n = closes.len();
             let timestamps: Vec<String> = (0..n).map(|i| format!("{i:04}")).collect();
             let tickers = vec!["BTC"; n];
+            let opens = opens_for_bull_candles(&closes);
             let candles = df! {
                 "timestamp" => timestamps,
                 "ticker" => tickers,
+                "open" => opens,
                 "close" => closes,
             }
             .unwrap();
@@ -462,8 +484,8 @@ mod tests {
                 "increasing closes have no downside, so sortino must be null, got {sortino:?}"
             );
 
-            // A smooth uptrend is fully positive returns, so information
-            // discreteness is sign(+) * (0 - 1) = -1.
+            // Every candle is bullish (close > open), so information discreteness
+            // is sign(+) * (0 - n) / lookback.
             let information_discreteness = out
                 .column("information_discreteness")
                 .unwrap()
@@ -471,9 +493,14 @@ mod tests {
                 .unwrap()
                 .get(0)
                 .unwrap();
+            let candle_count = f64::from(u32::try_from(n).unwrap_or(u32::MAX));
+            let lookback = f64::from(
+                u32::try_from(config.lookback_periods).unwrap_or(u32::MAX),
+            );
+            let expected_discreteness = -candle_count / lookback;
             prop_assert!(
-                (information_discreteness - (-1.0)).abs() < 1e-12,
-                "a smooth uptrend must give information_discreteness -1, got {information_discreteness}"
+                (information_discreteness - expected_discreteness).abs() < 1e-9,
+                "a smooth uptrend must give information_discreteness {expected_discreteness}, got {information_discreteness}"
             );
         }
     }
@@ -486,16 +513,18 @@ mod tests {
         // and while one other window ([0, 0, ln(1.1)]) also sums to ln(1.1),
         // the sma assertion below discriminates it (its closes average lower
         // than the trailing window's).
+        let closes = &[
+            100.0, 100.0, 100.0, 100.0, 100.0, 110.0, 100.0, 110.0, 200.0, 200.0, 200.0, 200.0,
+            200.0, 220.0, 200.0, 220.0_f64,
+        ];
         let candles = df! {
             "timestamp" => &[
                 "0", "1", "2", "3", "4", "5", "6", "7",
                 "0", "1", "2", "3", "4", "5", "6", "7",
             ],
             "ticker" => &["BTC"; 8].iter().chain(&["ETH"; 8]).copied().collect::<Vec<_>>(),
-            "close" => &[
-                100.0, 100.0, 100.0, 100.0, 100.0, 110.0, 100.0, 110.0,
-                200.0, 200.0, 200.0, 200.0, 200.0, 220.0, 200.0, 220.0_f64,
-            ],
+            "open" => closes,
+            "close" => closes,
         }
         .unwrap();
         let config = TimeframeConfig {
@@ -547,10 +576,12 @@ mod tests {
         // NaN while annualized_return collapses to a finite -1, so only the
         // is_finite() denominator guard stands between this input and a NaN
         // sharpe in the /factors JSON.
+        let closes = &[100.0, 0.0, 101.0];
         let candles = df! {
             "timestamp" => &["0", "1", "2"],
             "ticker" => &["BTC", "BTC", "BTC"],
-            "close" => &[100.0, 0.0, 101.0],
+            "open" => closes,
+            "close" => closes,
         }
         .unwrap();
         let config = TimeframeConfig {
@@ -585,10 +616,12 @@ mod tests {
         // Every other sharpe test uses a non-negative return, so a sign error
         // in the formula (e.g. an accidental abs on the numerator) would pass
         // the whole suite while misranking every asset in a drawdown.
+        let closes = &[100.0, 99.0, 97.5, 95.0];
         let candles = df! {
             "timestamp" => &["0", "1", "2", "3"],
             "ticker" => &["BTC", "BTC", "BTC", "BTC"],
-            "close" => &[100.0, 99.0, 97.5, 95.0],
+            "open" => opens_for_bear_candles(closes),
+            "close" => closes,
         }
         .unwrap();
         let config = TimeframeConfig {
@@ -620,10 +653,12 @@ mod tests {
         // distinct returns keep the volatility finite and non-zero, so the
         // sharpe assertion below genuinely tests null propagation from
         // annualized_return rather than a null-volatility shortcut.
+        let closes = &[1.0, 1e100, 1e150_f64];
         let candles = df! {
             "timestamp" => &["0", "1", "2"],
             "ticker" => &["BTC", "BTC", "BTC"],
-            "close" => &[1.0, 1e100, 1e150_f64],
+            "open" => opens_for_bull_candles(closes),
+            "close" => closes,
         }
         .unwrap();
         let config = TimeframeConfig {
@@ -656,10 +691,12 @@ mod tests {
         // A NaN close poisons the window's stddev to NaN, and NaN != 0.0 is
         // true in IEEE 754 - without the is_finite() guard the z-score would
         // serialize as NaN and silently dominate any z-score-ranked output.
+        let closes = &[100.0, f64::NAN, 101.0];
         let candles = df! {
             "timestamp" => &["0", "1", "2"],
             "ticker" => &["BTC", "BTC", "BTC"],
-            "close" => &[100.0, f64::NAN, 101.0],
+            "open" => closes,
+            "close" => closes,
         }
         .unwrap();
         let config = TimeframeConfig {
@@ -681,10 +718,12 @@ mod tests {
     fn per_ticker_factors_zscore_is_null_for_a_single_candle_ticker() {
         // A single observation yields a null (not NaN) stddev from std(ddof=1);
         // pin the documented null so the edge stays covered.
+        let close = 100.0_f64;
         let candles = df! {
             "timestamp" => &["0"],
             "ticker" => &["BTC"],
-            "close" => &[100.0_f64],
+            "open" => &[close],
+            "close" => &[close],
         }
         .unwrap();
         let config = TimeframeConfig {
@@ -704,10 +743,12 @@ mod tests {
 
     #[test]
     fn per_ticker_factors_match_manual_values() {
+        let closes = &[100.0, 101.0, 100.0, 101.0, 100.0_f64];
         let candles = df! {
             "timestamp" => &["0", "1", "2", "3", "4"],
             "ticker" => &["BTC", "BTC", "BTC", "BTC", "BTC"],
-            "close" => &[100.0, 101.0, 100.0, 101.0, 100.0_f64],
+            "open" => closes,
+            "close" => closes,
         }
         .unwrap();
         let config = TimeframeConfig {
@@ -761,8 +802,8 @@ mod tests {
             "mean_return should be ~0, got {mean_return}"
         );
 
-        // price stddev (ddof=1) of the closes is sqrt(1.2 / 4) = sqrt(0.3), so
-        // the z-score of the latest close (100) is (100 - 100.4) / sqrt(0.3).
+        // price stddev (ddof=0) of the closes is sqrt(1.2 / 5) = sqrt(0.24), so
+        // the z-score of the latest close (100) is (100 - 100.4) / sqrt(0.24).
         let zscore = out
             .column("price_zscore")
             .unwrap()
@@ -770,7 +811,7 @@ mod tests {
             .unwrap()
             .get(0)
             .unwrap();
-        let expected_zscore = -0.4 / 0.3_f64.sqrt();
+        let expected_zscore = -0.4 / 0.24_f64.sqrt();
         assert!(
             (zscore - expected_zscore).abs() < 1e-10,
             "zscore {zscore} != {expected_zscore}"
@@ -821,10 +862,12 @@ mod tests {
 
     #[test]
     fn per_ticker_factors_are_zero_for_constant_prices() {
+        let close = 100.0_f64;
         let candles = df! {
             "timestamp" => &["0", "1", "2", "3"],
             "ticker" => &["BTC", "BTC", "BTC", "BTC"],
-            "close" => &[100.0, 100.0, 100.0, 100.0_f64],
+            "open" => &[close; 4],
+            "close" => &[close; 4],
         }
         .unwrap();
         let config = TimeframeConfig {
@@ -941,10 +984,12 @@ mod tests {
     fn per_ticker_sortino_matches_manual_downside_deviation() {
         // closes [100, 99, 101] give log returns [-p, q] with p = ln(100/99)
         // (a down move below the MAR of 0) and q = ln(101/99) (an up move).
+        let closes = &[100.0, 99.0, 101.0_f64];
         let candles = df! {
             "timestamp" => &["0", "1", "2"],
             "ticker" => &["BTC", "BTC", "BTC"],
-            "close" => &[100.0, 99.0, 101.0_f64],
+            "open" => opens_for_bull_candles(closes),
+            "close" => closes,
         }
         .unwrap();
         // annualized_factor 1 keeps annualized_return = exp(mean_return) - 1.
@@ -979,10 +1024,12 @@ mod tests {
     #[test]
     fn per_ticker_factors_treat_near_zero_price_stddev_as_undefined_zscore() {
         let tiny_move = PRICE_STDDEV_EPS / 100.0;
+        let closes = &[100.0, 100.0 + tiny_move, 100.0, 100.0 + tiny_move];
         let candles = df! {
             "timestamp" => &["0", "1", "2", "3"],
             "ticker" => &["BTC", "BTC", "BTC", "BTC"],
-            "close" => &[100.0, 100.0 + tiny_move, 100.0, 100.0 + tiny_move],
+            "open" => closes,
+            "close" => closes,
         }
         .unwrap();
         let config = TimeframeConfig {
@@ -1001,13 +1048,14 @@ mod tests {
     }
 
     #[test]
-    fn information_discreteness_matches_manual_value_for_mixed_signs() {
-        // Three up moves and one down move with a net-positive cum_return:
-        // sign(+) * (pct_negative - pct_positive) = 1 * (1/4 - 3/4) = -0.5.
+    fn information_discreteness_matches_manual_value_for_mixed_candle_signs() {
+        // Two bear and three bull candles on a net-positive cum_return:
+        // sign(+) * (2 - 3) / lookback = -0.1.
         let candles = df! {
             "timestamp" => &["0", "1", "2", "3", "4"],
             "ticker" => &["BTC", "BTC", "BTC", "BTC", "BTC"],
-            "close" => &[100.0, 102.0, 101.0, 103.0, 105.0_f64],
+            "open" => &[100.0, 103.0, 100.0, 104.0, 104.0_f64],
+            "close" => &[102.0, 101.0, 103.0, 103.0, 105.0_f64],
         }
         .unwrap();
         let config = TimeframeConfig {
@@ -1026,19 +1074,21 @@ mod tests {
             .unwrap();
 
         assert!(
-            (information_discreteness - (-0.5)).abs() < 1e-12,
-            "1 down of 4 returns on a net uptrend must give -0.5, got {information_discreteness}"
+            (information_discreteness - (-0.1)).abs() < 1e-12,
+            "2 bear and 3 bull candles on a net uptrend must give -0.1, got {information_discreteness}"
         );
     }
 
     #[test]
-    fn information_discreteness_is_minus_one_for_smooth_downtrend() {
-        // A smooth downtrend is fully negative returns, so information
-        // discreteness is sign(-) * (1 - 0) = -1, mirroring the uptrend case.
+    fn information_discreteness_for_smooth_bearish_candle_downtrend() {
+        // Every candle is bearish (close < open) on a downtrend, so information
+        // discreteness is sign(-) * (4 - 0) / lookback = -0.4.
+        let closes = &[100.0, 99.0, 98.0, 97.0_f64];
         let candles = df! {
             "timestamp" => &["0", "1", "2", "3"],
             "ticker" => &["BTC", "BTC", "BTC", "BTC"],
-            "close" => &[100.0, 99.0, 98.0, 97.0_f64],
+            "open" => opens_for_bear_candles(closes),
+            "close" => closes,
         }
         .unwrap();
         let config = TimeframeConfig {
@@ -1056,8 +1106,8 @@ mod tests {
             .get(0)
             .unwrap();
         assert!(
-            (information_discreteness - (-1.0)).abs() < 1e-12,
-            "a smooth downtrend must give information_discreteness -1, got {information_discreteness}"
+            (information_discreteness - (-0.4)).abs() < 1e-12,
+            "a smooth bearish-candle downtrend must give information_discreteness -0.4, got {information_discreteness}"
         );
     }
 

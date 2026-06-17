@@ -493,8 +493,11 @@ mod tests {
                 .unwrap()
                 .get(0)
                 .unwrap();
-            let candle_count = n as f64;
-            let expected_discreteness = -candle_count / config.lookback_periods as f64;
+            let candle_count = f64::from(u32::try_from(n).unwrap_or(u32::MAX));
+            let lookback = f64::from(
+                u32::try_from(config.lookback_periods).unwrap_or(u32::MAX),
+            );
+            let expected_discreteness = -candle_count / lookback;
             prop_assert!(
                 (information_discreteness - expected_discreteness).abs() < 1e-9,
                 "a smooth uptrend must give information_discreteness {expected_discreteness}, got {information_discreteness}"

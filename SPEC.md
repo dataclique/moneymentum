@@ -118,8 +118,8 @@ execution but never holds raw private keys.
   operations. Withdrawal credentials are held at a higher privilege tier.
 
 The backend pre-computes global market metrics (betas, correlations, etc.) and
-returns user-specific analytics (portfolio beta, VaR, execution plans). The
-frontend is a monitoring and control dashboard.
+returns user-specific analytics (portfolio beta, Value at Risk (VaR), execution
+plans). The frontend is a monitoring and control dashboard.
 
 ## Custody & Execution
 
@@ -198,7 +198,7 @@ graph TB
 ## Fee Structure
 
 Fees are the commercialization mechanism. Personal use is free (0/0 fees).
-Revenue comes from PMs managing other people's money.
+Revenue comes from portfolio managers (PMs) managing other people's money.
 
 - **Management fee**: Annual percentage of AUM (assets under management),
   deducted at withdrawal
@@ -287,9 +287,10 @@ solidify.
 **Factor Engine**: Computes per-asset factor scores (beta, momentum, carry,
 volatility, Sharpe) over the tradable universe. The backend computes rolling
 beta to BTC and serves per-asset factor scores via `GET /factors/<timeframe>`;
-factors land incrementally as columns (rolling windows over ingested OHLCV and
-funding-rate data). Outputs feed the screener (rank/filter assets by factor) and
-the rebalancer (target factor exposures, not symbols).
+factors land incrementally as columns (rolling windows over ingested
+open-high-low-close-volume (OHLCV) and funding-rate data). Outputs feed the
+screener (rank/filter assets by factor) and the rebalancer (target factor
+exposures, not symbols).
 
 The portfolio-weighted beta is exposed via `POST /beta`, which accepts a set of
 position weights plus a benchmark symbol and returns a single beta value

@@ -3,6 +3,7 @@
 //! Each ingestion attempt is stored as its own row in `ingestion_runs`. This
 //! makes failed and abandoned runs visible without requiring a database reset.
 
+use std::convert::Infallible;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 

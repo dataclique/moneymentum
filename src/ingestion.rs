@@ -3,6 +3,7 @@
 //! Each ingestion attempt is stored as its own row in `ingestion_runs`. This
 //! makes failed and abandoned runs visible without requiring a database reset.
 
+use std::convert::Infallible;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -47,10 +48,14 @@ impl IngestionJob {
         Self { run_id }
     }
 
-    pub(crate) async fn run(self, pool: Data<SqlitePool>, services: Data<Arc<IngestionServices>>) {
+    pub(crate) async fn run(
+        self,
+        pool: Data<SqlitePool>,
+        services: Data<Arc<IngestionServices>>,
+    ) -> Result<(), Infallible> {
         if let Err(err) = touch_run(&pool, &self.run_id).await {
             error!(error = %err, run_id = self.run_id.as_str(), "failed to touch ingestion run");
-            return;
+            return Ok(());
         }
 
         let candle_ingester = CandleIngester::new(
@@ -73,7 +78,7 @@ impl IngestionJob {
             Ok(last_record) => {
                 if let Err(err) = complete_run(&pool, &self.run_id, last_record).await {
                     error!(error = %err, run_id = self.run_id.as_str(), "failed to record ingestion completion");
-                    return;
+                    return Ok(());
                 }
                 info!(run_id = self.run_id.as_str(), "ingestion complete");
             }
@@ -88,6 +93,8 @@ impl IngestionJob {
                 }
             }
         }
+
+        Ok(())
     }
 }
 
@@ -484,7 +491,8 @@ mod tests {
             Data::new(pool.clone()),
             Data::new(Arc::new(test_services())),
         )
-        .await;
+        .await
+        .unwrap();
 
         let status = latest_status(&pool).await.unwrap();
 
@@ -506,7 +514,8 @@ mod tests {
             Data::new(pool.clone()),
             Data::new(Arc::new(test_services())),
         )
-        .await;
+        .await
+        .unwrap();
 
         let status = latest_status(&pool).await.unwrap();
 

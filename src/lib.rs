@@ -18,8 +18,8 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
 
-use apalis::prelude::{Monitor, Storage, WorkerBuilder, WorkerFactoryFn};
-use apalis_sql::sqlite::SqliteStorage;
+use apalis::prelude::{Monitor, TaskSink, WorkerBuilder};
+use apalis_sqlite::SqliteStorage;
 use rocket::config::Config as RocketConfig;
 use rocket::http::Status;
 use rocket::request::{FromParam, FromRequest, Outcome};
@@ -204,8 +204,6 @@ pub enum ConfigError {
     #[error("the [derive] config section is required to run the derive server")]
     MissingDeriveConfig,
 }
-
-type IngestionJobQueue = SqliteStorage<IngestionJob>;
 
 #[get("/health")]
 fn health() -> HealthJson {
@@ -415,7 +413,10 @@ fn markets_refresh_token_matches(provided: &str, expected: &str) -> bool {
 }
 
 #[post("/ingest")]
-async fn start_ingestion(job_queue: &State<IngestionJobQueue>, pool: &State<SqlitePool>) -> Status {
+async fn start_ingestion(
+    pool: &State<SqlitePool>,
+    apalis_pool: &State<apalis_sqlite::SqlitePool>,
+) -> Status {
     let run_id = match ingestion::create_run(pool).await {
         Ok(run_id) => run_id,
         Err(IngestionRunError::AlreadyRunning) => return Status::Conflict,
@@ -425,12 +426,8 @@ async fn start_ingestion(job_queue: &State<IngestionJobQueue>, pool: &State<Sqli
         }
     };
 
-    if let Err(err) = job_queue
-        .inner()
-        .clone()
-        .push(IngestionJob::new(run_id.clone()))
-        .await
-    {
+    let mut job_queue = SqliteStorage::<IngestionJob, (), ()>::new(apalis_pool.inner());
+    if let Err(err) = job_queue.push(IngestionJob::new(run_id.clone())).await {
         error!(error = %err, "failed to queue ingestion job");
         if let Err(record_err) =
             ingestion::fail_run(pool, &run_id, "failed to queue ingestion job").await
@@ -643,31 +640,26 @@ pub async fn rocket(
     let pool = SqlitePool::connect_with(database_options).await?;
     debug!("database connected");
 
-    // IMPORTANT: Migration ordering matters here.
-    //
-    // Both apalis and our code use sqlx migrations, which share a single
-    // `_sqlx_migrations` table. Each migrator validates that all previously
-    // applied migrations exist in its own migration set. If we run our
-    // migrations first, apalis's migrator will fail with `VersionMissing`
-    // because it doesn't recognize our migrations.
-    //
-    // Solution: Run apalis first (if not already set up), then our migrations
-    // with `ignore_missing` so we don't fail on apalis's migrations.
-    let apalis_tables_exist: i64 = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='Jobs')",
-    )
-    .fetch_one(&pool)
-    .await?;
-
-    if apalis_tables_exist == 0 {
-        SqliteStorage::setup(&pool).await?;
-    }
+    // We own the apalis `Jobs`/`Workers` tables as consumer migrations rather
+    // than calling apalis-sqlite's own migrator, which would compete with ours
+    // over the shared `_sqlx_migrations` table. `ignore_missing` tolerates the
+    // apalis-sql 0.7 migration records left in databases provisioned before the
+    // upgrade, so those rows do not fail the migrator.
     let mut migrations = sqlx::migrate!("./migrations");
     migrations.set_ignore_missing(true).run(&pool).await?;
     debug!(count = migrations.iter().count(), "migrations applied");
 
-    let job_queue = SqliteStorage::<IngestionJob>::new(pool.clone());
     ingestion::recover_abandoned_runs(&pool).await?;
+
+    // apalis-sqlite is built against sqlx 0.8, so its storage needs its own
+    // pool distinct from the sqlx 0.9 `pool` the event store and ledger use.
+    // Both address the same SQLite file; WAL is already enabled on it by the
+    // pool above, and `busy_timeout` lets the two writers wait out the single
+    // writer lock instead of failing with "database is locked".
+    let apalis_options = apalis_sqlite::SqliteConnectOptions::from_str(&config.database_url)?
+        .busy_timeout(std::time::Duration::from_secs(5));
+    let apalis_pool = apalis_sqlite::SqlitePool::connect_with(apalis_options).await?;
+    debug!("apalis storage pool connected");
 
     let hyperliquid_clients = HyperliquidClients::from_config(
         config.hyperliquid_base_url.as_ref(),
@@ -689,16 +681,16 @@ pub async fn rocket(
     // Spawn apalis worker
     tokio::spawn({
         let pool = pool.clone();
+        let apalis_pool = apalis_pool.clone();
         let services = Arc::clone(&services);
-        let job_queue = job_queue.clone();
         async move {
-            let monitor = Monitor::new().register(
+            let monitor = Monitor::new().register(move |_worker_index| {
                 WorkerBuilder::new("ingestion")
-                    .data(pool)
-                    .data(services)
-                    .backend(job_queue)
-                    .build_fn(IngestionJob::run),
-            );
+                    .backend(SqliteStorage::<IngestionJob, (), ()>::new(&apalis_pool))
+                    .data(pool.clone())
+                    .data(services.clone())
+                    .build(IngestionJob::run)
+            });
             if let Err(err) = monitor.run().await {
                 error!(error = %err, "ingestion monitor crashed");
             }
@@ -710,7 +702,7 @@ pub async fn rocket(
     Ok(rocket::custom(rocket_config)
         .manage(config)
         .manage(pool)
-        .manage(job_queue)
+        .manage(apalis_pool)
         .manage(hyperliquid_clients)
         .mount(
             "/",

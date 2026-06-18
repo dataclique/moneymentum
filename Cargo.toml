@@ -43,13 +43,14 @@ edition = "2024"
 authors = ["Data Clique Software Design FZCO"]
 
 [dependencies]
-apalis = "0.7.4"
-apalis-sql = { version = "0.7.4", features = ["sqlite"] }
+apalis = "=1.0.0-rc.9"
+apalis-sqlite = "=1.0.0-rc.8"
 async-trait = "0.1.89"
 backon = "1.6.0"
 bitcoin = "0.32.8"
 chrono = { version = "0.4.43", features = ["serde"] }
 clap = { version = "4.5.57", features = ["derive", "env"] }
+event-sorcery = { git = "https://github.com/ST0X-Technology/event-sorcery", tag = "0.2.0-rc2", version = "0.1.0" }
 futures = "0.3.31"
 getrandom = "0.4.3"
 hyperliquid_rust_sdk = "0.6.0"
@@ -67,10 +68,11 @@ rocket = { version = "0.5.1", features = ["json"] }
 rust_decimal = { version = "1.40.0", features = ["serde-with-str"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
-sqlx = { version = "0.8.6", features = [
+sqlx = { version = "0.9.0", features = [
   "sqlite",
-  "runtime-tokio-rustls",
-  "macros",
+  "chrono",
+  "runtime-tokio",
+  "tls-rustls",
   "migrate",
 ] }
 thiserror.workspace = true

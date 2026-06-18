@@ -5,11 +5,16 @@ mod finance;
 mod funding;
 mod hyperliquid;
 mod ingestion;
+mod market_catalog;
+mod market_enablement;
 mod market_metadata;
+mod portfolio;
 mod readonly_portfolio;
 mod screener;
 mod timeframe;
+mod venue;
 
+use std::collections::HashMap;
 use std::net::Ipv4Addr;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -17,6 +22,7 @@ use std::sync::Arc;
 
 use apalis::prelude::{Monitor, TaskSink, WorkerBuilder};
 use apalis_sqlite::SqliteStorage;
+use event_sorcery::{AggregateError, LifecycleError, Projection, SendError, Store, StoreBuilder};
 use rocket::config::Config as RocketConfig;
 use rocket::http::Status;
 use rocket::request::FromParam;
@@ -25,6 +31,8 @@ use rocket::response::status::Custom;
 use rocket::response::{Responder, Response};
 use rocket::serde::json::Json;
 use rocket::{Rocket, State, get, post, routes};
+use rust_decimal::Decimal;
+use rust_decimal::prelude::FromPrimitive;
 use serde::Deserialize;
 use sqlx::SqlitePool;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode};
@@ -32,8 +40,20 @@ use thiserror::Error;
 use tracing::{debug, error, info};
 use tracing_subscriber::EnvFilter;
 
-use ingestion::{IngestionJob, IngestionRunError, IngestionServices, IngestionStatus};
+use finance::Symbol;
+use ingestion::{
+    IngestionError, IngestionJob, IngestionRun, IngestionRunStatus, IngestionServices,
+};
+use market_catalog::MarketCatalog;
+use market_enablement::{
+    MarketEnablement, MarketEnablementCommand, MarketEnablementError, MarketId,
+};
+use portfolio::{
+    BaseCurrency, Portfolio, PortfolioCommand, PortfolioError, PortfolioId, PortfolioName,
+    PortfolioStatus, PortfolioView, STATUS, TargetRevision,
+};
 use timeframe::Timeframe;
+use venue::VenueRef;
 
 impl<'r> FromParam<'r> for Timeframe {
     type Error = &'r str;
@@ -174,12 +194,13 @@ async fn post_screener(
 
 #[post("/ingest")]
 async fn start_ingestion(
-    pool: &State<SqlitePool>,
+    ingestion_store: &State<Arc<Store<IngestionRun>>>,
+    ingestion_projection: &State<Arc<Projection<IngestionRun>>>,
     apalis_pool: &State<apalis_sqlite::SqlitePool>,
 ) -> Status {
-    let run_id = match ingestion::create_run(pool).await {
+    let run_id = match ingestion::create_run(ingestion_store, ingestion_projection).await {
         Ok(run_id) => run_id,
-        Err(IngestionRunError::AlreadyRunning) => return Status::Conflict,
+        Err(IngestionError::AlreadyRunning) => return Status::Conflict,
         Err(err) => {
             error!(error = %err, "failed to create ingestion run");
             return Status::InternalServerError;
@@ -190,7 +211,7 @@ async fn start_ingestion(
     if let Err(err) = job_queue.push(IngestionJob::new(run_id.clone())).await {
         error!(error = %err, "failed to queue ingestion job");
         if let Err(record_err) =
-            ingestion::fail_run(pool, &run_id, "failed to queue ingestion job").await
+            ingestion::fail_run(ingestion_store, &run_id, "failed to queue ingestion job").await
         {
             error!(error = %record_err, "failed to record ingestion queue failure");
         }
@@ -202,12 +223,14 @@ async fn start_ingestion(
 
 #[get("/ingestion/status")]
 async fn get_ingestion_status(
-    pool: &State<SqlitePool>,
-) -> Result<Json<Option<IngestionStatus>>, Status> {
-    let status = ingestion::latest_status(pool).await.map_err(|err| {
-        error!(error = %err, "failed to load ingestion status");
-        Status::InternalServerError
-    })?;
+    ingestion_projection: &State<Arc<Projection<IngestionRun>>>,
+) -> Result<Json<Option<IngestionRunStatus>>, Status> {
+    let status = ingestion::latest_status(ingestion_projection)
+        .await
+        .map_err(|err| {
+            error!(error = %err, "failed to load ingestion status");
+            Status::InternalServerError
+        })?;
 
     Ok(Json(status))
 }
@@ -375,6 +398,346 @@ async fn post_beta(
     }
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CreatePortfolioRequest {
+    name: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RenamePortfolioRequest {
+    name: String,
+}
+
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PortfolioCreatedResponse {
+    id: PortfolioId,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ReviseTargetRequest {
+    weights: HashMap<String, f64>,
+    leverage: f64,
+}
+
+/// Opens a new portfolio under a freshly minted id.
+#[post("/portfolio", data = "<body>")]
+async fn post_portfolio_create(
+    store: &State<Arc<Store<Portfolio>>>,
+    body: Json<CreatePortfolioRequest>,
+) -> Result<Custom<Json<PortfolioCreatedResponse>>, Custom<Json<ApiErrorResponse>>> {
+    let name = PortfolioName::new(&body.name).map_err(|err| bad_request(&err.to_string()))?;
+    let id = PortfolioId::generate();
+
+    store
+        .send(
+            &id,
+            PortfolioCommand::Open {
+                name,
+                base_currency: BaseCurrency::Usdc,
+            },
+        )
+        .await
+        .map_err(|err| classify_portfolio_send_error(&err, "failed to open portfolio"))?;
+
+    debug!(portfolio_id = %id, "portfolio opened");
+    Ok(Custom(
+        Status::Created,
+        Json(PortfolioCreatedResponse { id }),
+    ))
+}
+
+/// Replaces a portfolio's target with a new revision of perp weights + leverage.
+#[post("/portfolio/<id>/target", data = "<body>")]
+async fn post_portfolio_target(
+    store: &State<Arc<Store<Portfolio>>>,
+    id: &str,
+    body: Json<ReviseTargetRequest>,
+) -> Result<Status, Custom<Json<ApiErrorResponse>>> {
+    let portfolio_id =
+        PortfolioId::from_str(id).map_err(|_| bad_request("portfolio id is not a valid uuid"))?;
+
+    let mut weights = Vec::with_capacity(body.weights.len());
+    for (symbol, weight) in &body.weights {
+        let weight =
+            finite_decimal(*weight).ok_or_else(|| bad_request("weights must be finite"))?;
+        weights.push((Symbol::from_raw(symbol), weight));
+    }
+    let leverage =
+        finite_decimal(body.leverage).ok_or_else(|| bad_request("leverage must be finite"))?;
+
+    let target = TargetRevision::from_hyperliquid_perp_weights(weights, leverage)
+        .map_err(|err| bad_request(&err.to_string()))?;
+
+    store
+        .send(&portfolio_id, PortfolioCommand::ReviseTarget { target })
+        .await
+        .map_err(|err| classify_portfolio_send_error(&err, "failed to revise portfolio target"))?;
+
+    debug!(portfolio_id = id, "portfolio target revised");
+    Ok(Status::Accepted)
+}
+
+/// Returns a portfolio's current state, read from its projection.
+#[get("/portfolio/<id>")]
+async fn get_portfolio(
+    projection: &State<Arc<Projection<Portfolio>>>,
+    id: &str,
+) -> Result<Json<PortfolioView>, Status> {
+    let portfolio_id = PortfolioId::from_str(id).map_err(|_| Status::BadRequest)?;
+    let portfolio = projection
+        .load(&portfolio_id)
+        .await
+        .map_err(|err| {
+            error!(error = %err, "failed to load portfolio");
+            Status::InternalServerError
+        })?
+        .ok_or(Status::NotFound)?;
+
+    Ok(Json(portfolio.to_view(&portfolio_id)))
+}
+
+/// Lists portfolios, optionally restricted to a single status.
+#[get("/portfolio?<status>")]
+async fn list_portfolios(
+    projection: &State<Arc<Projection<Portfolio>>>,
+    status: Option<&str>,
+) -> Result<Json<Vec<PortfolioView>>, Status> {
+    let portfolios = match status {
+        Some(raw) => {
+            let status = PortfolioStatus::from_query(raw).ok_or(Status::BadRequest)?;
+            projection.filter(STATUS, &status).await.map_err(|err| {
+                error!(error = %err, "failed to list portfolios by status");
+                Status::InternalServerError
+            })?
+        }
+        None => projection.load_all().await.map_err(|err| {
+            error!(error = %err, "failed to list portfolios");
+            Status::InternalServerError
+        })?,
+    };
+
+    let views = portfolios
+        .iter()
+        .map(|(id, portfolio)| portfolio.to_view(id))
+        .collect();
+    Ok(Json(views))
+}
+
+/// Renames a portfolio.
+#[post("/portfolio/<id>/rename", data = "<body>")]
+async fn post_portfolio_rename(
+    store: &State<Arc<Store<Portfolio>>>,
+    id: &str,
+    body: Json<RenamePortfolioRequest>,
+) -> Result<Status, Custom<Json<ApiErrorResponse>>> {
+    let portfolio_id =
+        PortfolioId::from_str(id).map_err(|_| bad_request("portfolio id is not a valid uuid"))?;
+    let name = PortfolioName::new(&body.name).map_err(|err| bad_request(&err.to_string()))?;
+
+    store
+        .send(&portfolio_id, PortfolioCommand::Rename { name })
+        .await
+        .map_err(|err| classify_portfolio_send_error(&err, "failed to rename portfolio"))?;
+
+    debug!(portfolio_id = id, "portfolio renamed");
+    Ok(Status::Accepted)
+}
+
+/// Archives a portfolio, retiring it from active management.
+#[post("/portfolio/<id>/archive")]
+async fn post_portfolio_archive(
+    store: &State<Arc<Store<Portfolio>>>,
+    id: &str,
+) -> Result<Status, Custom<Json<ApiErrorResponse>>> {
+    let portfolio_id =
+        PortfolioId::from_str(id).map_err(|_| bad_request("portfolio id is not a valid uuid"))?;
+
+    store
+        .send(&portfolio_id, PortfolioCommand::Archive)
+        .await
+        .map_err(|err| classify_portfolio_send_error(&err, "failed to archive portfolio"))?;
+
+    debug!(portfolio_id = id, "portfolio archived");
+    Ok(Status::Accepted)
+}
+
+/// Maps a finite `f64` from the wire onto an exact `Decimal`; `None` for NaN,
+/// infinities, or values outside `Decimal`'s range.
+fn finite_decimal(value: f64) -> Option<Decimal> {
+    if value.is_finite() {
+        Decimal::from_f64(value)
+    } else {
+        None
+    }
+}
+
+fn bad_request(message: &str) -> Custom<Json<ApiErrorResponse>> {
+    Custom(
+        Status::BadRequest,
+        Json(ApiErrorResponse {
+            error: message.to_string(),
+        }),
+    )
+}
+
+/// Translates a portfolio command failure into an HTTP response: domain refusals
+/// map to client errors, everything else is an internal error and is logged.
+fn classify_portfolio_send_error(
+    error: &SendError<Portfolio>,
+    operation: &str,
+) -> Custom<Json<ApiErrorResponse>> {
+    let (status, message) = match error {
+        AggregateError::UserError(LifecycleError::Apply(PortfolioError::NotOpen)) => {
+            (Status::NotFound, "portfolio not found")
+        }
+        AggregateError::UserError(LifecycleError::Apply(PortfolioError::Archived)) => {
+            (Status::Conflict, "portfolio is archived")
+        }
+        AggregateError::UserError(LifecycleError::Apply(PortfolioError::AlreadyOpen)) => {
+            (Status::Conflict, "portfolio already exists")
+        }
+        other => {
+            error!(error = %other, operation, "portfolio command failed");
+            (Status::InternalServerError, "portfolio command failed")
+        }
+    };
+
+    Custom(
+        status,
+        Json(ApiErrorResponse {
+            error: message.to_string(),
+        }),
+    )
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DisableMarketRequest {
+    reason: Option<String>,
+}
+
+/// Disables a market so ingestion and the tradable set exclude it.
+#[post("/markets/<venue>/<symbol>/disable", data = "<body>")]
+async fn post_market_disable(
+    store: &State<Arc<Store<MarketEnablement>>>,
+    venue: &str,
+    symbol: &str,
+    body: Json<DisableMarketRequest>,
+) -> Result<Status, Custom<Json<ApiErrorResponse>>> {
+    let market_id = parse_market_id(venue, symbol)?;
+    store
+        .send(
+            &market_id,
+            MarketEnablementCommand::Disable {
+                reason: body.reason.clone(),
+            },
+        )
+        .await
+        .map_err(|err| classify_enablement_error(&err, "failed to disable market"))?;
+
+    debug!(venue, symbol, "market disabled");
+    Ok(Status::Accepted)
+}
+
+/// Re-enables a previously disabled market.
+#[post("/markets/<venue>/<symbol>/enable")]
+async fn post_market_enable(
+    store: &State<Arc<Store<MarketEnablement>>>,
+    venue: &str,
+    symbol: &str,
+) -> Result<Status, Custom<Json<ApiErrorResponse>>> {
+    let market_id = parse_market_id(venue, symbol)?;
+    store
+        .send(&market_id, MarketEnablementCommand::Enable)
+        .await
+        .map_err(|err| classify_enablement_error(&err, "failed to enable market"))?;
+
+    debug!(venue, symbol, "market enabled");
+    Ok(Status::Accepted)
+}
+
+/// Lists a venue's tradable markets: catalog listings minus operator disables.
+#[get("/markets/<venue>")]
+async fn get_markets(
+    catalog_projection: &State<Arc<Projection<MarketCatalog>>>,
+    enablement_projection: &State<Arc<Projection<MarketEnablement>>>,
+    venue: &str,
+) -> Result<Json<Vec<String>>, Status> {
+    let venue = VenueRef::from_str(venue).map_err(|_| Status::NotFound)?;
+    let tradable =
+        market_metadata::tradable_markets(venue, catalog_projection, enablement_projection)
+            .await
+            .map_err(|err| {
+                error!(error = %err, "failed to list tradable markets");
+                Status::InternalServerError
+            })?;
+
+    Ok(Json(
+        tradable
+            .iter()
+            .map(|market| market.as_str().to_string())
+            .collect(),
+    ))
+}
+
+fn parse_market_id(venue: &str, symbol: &str) -> Result<MarketId, Custom<Json<ApiErrorResponse>>> {
+    let venue = VenueRef::from_str(venue).map_err(|_| bad_request("unknown venue"))?;
+    Ok(MarketId::new(venue, Symbol::from_raw(symbol)))
+}
+
+/// Translates a market-enablement command failure into an HTTP response.
+fn classify_enablement_error(
+    error: &SendError<MarketEnablement>,
+    operation: &str,
+) -> Custom<Json<ApiErrorResponse>> {
+    let (status, message) = match error {
+        AggregateError::UserError(LifecycleError::Apply(
+            MarketEnablementError::AlreadyDisabled,
+        )) => (Status::Conflict, "market is already disabled"),
+        AggregateError::UserError(LifecycleError::Apply(MarketEnablementError::AlreadyEnabled)) => {
+            (Status::Conflict, "market is already enabled")
+        }
+        other => {
+            error!(error = %other, operation, "market command failed");
+            (Status::InternalServerError, "market command failed")
+        }
+    };
+
+    Custom(
+        status,
+        Json(ApiErrorResponse {
+            error: message.to_string(),
+        }),
+    )
+}
+
+/// Spawns the supervised apalis worker that drains queued ingestion jobs.
+///
+/// The worker reads the `Jobs` table through its own sqlx-0.8 `apalis_pool` and
+/// drives each run's lifecycle through the sqlx-0.9 `ingestion_store`.
+fn spawn_ingestion_worker(
+    apalis_pool: apalis_sqlite::SqlitePool,
+    ingestion_store: Arc<Store<IngestionRun>>,
+    services: Arc<IngestionServices>,
+) {
+    tokio::spawn(async move {
+        let monitor = Monitor::new().register(move |_worker_index| {
+            WorkerBuilder::new("ingestion")
+                .backend(SqliteStorage::<IngestionJob, (), ()>::new(&apalis_pool))
+                .data(Arc::clone(&ingestion_store))
+                .data(services.clone())
+                .build(IngestionJob::run)
+        });
+        if let Err(err) = monitor.run().await {
+            error!(error = %err, "ingestion monitor crashed");
+        }
+    });
+}
+
 /// Build and configure the Rocket HTTP server for the moneymentum backend.
 ///
 /// # Errors
@@ -409,7 +772,27 @@ pub async fn rocket(
     migrations.set_ignore_missing(true).run(&pool).await?;
     debug!(count = migrations.iter().count(), "migrations applied");
 
-    ingestion::recover_abandoned_runs(&pool).await?;
+    // One Store + Projection per event-sourced aggregate, built once here and
+    // shared via Rocket state. `build()` reconciles the schema registry (clearing
+    // stale snapshots on a SCHEMA_VERSION bump) and auto-wires the projection.
+    let (portfolio_store, portfolio_projection) =
+        StoreBuilder::<Portfolio>::new(pool.clone()).build().await?;
+    let (ingestion_store, ingestion_projection) = StoreBuilder::<IngestionRun>::new(pool.clone())
+        .build()
+        .await?;
+    let (market_catalog, market_catalog_projection) =
+        StoreBuilder::<MarketCatalog>::new(pool.clone())
+            .build()
+            .await?;
+    let (market_enablement, market_enablement_projection) =
+        StoreBuilder::<MarketEnablement>::new(pool.clone())
+            .build()
+            .await?;
+    debug!("event-sourced stores ready");
+
+    // Abandon any run left Running by a crash before we accept /ingest, so the
+    // one-running slot can never stay wedged across a restart (issue #339).
+    ingestion::recover_abandoned_runs(&ingestion_store, &ingestion_projection).await?;
 
     // apalis-sqlite is built against sqlx 0.8, so its storage needs its own
     // pool distinct from the sqlx 0.9 `pool` the event store and ledger use.
@@ -430,26 +813,16 @@ pub async fn rocket(
         hyperliquid: Arc::new(hyperliquid_client),
         data_dir: config.data_dir.clone(),
         max_concurrent_requests: config.max_concurrent_requests,
+        market_catalog: Arc::clone(&market_catalog),
+        market_catalog_projection: Arc::clone(&market_catalog_projection),
+        market_enablement_projection: Arc::clone(&market_enablement_projection),
     });
 
-    // Spawn apalis worker
-    tokio::spawn({
-        let pool = pool.clone();
-        let apalis_pool = apalis_pool.clone();
-        let services = Arc::clone(&services);
-        async move {
-            let monitor = Monitor::new().register(move |_worker_index| {
-                WorkerBuilder::new("ingestion")
-                    .backend(SqliteStorage::<IngestionJob, (), ()>::new(&apalis_pool))
-                    .data(pool.clone())
-                    .data(services.clone())
-                    .build(IngestionJob::run)
-            });
-            if let Err(err) = monitor.run().await {
-                error!(error = %err, "ingestion monitor crashed");
-            }
-        }
-    });
+    spawn_ingestion_worker(
+        apalis_pool.clone(),
+        Arc::clone(&ingestion_store),
+        Arc::clone(&services),
+    );
     debug!("ingestion worker started");
 
     info!(port = config.port, "moneymentum ready");
@@ -457,15 +830,31 @@ pub async fn rocket(
         .manage(config)
         .manage(pool)
         .manage(apalis_pool)
+        .manage(portfolio_store)
+        .manage(portfolio_projection)
+        .manage(ingestion_store)
+        .manage(ingestion_projection)
+        .manage(market_enablement)
+        .manage(market_enablement_projection)
+        .manage(market_catalog_projection)
         .mount(
             "/",
             routes![
                 health,
                 get_candles,
                 get_factors,
+                post_portfolio_create,
+                post_portfolio_target,
+                get_portfolio,
+                list_portfolios,
+                post_portfolio_rename,
+                post_portfolio_archive,
                 post_screener,
                 start_ingestion,
                 get_ingestion_status,
+                post_market_disable,
+                post_market_enable,
+                get_markets,
                 post_beta,
                 post_portfolio_readonly_btc,
                 post_portfolio_exposure
@@ -518,6 +907,210 @@ mod tests {
             "/",
             routes![health, get_candles, get_factors, post_screener],
         )
+    }
+
+    async fn portfolio_client(data_dir: &TempDir) -> rocket::local::asynchronous::Client {
+        let database_url = format!(
+            "sqlite://{}?mode=rwc",
+            data_dir.path().join("portfolio-test.db").display()
+        );
+        let pool = SqlitePool::connect(&database_url).await.unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        let (store, projection) = StoreBuilder::<Portfolio>::new(pool).build().await.unwrap();
+        let rocket = rocket::build().manage(store).manage(projection).mount(
+            "/",
+            routes![
+                post_portfolio_create,
+                post_portfolio_target,
+                get_portfolio,
+                list_portfolios,
+                post_portfolio_rename,
+                post_portfolio_archive
+            ],
+        );
+
+        rocket::local::asynchronous::Client::tracked(rocket)
+            .await
+            .unwrap()
+    }
+
+    async fn markets_client(data_dir: &TempDir) -> rocket::local::asynchronous::Client {
+        let database_url = format!(
+            "sqlite://{}?mode=rwc",
+            data_dir.path().join("markets-test.db").display()
+        );
+        let pool = SqlitePool::connect(&database_url).await.unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        let (enablement_store, enablement_projection) =
+            StoreBuilder::<MarketEnablement>::new(pool.clone())
+                .build()
+                .await
+                .unwrap();
+        let (_catalog_store, catalog_projection) = StoreBuilder::<MarketCatalog>::new(pool)
+            .build()
+            .await
+            .unwrap();
+        let rocket = rocket::build()
+            .manage(enablement_store)
+            .manage(catalog_projection)
+            .manage(enablement_projection)
+            .mount(
+                "/",
+                routes![post_market_disable, post_market_enable, get_markets],
+            );
+
+        rocket::local::asynchronous::Client::tracked(rocket)
+            .await
+            .unwrap()
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn markets_disable_enable_list_and_idempotency() {
+        let data_dir = TempDir::new().unwrap();
+        let client = markets_client(&data_dir).await;
+
+        // Disable a market -> 202.
+        let disabled = client
+            .post("/markets/hyperliquid/BTC/disable")
+            .json(&serde_json::json!({ "reason": "maintenance" }))
+            .dispatch()
+            .await;
+        assert_eq!(disabled.status(), Status::Accepted);
+        assert!(logs_contain_at(
+            tracing::Level::DEBUG,
+            &["market disabled", "BTC"]
+        ));
+
+        // Disabling an already-disabled market -> 409.
+        let again = client
+            .post("/markets/hyperliquid/BTC/disable")
+            .json(&serde_json::json!({ "reason": null }))
+            .dispatch()
+            .await;
+        assert_eq!(again.status(), Status::Conflict);
+
+        // Re-enable the disabled market -> 202.
+        let enabled = client
+            .post("/markets/hyperliquid/BTC/enable")
+            .dispatch()
+            .await;
+        assert_eq!(enabled.status(), Status::Accepted);
+
+        // Enabling an already-enabled market -> 409.
+        let enable_again = client
+            .post("/markets/hyperliquid/BTC/enable")
+            .dispatch()
+            .await;
+        assert_eq!(enable_again.status(), Status::Conflict);
+
+        // Enabling a market that was never disabled (no stream yet) -> 409,
+        // not a spurious 202.
+        let fresh_enable = client
+            .post("/markets/hyperliquid/ETH/enable")
+            .dispatch()
+            .await;
+        assert_eq!(fresh_enable.status(), Status::Conflict);
+
+        // Listing a known venue's tradable markets succeeds.
+        let listed = client.get("/markets/hyperliquid").dispatch().await;
+        assert_eq!(listed.status(), Status::Ok);
+
+        // An unknown venue is a client error, never a 500.
+        let bad_disable = client
+            .post("/markets/bogus/BTC/disable")
+            .json(&serde_json::json!({ "reason": null }))
+            .dispatch()
+            .await;
+        assert_eq!(bad_disable.status(), Status::BadRequest);
+        let bad_list = client.get("/markets/bogus").dispatch().await;
+        assert_eq!(bad_list.status(), Status::NotFound);
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn portfolio_create_set_target_and_read_back() {
+        let data_dir = TempDir::new().unwrap();
+        let client = portfolio_client(&data_dir).await;
+
+        let created = client
+            .post("/portfolio")
+            .json(&serde_json::json!({ "name": "macro" }))
+            .dispatch()
+            .await;
+        assert_eq!(created.status(), Status::Created);
+        let created_body: serde_json::Value =
+            serde_json::from_str(&created.into_string().await.unwrap()).unwrap();
+        let id = created_body["id"].as_str().unwrap().to_string();
+        assert!(logs_contain_at(
+            tracing::Level::DEBUG,
+            &["portfolio opened", &id]
+        ));
+
+        let revised = client
+            .post(format!("/portfolio/{id}/target"))
+            .json(&serde_json::json!({ "weights": { "BTC": 0.6, "ETH": -0.4 }, "leverage": 2.0 }))
+            .dispatch()
+            .await;
+        assert_eq!(revised.status(), Status::Accepted);
+        assert!(logs_contain_at(
+            tracing::Level::DEBUG,
+            &["portfolio target revised", &id]
+        ));
+
+        let fetched = client.get(format!("/portfolio/{id}")).dispatch().await;
+        assert_eq!(fetched.status(), Status::Ok);
+        let view: serde_json::Value =
+            serde_json::from_str(&fetched.into_string().await.unwrap()).unwrap();
+        assert_eq!(view["name"], "macro");
+        assert_eq!(view["status"], "Active");
+        let btc_weight: f64 = view["target"]["weights"]["BTC"]
+            .as_str()
+            .unwrap()
+            .parse()
+            .unwrap();
+        assert!(
+            (btc_weight - 0.6).abs() < 1e-9,
+            "BTC weight should round-trip, got {btc_weight}"
+        );
+
+        let listed = client.get("/portfolio?status=active").dispatch().await;
+        assert_eq!(listed.status(), Status::Ok);
+        let rows: Vec<serde_json::Value> =
+            serde_json::from_str(&listed.into_string().await.unwrap()).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["id"], id);
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn revising_a_missing_portfolio_is_not_found() {
+        let data_dir = TempDir::new().unwrap();
+        let client = portfolio_client(&data_dir).await;
+        let missing = uuid::Uuid::new_v4();
+
+        let revised = client
+            .post(format!("/portfolio/{missing}/target"))
+            .json(&serde_json::json!({ "weights": { "BTC": 1.0 }, "leverage": 1.0 }))
+            .dispatch()
+            .await;
+
+        assert_eq!(revised.status(), Status::NotFound);
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn create_rejects_a_blank_name() {
+        let data_dir = TempDir::new().unwrap();
+        let client = portfolio_client(&data_dir).await;
+
+        let created = client
+            .post("/portfolio")
+            .json(&serde_json::json!({ "name": "   " }))
+            .dispatch()
+            .await;
+
+        assert_eq!(created.status(), Status::BadRequest);
     }
 
     proptest! {

@@ -1,47 +1,80 @@
-//! Markets metadata: the perp universe with each market's max leverage and a
-//! persisted `disable` flag, stored in `markets.csv`.
+//! The markets domain orchestration: refreshing a venue's universe from the
+//! exchange and deriving its tradable set.
 //!
-//! The `disable` flag is operator-controlled (edited by hand) and preserved
-//! across refreshes; metadata like max leverage is refreshed from the exchange.
+//! The universe and the operator disable decisions live in two separate
+//! aggregates ([`crate::market_catalog`] and [`crate::market_enablement`]); this
+//! module ties them together. The tradable set is catalog listings minus
+//! operator disables -- a join over two projections, which makes "a refresh
+//! never clobbers an operator disable" a structural guarantee rather than a
+//! careful merge (the bug the old `markets.csv` left-join had to avoid by hand).
 
-use std::path::Path;
+use std::collections::BTreeSet;
 
-use polars::prelude::{
-    DataFrame, IntoLazy, JoinArgs, JoinType, NamedFrom, PolarsError, Series, col, df, lit,
-};
+use chrono::Utc;
+use event_sorcery::{Projection, ProjectionError, SendError, Store};
 use tracing::info;
 
-use crate::finance::Market;
+use crate::finance::{Market, Symbol};
 use crate::hyperliquid::{Hyperliquid, HyperliquidError};
+use crate::market_catalog::{CatalogMarket, MarketCatalog, MarketCatalogCommand};
+use crate::market_enablement::{ENABLEMENT_STATUS, MarketEnablement, MarketId, MarketStatus};
+use crate::venue::VenueRef;
 
-/// A market's exchange metadata as fetched from Hyperliquid.
+/// A market's exchange metadata as fetched from a venue.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct MarketMetadata {
     pub(crate) symbol: Market,
     pub(crate) max_leverage: u32,
 }
 
-/// File name of the markets ledger inside the data directory.
-pub(crate) fn file_name() -> &'static str {
-    "markets.csv"
+/// Why refreshing the market universe fails.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum RefreshError {
+    #[error(transparent)]
+    Hyperliquid(#[from] HyperliquidError),
+    #[error(transparent)]
+    RecordUniverse(#[from] SendError<MarketCatalog>),
+    #[error(transparent)]
+    Catalog(#[from] ProjectionError<MarketCatalog>),
+    #[error(transparent)]
+    Enablement(#[from] ProjectionError<MarketEnablement>),
 }
 
-/// Refreshes `markets.csv` from the live exchange and returns the tradable
-/// markets: every fetched market that is not disabled.
-///
-/// Market discovery is driven by the exchange fetch; the ledger only persists
-/// the operator-controlled `disable` flags. Ingestion consumes the returned
-/// list directly, so it never depends on re-reading the CSV.
+/// Refreshes the Hyperliquid universe from the live exchange and returns the
+/// tradable markets: every listed market the operator has not disabled.
 pub(crate) async fn refresh_markets(
     client: &dyn Hyperliquid,
-    data_dir: &Path,
-) -> Result<Vec<Market>, HyperliquidError> {
+    catalog: &Store<MarketCatalog>,
+    catalog_projection: &Projection<MarketCatalog>,
+    enablement_projection: &Projection<MarketEnablement>,
+) -> Result<Vec<Market>, RefreshError> {
     let fetched = client.fetch_market_metadata().await?;
-    let path = data_dir.join(file_name());
-    let existing = crate::dataframe::read_csv(path.clone()).await?;
-    let frame = build_markets_frame(&fetched, existing.as_ref())?;
-    let tradable = tradable_from_frame(&frame)?;
-    crate::dataframe::write_csv(path, frame).await?;
+    let observed: Vec<CatalogMarket> = fetched
+        .iter()
+        .map(|market| {
+            CatalogMarket::new(
+                Symbol::from_raw(market.symbol.as_str()),
+                market.max_leverage,
+            )
+        })
+        .collect();
+
+    catalog
+        .send(
+            &VenueRef::Hyperliquid,
+            MarketCatalogCommand::RecordUniverse {
+                markets: observed,
+                observed_at: Utc::now(),
+            },
+        )
+        .await?;
+
+    let tradable = tradable_markets(
+        VenueRef::Hyperliquid,
+        catalog_projection,
+        enablement_projection,
+    )
+    .await?;
     info!(
         markets = fetched.len(),
         tradable = tradable.len(),
@@ -50,79 +83,49 @@ pub(crate) async fn refresh_markets(
     Ok(tradable)
 }
 
-/// The tradable markets in a freshly built ledger frame: every market whose
-/// `disable` flag is not set.
-fn tradable_from_frame(frame: &DataFrame) -> Result<Vec<Market>, PolarsError> {
-    let symbols = frame.column("symbol")?.str()?;
-    let disable = frame.column("disable")?.bool()?;
-    let markets: Vec<Market> = (0..symbols.len())
-        .filter(|&index| disable.get(index) == Some(false))
-        .filter_map(|index| {
-            symbols
-                .get(index)
-                .map(|symbol| Market::new(symbol.to_string()))
-        })
-        .collect();
-    Ok(markets)
-}
-
-/// Builds the markets ledger `DataFrame` (`symbol`, `max_leverage`, `disable`)
-/// from freshly fetched metadata, preserving the `disable` flag of any symbol
-/// already in `existing` and defaulting new symbols to enabled (`disable` false).
-fn build_markets_frame(
-    fetched: &[MarketMetadata],
-    existing: Option<&DataFrame>,
-) -> Result<DataFrame, PolarsError> {
-    let symbols: Vec<&str> = fetched
-        .iter()
-        .map(|market| market.symbol.as_str())
-        .collect();
-    let max_leverages: Vec<u32> = fetched.iter().map(|market| market.max_leverage).collect();
-    let fresh = df! {
-        "symbol" => symbols,
-        "max_leverage" => max_leverages,
-    }?;
-
-    let Some(existing) = existing else {
-        let mut fresh = fresh;
-        let disable = Series::new("disable".into(), vec![false; fresh.height()]);
-        fresh.with_column(disable)?;
-        return Ok(fresh);
+/// The tradable markets of a venue: catalog listings minus operator disables.
+pub(crate) async fn tradable_markets(
+    venue: VenueRef,
+    catalog_projection: &Projection<MarketCatalog>,
+    enablement_projection: &Projection<MarketEnablement>,
+) -> Result<Vec<Market>, RefreshError> {
+    let Some(catalog) = catalog_projection.load(&venue).await? else {
+        return Ok(Vec::new());
     };
 
-    let previous_flags = existing
-        .clone()
-        .lazy()
-        .select([col("symbol"), col("disable").alias("previous_disable")]);
+    let disabled: BTreeSet<Symbol> = enablement_projection
+        .filter(ENABLEMENT_STATUS, &MarketStatus::Disabled)
+        .await?
+        .into_iter()
+        .filter(|(id, _)| id.venue() == venue)
+        .map(|(id, _): (MarketId, MarketEnablement)| id.into_symbol())
+        .collect();
 
-    fresh
-        .lazy()
-        .join(
-            previous_flags,
-            [col("symbol")],
-            [col("symbol")],
-            JoinArgs::new(JoinType::Left),
-        )
-        .with_column(
-            col("previous_disable")
-                .fill_null(lit(false))
-                .alias("disable"),
-        )
-        .select([col("symbol"), col("max_leverage"), col("disable")])
-        .collect()
+    let tradable = catalog
+        .markets()
+        .iter()
+        .filter(|market| !disabled.contains(market.symbol()))
+        .map(|market| Market::new(market.symbol().as_str().to_string()))
+        .collect();
+    Ok(tradable)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::sync::Arc;
+
     use async_trait::async_trait;
     use chrono::{DateTime, Utc};
-    use tempfile::TempDir;
+    use sqlx::SqlitePool;
     use tracing::Level;
     use tracing_test::traced_test;
 
+    use event_sorcery::StoreBuilder;
+
+    use super::*;
     use crate::candle::Candle;
     use crate::funding::FundingRate;
+    use crate::market_enablement::MarketEnablementCommand;
     use crate::timeframe::Timeframe;
 
     fn metadata(symbol: &str, max_leverage: u32) -> MarketMetadata {
@@ -160,133 +163,82 @@ mod tests {
         }
     }
 
-    fn disable_for(frame: &DataFrame, symbol: &str) -> Option<bool> {
-        let symbols = frame.column("symbol").unwrap().str().unwrap();
-        let disable = frame.column("disable").unwrap().bool().unwrap();
-        (0..symbols.len())
-            .find(|&index| symbols.get(index) == Some(symbol))
-            .and_then(|index| disable.get(index))
-    }
-
-    #[test]
-    fn new_markets_default_to_enabled() {
-        let fetched = [metadata("BTC", 50), metadata("ETH", 25)];
-
-        let frame = build_markets_frame(&fetched, None).unwrap();
-        assert_eq!(frame.height(), 2);
-        assert_eq!(disable_for(&frame, "BTC"), Some(false));
-        assert_eq!(disable_for(&frame, "ETH"), Some(false));
-    }
-
-    #[test]
-    fn refresh_preserves_disable_flag_and_drops_vanished_markets() {
-        let existing = df! {
-            "symbol" => &["BTC", "SOL"],
-            "max_leverage" => &[40_u32, 20],
-            "disable" => &[true, false],
-        }
-        .unwrap();
-        let fetched = [metadata("BTC", 50), metadata("ETH", 25)];
-
-        let frame = build_markets_frame(&fetched, Some(&existing)).unwrap();
-
-        // BTC keeps its operator-set disable flag; ETH is new (enabled); SOL
-        // vanished from the exchange and is dropped.
-        assert_eq!(frame.height(), 2);
-        assert_eq!(disable_for(&frame, "BTC"), Some(true));
-        assert_eq!(disable_for(&frame, "ETH"), Some(false));
-        assert_eq!(disable_for(&frame, "SOL"), None);
-
-        // max leverage is refreshed from the fetched metadata.
-        let symbols = frame.column("symbol").unwrap().str().unwrap();
-        let leverage = frame.column("max_leverage").unwrap().u32().unwrap();
-        let btc_index = (0..symbols.len())
-            .find(|&index| symbols.get(index) == Some("BTC"))
+    async fn market_stores() -> (
+        Arc<Store<MarketCatalog>>,
+        Arc<Projection<MarketCatalog>>,
+        Arc<Store<MarketEnablement>>,
+        Arc<Projection<MarketEnablement>>,
+    ) {
+        let pool = SqlitePool::connect(":memory:").await.unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        let (catalog, catalog_projection) = StoreBuilder::<MarketCatalog>::new(pool.clone())
+            .build()
+            .await
             .unwrap();
-        assert_eq!(leverage.get(btc_index), Some(50));
+        let (enablement, enablement_projection) = StoreBuilder::<MarketEnablement>::new(pool)
+            .build()
+            .await
+            .unwrap();
+        (
+            catalog,
+            catalog_projection,
+            enablement,
+            enablement_projection,
+        )
+    }
+
+    fn symbols(markets: &[Market]) -> Vec<&str> {
+        markets.iter().map(Market::as_str).collect()
     }
 
     #[traced_test]
     #[tokio::test]
-    async fn refresh_writes_markets_csv_and_preserves_disable_across_runs() {
-        let data_dir = TempDir::new().unwrap();
+    async fn refresh_records_the_universe_and_excludes_operator_disables() {
+        let (catalog, catalog_projection, enablement, enablement_projection) =
+            market_stores().await;
         let client = StubClient {
             metadata: vec![metadata("BTC", 50), metadata("ETH", 25)],
         };
 
-        let tradable = refresh_markets(&client, data_dir.path()).await.unwrap();
-        assert_eq!(
-            tradable.len(),
-            2,
-            "both markets are tradable on first refresh"
-        );
-        assert!(data_dir.path().join("markets.csv").exists());
+        let tradable = refresh_markets(
+            &client,
+            &catalog,
+            &catalog_projection,
+            &enablement_projection,
+        )
+        .await
+        .unwrap();
+        assert_eq!(symbols(&tradable), vec!["BTC", "ETH"]);
         assert!(crate::logs_contain_at(
             Level::INFO,
             &["markets metadata refreshed"]
         ));
 
-        // Operator disables BTC by editing the ledger, then a later refresh keeps it.
-        let path = data_dir.path().join(file_name());
-        let edited = crate::dataframe::read_csv(path.clone())
+        // The operator disables BTC; a later refresh keeps it excluded.
+        enablement
+            .send(
+                &MarketId::new(VenueRef::Hyperliquid, Symbol::from_raw("BTC")),
+                MarketEnablementCommand::Disable { reason: None },
+            )
             .await
-            .unwrap()
-            .unwrap()
-            .lazy()
-            .with_column(col("symbol").eq(lit("BTC")).alias("disable"))
-            .collect()
             .unwrap();
-        crate::dataframe::write_csv(path, edited).await.unwrap();
 
-        let tradable = refresh_markets(&client, data_dir.path()).await.unwrap();
-        assert_eq!(
-            tradable.iter().map(Market::as_str).collect::<Vec<_>>(),
-            vec!["ETH"],
-            "BTC is excluded from the tradable set once disabled"
-        );
-
-        let reloaded = crate::dataframe::read_csv(data_dir.path().join(file_name()))
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(disable_for(&reloaded, "BTC"), Some(true));
-        assert_eq!(disable_for(&reloaded, "ETH"), Some(false));
-    }
-
-    #[test]
-    fn tradable_from_frame_excludes_disabled_markets() {
-        let frame = df! {
-            "symbol" => &["BTC", "ETH", "SOL"],
-            "max_leverage" => &[50_u32, 25, 20],
-            "disable" => &[false, true, false],
-        }
+        let tradable = refresh_markets(
+            &client,
+            &catalog,
+            &catalog_projection,
+            &enablement_projection,
+        )
+        .await
         .unwrap();
-
-        let markets = tradable_from_frame(&frame).unwrap();
-        let symbols: Vec<&str> = markets.iter().map(Market::as_str).collect();
-
-        assert_eq!(markets.len(), 2, "the disabled market is excluded");
-        assert!(symbols.contains(&"BTC"));
-        assert!(symbols.contains(&"SOL"));
-        assert!(!symbols.contains(&"ETH"), "ETH is disabled");
+        assert_eq!(symbols(&tradable), vec!["ETH"]);
     }
 
     #[traced_test]
     #[tokio::test]
-    async fn refresh_discovers_markets_from_the_exchange_not_the_ledger() {
-        let data_dir = TempDir::new().unwrap();
-        // The persisted ledger only knows BTC, which the operator disabled.
-        let existing = df! {
-            "symbol" => &["BTC"],
-            "max_leverage" => &[40_u32],
-            "disable" => &[true],
-        }
-        .unwrap();
-        crate::dataframe::write_csv(data_dir.path().join(file_name()), existing)
-            .await
-            .unwrap();
-
-        // The exchange now lists BTC, ETH, and SOL.
+    async fn refresh_discovers_newly_listed_markets() {
+        let (catalog, catalog_projection, _enablement, enablement_projection) =
+            market_stores().await;
         let client = StubClient {
             metadata: vec![
                 metadata("BTC", 50),
@@ -295,18 +247,18 @@ mod tests {
             ],
         };
 
-        let tradable = refresh_markets(&client, data_dir.path()).await.unwrap();
-        let symbols: Vec<&str> = tradable.iter().map(Market::as_str).collect();
+        let tradable = refresh_markets(
+            &client,
+            &catalog,
+            &catalog_projection,
+            &enablement_projection,
+        )
+        .await
+        .unwrap();
 
-        // ETH and SOL are discovered from the live fetch even though the ledger
-        // never listed them; BTC stays excluded by its persisted disable flag.
-        assert_eq!(tradable.len(), 2, "newly listed markets are discovered");
-        assert!(symbols.contains(&"ETH"));
-        assert!(symbols.contains(&"SOL"));
-        assert!(
-            !symbols.contains(&"BTC"),
-            "operator-disabled BTC stays excluded"
-        );
+        let mut discovered = symbols(&tradable);
+        discovered.sort_unstable();
+        assert_eq!(discovered, vec!["BTC", "ETH", "SOL"]);
         assert!(crate::logs_contain_at(
             Level::INFO,
             &["markets metadata refreshed"]

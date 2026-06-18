@@ -92,7 +92,8 @@ of them.
 
 Keep the development pipeline and the repo's front page healthy: CI that gates
 on code rather than a throttled cache, the PR-footer tooling `AGENTS.md` already
-mandates, and a README that shows the product instead of a deprecated embed.
+mandates, a README that shows the product instead of a deprecated embed, and
+front-page docs that spell out their abbreviations on first use.
 
 - [ ] Replace magic-nix-cache with cachix + a per-runner store cache --
       [#359](https://github.com/data-cartel/moneymentum/issues/359) /
@@ -103,6 +104,9 @@ mandates, and a README that shows the product instead of a deprecated embed.
 - [ ] Replace the deprecated Big Short embed with a prototype screenshot --
       [#365](https://github.com/data-cartel/moneymentum/issues/365) /
       [#366](https://github.com/data-cartel/moneymentum/pull/366)
+- [ ] Expand abbreviations on first use in SPEC and README --
+      [#369](https://github.com/data-cartel/moneymentum/issues/369) /
+      [#370](https://github.com/data-cartel/moneymentum/pull/370)
 
 ---
 

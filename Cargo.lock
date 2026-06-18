@@ -3475,6 +3475,7 @@ dependencies = [
  "tracing-subscriber",
  "tracing-test",
  "url",
+ "uuid 1.23.3",
  "wiremock",
 ]
 

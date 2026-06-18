@@ -128,7 +128,7 @@ version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40c48f72fd53cd289104fc64099abca73db4166ad86ea0b4341abe65af83dadc"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -139,7 +139,7 @@ checksum = "291e6a250ff86cd4a820112fb8898808a366d8f9f58ce16d1f538353ad55747d"
 dependencies = [
  "anstyle",
  "once_cell_polyfill",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1612,7 +1612,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2806,7 +2806,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.5.10",
+ "socket2 0.6.4",
  "system-configuration 0.7.0",
  "tokio",
  "tower-service",
@@ -2835,16 +2835,8 @@ dependencies = [
  "serde_json",
  "thiserror 1.0.69",
  "tokio",
-<<<<<<< New base: chore: adopt the event-sorcery event-store stack (sqlx 0.9, apalis 1.0-rc) (#361
  "tokio-tungstenite 0.20.1",
  "uuid 1.23.3",
-||||||| Common ancestor
- "tokio-tungstenite",
- "uuid 1.20.0",
-=======
- "tokio-tungstenite",
- "uuid 1.23.3",
->>>>>>> Current commit: chore: adopt event-sorcery event-store stack (sqlx 0.9, apalis 1.0-rc)
 ]
 
 [[package]]
@@ -3056,29 +3048,9 @@ dependencies = [
 
 [[package]]
 name = "ipnet"
-<<<<<<< New base: chore: adopt the event-sorcery event-store stack (sqlx 0.9, apalis 1.0-rc) (#361
 version = "2.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d98f6fed1fde3f8c21bc40a1abb88dd75e67924f9cffc3ef95607bad8017f8e2"
-||||||| Common ancestor
-version = "2.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "469fb0b9cefa57e3ef31275ee7cacb78f2fdca44e4765491884a2b119d4eb130"
-
-[[package]]
-name = "iri-string"
-version = "0.7.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c91338f0783edbd6195decb37bae672fd3b165faffb89bf7b9e6942f8b1a731a"
-dependencies = [
- "memchr",
- "serde",
-]
-=======
-version = "2.12.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d98f6fed1fde3f8c21bc40a1abb88dd75e67924f9cffc3ef95607bad8017f8e2"
->>>>>>> Current commit: chore: adopt event-sorcery event-store stack (sqlx 0.9, apalis 1.0-rc)
 
 [[package]]
 name = "is-terminal"
@@ -3088,7 +3060,7 @@ checksum = "3640c1c38b8e4e43584d8df18be5fc6b0aa314ce6ebf51b53313d4306cca8e46"
 dependencies = [
  "hermit-abi",
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3499,18 +3471,13 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
-<<<<<<< New base: chore: adopt the event-sorcery event-store stack (sqlx 0.9, apalis 1.0-rc) (#361
  "tokio-tungstenite 0.29.0",
  "toml 0.9.12+spec-1.1.0",
-||||||| Common ancestor
- "toml 0.9.11+spec-1.1.0",
-=======
- "toml 0.9.12+spec-1.1.0",
->>>>>>> Current commit: chore: adopt event-sorcery event-store stack (sqlx 0.9, apalis 1.0-rc)
  "tracing",
  "tracing-subscriber",
  "tracing-test",
  "url",
+ "uuid 1.23.3",
  "wiremock",
 ]
 
@@ -3571,7 +3538,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4070,7 +4037,6 @@ dependencies = [
 
 [[package]]
 name = "pkg-config"
-<<<<<<< New base: chore: adopt the event-sorcery event-store stack (sqlx 0.9, apalis 1.0-rc) (#361
 version = "0.3.33"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "19f132c84eca552bf34cab8ec81f1c1dcc229b811638f9d283dceabe58c5569e"
@@ -4078,25 +4044,8 @@ checksum = "19f132c84eca552bf34cab8ec81f1c1dcc229b811638f9d283dceabe58c5569e"
 [[package]]
 name = "plain"
 version = "0.2.3"
-||||||| Common ancestor
-version = "0.3.32"
-=======
-version = "0.3.33"
->>>>>>> Current commit: chore: adopt event-sorcery event-store stack (sqlx 0.9, apalis 1.0-rc)
-source = "registry+https://github.com/rust-lang/crates.io-index"
-<<<<<<< New base: chore: adopt the event-sorcery event-store stack (sqlx 0.9, apalis 1.0-rc) (#361
-checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
-||||||| Common ancestor
-checksum = "7edddbd0b52d732b21ad9a5fab5c704c14cd949e5e9a1ec5929a24fded1b904c"
-=======
-checksum = "19f132c84eca552bf34cab8ec81f1c1dcc229b811638f9d283dceabe58c5569e"
-
-[[package]]
-name = "plain"
-version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
->>>>>>> Current commit: chore: adopt event-sorcery event-store stack (sqlx 0.9, apalis 1.0-rc)
 
 [[package]]
 name = "planus"
@@ -4814,7 +4763,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash",
  "rustls 0.23.40",
- "socket2 0.5.10",
+ "socket2 0.6.4",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -4852,7 +4801,7 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.5.10",
+ "socket2 0.6.4",
  "tracing",
  "windows-sys 0.60.2",
 ]
@@ -5521,7 +5470,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5600,7 +5549,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6116,7 +6065,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "52d1cfed4120b4d927bf7c0f86d2087a4a7d6027c906d9f9d525a80573b9be51"
 dependencies = [
  "libc",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6578,7 +6527,7 @@ dependencies = [
  "cfg-if",
  "libc",
  "psm",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6812,7 +6761,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -7781,7 +7730,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -8102,11 +8051,6 @@ checksum = "d6bbff5f0aada427a1e5a6da5f1f98158182f26556f345ac9e04d36d0ebed650"
 
 [[package]]
 name = "winnow"
-<<<<<<< New base: chore: adopt the event-sorcery event-store stack (sqlx 0.9, apalis 1.0-rc) (#361
-version = "0.7.15"
-||||||| Common ancestor
-version = "0.7.14"
-=======
 version = "0.7.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "df79d97927682d2fd8adb29682d1140b343be4ac0f08fd68b7765d9c059d3945"
@@ -8117,24 +8061,8 @@ dependencies = [
 [[package]]
 name = "winnow"
 version = "1.0.3"
->>>>>>> Current commit: chore: adopt event-sorcery event-store stack (sqlx 0.9, apalis 1.0-rc)
-source = "registry+https://github.com/rust-lang/crates.io-index"
-<<<<<<< New base: chore: adopt the event-sorcery event-store stack (sqlx 0.9, apalis 1.0-rc) (#361
-checksum = "df79d97927682d2fd8adb29682d1140b343be4ac0f08fd68b7765d9c059d3945"
-dependencies = [
- "memchr",
-]
-
-[[package]]
-name = "winnow"
-version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0592e1c9d151f854e6fd382574c3a0855250e1d9b2f99d9281c6e6391af352f1"
-||||||| Common ancestor
-checksum = "5a5364e9d77fcdeeaa6062ced926ee3381faa2ee02d3eb83a5c27a8825540829"
-=======
-checksum = "0592e1c9d151f854e6fd382574c3a0855250e1d9b2f99d9281c6e6391af352f1"
->>>>>>> Current commit: chore: adopt event-sorcery event-store stack (sqlx 0.9, apalis 1.0-rc)
 dependencies = [
  "memchr",
 ]

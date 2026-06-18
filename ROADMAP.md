@@ -18,6 +18,25 @@ the order within each theme.
 
 ---
 
+## Dev: event-sourced persistence foundation
+
+Give the toolkit durable, auditable state via
+[event-sorcery](https://github.com/ST0X-Technology/event-sorcery): portfolios
+(target streams that enable auto-rebalancing), the ingestion lifecycle, and the
+tradable market universe. Each domain is an event-sourced aggregate so history
+is a first-class artifact for later performance attribution and prediction, and
+the design stays forward-compatible with multiple instruments and venues.
+Design: [adrs/0001](./adrs/0001-event-sorcery-persistence-foundation.md).
+
+- [ ] Adopt the event-sorcery event-store stack (sqlx 0.9, apalis 1.0-rc) --
+      [#363](https://github.com/data-cartel/moneymentum/issues/363) /
+      [#361](https://github.com/data-cartel/moneymentum/pull/361)
+- [ ] Event-source portfolios, ingestion runs, and the market universe --
+      [#364](https://github.com/data-cartel/moneymentum/issues/364) /
+      [#362](https://github.com/data-cartel/moneymentum/pull/362)
+
+---
+
 ## Dev: finish the Python -> Rust analytics migration
 
 Port the deleted Python quant analytics to Rust as the factor and risk engine

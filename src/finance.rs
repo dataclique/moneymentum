@@ -7,16 +7,16 @@
 //! [`Symbol`] normalizes these representations for consistent storage and lookup.
 //! [`Market`] preserves the exchange's native identifier for API calls.
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 /// Normalized trading symbol (e.g., "BTC", "ETH").
 ///
 /// Normalizes input like "BTC/USDC:USDC" to just "BTC".
 ///
-/// Serialization is transparent (the inner ticker string). Persisted symbols
-/// are always written through [`Symbol::from_raw`], so a deserialized value is
-/// already normalized -- replay trusts the stored representation.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+/// Serialization is transparent (the inner ticker string). Deserialization
+/// normalizes through [`Symbol::from_raw`], so a `Symbol` decoded at any boundary
+/// -- a wire request or a persisted event -- is canonical.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 pub(crate) struct Symbol(String);
 
 impl Symbol {
@@ -27,6 +27,16 @@ impl Symbol {
 
     pub(crate) fn as_str(&self) -> &str {
         &self.0
+    }
+}
+
+impl<'de> Deserialize<'de> for Symbol {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let raw = String::deserialize(deserializer)?;
+        Ok(Self::from_raw(&raw))
     }
 }
 

@@ -25,6 +25,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::finance::Symbol;
+use crate::venue::VenueRef;
 
 /// Opaque, server-minted identity for a portfolio.
 ///
@@ -102,13 +103,6 @@ pub(crate) enum PortfolioNameError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum BaseCurrency {
     Usdc,
-}
-
-/// An execution/data venue. The data-source and execution halves of the SPEC's
-/// dual abstraction both key on this value, so a new venue is one variant.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) enum VenueRef {
-    Hyperliquid,
 }
 
 /// A venue-agnostic reference to a tradable instrument.

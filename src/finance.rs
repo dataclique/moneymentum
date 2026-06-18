@@ -7,12 +7,16 @@
 //! [`Symbol`] normalizes these representations for consistent storage and lookup.
 //! [`Market`] preserves the exchange's native identifier for API calls.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// Normalized trading symbol (e.g., "BTC", "ETH").
 ///
 /// Normalizes input like "BTC/USDC:USDC" to just "BTC".
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// Serialization is transparent (the inner ticker string). Persisted symbols
+/// are always written through [`Symbol::from_raw`], so a deserialized value is
+/// already normalized -- replay trusts the stored representation.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub(crate) struct Symbol(String);
 
 impl Symbol {

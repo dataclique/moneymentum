@@ -24,10 +24,10 @@ Consequences of that history that shape this decision:
   exist. They do not. The story is stale.
 - Persisted state today: `ingestion_runs` (raw sqlx), the apalis `Jobs` table
   (apalis-sql 0.7), and file-based parquet/CSV (`markets.csv` holds the
-  operator-edited `disable` flag; OHLCV/funding are parquet). **Portfolio state
-  is not persisted** -- target/current weights arrive in request bodies;
-  `/beta`, `/risk`, `/portfolio/compare`, `/portfolio/simulate`,
-  `/portfolio/exposure` are stateless analytics.
+  operator-edited `disable` flag; Open-High-Low-Close-Volume (OHLCV) and funding
+  are parquet). **Portfolio state is not persisted** -- target/current weights
+  arrive in request bodies; `/beta`, `/risk`, `/portfolio/compare`,
+  `/portfolio/simulate`, `/portfolio/exposure` are stateless analytics.
 
 **The goal (from the maintainer):** make
 [`event-sorcery`](https://github.com/ST0X-Technology/event-sorcery) (the
@@ -79,10 +79,10 @@ choices:
    portfolio command/event surface. This is how the dual abstraction is enforced
    structurally rather than by convention.
 
-4. **NAV and historic performance are projection-backed read models, never
-   event-writing aggregates.** NAV is derived, not decided. Historic performance
-   rebuilds deterministically by folding the retained `TargetRevised`,
-   `RebalanceSettled`, and `NavComputed` streams.
+4. **Net Asset Value (NAV) and historic performance are projection-backed read
+   models, never event-writing aggregates.** NAV is derived, not decided.
+   Historic performance rebuilds deterministically by folding the retained
+   `TargetRevised`, `RebalanceSettled`, and `NavComputed` streams.
 
 5. **Ingestion is re-event-sourced without the #339 regression.** Per-run
    identity (never a singleton), a monotone terminal state machine, the "one
@@ -154,7 +154,7 @@ history (a projection over `Portfolio`'s `TargetRevised` stream) and
   **deliberately deferred** out of the permanent event model until an options
   venue and its conventions (American/European, settlement, multiplier) are real
   -- committing strike/expiry/kind into immutable history now is an unmigratable
-  bet (YAGNI on event types).
+  bet (You Aren't Gonna Need It, or YAGNI, applied to event types).
 - **Venues (execution half).** Each venue contributes in exactly two pluggable
   places, both keyed on `VenueRef`: an **ingest adapter** (venue state ->
   `Record*` command, via a job) and an **execute adapter** (`ExecuteLegJob`
@@ -219,9 +219,9 @@ startup reconciler fails any orphaned run); the migration creates the 1.0-rc
    already matches; recreate `snapshots` with the missing
    `snapshot_version BIGINT NOT NULL DEFAULT 0`. Net effect equals
    event-sorcery's `init` migration.
-3. Create the apalis-sqlite 1.0-rc `Jobs` table (BLOB) as consumer-owned DDL,
-   replacing the runtime `SqliteStorage::setup` probe and the
-   `set_ignore_missing` ordering hack (no second migrator competes for
+3. Create the apalis-sqlite 1.0-rc `Jobs` table (BLOB) as consumer-owned Data
+   Definition Language (DDL), replacing the runtime `SqliteStorage::setup` probe
+   and the `set_ignore_missing` ordering hack (no second migrator competes for
    `_sqlx_migrations` anymore).
 
 **Startup wiring** (`rocket()` in `src/lib.rs`): one sqlx 0.9 pool -> plain

@@ -67,7 +67,7 @@ impl<S: Stamp + Send + Sync> Wallet for TurnkeyEvmWallet<S> {
         let result = self
             .client
             .sign_raw_payload(
-                self.organization_id.0.clone(),
+                self.organization_id.as_str().to_owned(),
                 self.client.current_timestamp(),
                 SignRawPayloadIntentV2 {
                     sign_with: self.account.to_checksum(None),

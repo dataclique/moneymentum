@@ -7,15 +7,21 @@ use uuid::Uuid;
 /// instance is always a syntactically valid UUID. Shared by every chain-specific
 /// Turnkey wallet.
 #[derive(Debug, Clone)]
-pub struct OrganizationId(pub(crate) String);
+pub struct OrganizationId(String);
 
 impl OrganizationId {
     /// Parses a Turnkey organization id, rejecting anything that is not a UUID
     /// so an invalid id cannot reach an API call and fail late.
     pub fn new(id: impl Into<String>) -> Result<Self, OrganizationIdError> {
         let id = id.into();
-        Uuid::parse_str(&id).map_err(|_| OrganizationIdError::NotAUuid)?;
+        Uuid::parse_str(&id)?;
         Ok(Self(id))
+    }
+
+    /// Borrows the validated UUID string to scope a Turnkey API call to this
+    /// organization. Crate-internal so the raw id never escapes the newtype.
+    pub(crate) fn as_str(&self) -> &str {
+        &self.0
     }
 }
 
@@ -23,7 +29,7 @@ impl OrganizationId {
 #[derive(Debug, thiserror::Error)]
 pub enum OrganizationIdError {
     #[error("organization id is not a valid UUID")]
-    NotAUuid,
+    Uuid(#[from] uuid::Error),
 }
 
 /// Turnkey wallet identifier.
@@ -63,7 +69,7 @@ mod tests {
     fn organization_id_rejects_a_non_uuid() {
         assert!(matches!(
             OrganizationId::new("not-a-uuid"),
-            Err(OrganizationIdError::NotAUuid)
+            Err(OrganizationIdError::Uuid(_))
         ));
     }
 }

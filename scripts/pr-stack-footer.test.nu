@@ -111,4 +111,16 @@ let status = {stacks: [
 ]}
 assert equal ($status | stacks-with-prs) [[101 103]]
 
+# footer-jobs flattens each stack's PR list into one job per PR, preserving
+# stack order and pairing every PR with its full stack list so the footer
+# can be built with the right position and total.
+assert equal (footer-jobs [[101 103] [205]]) [
+  {prs: [101 103], pr: 101}
+  {prs: [101 103], pr: 103}
+  {prs: [205], pr: 205}
+]
+
+# An empty workspace yields no jobs.
+assert equal (footer-jobs []) []
+
 print "pr-stack-footer: all tests passed"

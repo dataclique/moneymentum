@@ -20,13 +20,13 @@ const BOTTOM_MARKER = "<!-- GitButler Footer Boundary Bottom -->"
 # own output.
 export def build-footer [prs: list, current: int]: nothing -> string {
   let total = ($prs | length)
-  let current_index = ($prs | enumerate | where item == $current | get index)
+  let current_match = ($prs | enumerate | where item == $current)
 
-  if ($current_index | is-empty) {
+  if ($current_match | is-empty) {
     error make {msg: $"PR #($current) not found in stack PR list: ($prs)"}
   }
 
-  let current_position = (($current_index | first) + 1)
+  let current_position = (($current_match | first | get index) + 1)
 
   let rows = (
     $prs
@@ -105,44 +105,52 @@ def parse-pr-number []: any -> any {
   if ($matched | is-empty) { null } else { $matched.0.num | into int }
 }
 
-def main [--apply]: nothing -> any {
-  let stacks = (^but status -j | from json | stacks-with-prs)
+# Flatten the per-stack PR lists into one job per PR, each carrying its
+# stack's full PR list so the footer can be built for it. This turns the
+# nested per-stack/per-PR walk into a single functional pipeline.
+export def footer-jobs [stacks: list]: nothing -> table {
+  $stacks | each {|prs| $prs | each {|pr| {prs: $prs, pr: $pr}}} | flatten
+}
 
-  mut updated = []
-  mut failed = []
+# Build one PR's footer and write it back via gh: read the body, splice the
+# footer in, edit. Returns {pr, outcome: "updated" | "failed"}; progress and
+# errors print as a side effect so a long run streams feedback.
+def apply-footer [prs: list, pr: int]: nothing -> record {
+  let view = (^gh pr view $pr --json body | complete)
 
-  for prs in $stacks {
-    for pr in $prs {
-      let footer = (build-footer $prs $pr)
-
-      if $apply {
-        let view = (^gh pr view $pr --json body | complete)
-        if $view.exit_code != 0 {
-          print -e $"failed to read #($pr): ($view.stderr | str trim)"
-          $failed = ($failed | append $pr)
-          continue
-        }
-
-        let body = ($view.stdout | from json | get body)
-        let new_body = (splice-footer $body $footer)
-
-        let edit = (^gh pr edit $pr --body $new_body | complete)
-        if $edit.exit_code != 0 {
-          print -e $"failed to update #($pr): ($edit.stderr | str trim)"
-          $failed = ($failed | append $pr)
-          continue
-        }
-
-        $updated = ($updated | append $pr)
-        print $"updated #($pr)"
-      } else {
-        let position = (($prs | enumerate | where item == $pr | get index | first) + 1)
-        print $"would update #($pr): part ($position) of ($prs | length)"
-      }
-    }
+  if $view.exit_code != 0 {
+    print -e $"failed to read #($pr): ($view.stderr | str trim)"
+    return {pr: $pr, outcome: "failed"}
   }
 
-  if ($apply and (not ($failed | is-empty))) {
+  let new_body = (splice-footer ($view.stdout | from json | get body) (build-footer $prs $pr))
+  let edit = (^gh pr edit $pr --body $new_body | complete)
+
+  if $edit.exit_code != 0 {
+    print -e $"failed to update #($pr): ($edit.stderr | str trim)"
+    return {pr: $pr, outcome: "failed"}
+  }
+
+  print $"updated #($pr)"
+  {pr: $pr, outcome: "updated"}
+}
+
+def main [--apply]: nothing -> any {
+  let jobs = (footer-jobs (^but status -j | from json | stacks-with-prs))
+
+  if not $apply {
+    $jobs | each {|job|
+      let position = (($job.prs | enumerate | where item == $job.pr | get index | first) + 1)
+      print $"would update #($job.pr): part ($position) of ($job.prs | length)"
+    } | ignore
+    return
+  }
+
+  let outcomes = ($jobs | each {|job| apply-footer $job.prs $job.pr})
+  let updated = ($outcomes | where outcome == "updated")
+  let failed = ($outcomes | where outcome == "failed" | get pr)
+
+  if not ($failed | is-empty) {
     let failed_str = ($failed | each {|pr| $"#($pr)"} | str join ", ")
     print -e $"($updated | length) updated, ($failed | length) failed: ($failed_str). Re-run to retry the failed PRs."
   }

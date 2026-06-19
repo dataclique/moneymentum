@@ -52,8 +52,15 @@ let
 
     RUSTFLAGS = "-D warnings";
 
-    # Compile/test env for sqlx and reqwest in the nix sandbox.
+    # Compile/test env for sqlx and reqwest in the nix sandbox. SQLX_OFFLINE is
+    # set here as a derivation env var, not only in .cargo/config.toml, because
+    # crane's buildDepsOnly vendors the dependency crates from a manifest-only
+    # source tree (depsSrc) that omits .cargo/config.toml. Without the env var,
+    # the event-store deps' compile-time `sqlx::query_file!` macros connect to
+    # DATABASE_URL instead of their bundled `.sqlx/` caches and fail against the
+    # empty sandbox database.
     DATABASE_URL = "sqlite::memory:";
+    SQLX_OFFLINE = "true";
     SSL_CERT_FILE = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
     NIX_SSL_CERT_FILE = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
   };

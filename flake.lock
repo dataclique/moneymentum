@@ -799,13 +799,13 @@
       "locked": {
         "lastModified": 1781119917,
         "narHash": "sha256-Z7YYJLfTXtnTzTerGktEsmCaffOEamgBNUY1mrEIdls=",
-        "owner": "data-cartel",
+        "owner": "dataclique",
         "repo": "fund",
         "rev": "d6e791b4e527da86f8a7da62039aafa2ca98d2f3",
         "type": "github"
       },
       "original": {
-        "owner": "data-cartel",
+        "owner": "dataclique",
         "repo": "fund",
         "rev": "d6e791b4e527da86f8a7da62039aafa2ca98d2f3",
         "type": "github"

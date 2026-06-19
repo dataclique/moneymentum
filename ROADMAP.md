@@ -29,62 +29,62 @@ engineering track that runs in parallel to the product themes below, not ahead
 of them.
 
 - [x] Point user stories at the factors module --
-      [#304](https://github.com/data-cartel/moneymentum/issues/304) /
-      [#250](https://github.com/data-cartel/moneymentum/pull/250)
+      [#304](https://github.com/dataclique/moneymentum/issues/304) /
+      [#250](https://github.com/dataclique/moneymentum/pull/250)
 - [x] Consolidate beta into a factors module --
-      [#249](https://github.com/data-cartel/moneymentum/issues/249) /
-      [#252](https://github.com/data-cartel/moneymentum/pull/252)
+      [#249](https://github.com/dataclique/moneymentum/issues/249) /
+      [#252](https://github.com/dataclique/moneymentum/pull/252)
 - [x] Add TimeframeConfig (lookback + annualization) --
-      [#251](https://github.com/data-cartel/moneymentum/issues/251) /
-      [#254](https://github.com/data-cartel/moneymentum/pull/254)
+      [#251](https://github.com/dataclique/moneymentum/issues/251) /
+      [#254](https://github.com/dataclique/moneymentum/pull/254)
 - [x] Split the factor engine into returns/beta/scores submodules --
-      [#257](https://github.com/data-cartel/moneymentum/issues/257) /
-      [#258](https://github.com/data-cartel/moneymentum/pull/258)
+      [#257](https://github.com/dataclique/moneymentum/issues/257) /
+      [#258](https://github.com/dataclique/moneymentum/pull/258)
 - [x] Factor: returns shared primitive --
       [`src/factors/returns.rs`](./src/factors/returns.rs)
 - [x] Factor: cum_return --
-      [#253](https://github.com/data-cartel/moneymentum/issues/253) /
-      [#254](https://github.com/data-cartel/moneymentum/pull/254)
+      [#253](https://github.com/dataclique/moneymentum/issues/253) /
+      [#254](https://github.com/dataclique/moneymentum/pull/254)
 - [x] Factor: volatility --
-      [#251](https://github.com/data-cartel/moneymentum/issues/251) /
-      [#254](https://github.com/data-cartel/moneymentum/pull/254)
+      [#251](https://github.com/dataclique/moneymentum/issues/251) /
+      [#254](https://github.com/dataclique/moneymentum/pull/254)
 - [x] Factor: SMA --
-      [#255](https://github.com/data-cartel/moneymentum/issues/255) /
-      [#256](https://github.com/data-cartel/moneymentum/pull/256)
+      [#255](https://github.com/dataclique/moneymentum/issues/255) /
+      [#256](https://github.com/dataclique/moneymentum/pull/256)
 - [x] Factor: mean return --
-      [#255](https://github.com/data-cartel/moneymentum/issues/255) /
-      [#256](https://github.com/data-cartel/moneymentum/pull/256)
+      [#255](https://github.com/dataclique/moneymentum/issues/255) /
+      [#256](https://github.com/dataclique/moneymentum/pull/256)
 - [x] Factor: price z-score --
-      [#255](https://github.com/data-cartel/moneymentum/issues/255) /
-      [#256](https://github.com/data-cartel/moneymentum/pull/256)
+      [#255](https://github.com/dataclique/moneymentum/issues/255) /
+      [#256](https://github.com/dataclique/moneymentum/pull/256)
 - [x] Factor: Sharpe --
-      [#259](https://github.com/data-cartel/moneymentum/issues/259) /
-      [#260](https://github.com/data-cartel/moneymentum/pull/260)
+      [#259](https://github.com/dataclique/moneymentum/issues/259) /
+      [#260](https://github.com/dataclique/moneymentum/pull/260)
 - [x] Factor: Sortino (adds MAR -- Minimum Acceptable Return -- to
       TimeframeConfig) --
-      [#261](https://github.com/data-cartel/moneymentum/issues/261) /
-      [#262](https://github.com/data-cartel/moneymentum/pull/262)
+      [#261](https://github.com/dataclique/moneymentum/issues/261) /
+      [#262](https://github.com/dataclique/moneymentum/pull/262)
 - [x] Factor: autocorrelation --
-      [#263](https://github.com/data-cartel/moneymentum/issues/263) /
-      [#264](https://github.com/data-cartel/moneymentum/pull/264)
+      [#263](https://github.com/dataclique/moneymentum/issues/263) /
+      [#264](https://github.com/dataclique/moneymentum/pull/264)
 - [x] Factor: information discreteness --
-      [#265](https://github.com/data-cartel/moneymentum/issues/265) /
-      [#266](https://github.com/data-cartel/moneymentum/pull/266)
+      [#265](https://github.com/dataclique/moneymentum/issues/265) /
+      [#266](https://github.com/dataclique/moneymentum/pull/266)
 - [x] Factor: carry (signed funding) --
-      [#267](https://github.com/data-cartel/moneymentum/issues/267) /
-      [#268](https://github.com/data-cartel/moneymentum/pull/268)
+      [#267](https://github.com/dataclique/moneymentum/issues/267) /
+      [#268](https://github.com/dataclique/moneymentum/pull/268)
 - [x] Factor: beta (per-asset, to benchmark) --
-      [#269](https://github.com/data-cartel/moneymentum/issues/269) /
-      [#270](https://github.com/data-cartel/moneymentum/pull/270)
+      [#269](https://github.com/dataclique/moneymentum/issues/269) /
+      [#270](https://github.com/dataclique/moneymentum/pull/270)
 - [x] Factor: 24h volume (screener tie-break) --
-      [#271](https://github.com/data-cartel/moneymentum/issues/271) /
-      [#272](https://github.com/data-cartel/moneymentum/pull/272)
+      [#271](https://github.com/dataclique/moneymentum/issues/271) /
+      [#272](https://github.com/dataclique/moneymentum/pull/272)
 - [x] Markets metadata + persisted disable flag --
-      [#275](https://github.com/data-cartel/moneymentum/issues/275) /
-      [#276](https://github.com/data-cartel/moneymentum/pull/276)
+      [#275](https://github.com/dataclique/moneymentum/issues/275) /
+      [#276](https://github.com/dataclique/moneymentum/pull/276)
 - [x] Tradable filter wired into ingestion --
-      [#277](https://github.com/data-cartel/moneymentum/issues/277) /
-      [#278](https://github.com/data-cartel/moneymentum/pull/278)
+      [#277](https://github.com/dataclique/moneymentum/issues/277) /
+      [#278](https://github.com/dataclique/moneymentum/pull/278)
 
 ---
 
@@ -158,8 +158,8 @@ result before sending trades.
 - [ ] [Compare Target vs Current Portfolio](./stories/0x01a.compare-target-vs-current-portfolio.md)
 - [ ] [Screen Perps By Factor](./stories/0x01c.screen-perps-by-factor.md) --
       backend rank API shipped
-      ([#273](https://github.com/data-cartel/moneymentum/issues/273) /
-      [#274](https://github.com/data-cartel/moneymentum/pull/274)); frontend
+      ([#273](https://github.com/dataclique/moneymentum/issues/273) /
+      [#274](https://github.com/dataclique/moneymentum/pull/274)); frontend
       filter integration pending
 - [ ] [Simulate Staged Portfolio Metrics](./stories/0x01d.simulate-staged-portfolio-metrics.md)
 
@@ -237,23 +237,23 @@ to DigitalOcean via NixOS + deploy-rs.
 ## Completed: GitButler CLI for stacked PRs
 
 - [x] Package the GitButler CLI via Nix --
-      [#243](https://github.com/data-cartel/moneymentum/issues/243) /
-      [#238](https://github.com/data-cartel/moneymentum/pull/238)
+      [#243](https://github.com/dataclique/moneymentum/issues/243) /
+      [#238](https://github.com/dataclique/moneymentum/pull/238)
 - [x] Add a GitButler skill for coding agents --
-      [#244](https://github.com/data-cartel/moneymentum/issues/244) /
-      [#240](https://github.com/data-cartel/moneymentum/pull/240)
+      [#244](https://github.com/dataclique/moneymentum/issues/244) /
+      [#240](https://github.com/dataclique/moneymentum/pull/240)
 
 ## Completed: Finish Python/Spark removal
 
 - [x] Remove dead Python linter tooling --
-      [#245](https://github.com/data-cartel/moneymentum/issues/245) /
-      [#241](https://github.com/data-cartel/moneymentum/pull/241)
+      [#245](https://github.com/dataclique/moneymentum/issues/245) /
+      [#241](https://github.com/dataclique/moneymentum/pull/241)
 - [x] Strip unused JVM/Spark deps from the dev shell --
-      [#246](https://github.com/data-cartel/moneymentum/issues/246) /
-      [#242](https://github.com/data-cartel/moneymentum/pull/242)
+      [#246](https://github.com/dataclique/moneymentum/issues/246) /
+      [#242](https://github.com/dataclique/moneymentum/pull/242)
 
 ## Completed: Per-PR issue and roadmap tracking
 
 - [x] Document and automate the issue-and-roadmap-per-PR rule --
-      [#247](https://github.com/data-cartel/moneymentum/issues/247) /
-      [#248](https://github.com/data-cartel/moneymentum/pull/248)
+      [#247](https://github.com/dataclique/moneymentum/issues/247) /
+      [#248](https://github.com/dataclique/moneymentum/pull/248)

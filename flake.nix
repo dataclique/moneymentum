@@ -36,9 +36,9 @@
     # cannot use, so it stays in its own repository; all we consume is its
     # `packages.idl` output (the Anchor IDL json client bindings are
     # generated from). Pinned to the feat/idl-flake-output head until
-    # data-cartel/fund#22 merges, then this can track the default branch.
+    # dataclique/fund#22 merges, then this can track the default branch.
     fund.url =
-      "github:data-cartel/fund/d6e791b4e527da86f8a7da62039aafa2ca98d2f3";
+      "github:dataclique/fund/d6e791b4e527da86f8a7da62039aafa2ca98d2f3";
   };
 
   outputs = { self, nixpkgs, flake-utils, git-hooks, devenv, rust-overlay, crane

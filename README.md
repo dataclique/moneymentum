@@ -43,7 +43,7 @@ See [ROADMAP.md](./ROADMAP.md) for what's next.
 ### Setup
 
 ```bash
-git clone https://github.com/data-cartel/moneymentum.git
+git clone https://github.com/dataclique/moneymentum.git
 cd moneymentum
 direnv allow  # or: nix develop
 ```

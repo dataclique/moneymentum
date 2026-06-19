@@ -101,7 +101,7 @@ async fn poll_for_status(
 }
 
 // Temporarily skipped: fails due to OneWeek timeframe overflow when using a
-// 5000-entry window; see https://github.com/data-cartel/moneymentum/issues/64.
+// 5000-entry window; see https://github.com/dataclique/moneymentum/issues/64.
 #[ignore = "OneWeek timeframe window overflows when requesting 5000 candles (see issue #64)"]
 #[rocket::async_test]
 async fn ingest_and_query_candles() {

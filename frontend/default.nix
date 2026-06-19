@@ -28,7 +28,7 @@ in {
 
     meta = {
       description = "moneymentum frontend";
-      homepage = "https://github.com/data-cartel/moneymentum";
+      homepage = "https://github.com/dataclique/moneymentum";
     };
   });
 

@@ -11,8 +11,18 @@ const portfolioPosition = () => ({
   notional: 500,
 })
 
+const defaultRowMetrics = {
+  signedFundingRate: null,
+  beta: null,
+  volatility: null,
+  sharpe: null,
+  sortino: null,
+  momentum: null,
+  carry: null,
+}
+
 describe("PositionsPanelRow", () => {
-  it("replaces side through theta columns with a compact leverage editor", async () => {
+  it("replaces side through visible metric columns with a compact leverage editor", async () => {
     const user = userEvent.setup()
 
     render(() => (
@@ -22,10 +32,13 @@ describe("PositionsPanelRow", () => {
             symbol="ETH/USDC:USDC"
             position={portfolioPosition}
             status="unchanged"
+            visibleMetricColumns={["rate"]}
+            rowMetrics={defaultRowMetrics}
             maxLeverage={5}
             leverageLimitsIsLoading={false}
             isPrecise={true}
             fundingIsLoading={false}
+            factorsIsLoading={false}
             onRemove={vi.fn()}
             onUndoRemove={vi.fn()}
             onSideChange={vi.fn()}
@@ -50,7 +63,9 @@ describe("PositionsPanelRow", () => {
     await user.click(screen.getByRole("button", { name: "2x" }))
 
     expect(assetCell).not.toHaveAttribute("colspan")
-    expect(screen.queryByRole("combobox")).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole("button", { name: "Switch ETH side" }),
+    ).not.toBeInTheDocument()
     expect(
       screen.queryByRole("button", { name: "Remove ETH/USDC:USDC" }),
     ).not.toBeInTheDocument()
@@ -60,13 +75,15 @@ describe("PositionsPanelRow", () => {
     if (sliderCell === null) {
       throw new Error("slider cell not found")
     }
-    expect(sliderCell).toHaveAttribute("colspan", "7")
+    expect(sliderCell).toHaveAttribute("colspan", "4")
 
     await user.click(document.body)
 
     expect(assetCell).not.toHaveAttribute("colspan")
     await waitFor(() => {
-      expect(screen.getByRole("combobox")).toBeInTheDocument()
+      expect(
+        screen.getByRole("button", { name: "Switch ETH side" }),
+      ).toBeInTheDocument()
     })
   })
 
@@ -81,10 +98,13 @@ describe("PositionsPanelRow", () => {
             symbol="ETH/USDC:USDC"
             position={portfolioPosition}
             status="unchanged"
+            visibleMetricColumns={["rate"]}
+            rowMetrics={defaultRowMetrics}
             maxLeverage={40}
             leverageLimitsIsLoading={false}
             isPrecise={true}
             fundingIsLoading={false}
+            factorsIsLoading={false}
             onRemove={vi.fn()}
             onUndoRemove={vi.fn()}
             onSideChange={vi.fn()}
@@ -118,10 +138,13 @@ describe("PositionsPanelRow", () => {
             symbol="ETH/USDC:USDC"
             position={portfolioPosition}
             status="unchanged"
+            visibleMetricColumns={["rate"]}
+            rowMetrics={defaultRowMetrics}
             maxLeverage={40}
             leverageLimitsIsLoading={false}
             isPrecise={true}
             fundingIsLoading={false}
+            factorsIsLoading={false}
             onRemove={vi.fn()}
             onUndoRemove={vi.fn()}
             onSideChange={vi.fn()}
@@ -153,10 +176,13 @@ describe("PositionsPanelRow", () => {
             symbol="ETH/USDC:USDC"
             position={portfolioPosition}
             status="unchanged"
+            visibleMetricColumns={["rate"]}
+            rowMetrics={defaultRowMetrics}
             maxLeverage={5}
             leverageLimitsIsLoading={false}
             isPrecise={true}
             fundingIsLoading={false}
+            factorsIsLoading={false}
             onRemove={vi.fn()}
             onUndoRemove={vi.fn()}
             onSideChange={vi.fn()}
@@ -185,11 +211,13 @@ describe("PositionsPanelRow", () => {
     if (sliderCell === null) {
       throw new Error("slider cell not found")
     }
-    expect(sliderCell).toHaveAttribute("colspan", "7")
+    expect(sliderCell).toHaveAttribute("colspan", "4")
 
     await user.keyboard("{Escape}")
 
-    expect(screen.getByRole("combobox")).toBeInTheDocument()
+    expect(
+      screen.getByRole("button", { name: "Switch ETH side" }),
+    ).toBeInTheDocument()
     expect(assetCell).not.toHaveAttribute("colspan")
     expect(
       screen.queryByLabelText("Leverage for ETH/USDC:USDC"),
@@ -207,10 +235,13 @@ describe("PositionsPanelRow", () => {
             symbol="ETH/USDC:USDC"
             position={portfolioPosition}
             status="unchanged"
+            visibleMetricColumns={["rate"]}
+            rowMetrics={defaultRowMetrics}
             maxLeverage={5}
             leverageLimitsIsLoading={false}
             isPrecise={true}
             fundingIsLoading={false}
+            factorsIsLoading={false}
             onRemove={vi.fn()}
             onUndoRemove={vi.fn()}
             onSideChange={vi.fn()}

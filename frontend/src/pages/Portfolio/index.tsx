@@ -1,15 +1,6 @@
-import { createSignal, createEffect, createMemo, Show } from "solid-js"
-import { Button } from "@/components/ui/button"
+import { createSignal, createEffect, Show } from "solid-js"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Slider } from "@/components/ui/slider"
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
-import { Switch } from "@/components/ui/switch"
-import { ChevronUp } from "lucide-solid"
 import { cn } from "@/lib/cn"
 import { useNetwork } from "@/hooks/useNetwork"
 import { WalletHeader } from "@/components/wallet-header"
@@ -25,7 +16,6 @@ import {
   useHyperliquidTickers,
   useHyperliquidFundingRates,
 } from "@/hooks/useTrading"
-import { ScreenerPanel } from "@/pages/Portfolio/components/ScreenerPanel"
 import { PositionsPanel } from "@/pages/Portfolio/components/PositionsPanel/PositionsPanel"
 import { PerformancePanel } from "@/pages/Portfolio/components/PerformancePanel"
 import { StagedChangesPanel } from "@/pages/Portfolio/components/StagedChangesPanel"
@@ -60,19 +50,6 @@ const PortfolioPage = () => {
       String(portfolio.isManualWeightEntry),
     )
   })
-  const activeSymbolsSet = createMemo(() => {
-    const set = new Set<string>()
-    for (const key of Object.keys(portfolio.targetPortfolio)) {
-      set.add(key)
-    }
-    for (const key of Object.keys(portfolio.deletedArchive)) {
-      if (portfolio.deletedArchive[key] !== undefined) {
-        set.add(key)
-      }
-    }
-    return set
-  })
-
   const betaResult = useBeta(
     () => portfolio.targetPortfolio,
     () => portfolio.targetTotalNotional,
@@ -159,17 +136,9 @@ const PortfolioPage = () => {
           isNetworkSwitching() && "pointer-events-none opacity-50",
         )}
       >
-        <ScreenerPanel
-          symbols={screenerSymbols()}
-          activeSymbols={activeSymbolsSet()}
-          fundingIsLoading={fundingRatesQuery.isLoading}
-          onAddSymbol={portfolio.handleAddToken}
-          fundingRatesByBaseSymbol={fundingRatesByBaseSymbol()}
-        />
         <div class="flex-1 min-w-0 flex gap-1 overflow-hidden">
-          {/* Center: Positions */}
-          <div class="shrink-0 basis-[600px] flex flex-col overflow-hidden">
-            <div class="flex gap-1 min-h-0 min-w-0 flex-1">
+          <div class="shrink-0 flex-[0_0_780px] flex flex-col overflow-hidden min-h-0">
+            <div class="flex min-h-0 min-w-0 flex-1">
               <PositionsPanel
                 currentPortfolio={portfolio.currentPortfolio}
                 targetPortfolio={portfolio.targetPortfolio}
@@ -180,6 +149,13 @@ const PortfolioPage = () => {
                 leverageLimitsMap={portfolio.leverageLimitsMap}
                 _isRebalancing={portfolio.isRebalancing}
                 isPrecise={portfolio.isPrecise}
+                onPreciseChange={value => {
+                  portfolio.setIsPrecise(value)
+                }}
+                isManualWeightEntry={portfolio.isManualWeightEntry}
+                onManualWeightEntryChange={value => {
+                  portfolio.setManualWeightEntry(value)
+                }}
                 onRemove={portfolio.handleRemoveToken}
                 onUndoRemove={portfolio.handleUndoRemoveToken}
                 onSideChange={portfolio.handleSideChange}
@@ -203,6 +179,8 @@ const PortfolioPage = () => {
                 onReadonlyBtcIncludeInBetaChange={
                   portfolio.setReadonlyBtcIncludeInBeta
                 }
+                screenerSymbols={screenerSymbols()}
+                onAddSymbol={portfolio.handleAddToken}
               />
             </div>
             {/* <Show when={portfolio.blockingReasons.length > 0}>
@@ -218,97 +196,55 @@ const PortfolioPage = () => {
             {/* Footer */}
             <div class="sticky bottom-0 bg-background/80 backdrop-blur mt-auto">
               <div class="text-[12px] border-t border-border pt-3 flex items-center">
-                <div class="flex items-center gap-4 w-full">
-                  {/* Cross Account Leverage Slider */}
-                  <div class="flex items-center gap-3 flex-1">
-                    <span class="font-semibold text-muted-foreground whitespace-nowrap">
-                      Leverage
-                    </span>
-                    <Show
-                      // TODO: we can make not isBalanceLoading logic
-                      when={!portfolio.isBalanceLoading}
-                      fallback={<Skeleton class="h-4 w-full" />}
-                    >
-                      <Slider
-                        value={[portfolio.targetCrossAccountLeverage]}
-                        onChange={([selectedLeverage]) => {
-                          portfolio.handleCrossAccountLeverageChange(
-                            selectedLeverage,
-                          )
-                        }}
-                        minValue={LEVERAGE_MIN}
-                        maxValue={LEVERAGE_MAX}
-                        step={LEVERAGE_STEP}
-                        class="flex-1"
-                      />
-                      <input
-                        type="number"
-                        value={leverageInput()}
-                        onFocus={() => setIsLeverageInputFocused(true)}
-                        onBlur={() => {
-                          setIsLeverageInputFocused(false)
-                          setLeverageInput(
-                            portfolio.targetCrossAccountLeverage.toFixed(2),
-                          )
-                        }}
-                        onInput={leverageInputChangeEvent => {
-                          applyLeverageInput(
-                            leverageInputChangeEvent.currentTarget.value,
-                          )
-                        }}
-                        min={LEVERAGE_MIN}
-                        max={LEVERAGE_MAX}
-                        step={LEVERAGE_STEP}
-                        class="w-16 rounded-md border border-border bg-transparent px-2 py-1 text-center font-medium [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
-                      />
-                      <span class="text-sm font-medium">x</span>
-                    </Show>
-                  </div>
-                  <div class="flex items-center gap-4">
-                    <DropdownMenu>
-                      <DropdownMenuTrigger
-                        as={Button}
-                        variant="outline"
-                        size="icon"
-                        aria-label="Open portfolio settings menu"
-                      >
-                        <ChevronUp class="h-4 w-4" />
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent>
-                        <DropdownMenuItem
-                          class="flex items-center justify-between gap-2"
-                          closeOnSelect={false}
-                        >
-                          <span>Precise</span>
-                          <Switch
-                            checked={portfolio.isPrecise}
-                            onChange={value => {
-                              portfolio.setIsPrecise(value)
-                            }}
-                          />
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                          class="flex items-center justify-between gap-2"
-                          closeOnSelect={false}
-                        >
-                          <span>Manual weight entry</span>
-                          <Switch
-                            checked={portfolio.isManualWeightEntry}
-                            onChange={value => {
-                              portfolio.setManualWeightEntry(value)
-                            }}
-                          />
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </div>
+                <div class="flex items-center gap-3 flex-1">
+                  <span class="font-semibold text-muted-foreground whitespace-nowrap">
+                    Leverage
+                  </span>
+                  <Show
+                    when={!portfolio.isBalanceLoading}
+                    fallback={<Skeleton class="h-4 w-full" />}
+                  >
+                    <Slider
+                      value={[portfolio.targetCrossAccountLeverage]}
+                      onChange={([selectedLeverage]) => {
+                        portfolio.handleCrossAccountLeverageChange(
+                          selectedLeverage,
+                        )
+                      }}
+                      minValue={LEVERAGE_MIN}
+                      maxValue={LEVERAGE_MAX}
+                      step={LEVERAGE_STEP}
+                      class="flex-1"
+                    />
+                    <input
+                      type="number"
+                      value={leverageInput()}
+                      onFocus={() => setIsLeverageInputFocused(true)}
+                      onBlur={() => {
+                        setIsLeverageInputFocused(false)
+                        setLeverageInput(
+                          portfolio.targetCrossAccountLeverage.toFixed(2),
+                        )
+                      }}
+                      onInput={leverageInputChangeEvent => {
+                        applyLeverageInput(
+                          leverageInputChangeEvent.currentTarget.value,
+                        )
+                      }}
+                      min={LEVERAGE_MIN}
+                      max={LEVERAGE_MAX}
+                      step={LEVERAGE_STEP}
+                      class="w-16 rounded-md border border-border bg-transparent px-2 py-1 text-center font-medium [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                    />
+                    <span class="text-sm font-medium">x</span>
+                  </Show>
                 </div>
               </div>
             </div>
           </div>
 
           {/* Right: Analysis panels (PERFORMANCE, STAGED, FACTORS, RISK) */}
-          <div class="flex flex-col gap-1 min-h-0 w-full">
+          <div class="flex flex-col gap-1 min-h-0 flex-1 min-w-0">
             <PerformancePanel />
             <div class="flex-1 flex gap-1 min-h-0">
               <div class="flex flex-[0_0_40%] min-w-0">

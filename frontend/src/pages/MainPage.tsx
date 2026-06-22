@@ -1,6 +1,6 @@
 import { createSignal, createMemo, Show } from "solid-js"
 import { columns } from "@/components/ui/columns"
-import { DataTable } from "@/components/ui/data-table"
+import { VirtualizedDataTable } from "@/components/ui/virtualized-data-table"
 import { Calendar22 as DatePicker } from "@/components/ui/date-picker"
 import {
   TimeframeSelect,
@@ -206,7 +206,7 @@ const MainPage = () => {
           <Show when={message()}>
             <div class="mb-4 text-center">{message()}</div>
           </Show>
-          <DataTable columns={columns} data={data()} />
+          <VirtualizedDataTable columns={columns} data={data()} />
         </div>
       </Show>
     </>

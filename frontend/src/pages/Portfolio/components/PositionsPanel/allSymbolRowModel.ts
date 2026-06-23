@@ -119,3 +119,17 @@ export const buildAllSymbolRows = (
     }
   })
 }
+
+export const filterAllSymbolRows = (
+  rows: AllSymbolRowData[],
+  searchQuery: string,
+): AllSymbolRowData[] => {
+  const query = searchQuery.trim().toLowerCase()
+  if (query === "") return rows
+
+  return rows.filter(
+    row =>
+      row.baseSymbol.toLowerCase().includes(query) ||
+      row.symbol.toLowerCase().includes(query),
+  )
+}

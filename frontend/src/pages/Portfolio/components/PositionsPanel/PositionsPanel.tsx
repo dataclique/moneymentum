@@ -43,10 +43,10 @@ import {
 import { buildPositionsColumns } from "./positionsColumns"
 import {
   PORTFOLIO_METRIC_COLUMN_ORDER,
-  PORTFOLIO_METRIC_COLUMNS_STORAGE_KEY,
   PORTFOLIO_METRIC_COLUMN_LABELS,
   readPortfolioMetricVisibility,
   visiblePortfolioMetricColumns,
+  writePortfolioMetricVisibility,
   type PortfolioMetricColumnId,
 } from "./portfolioMetricVisibility"
 import { PositionsDataTable } from "./positions-data-table"
@@ -104,11 +104,9 @@ export const PositionsPanel = (props: PositionsPanelProps): JSX.Element => {
     readPortfolioMetricVisibility(),
   )
 
+  // createEffect: persist metricVisibility to localStorage when gear toggles change (imperative storage sync -- valid side-effect, not expressible via createMemo)
   createEffect(() => {
-    localStorage.setItem(
-      PORTFOLIO_METRIC_COLUMNS_STORAGE_KEY,
-      JSON.stringify(metricVisibility()),
-    )
+    writePortfolioMetricVisibility(metricVisibility())
   })
 
   const visibleMetricColumns = createMemo(() =>
@@ -193,20 +191,6 @@ export const PositionsPanel = (props: PositionsPanelProps): JSX.Element => {
     ),
   )
 
-  const targetSymbolSet = createMemo(
-    () => new Set(Object.keys(props.targetPortfolio)),
-  )
-
-  const closingSymbolSet = createMemo(() => {
-    const symbols = new Set<string>()
-    for (const symbol of Object.keys(props.deletedArchive)) {
-      if (props.deletedArchive[symbol] !== undefined) {
-        symbols.add(symbol)
-      }
-    }
-    return symbols
-  })
-
   const handleAllSymbolClick = (symbol: string) => {
     const action = resolveAllSymbolClick(
       allSymbolPortfolioState(
@@ -268,8 +252,8 @@ export const PositionsPanel = (props: PositionsPanelProps): JSX.Element => {
       <div class="px-2 py-1.5 border-b border-border bg-muted/30 flex items-center justify-between gap-2 shrink-0">
         <div class="flex items-center gap-2 min-w-0">
           <span class="font-medium">
-            <Show when={panelView() === "portfolio"} fallback="POSITIONS">
-              POSITIONS ({targetPositionCount()})
+            <Show when={panelView() === "portfolio"} fallback="ALL SYMBOLS">
+              PORTFOLIO ({targetPositionCount()})
             </Show>
           </span>
         </div>
@@ -419,12 +403,12 @@ export const PositionsPanel = (props: PositionsPanelProps): JSX.Element => {
             </Show>
           }
         >
-          <div class="flex-1 min-h-0 overflow-auto scrollbar-hide">
+          <div class="flex-1 min-h-0">
             <AllSymbolsDataTable
               columns={allSymbolsColumns}
               data={allSymbolRows}
-              targetSymbols={targetSymbolSet()}
-              closingSymbols={closingSymbolSet()}
+              targetPortfolio={props.targetPortfolio}
+              deletedArchive={props.deletedArchive}
               fundingIsLoading={props.fundingIsLoading}
               factorsIsLoading={
                 factorScoresQuery.isLoading || factorScoresQuery.isFetching

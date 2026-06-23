@@ -37,6 +37,7 @@ const PortfolioPage = () => {
   const { isNetworkSwitching } = useNetwork()
   const portfolio = usePortfolioState()
 
+  // createEffect: persist precise toggle to localStorage when it changes
   createEffect(() => {
     localStorage.setItem(
       PRECISE_TOGGLE_STORAGE_KEY,
@@ -44,6 +45,7 @@ const PortfolioPage = () => {
     )
   })
 
+  // createEffect: persist manual weight entry toggle to localStorage when it changes
   createEffect(() => {
     localStorage.setItem(
       MANUAL_WEIGHT_ENTRY_STORAGE_KEY,
@@ -105,25 +107,23 @@ const PortfolioPage = () => {
               ${portfolio.targetTotalNotional.toFixed(2)}
             </span>
           </div>
-          <span class="text-muted-foreground">
-            TODO: effectiveLeverage.toFixed(2)x
-          </span>
+          <span class="text-muted-foreground">coming soon...</span>
         </div>
         <div class="flex items-center gap-4">
           <span class="text-muted-foreground">Δ</span>
-          <span class="font-mono">TODO</span>
+          <span class="font-mono">coming soon...</span>
           <span class="text-muted-foreground">Γ</span>
-          <span class="font-mono">TODO</span>
+          <span class="font-mono">coming soon...</span>
           <span class="text-muted-foreground">Θ</span>
-          <span class="font-mono">TODO</span>
+          <span class="font-mono">coming soon...</span>
           <div class="h-4 border-l border-border" />
-          <span class="text-muted-foreground">TODO Var</span>
-          <span class="font-mono text-red-400">TODO</span>
+          <span class="text-muted-foreground">VaR</span>
+          <span class="font-mono text-red-400">coming soon...</span>
           <ModeToggle />
           <kbd
             class="px-1.5 py-0.5 text-[10px] font-mono bg-muted rounded cursor-pointer hover:bg-muted/80"
             onClick={() => {
-              alert("TODO: add help")
+              alert("coming soon...")
             }}
           >
             ?

@@ -64,7 +64,11 @@ export const createSortableHeader =
   }
 
 const isSortedDesc = <TData,>(row: Row<TData>, columnId: string): boolean =>
-  row._getAllCellsByColumnId()[columnId].column.getIsSorted() === "desc"
+  row
+    .getAllCells()[0]
+    ?.getContext()
+    .table.getColumn(columnId)
+    ?.getIsSorted() === "desc"
 
 export const compareNullableNumbers = (
   left: number | null,

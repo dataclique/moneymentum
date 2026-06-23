@@ -86,6 +86,22 @@ export const readPortfolioMetricVisibility = (): PortfolioMetricVisibility => {
   }
 }
 
+export const writePortfolioMetricVisibility = (
+  visibility: PortfolioMetricVisibility,
+): void => {
+  if (
+    typeof localStorage === "undefined" ||
+    typeof localStorage.setItem !== "function"
+  ) {
+    return
+  }
+
+  localStorage.setItem(
+    PORTFOLIO_METRIC_COLUMNS_STORAGE_KEY,
+    JSON.stringify(visibility),
+  )
+}
+
 export const visiblePortfolioMetricColumns = (
   visibility: PortfolioMetricVisibility,
 ): PortfolioMetricColumnId[] =>

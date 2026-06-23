@@ -74,7 +74,7 @@ const isPositionColumnId = (value: string): value is PositionColumnId =>
 
 interface PositionsTableBodyRowProps {
   symbol: string
-  data: Accessor<PositionRowData[]>
+  rowDataBySymbol: Accessor<Map<string, PositionRowData>>
   visibleMetricColumns: PortfolioMetricColumnId[]
   factorsIsLoading: boolean
   meta: PositionsTableMeta
@@ -85,9 +85,7 @@ interface PositionsTableBodyRowProps {
 const PositionsTableBodyRow = (
   props: PositionsTableBodyRowProps,
 ): JSX.Element => {
-  const row = createMemo(() =>
-    props.data().find(entry => entry.symbol === props.symbol),
-  )
+  const row = createMemo(() => props.rowDataBySymbol().get(props.symbol))
 
   return (
     <Show when={row()}>
@@ -154,6 +152,19 @@ export const PositionsDataTable = (
     null,
   )
 
+  const rowDataBySymbol = createMemo(() => {
+    const map = new Map<string, PositionRowData>()
+    for (const entry of local.data()) {
+      map.set(entry.symbol, entry)
+    }
+    return map
+  })
+
+  const frozenSymbolSet = createMemo(() => {
+    const order = frozenRowOrder()
+    return order === null ? null : new Set(order)
+  })
+
   const table = createSolidTable({
     get data() {
       return local.data()
@@ -184,6 +195,8 @@ export const PositionsDataTable = (
 
     const rowsBySymbol = new Map(rows.map(row => [row.original.symbol, row]))
     const ordered: Row<PositionRowData>[] = []
+    const frozenSymbols = frozenSymbolSet()
+    if (frozenSymbols === null) return rows
 
     for (const symbol of order) {
       const row = rowsBySymbol.get(symbol)
@@ -193,7 +206,7 @@ export const PositionsDataTable = (
     }
 
     for (const row of rows) {
-      if (!order.includes(row.original.symbol)) {
+      if (!frozenSymbols.has(row.original.symbol)) {
         ordered.push(row)
       }
     }
@@ -255,11 +268,11 @@ export const PositionsDataTable = (
           </For>
         </thead>
         <tbody>
-          <For each={rowSymbols()} by={(symbol: string) => symbol}>
+          <For each={rowSymbols()}>
             {symbol => (
               <PositionsTableBodyRow
                 symbol={symbol}
-                data={local.data}
+                rowDataBySymbol={rowDataBySymbol}
                 visibleMetricColumns={local.visibleMetricColumns}
                 factorsIsLoading={local.factorsIsLoading}
                 meta={local.meta}

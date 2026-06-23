@@ -308,6 +308,7 @@ export const PositionsPanelRow = (props: {
     clearLeverageEditorTimers()
   })
 
+  // createEffect: attach global pointerdown listener while leverage editor is open to close on outside click
   createEffect(() => {
     if (!isLeverageEditorMounted()) return
 
@@ -325,6 +326,7 @@ export const PositionsPanelRow = (props: {
     })
   })
 
+  // createEffect: attach global keydown listener while leverage editor is open for keyboard leverage entry
   createEffect(() => {
     if (!isLeverageEditorMounted()) return
 

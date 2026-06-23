@@ -4,7 +4,11 @@ import type { JSX } from "solid-js"
 import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/cn"
 
-import type { AllSymbolRowData } from "./allSymbolRowModel"
+import type {
+  AllSymbolPortfolioState,
+  AllSymbolRowData,
+} from "./allSymbolRowModel"
+import { allSymbolBodyCellClass } from "./allSymbolColumnLayout"
 import {
   betaClassName,
   formatDecimal,
@@ -17,13 +21,11 @@ import {
 
 export const AllSymbolsRow = (props: {
   row: AllSymbolRowData
-  isInTarget: boolean
-  isClosing: boolean
+  portfolioState: AllSymbolPortfolioState
   fundingIsLoading: boolean
   factorsIsLoading: boolean
   onSymbolClick: (symbol: string) => void
 }): JSX.Element => {
-  const cellClass = "px-2 py-1 align-middle text-right font-mono text-[11px]"
   const fundingDisplay = () => formatPercent(props.row.fundingRateAnnualized)
 
   const handleActivate = () => {
@@ -31,41 +33,51 @@ export const AllSymbolsRow = (props: {
   }
 
   const ariaLabel = () => {
-    if (props.isClosing) {
-      return `Undo remove ${props.row.baseSymbol}`
+    switch (props.portfolioState) {
+      case "closing":
+        return `Undo remove ${props.row.baseSymbol}`
+      case "target":
+        return `Remove ${props.row.baseSymbol} from portfolio`
+      case "absent":
+        return `Add ${props.row.baseSymbol} to portfolio`
     }
-    if (props.isInTarget) {
-      return `Remove ${props.row.baseSymbol} from portfolio`
+  }
+
+  const rowClassName = () => {
+    switch (props.portfolioState) {
+      case "closing":
+        return "opacity-50 bg-red-500/5"
+      case "target":
+        return "bg-muted/50"
+      case "absent":
+        return "hover:bg-muted/30 group-focus-within:bg-muted/30"
     }
-    return `Add ${props.row.baseSymbol} to portfolio`
   }
 
   return (
     <tr
-      tabIndex={0}
-      role="button"
-      aria-pressed={props.isInTarget || props.isClosing}
-      aria-label={ariaLabel()}
       class={cn(
-        "border-b border-border/20 cursor-pointer transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-0",
-        props.isClosing && "opacity-50 bg-red-500/5",
-        props.isInTarget && !props.isClosing && "bg-muted/50",
-        !props.isInTarget && !props.isClosing && "hover:bg-muted/30",
+        "group border-b border-border/20 cursor-pointer transition-colors",
+        rowClassName(),
       )}
-      onKeyDown={event => {
-        if (event.key !== "Enter" && event.key !== " ") return
-        event.preventDefault()
-        handleActivate()
-      }}
       onClick={handleActivate}
     >
-      <td class="px-2 py-1 align-middle font-medium text-left">
-        {props.row.baseSymbol}
+      <td class={allSymbolBodyCellClass("asset")}>
+        <button
+          type="button"
+          aria-pressed={props.portfolioState !== "absent"}
+          aria-label={ariaLabel()}
+          class={cn(
+            "w-full truncate rounded-sm border-0 bg-transparent p-0 text-left font-medium cursor-pointer",
+            "focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-0",
+          )}
+        >
+          {props.row.baseSymbol}
+        </button>
       </td>
       <td
         class={cn(
-          cellClass,
-          "w-[80px]",
+          allSymbolBodyCellClass("rate"),
           fundingRateClassName(props.row.fundingRateAnnualized),
         )}
       >
@@ -76,7 +88,12 @@ export const AllSymbolsRow = (props: {
           {fundingDisplay()}
         </Show>
       </td>
-      <td class={cn(cellClass, betaClassName(props.row.beta))}>
+      <td
+        class={cn(
+          allSymbolBodyCellClass("beta"),
+          betaClassName(props.row.beta),
+        )}
+      >
         <Show
           when={!props.factorsIsLoading}
           fallback={<Skeleton class="inline-block h-3 w-10 align-middle" />}
@@ -84,7 +101,12 @@ export const AllSymbolsRow = (props: {
           {formatDecimal(props.row.beta)}
         </Show>
       </td>
-      <td class={cn(cellClass, volatilityClassName(props.row.volatility))}>
+      <td
+        class={cn(
+          allSymbolBodyCellClass("vol"),
+          volatilityClassName(props.row.volatility),
+        )}
+      >
         <Show
           when={!props.factorsIsLoading}
           fallback={<Skeleton class="inline-block h-3 w-10 align-middle" />}
@@ -92,7 +114,12 @@ export const AllSymbolsRow = (props: {
           {formatPercent(props.row.volatility)}
         </Show>
       </td>
-      <td class={cn(cellClass, riskAdjustedReturnClassName(props.row.sharpe))}>
+      <td
+        class={cn(
+          allSymbolBodyCellClass("sharpe"),
+          riskAdjustedReturnClassName(props.row.sharpe),
+        )}
+      >
         <Show
           when={!props.factorsIsLoading}
           fallback={<Skeleton class="inline-block h-3 w-10 align-middle" />}
@@ -100,7 +127,12 @@ export const AllSymbolsRow = (props: {
           {formatDecimal(props.row.sharpe)}
         </Show>
       </td>
-      <td class={cn(cellClass, riskAdjustedReturnClassName(props.row.sortino))}>
+      <td
+        class={cn(
+          allSymbolBodyCellClass("sortino"),
+          riskAdjustedReturnClassName(props.row.sortino),
+        )}
+      >
         <Show
           when={!props.factorsIsLoading}
           fallback={<Skeleton class="inline-block h-3 w-10 align-middle" />}
@@ -108,7 +140,12 @@ export const AllSymbolsRow = (props: {
           {formatDecimal(props.row.sortino)}
         </Show>
       </td>
-      <td class={cn(cellClass, signedMetricClassName(props.row.momentum))}>
+      <td
+        class={cn(
+          allSymbolBodyCellClass("momentum"),
+          signedMetricClassName(props.row.momentum),
+        )}
+      >
         <Show
           when={!props.factorsIsLoading}
           fallback={<Skeleton class="inline-block h-3 w-10 align-middle" />}
@@ -116,7 +153,12 @@ export const AllSymbolsRow = (props: {
           {formatPercent(props.row.momentum)}
         </Show>
       </td>
-      <td class={cn(cellClass, signedMetricClassName(props.row.carry))}>
+      <td
+        class={cn(
+          allSymbolBodyCellClass("carry"),
+          signedMetricClassName(props.row.carry),
+        )}
+      >
         <Show
           when={!props.factorsIsLoading}
           fallback={<Skeleton class="inline-block h-3 w-10 align-middle" />}

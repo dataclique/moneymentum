@@ -106,42 +106,58 @@ export const VirtualizedDataTable = <TData, TValue>(
           </For>
         </TableHeader>
         <TableBody>
-          <Show when={paddingTop() > 0}>
-            <tr>
-              <td
-                colSpan={local.columns.length}
-                style={{ height: `${String(paddingTop())}px` }}
-              />
-            </tr>
-          </Show>
-          <For each={virtualRows()}>
-            {(virtualRow: VirtualItem) => {
-              const row = rows()[virtualRow.index]
-              return (
-                <TableRow
-                  data-state={row.getIsSelected() ? "selected" : undefined}
+          <Show
+            when={rows().length > 0}
+            fallback={
+              <TableRow>
+                <TableCell
+                  colSpan={local.columns.length}
+                  class="h-24 text-center"
                 >
-                  <For each={row.getVisibleCells()}>
-                    {cell => (
-                      <TableCell>
-                        {flexRender(
-                          cell.column.columnDef.cell,
-                          cell.getContext(),
-                        )}
-                      </TableCell>
-                    )}
-                  </For>
-                </TableRow>
-              )
-            }}
-          </For>
-          <Show when={paddingBottom() > 0}>
-            <tr>
-              <td
-                colSpan={local.columns.length}
-                style={{ height: `${String(paddingBottom())}px` }}
-              />
-            </tr>
+                  No results.
+                </TableCell>
+              </TableRow>
+            }
+          >
+            <Show when={paddingTop() > 0}>
+              <tr>
+                <td
+                  colSpan={local.columns.length}
+                  style={{ height: `${String(paddingTop())}px` }}
+                />
+              </tr>
+            </Show>
+            <For each={virtualRows()}>
+              {(virtualRow: VirtualItem) => {
+                const currentRows = rows()
+                if (virtualRow.index >= currentRows.length) return null
+                const row = currentRows[virtualRow.index]
+                return (
+                  <TableRow
+                    data-state={row.getIsSelected() ? "selected" : undefined}
+                  >
+                    <For each={row.getVisibleCells()}>
+                      {cell => (
+                        <TableCell>
+                          {flexRender(
+                            cell.column.columnDef.cell,
+                            cell.getContext(),
+                          )}
+                        </TableCell>
+                      )}
+                    </For>
+                  </TableRow>
+                )
+              }}
+            </For>
+            <Show when={paddingBottom() > 0}>
+              <tr>
+                <td
+                  colSpan={local.columns.length}
+                  style={{ height: `${String(paddingBottom())}px` }}
+                />
+              </tr>
+            </Show>
           </Show>
         </TableBody>
       </Table>

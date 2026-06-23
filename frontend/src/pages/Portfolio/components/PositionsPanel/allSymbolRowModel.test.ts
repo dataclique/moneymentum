@@ -6,6 +6,7 @@ import {
   allSymbolPortfolioState,
   betaClassName,
   buildAllSymbolRows,
+  filterAllSymbolRows,
   fundingRateClassName,
   resolveAllSymbolClick,
   riskAdjustedReturnClassName,
@@ -52,6 +53,47 @@ describe("buildAllSymbolRows", () => {
     expect(ethRow?.sortino).toBe(0.9)
     expect(ethRow?.fundingRateAnnualized).toBeCloseTo(-0.00002 * 24 * 365)
     expect(solRow?.beta).toBeNull()
+  })
+})
+
+describe("filterAllSymbolRows", () => {
+  const rows = buildAllSymbolRows(
+    ["BTC/USDC:USDC", "ETH/USDC:USDC", "SOL/USDC:USDC"],
+    sampleFactors,
+  )
+
+  it("returns all rows when the search query is empty", () => {
+    expect(filterAllSymbolRows(rows, "")).toHaveLength(3)
+    expect(filterAllSymbolRows(rows, "   ")).toHaveLength(3)
+  })
+
+  it("filters by base symbol case-insensitively", () => {
+    expect(filterAllSymbolRows(rows, "btc").map(row => row.baseSymbol)).toEqual(
+      ["BTC"],
+    )
+  })
+
+  it("filters by partial base symbol substring", () => {
+    const extendedRows = buildAllSymbolRows(
+      ["BTC/USDC:USDC", "ETH/USDC:USDC", "ZEREBRO/USDC:USDC", "ZEC/USDC:USDC"],
+      sampleFactors,
+    )
+
+    expect(
+      filterAllSymbolRows(extendedRows, "btc").map(row => row.baseSymbol),
+    ).toEqual(["BTC"])
+    expect(
+      filterAllSymbolRows(extendedRows, "bt").map(row => row.baseSymbol),
+    ).toEqual(["BTC"])
+    expect(
+      filterAllSymbolRows(extendedRows, "eth").map(row => row.baseSymbol),
+    ).toEqual(["ETH"])
+    expect(filterAllSymbolRows(extendedRows, "eth")).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ baseSymbol: "ZEREBRO" }),
+        expect.objectContaining({ baseSymbol: "ZEC" }),
+      ]),
+    )
   })
 })
 

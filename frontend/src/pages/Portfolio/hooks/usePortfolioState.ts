@@ -39,6 +39,31 @@ const initialManualWeightEntryFromStorage = (): boolean =>
   typeof localStorage.getItem === "function" &&
   localStorage.getItem(MANUAL_WEIGHT_ENTRY_STORAGE_KEY) === "true"
 
+export const writePreciseToggle = (isPrecise: boolean): void => {
+  if (
+    typeof localStorage === "undefined" ||
+    typeof localStorage.setItem !== "function"
+  ) {
+    return
+  }
+
+  localStorage.setItem(PRECISE_TOGGLE_STORAGE_KEY, String(isPrecise))
+}
+
+export const writeManualWeightEntry = (isManualWeightEntry: boolean): void => {
+  if (
+    typeof localStorage === "undefined" ||
+    typeof localStorage.setItem !== "function"
+  ) {
+    return
+  }
+
+  localStorage.setItem(
+    MANUAL_WEIGHT_ENTRY_STORAGE_KEY,
+    String(isManualWeightEntry),
+  )
+}
+
 const MAX_CROSS_ACCOUNT_LEVERAGE = 5
 const DEFAULT_CROSS_ACCOUNT_LEVERAGE = 1
 const POSITION_CLOSE_EPSILON = 0.01

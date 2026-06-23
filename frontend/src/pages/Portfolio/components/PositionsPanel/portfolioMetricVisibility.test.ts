@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import {
   DEFAULT_PORTFOLIO_METRIC_VISIBILITY,
@@ -91,5 +91,19 @@ describe("writePortfolioMetricVisibility", () => {
     writePortfolioMetricVisibility(stored)
 
     expect(readPortfolioMetricVisibility()).toEqual(stored)
+  })
+
+  it("does not throw when localStorage.setItem fails", () => {
+    const setItem = vi
+      .spyOn(Storage.prototype, "setItem")
+      .mockImplementation(() => {
+        throw new DOMException("quota exceeded", "QuotaExceededError")
+      })
+
+    expect(() => {
+      writePortfolioMetricVisibility(DEFAULT_PORTFOLIO_METRIC_VISIBILITY)
+    }).not.toThrow()
+
+    setItem.mockRestore()
   })
 })

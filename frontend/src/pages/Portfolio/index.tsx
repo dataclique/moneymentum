@@ -7,9 +7,9 @@ import { WalletHeader } from "@/components/wallet-header"
 import { ModeToggle } from "@/components/ui/mode-toggle"
 
 import {
-  MANUAL_WEIGHT_ENTRY_STORAGE_KEY,
-  PRECISE_TOGGLE_STORAGE_KEY,
   usePortfolioState,
+  writeManualWeightEntry,
+  writePreciseToggle,
 } from "./hooks/usePortfolioState"
 import { useBeta, type BetaBenchmark } from "./hooks/useBeta"
 import {
@@ -39,18 +39,12 @@ const PortfolioPage = () => {
 
   // createEffect: persist precise toggle to localStorage when it changes
   createEffect(() => {
-    localStorage.setItem(
-      PRECISE_TOGGLE_STORAGE_KEY,
-      String(portfolio.isPrecise),
-    )
+    writePreciseToggle(portfolio.isPrecise)
   })
 
   // createEffect: persist manual weight entry toggle to localStorage when it changes
   createEffect(() => {
-    localStorage.setItem(
-      MANUAL_WEIGHT_ENTRY_STORAGE_KEY,
-      String(portfolio.isManualWeightEntry),
-    )
+    writeManualWeightEntry(portfolio.isManualWeightEntry)
   })
   const betaResult = useBeta(
     () => portfolio.targetPortfolio,

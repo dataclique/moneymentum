@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest"
+import { describe, expect, it, vi } from "vitest"
 
-import { compareNullableNumbers } from "./sortableTableHeader"
+import { compareNullableNumbers, toggleColumnSort } from "./sortableTableHeader"
 
 const applyTableSort = (
   left: number | null,
@@ -10,6 +10,44 @@ const applyTableSort = (
   const sortInt = compareNullableNumbers(left, right, isDesc)
   return isDesc ? sortInt * -1 : sortInt
 }
+
+describe("toggleColumnSort", () => {
+  it("starts ascending on the first click", () => {
+    const toggleSorting = vi.fn()
+    const column = {
+      getIsSorted: () => false,
+      toggleSorting,
+    }
+
+    toggleColumnSort(column)
+
+    expect(toggleSorting).toHaveBeenCalledWith(false)
+  })
+
+  it("toggles from ascending to descending", () => {
+    const toggleSorting = vi.fn()
+    const column = {
+      getIsSorted: () => "asc" as const,
+      toggleSorting,
+    }
+
+    toggleColumnSort(column)
+
+    expect(toggleSorting).toHaveBeenCalledWith(true)
+  })
+
+  it("toggles from descending to ascending", () => {
+    const toggleSorting = vi.fn()
+    const column = {
+      getIsSorted: () => "desc" as const,
+      toggleSorting,
+    }
+
+    toggleColumnSort(column)
+
+    expect(toggleSorting).toHaveBeenCalledWith(false)
+  })
+})
 
 describe("compareNullableNumbers", () => {
   it("keeps null values after populated values when sorting ascending", () => {

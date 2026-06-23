@@ -96,10 +96,14 @@ export const writePortfolioMetricVisibility = (
     return
   }
 
-  localStorage.setItem(
-    PORTFOLIO_METRIC_COLUMNS_STORAGE_KEY,
-    JSON.stringify(visibility),
-  )
+  try {
+    localStorage.setItem(
+      PORTFOLIO_METRIC_COLUMNS_STORAGE_KEY,
+      JSON.stringify(visibility),
+    )
+  } catch {
+    return
+  }
 }
 
 export const visiblePortfolioMetricColumns = (

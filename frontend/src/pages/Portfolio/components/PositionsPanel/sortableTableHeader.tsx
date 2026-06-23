@@ -7,7 +7,7 @@ import { cn } from "@/lib/cn"
 export const toggleColumnSort = <TData,>(column: Column<TData>): void => {
   const sorted = column.getIsSorted()
   if (!sorted) {
-    column.toggleSorting(true)
+    column.toggleSorting(false)
     return
   }
   column.toggleSorting(sorted === "asc")

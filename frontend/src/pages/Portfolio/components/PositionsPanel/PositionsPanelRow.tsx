@@ -2,6 +2,7 @@ import {
   createSignal,
   createEffect,
   Show,
+  For,
   createMemo,
   onCleanup,
 } from "solid-js"
@@ -20,11 +21,40 @@ import { cn } from "@/lib/cn"
 import type { OrderSide } from "@/hooks/useTrading"
 import { MIN_USD, type PortfolioInterface } from "../../hooks/usePortfolioState"
 import {
+  betaClassName,
+  formatDecimal,
+  formatPercent,
+  fundingRateClassName,
+  riskAdjustedReturnClassName,
+  signedMetricClassName,
+  volatilityClassName,
+} from "./allSymbolRowModel"
+import {
   LeverageEditorTrigger,
   LeverageSliderEditor,
 } from "./LeverageInlineEditor"
+import {
+  positionBodyCellClass,
+  positionBodyCellInnerClass,
+  positionStickyBodyClass,
+  positionStickyLeverageCloseClass,
+  SIDE_BADGE_CLASS,
+} from "./positionColumnLayout"
+import {
+  leverageEditorColumnSpan,
+  type PortfolioMetricColumnId,
+} from "./portfolioMetricVisibility"
+import { positionCellInputProps } from "./positionCellInput"
 
-const LEVERAGE_EDITOR_COLUMN_COUNT = 7
+export interface PositionRowMetrics {
+  signedFundingRate: number | null
+  beta: number | null
+  volatility: number | null
+  sharpe: number | null
+  sortino: number | null
+  momentum: number | null
+  carry: number | null
+}
 const LEVERAGE_KEYBOARD_ENTRY_TIMEOUT_MS = 1_000
 
 const getSideBadgeClass = (side: OrderSide) =>
@@ -36,17 +66,21 @@ export const PositionsPanelRow = (props: {
   symbol: string
   position: () => PortfolioInterface
   status: "new" | "unchanged" | "changed" | "closing"
+  visibleMetricColumns: PortfolioMetricColumnId[]
+  rowMetrics: PositionRowMetrics
   maxLeverage?: number
   leverageLimitsIsLoading: boolean
   isPrecise: boolean
   fundingIsLoading: boolean
+  factorsIsLoading: boolean
   onRemove: (symbol: string) => void
   onUndoRemove: (symbol: string) => void
   onSideChange: (symbol: string, side: OrderSide) => void
   onLeverageChange: (symbol: string, leverage: number) => void
   onNotionalChange: (symbol: string, notional: number) => void
   onWeightChange: (symbol: string, percentage: number) => void
-  fundingRatesByBaseSymbol?: Record<string, number>
+  onCellEditFocus?: () => void
+  onCellEditBlur?: (event: FocusEvent) => void
   totalNotional: number
   symbolsBelowMinimum: string[]
   symbolsDeltaBelowMinimum: string[]
@@ -84,35 +118,108 @@ export const PositionsPanelRow = (props: {
 
   const baseSymbol = () =>
     props.position().symbol.split("/")[0] ?? props.position().symbol
-  const fundingRate = () => props.fundingRatesByBaseSymbol?.[baseSymbol()]
 
-  // const targetValue = () =>
-  //   props.token.targetNotional ??
-  //   notional() ??
-  //   parseFloat(notional())
-  // const showDeltaWarning = () =>
-  //   !props.isPrecise &&
-  //   props.token.deltaInsufficient === true
+  const leverageEditorSpan = () =>
+    leverageEditorColumnSpan(props.visibleMetricColumns)
 
-  // fundingRate we got from hyperliquid API is 1 hour rate
-  // to get annualized rate, we multiply by 24 (hours) and 365 (days)
-  const annualizedFundingRate = () => {
-    const rate = fundingRate()
-    return rate === undefined ? null : rate * 24 * 365
-  }
-  const positionAdjustedFundingRate = () => {
-    const rate = annualizedFundingRate()
-    if (rate === null) return null
-    return props.position().side === "buy" ? -rate : rate
-  }
-  const fundingDisplay = () => {
-    const rate = positionAdjustedFundingRate()
-    return rate === null ? "--" : `${(rate * 100).toFixed(2)}%`
-  }
-  const fundingClassName = () => {
-    const rate = positionAdjustedFundingRate()
-    if (rate === null || rate === 0) return "text-muted-foreground"
-    return rate > 0 ? "text-emerald-500" : "text-rose-500"
+  const metricSkeleton = () => (
+    <Skeleton class="ml-auto h-3 w-[3rem] inline-block align-middle" />
+  )
+
+  const renderMetricCell = (columnId: PortfolioMetricColumnId) => {
+    switch (columnId) {
+      case "rate":
+        return (
+          <td
+            class={cn(
+              positionBodyCellClass("rate"),
+              fundingRateClassName(props.rowMetrics.signedFundingRate),
+            )}
+          >
+            <Show when={!props.fundingIsLoading} fallback={metricSkeleton()}>
+              {formatPercent(props.rowMetrics.signedFundingRate)}
+            </Show>
+          </td>
+        )
+      case "beta":
+        return (
+          <td
+            class={cn(
+              positionBodyCellClass("beta"),
+              betaClassName(props.rowMetrics.beta),
+            )}
+          >
+            <Show when={!props.factorsIsLoading} fallback={metricSkeleton()}>
+              {formatDecimal(props.rowMetrics.beta)}
+            </Show>
+          </td>
+        )
+      case "vol":
+        return (
+          <td
+            class={cn(
+              positionBodyCellClass("vol"),
+              volatilityClassName(props.rowMetrics.volatility),
+            )}
+          >
+            <Show when={!props.factorsIsLoading} fallback={metricSkeleton()}>
+              {formatPercent(props.rowMetrics.volatility)}
+            </Show>
+          </td>
+        )
+      case "sharpe":
+        return (
+          <td
+            class={cn(
+              positionBodyCellClass("sharpe"),
+              riskAdjustedReturnClassName(props.rowMetrics.sharpe),
+            )}
+          >
+            <Show when={!props.factorsIsLoading} fallback={metricSkeleton()}>
+              {formatDecimal(props.rowMetrics.sharpe)}
+            </Show>
+          </td>
+        )
+      case "sortino":
+        return (
+          <td
+            class={cn(
+              positionBodyCellClass("sortino"),
+              riskAdjustedReturnClassName(props.rowMetrics.sortino),
+            )}
+          >
+            <Show when={!props.factorsIsLoading} fallback={metricSkeleton()}>
+              {formatDecimal(props.rowMetrics.sortino)}
+            </Show>
+          </td>
+        )
+      case "momentum":
+        return (
+          <td
+            class={cn(
+              positionBodyCellClass("momentum"),
+              signedMetricClassName(props.rowMetrics.momentum),
+            )}
+          >
+            <Show when={!props.factorsIsLoading} fallback={metricSkeleton()}>
+              {formatPercent(props.rowMetrics.momentum)}
+            </Show>
+          </td>
+        )
+      case "carry":
+        return (
+          <td
+            class={cn(
+              positionBodyCellClass("carry"),
+              signedMetricClassName(props.rowMetrics.carry),
+            )}
+          >
+            <Show when={!props.factorsIsLoading} fallback={metricSkeleton()}>
+              {formatPercent(props.rowMetrics.carry)}
+            </Show>
+          </td>
+        )
+    }
   }
 
   const isBelowMinimum = () => props.symbolsBelowMinimum.includes(props.symbol)
@@ -201,6 +308,7 @@ export const PositionsPanelRow = (props: {
     clearLeverageEditorTimers()
   })
 
+  // createEffect: attach global pointerdown listener while leverage editor is open to close on outside click
   createEffect(() => {
     if (!isLeverageEditorMounted()) return
 
@@ -218,6 +326,7 @@ export const PositionsPanelRow = (props: {
     })
   })
 
+  // createEffect: attach global keydown listener while leverage editor is open for keyboard leverage entry
   createEffect(() => {
     if (!isLeverageEditorMounted()) return
 
@@ -259,7 +368,8 @@ export const PositionsPanelRow = (props: {
     >
       <td
         class={cn(
-          "px-2 py-1 align-middle font-medium pointer-events-auto transition-[padding] duration-200 ease-out",
+          positionStickyBodyClass("asset", props.status),
+          "transition-[padding] duration-200 ease-out",
           isLeverageEditorExpanded() && "py-2",
         )}
       >
@@ -276,8 +386,8 @@ export const PositionsPanelRow = (props: {
               Edit leverage
             </div>
           </Show>
-          <div class="flex flex-row items-center gap-[4px]">
-            <span class="shrink-0 font-medium">{baseSymbol()}</span>
+          <div class="flex min-w-0 flex-row items-center gap-[4px]">
+            <span class="min-w-0 truncate font-medium">{baseSymbol()}</span>
             <LeverageEditorTrigger
               isOpen={isLeverageEditorMounted()}
               onOpen={openLeverageEditor}
@@ -295,157 +405,156 @@ export const PositionsPanelRow = (props: {
         when={isLeverageEditorMounted()}
         fallback={
           <>
-            <td class="px-2 py-1 align-middle pointer-events-auto">
-              <select
-                value={props.position().side}
-                onChange={event => {
-                  props.onSideChange(
-                    props.position().symbol,
-                    event.currentTarget.value as OrderSide,
-                  )
-                }}
-                disabled={isClosing()}
-                class={cn(
-                  "text-[10px] font-medium px-1.5 py-0.5 rounded border-0 bg-transparent",
-                  !isClosing() && "cursor-pointer",
-                  getSideBadgeClass(props.position().side),
-                  isClosing() && "grayscale opacity-50",
-                )}
-              >
-                <option value="buy">LONG</option>
-                <option value="sell">SHORT</option>
-              </select>
+            <td class={positionBodyCellClass("side")}>
+              <div class={positionBodyCellInnerClass}>
+                <button
+                  type="button"
+                  disabled={isClosing()}
+                  aria-label={`Switch ${baseSymbol()} side`}
+                  class={cn(
+                    SIDE_BADGE_CLASS,
+                    !isClosing() && "cursor-pointer",
+                    getSideBadgeClass(props.position().side),
+                    isClosing() && "grayscale opacity-50",
+                  )}
+                  onClick={() => {
+                    const nextSide =
+                      props.position().side === "buy" ? "sell" : "buy"
+                    props.onSideChange(props.position().symbol, nextSide)
+                  }}
+                >
+                  {props.position().side === "buy" ? "LONG" : "SHORT"}
+                </button>
+              </div>
             </td>
-            <td class="px-2 py-1 align-middle text-right pointer-events-auto">
-              <Show
-                when={!isClosing()}
-                fallback={<span class="text-rose-500 text-[10px]">→ 0%</span>}
-              >
+            <td class={positionBodyCellClass("weight")}>
+              <div class={positionBodyCellInnerClass}>
+                <Show
+                  when={!isClosing()}
+                  fallback={<span class="text-rose-500 text-[10px]">→ 0%</span>}
+                >
+                  <input
+                    type="number"
+                    {...positionCellInputProps}
+                    value={weightInput()}
+                    onFocus={() => {
+                      setIsWeightFocused(true)
+                      props.onCellEditFocus?.()
+                    }}
+                    onBlur={event => {
+                      setIsWeightFocused(false)
+                      setWeightInput(weight())
+                      props.onCellEditBlur?.(event)
+                    }}
+                    onInput={inputEvent => {
+                      const raw = inputEvent.currentTarget.value
+                      setWeightInput(raw)
+                      const parsed = raw === "" ? 0 : Number.parseFloat(raw)
+                      const isValid =
+                        Number.isFinite(parsed) && parsed >= 0 && parsed <= 100
+
+                      if (!isValid) return
+
+                      props.onWeightChange(props.position().symbol, parsed)
+                    }}
+                    step={0.5}
+                    min={0}
+                    max={100}
+                    class="w-12 text-right font-mono text-[11px] rounded border border-border bg-transparent px-1 py-0.5 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                  />
+                  <span class="text-muted-foreground text-[10px]">%</span>
+                </Show>
+              </div>
+            </td>
+            <td class={positionBodyCellClass("notional")}>
+              <div class={positionBodyCellInnerClass}>
+                <span class="text-muted-foreground text-[10px]">$</span>
                 <input
                   type="number"
-                  value={weightInput()}
-                  onFocus={() => setIsWeightFocused(true)}
-                  onBlur={() => {
-                    setIsWeightFocused(false)
-                    setWeightInput(weight())
+                  {...positionCellInputProps}
+                  value={notionalInput()}
+                  onFocus={() => {
+                    setIsNotionalFocused(true)
+                    props.onCellEditFocus?.()
+                  }}
+                  onBlur={event => {
+                    setIsNotionalFocused(false)
+                    setNotionalInput(notional().toFixed(2))
+                    props.onCellEditBlur?.(event)
                   }}
                   onInput={inputEvent => {
                     const raw = inputEvent.currentTarget.value
-                    setWeightInput(raw)
+                    setNotionalInput(raw)
                     const parsed = raw === "" ? 0 : Number.parseFloat(raw)
-                    const isValid =
-                      Number.isFinite(parsed) && parsed >= 0 && parsed <= 100
+                    const isValid = Number.isFinite(parsed) && parsed >= 0
 
                     if (!isValid) return
 
-                    props.onWeightChange(props.position().symbol, parsed)
+                    props.onNotionalChange(props.position().symbol, parsed)
                   }}
-                  step={0.5}
+                  disabled={isClosing()}
+                  step={1}
                   min={0}
-                  max={100}
-                  class="w-12 text-right font-mono text-[11px] rounded border border-border bg-transparent px-1 py-0.5 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                  class="w-16 text-right font-mono text-[11px] rounded border border-border bg-transparent px-1 py-0.5 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                 />
-                <span class="text-muted-foreground text-[10px] ml-0.5">%</span>
-              </Show>
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger
+                      class={cn(
+                        "inline-flex h-3 w-3 shrink-0 items-center justify-center align-middle",
+                        !showWarning() && "pointer-events-none opacity-0",
+                      )}
+                    >
+                      <CircleAlert class="h-3 w-3 text-amber-500" />
+                    </TooltipTrigger>
+                    <TooltipContent class="text-xs">
+                      <Show when={!props.isPrecise && isDeltaBelowMinimum()}>
+                        <p>
+                          Delta ${props.symbolDelta.toFixed(2)} is below $
+                          {MIN_USD} minimum.
+                        </p>
+                      </Show>
+                      <Show when={isBelowMinimum()}>
+                        <p>
+                          Position ${notional().toFixed(2)} below ${MIN_USD}{" "}
+                          minimum.
+                        </p>
+                      </Show>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              </div>
             </td>
-            <td class="px-2 py-1 align-middle text-right pointer-events-auto">
-              <span class="text-muted-foreground text-[10px]">$</span>
-              <input
-                type="number"
-                value={notionalInput()}
-                onFocus={() => setIsNotionalFocused(true)}
-                onBlur={() => {
-                  setIsNotionalFocused(false)
-                  setNotionalInput(notional().toFixed(2))
-                }}
-                onInput={inputEvent => {
-                  const raw = inputEvent.currentTarget.value
-                  setNotionalInput(raw)
-                  const parsed = raw === "" ? 0 : Number.parseFloat(raw)
-                  const isValid = Number.isFinite(parsed) && parsed >= 0
-
-                  if (!isValid) return
-
-                  props.onNotionalChange(props.position().symbol, parsed)
-                }}
-                disabled={isClosing()}
-                step={1}
-                min={0}
-                class="w-16 text-right font-mono text-[11px] rounded border border-border bg-transparent px-1 py-0.5 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
-              />
-              <TooltipProvider>
-                <Tooltip>
-                  <TooltipTrigger
-                    class={cn(
-                      "inline-block ml-0.5 align-middle",
-                      !showWarning() && "pointer-events-none opacity-0",
-                    )}
-                  >
-                    <CircleAlert class="h-3 w-3 text-amber-500" />
-                  </TooltipTrigger>
-                  <TooltipContent class="text-xs">
-                    <Show when={!props.isPrecise && isDeltaBelowMinimum()}>
-                      <p>
-                        Delta ${props.symbolDelta.toFixed(2)} is below $
-                        {MIN_USD} minimum.
-                      </p>
-                    </Show>
-                    <Show when={isBelowMinimum()}>
-                      <p>
-                        Position ${notional().toFixed(2)} below ${MIN_USD}{" "}
-                        minimum.
-                      </p>
-                    </Show>
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-            </td>
-            <td
-              class={cn(
-                "px-2 py-1 align-middle text-right font-mono text-[11px] w-[11ch]",
-                fundingClassName(),
-              )}
-            >
-              <Show
-                when={!props.fundingIsLoading}
-                fallback={
-                  <Skeleton class="h-3 w-[64px] inline-block align-middle" />
-                }
-              >
-                {fundingDisplay()}
-              </Show>
-            </td>
-            <td class="px-2 py-1 align-middle text-right font-mono text-[11px] text-muted-foreground">
-              0
-            </td>
-            <td class="px-2 py-1 align-middle text-right font-mono text-[11px] text-muted-foreground">
-              0
-            </td>
-            <td class="px-2 py-1 align-middle text-right font-mono text-[11px] text-muted-foreground">
-              0
-            </td>
-            <td class="px-2 py-1 align-middle text-right">
-              <Button
-                variant="ghost"
-                size="icon"
-                class="h-6 w-6"
-                aria-label={
-                  isClosing()
-                    ? `Undo remove ${props.position().symbol}`
-                    : `Remove ${props.position().symbol}`
-                }
-                onClick={() => {
-                  if (isClosing()) {
-                    props.onUndoRemove(props.position().symbol)
-                  } else {
-                    props.onRemove(props.position().symbol)
+            <For each={props.visibleMetricColumns}>
+              {columnId => renderMetricCell(columnId)}
+            </For>
+            <td class={positionStickyBodyClass("actions", props.status)}>
+              <div class={positionBodyCellInnerClass}>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  class="h-6 w-6"
+                  aria-label={
+                    isClosing()
+                      ? `Undo remove ${props.position().symbol}`
+                      : `Remove ${props.position().symbol}`
                   }
-                }}
-              >
-                <Show when={isClosing()} fallback={<Trash2 class="h-3 w-3" />}>
-                  <Undo2 class="h-3 w-3" />
-                </Show>
-              </Button>
+                  onClick={() => {
+                    if (isClosing()) {
+                      props.onUndoRemove(props.position().symbol)
+                    } else {
+                      props.onRemove(props.position().symbol)
+                    }
+                  }}
+                >
+                  <Show
+                    when={isClosing()}
+                    fallback={<Trash2 class="h-3 w-3" />}
+                  >
+                    <Undo2 class="h-3 w-3" />
+                  </Show>
+                </Button>
+              </div>
             </td>
           </>
         }
@@ -454,7 +563,7 @@ export const PositionsPanelRow = (props: {
           ref={element => {
             leverageSliderEditorElement = element
           }}
-          colSpan={LEVERAGE_EDITOR_COLUMN_COUNT}
+          colSpan={leverageEditorSpan()}
           class={cn(
             "px-2 align-middle pointer-events-auto transition-[padding,opacity] duration-200 ease-out",
             isLeverageEditorExpanded() ? "py-2 opacity-100" : "py-0 opacity-0",
@@ -471,7 +580,8 @@ export const PositionsPanelRow = (props: {
         </td>
         <td
           class={cn(
-            "px-2 align-middle text-right transition-[padding] duration-200 ease-out",
+            positionStickyLeverageCloseClass(props.status),
+            "transition-[padding] duration-200 ease-out",
             isLeverageEditorExpanded() ? "py-2" : "py-0",
           )}
         >

@@ -197,6 +197,28 @@ in {
           "${pkgs.curl}/bin/curl -sSf --max-time 300 -X POST http://127.0.0.1:8000/ingest";
       };
     };
+
+    moneymentum-markets-refresh = {
+      description = "Refresh Hyperliquid markets metadata";
+      unitConfig.ConditionPathExists = "/run/moneymentum/moneymentum.ready";
+      serviceConfig = {
+        Type = "oneshot";
+        DynamicUser = true;
+        ExecStart =
+          "${pkgs.curl}/bin/curl -sSf --max-time 120 -X POST http://127.0.0.1:8000/hyperliquid/markets/refresh";
+      };
+    };
+
+    staging-markets-refresh = {
+      description = "Refresh Hyperliquid markets metadata (staging)";
+      unitConfig.ConditionPathExists = "/run/moneymentum/staging.ready";
+      serviceConfig = {
+        Type = "oneshot";
+        DynamicUser = true;
+        ExecStart =
+          "${pkgs.curl}/bin/curl -sSf --max-time 120 -X POST http://127.0.0.1:8001/hyperliquid/markets/refresh";
+      };
+    };
   };
 
   systemd.timers.moneymentum-ingest = {
@@ -204,6 +226,22 @@ in {
     timerConfig = {
       OnBootSec = "5min";
       OnUnitActiveSec = "6h";
+      Persistent = true;
+    };
+  };
+
+  systemd.timers.moneymentum-markets-refresh = {
+    wantedBy = [ "timers.target" ];
+    timerConfig = {
+      OnCalendar = "*-*-* 00:00:00";
+      Persistent = true;
+    };
+  };
+
+  systemd.timers.staging-markets-refresh = {
+    wantedBy = [ "timers.target" ];
+    timerConfig = {
+      OnCalendar = "*-*-* 00:00:00";
       Persistent = true;
     };
   };

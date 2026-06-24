@@ -21,7 +21,7 @@ use std::str::FromStr;
 
 use crate::candle::{Candle, CandleError, candles_to_dataframe};
 use crate::dataframe::{self, DataFrameError};
-use crate::finance::{Market, Symbol};
+use crate::finance::{self, Market, Symbol};
 use crate::funding::{self, FundingError, FundingRate};
 use crate::market_metadata::MarketMetadata;
 use crate::timeframe::Timeframe;
@@ -204,7 +204,7 @@ impl Hyperliquid for HyperliquidClient {
                     close,
                     volume,
                     // CCXT perpetual format: BASE/USDC:USDC
-                    symbol: format!("{}/USDC:USDC", market.as_str()),
+                    symbol: finance::hyperliquid_swap_ccxt_symbol(market.as_str()),
                     ticker: Symbol::from_raw(market.as_str()),
                 })
             })

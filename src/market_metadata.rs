@@ -1,18 +1,48 @@
-//! Markets metadata: the perp universe with each market's max leverage and a
-//! persisted `disable` flag, stored in `markets.csv`.
-//!
-//! The `disable` flag is operator-controlled (edited by hand) and preserved
-//! across refreshes; metadata like max leverage is refreshed from the exchange.
+//! Markets metadata: the perp universe with each market's max leverage,
+//! stored in `markets.csv` and refreshed from Hyperliquid.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime};
 
-use polars::prelude::{
-    DataFrame, IntoLazy, JoinArgs, JoinType, NamedFrom, PolarsError, Series, col, df, lit,
-};
+use polars::prelude::{DataFrame, PolarsError, df};
+use serde::Serialize;
+use thiserror::Error;
 use tracing::info;
 
-use crate::finance::Market;
+use crate::finance::{self, Market};
 use crate::hyperliquid::{Hyperliquid, HyperliquidError};
+
+/// Markets metadata is refreshed at most once per day on the server.
+pub(crate) const MARKETS_REFRESH_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
+
+#[derive(Debug, Error)]
+pub(crate) enum MarketsMetadataError {
+    #[error(transparent)]
+    Hyperliquid(#[from] HyperliquidError),
+    #[error(transparent)]
+    DataFrame(#[from] crate::dataframe::DataFrameError),
+    #[error(transparent)]
+    Polars(#[from] PolarsError),
+    #[error("markets metadata file is missing")]
+    MissingFile,
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct LeverageLimitEntry {
+    pub(crate) symbol: String,
+    pub(crate) max_leverage: u32,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct MarketsApiResponse {
+    pub(crate) tickers: Vec<String>,
+    pub(crate) leverage_limits: Vec<LeverageLimitEntry>,
+    pub(crate) refreshed_at: Option<String>,
+}
 
 /// A market's exchange metadata as fetched from Hyperliquid.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -26,37 +56,118 @@ pub(crate) fn file_name() -> &'static str {
     "markets.csv"
 }
 
-/// Refreshes `markets.csv` from the live exchange and returns the tradable
-/// markets: every fetched market that is not disabled.
-///
-/// Market discovery is driven by the exchange fetch; the ledger only persists
-/// the operator-controlled `disable` flags. Ingestion consumes the returned
-/// list directly, so it never depends on re-reading the CSV.
+/// Refreshes `markets.csv` from the live exchange and returns the current
+/// perp universe. Ingestion consumes the returned list directly.
 pub(crate) async fn refresh_markets(
     client: &dyn Hyperliquid,
     data_dir: &Path,
 ) -> Result<Vec<Market>, HyperliquidError> {
     let fetched = client.fetch_market_metadata().await?;
     let path = data_dir.join(file_name());
-    let existing = crate::dataframe::read_csv(path.clone()).await?;
-    let frame = build_markets_frame(&fetched, existing.as_ref())?;
-    let tradable = tradable_from_frame(&frame)?;
+    let frame = build_markets_frame(&fetched)?;
+    let markets = markets_from_frame(&frame)?;
     crate::dataframe::write_csv(path, frame).await?;
-    info!(
-        markets = fetched.len(),
-        tradable = tradable.len(),
-        "markets metadata refreshed"
-    );
-    Ok(tradable)
+    info!(markets = markets.len(), "markets metadata refreshed");
+    Ok(markets)
 }
 
-/// The tradable markets in a freshly built ledger frame: every market whose
-/// `disable` flag is not set.
-fn tradable_from_frame(frame: &DataFrame) -> Result<Vec<Market>, PolarsError> {
+pub(crate) fn markets_file_path(data_dir: &Path) -> PathBuf {
+    data_dir.join(file_name())
+}
+
+pub(crate) async fn markets_need_refresh(data_dir: &Path) -> bool {
+    let path = markets_file_path(data_dir);
+    let Ok(metadata) = tokio::fs::metadata(&path).await else {
+        return true;
+    };
+    let Ok(modified_at) = metadata.modified() else {
+        return true;
+    };
+    let age = SystemTime::now()
+        .duration_since(modified_at)
+        .unwrap_or(MARKETS_REFRESH_INTERVAL);
+    age >= MARKETS_REFRESH_INTERVAL
+}
+
+pub(crate) async fn load_markets_api_response(
+    data_dir: &Path,
+) -> Result<MarketsApiResponse, MarketsMetadataError> {
+    let path = markets_file_path(data_dir);
+    let frame = crate::dataframe::read_csv(path.clone())
+        .await?
+        .ok_or(MarketsMetadataError::MissingFile)?;
+    let refreshed_at = file_modified_at_rfc3339(&path).await?;
+    markets_api_response_from_frame(&frame, refreshed_at)
+}
+
+fn markets_api_response_from_frame(
+    frame: &DataFrame,
+    refreshed_at: Option<String>,
+) -> Result<MarketsApiResponse, MarketsMetadataError> {
     let symbols = frame.column("symbol")?.str()?;
-    let disable = frame.column("disable")?.bool()?;
+    let max_leverages = frame.column("max_leverage")?.i64()?;
+
+    let mut tickers = Vec::new();
+    let mut leverage_limits = Vec::new();
+
+    for index in 0..symbols.len() {
+        let Some(symbol) = symbols.get(index) else {
+            continue;
+        };
+        let ccxt_symbol = finance::hyperliquid_swap_ccxt_symbol(symbol);
+        let raw_max_leverage = max_leverages.get(index).unwrap_or(1);
+        let max_leverage = u32::try_from(raw_max_leverage).map_err(|_| {
+            MarketsMetadataError::Polars(PolarsError::ComputeError(
+                "max_leverage out of range".into(),
+            ))
+        })?;
+        tickers.push(ccxt_symbol.clone());
+        leverage_limits.push(LeverageLimitEntry {
+            symbol: ccxt_symbol,
+            max_leverage,
+        });
+    }
+
+    tickers.sort_unstable();
+    leverage_limits.sort_unstable_by(|left, right| left.symbol.cmp(&right.symbol));
+
+    Ok(MarketsApiResponse {
+        tickers,
+        leverage_limits,
+        refreshed_at,
+    })
+}
+
+async fn file_modified_at_rfc3339(path: &Path) -> Result<Option<String>, MarketsMetadataError> {
+    let metadata = tokio::fs::metadata(path).await?;
+    let modified_at = metadata.modified()?;
+    let timestamp = chrono::DateTime::<chrono::Utc>::from(modified_at);
+    Ok(Some(timestamp.to_rfc3339()))
+}
+
+/// Refreshes markets from Hyperliquid when stale, then returns the API payload.
+pub(crate) async fn refresh_markets_if_stale(
+    client: &dyn Hyperliquid,
+    data_dir: &Path,
+) -> Result<MarketsApiResponse, MarketsMetadataError> {
+    if markets_need_refresh(data_dir).await {
+        refresh_markets(client, data_dir).await?;
+    }
+    load_markets_api_response(data_dir).await
+}
+
+/// Refreshes markets from Hyperliquid unconditionally, then returns the API payload.
+pub(crate) async fn refresh_markets_and_load_api_response(
+    client: &dyn Hyperliquid,
+    data_dir: &Path,
+) -> Result<MarketsApiResponse, MarketsMetadataError> {
+    refresh_markets(client, data_dir).await?;
+    load_markets_api_response(data_dir).await
+}
+
+fn markets_from_frame(frame: &DataFrame) -> Result<Vec<Market>, PolarsError> {
+    let symbols = frame.column("symbol")?.str()?;
     let markets: Vec<Market> = (0..symbols.len())
-        .filter(|&index| disable.get(index) == Some(false))
         .filter_map(|index| {
             symbols
                 .get(index)
@@ -66,50 +177,16 @@ fn tradable_from_frame(frame: &DataFrame) -> Result<Vec<Market>, PolarsError> {
     Ok(markets)
 }
 
-/// Builds the markets ledger `DataFrame` (`symbol`, `max_leverage`, `disable`)
-/// from freshly fetched metadata, preserving the `disable` flag of any symbol
-/// already in `existing` and defaulting new symbols to enabled (`disable` false).
-fn build_markets_frame(
-    fetched: &[MarketMetadata],
-    existing: Option<&DataFrame>,
-) -> Result<DataFrame, PolarsError> {
+fn build_markets_frame(fetched: &[MarketMetadata]) -> Result<DataFrame, PolarsError> {
     let symbols: Vec<&str> = fetched
         .iter()
         .map(|market| market.symbol.as_str())
         .collect();
     let max_leverages: Vec<u32> = fetched.iter().map(|market| market.max_leverage).collect();
-    let fresh = df! {
+    df! {
         "symbol" => symbols,
         "max_leverage" => max_leverages,
-    }?;
-
-    let Some(existing) = existing else {
-        let mut fresh = fresh;
-        let disable = Series::new("disable".into(), vec![false; fresh.height()]);
-        fresh.with_column(disable)?;
-        return Ok(fresh);
-    };
-
-    let previous_flags = existing
-        .clone()
-        .lazy()
-        .select([col("symbol"), col("disable").alias("previous_disable")]);
-
-    fresh
-        .lazy()
-        .join(
-            previous_flags,
-            [col("symbol")],
-            [col("symbol")],
-            JoinArgs::new(JoinType::Left),
-        )
-        .with_column(
-            col("previous_disable")
-                .fill_null(lit(false))
-                .alias("disable"),
-        )
-        .select([col("symbol"), col("max_leverage"), col("disable")])
-        .collect()
+    }
 }
 
 #[cfg(test)]
@@ -160,65 +237,50 @@ mod tests {
         }
     }
 
-    fn disable_for(frame: &DataFrame, symbol: &str) -> Option<bool> {
-        let symbols = frame.column("symbol").unwrap().str().unwrap();
-        let disable = frame.column("disable").unwrap().bool().unwrap();
-        (0..symbols.len())
-            .find(|&index| symbols.get(index) == Some(symbol))
-            .and_then(|index| disable.get(index))
-    }
-
     #[test]
-    fn new_markets_default_to_enabled() {
+    fn build_markets_frame_writes_symbol_and_max_leverage() {
         let fetched = [metadata("BTC", 50), metadata("ETH", 25)];
 
-        let frame = build_markets_frame(&fetched, None).unwrap();
+        let frame = build_markets_frame(&fetched).unwrap();
+
         assert_eq!(frame.height(), 2);
-        assert_eq!(disable_for(&frame, "BTC"), Some(false));
-        assert_eq!(disable_for(&frame, "ETH"), Some(false));
-    }
-
-    #[test]
-    fn refresh_preserves_disable_flag_and_drops_vanished_markets() {
-        let existing = df! {
-            "symbol" => &["BTC", "SOL"],
-            "max_leverage" => &[40_u32, 20],
-            "disable" => &[true, false],
-        }
-        .unwrap();
-        let fetched = [metadata("BTC", 50), metadata("ETH", 25)];
-
-        let frame = build_markets_frame(&fetched, Some(&existing)).unwrap();
-
-        // BTC keeps its operator-set disable flag; ETH is new (enabled); SOL
-        // vanished from the exchange and is dropped.
-        assert_eq!(frame.height(), 2);
-        assert_eq!(disable_for(&frame, "BTC"), Some(true));
-        assert_eq!(disable_for(&frame, "ETH"), Some(false));
-        assert_eq!(disable_for(&frame, "SOL"), None);
-
-        // max leverage is refreshed from the fetched metadata.
+        assert_eq!(frame.get_column_names(), ["symbol", "max_leverage"]);
         let symbols = frame.column("symbol").unwrap().str().unwrap();
         let leverage = frame.column("max_leverage").unwrap().u32().unwrap();
-        let btc_index = (0..symbols.len())
-            .find(|&index| symbols.get(index) == Some("BTC"))
-            .unwrap();
-        assert_eq!(leverage.get(btc_index), Some(50));
+        assert_eq!(symbols.get(0), Some("BTC"));
+        assert_eq!(symbols.get(1), Some("ETH"));
+        assert_eq!(leverage.get(0), Some(50));
+        assert_eq!(leverage.get(1), Some(25));
+    }
+
+    #[test]
+    fn markets_from_frame_maps_all_rows() {
+        let frame = df! {
+            "symbol" => &["BTC", "ETH"],
+            "max_leverage" => &[50_u32, 25],
+        }
+        .unwrap();
+
+        let markets = markets_from_frame(&frame).unwrap();
+
+        assert_eq!(
+            markets.iter().map(Market::as_str).collect::<Vec<_>>(),
+            vec!["BTC", "ETH"]
+        );
     }
 
     #[traced_test]
     #[tokio::test]
-    async fn refresh_writes_markets_csv_and_preserves_disable_across_runs() {
+    async fn refresh_writes_markets_csv_from_exchange() {
         let data_dir = TempDir::new().unwrap();
         let client = StubClient {
             metadata: vec![metadata("BTC", 50), metadata("ETH", 25)],
         };
 
-        let tradable = refresh_markets(&client, data_dir.path()).await.unwrap();
+        let markets = refresh_markets(&client, data_dir.path()).await.unwrap();
         assert_eq!(
-            tradable.len(),
-            2,
-            "both markets are tradable on first refresh"
+            markets.iter().map(Market::as_str).collect::<Vec<_>>(),
+            vec!["BTC", "ETH"]
         );
         assert!(data_dir.path().join("markets.csv").exists());
         assert!(crate::logs_contain_at(
@@ -226,67 +288,26 @@ mod tests {
             &["markets metadata refreshed"]
         ));
 
-        // Operator disables BTC by editing the ledger, then a later refresh keeps it.
-        let path = data_dir.path().join(file_name());
-        let edited = crate::dataframe::read_csv(path.clone())
-            .await
-            .unwrap()
-            .unwrap()
-            .lazy()
-            .with_column(col("symbol").eq(lit("BTC")).alias("disable"))
-            .collect()
-            .unwrap();
-        crate::dataframe::write_csv(path, edited).await.unwrap();
-
-        let tradable = refresh_markets(&client, data_dir.path()).await.unwrap();
-        assert_eq!(
-            tradable.iter().map(Market::as_str).collect::<Vec<_>>(),
-            vec!["ETH"],
-            "BTC is excluded from the tradable set once disabled"
-        );
-
         let reloaded = crate::dataframe::read_csv(data_dir.path().join(file_name()))
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(disable_for(&reloaded, "BTC"), Some(true));
-        assert_eq!(disable_for(&reloaded, "ETH"), Some(false));
-    }
-
-    #[test]
-    fn tradable_from_frame_excludes_disabled_markets() {
-        let frame = df! {
-            "symbol" => &["BTC", "ETH", "SOL"],
-            "max_leverage" => &[50_u32, 25, 20],
-            "disable" => &[false, true, false],
-        }
-        .unwrap();
-
-        let markets = tradable_from_frame(&frame).unwrap();
-        let symbols: Vec<&str> = markets.iter().map(Market::as_str).collect();
-
-        assert_eq!(markets.len(), 2, "the disabled market is excluded");
-        assert!(symbols.contains(&"BTC"));
-        assert!(symbols.contains(&"SOL"));
-        assert!(!symbols.contains(&"ETH"), "ETH is disabled");
+        assert_eq!(reloaded.get_column_names(), ["symbol", "max_leverage"]);
     }
 
     #[traced_test]
     #[tokio::test]
     async fn refresh_discovers_markets_from_the_exchange_not_the_ledger() {
         let data_dir = TempDir::new().unwrap();
-        // The persisted ledger only knows BTC, which the operator disabled.
-        let existing = df! {
-            "symbol" => &["BTC"],
-            "max_leverage" => &[40_u32],
-            "disable" => &[true],
+        let stale_ledger = df! {
+            "symbol" => &["SOL"],
+            "max_leverage" => &[20_u32],
         }
         .unwrap();
-        crate::dataframe::write_csv(data_dir.path().join(file_name()), existing)
+        crate::dataframe::write_csv(data_dir.path().join(file_name()), stale_ledger)
             .await
             .unwrap();
 
-        // The exchange now lists BTC, ETH, and SOL.
         let client = StubClient {
             metadata: vec![
                 metadata("BTC", 50),
@@ -295,21 +316,81 @@ mod tests {
             ],
         };
 
-        let tradable = refresh_markets(&client, data_dir.path()).await.unwrap();
-        let symbols: Vec<&str> = tradable.iter().map(Market::as_str).collect();
+        let markets = refresh_markets(&client, data_dir.path()).await.unwrap();
+        let symbols: Vec<&str> = markets.iter().map(Market::as_str).collect();
 
-        // ETH and SOL are discovered from the live fetch even though the ledger
-        // never listed them; BTC stays excluded by its persisted disable flag.
-        assert_eq!(tradable.len(), 2, "newly listed markets are discovered");
+        assert_eq!(markets.len(), 3);
+        assert!(symbols.contains(&"BTC"));
         assert!(symbols.contains(&"ETH"));
         assert!(symbols.contains(&"SOL"));
-        assert!(
-            !symbols.contains(&"BTC"),
-            "operator-disabled BTC stays excluded"
-        );
         assert!(crate::logs_contain_at(
             Level::INFO,
             &["markets metadata refreshed"]
         ));
+    }
+
+    #[tokio::test]
+    async fn load_markets_api_response_returns_ccxt_symbols_and_leverage_limits() {
+        let data_dir = TempDir::new().unwrap();
+        let frame = df! {
+            "symbol" => &["ETH", "BTC"],
+            "max_leverage" => &[25_u32, 50],
+        }
+        .unwrap();
+        crate::dataframe::write_csv(data_dir.path().join(file_name()), frame)
+            .await
+            .unwrap();
+
+        let response = load_markets_api_response(data_dir.path()).await.unwrap();
+
+        assert_eq!(
+            response.tickers,
+            vec!["BTC/USDC:USDC".to_string(), "ETH/USDC:USDC".to_string()]
+        );
+        assert_eq!(response.leverage_limits.len(), 2);
+        assert_eq!(
+            response.leverage_limits[0].symbol,
+            "BTC/USDC:USDC".to_string()
+        );
+        assert_eq!(response.leverage_limits[0].max_leverage, 50);
+        assert!(response.refreshed_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn load_markets_api_response_uppercases_mixed_case_hyperliquid_names() {
+        let data_dir = TempDir::new().unwrap();
+        let frame = df! {
+            "symbol" => &["kPEPE"],
+            "max_leverage" => &[10_u32],
+        }
+        .unwrap();
+        crate::dataframe::write_csv(data_dir.path().join(file_name()), frame)
+            .await
+            .unwrap();
+
+        let response = load_markets_api_response(data_dir.path()).await.unwrap();
+
+        assert_eq!(response.tickers, vec!["KPEPE/USDC:USDC".to_string()]);
+        assert_eq!(
+            response.leverage_limits[0].symbol,
+            "KPEPE/USDC:USDC".to_string()
+        );
+    }
+
+    #[tokio::test]
+    async fn load_markets_api_response_formats_colon_names_like_ccxt() {
+        let data_dir = TempDir::new().unwrap();
+        let frame = df! {
+            "symbol" => &["flx:crcl"],
+            "max_leverage" => &[5_u32],
+        }
+        .unwrap();
+        crate::dataframe::write_csv(data_dir.path().join(file_name()), frame)
+            .await
+            .unwrap();
+
+        let response = load_markets_api_response(data_dir.path()).await.unwrap();
+
+        assert_eq!(response.tickers, vec!["FLX-CRCL/USDC:USDC".to_string()]);
     }
 }

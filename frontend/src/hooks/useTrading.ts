@@ -15,16 +15,45 @@ const QUERY_KEYS = {
   balance: ["hyperliquid", "balance"],
   accountSummary: ["hyperliquid", "account-summary"],
   positions: ["hyperliquid", "positions"],
-  tickers: ["hyperliquid", "tickers"],
-  leverageLimits: ["hyperliquid", "leverage-limits"],
+  markets: ["hyperliquid", "markets"],
   fundingRates: ["hyperliquid", "funding-rates"],
 } as const
 
 const DATA_STALE_TIME_MS = 30_000
+const MARKETS_STALE_TIME_MS = 24 * 60 * 60 * 1000
+
+export interface HyperliquidMarketsResponse {
+  tickers: string[]
+  leverageLimits: LeverageLimit[]
+  refreshedAt: string | null
+}
+
+const fetchHyperliquidMarkets =
+  async (): Promise<HyperliquidMarketsResponse> => {
+    const response = await fetch(
+      `${import.meta.env.BASE_URL}api/hyperliquid/markets`,
+    )
+    if (!response.ok) {
+      throw new Error(
+        `hyperliquid markets request failed: ${String(response.status)}`,
+      )
+    }
+    return response.json() as Promise<HyperliquidMarketsResponse>
+  }
 
 export const useHyperliquidClient = () => {
   const { client, credentials, networkMode, isConnected } = useWallet()
   return { client, credentials, isConnected, networkMode }
+}
+
+export const useHyperliquidMarkets = () => {
+  const { networkMode } = useWallet()
+
+  return useQuery(() => ({
+    queryKey: [...QUERY_KEYS.markets, networkMode()],
+    queryFn: fetchHyperliquidMarkets,
+    staleTime: MARKETS_STALE_TIME_MS,
+  }))
 }
 
 export const useHyperliquidBalance = () => {
@@ -117,35 +146,47 @@ export const useHyperliquidPositions = () => {
 }
 
 export const useHyperliquidTickers = () => {
-  const { client, networkMode, isConnected } = useHyperliquidClient()
+  const marketsQuery = useHyperliquidMarkets()
 
-  return useQuery(() => ({
-    queryKey: [...QUERY_KEYS.tickers, networkMode()],
-    queryFn: async () => {
-      const c = client()
-      if (!c) throw new Error("Wallet not connected")
-      return c.listPerpTickers()
+  return {
+    get data() {
+      return marketsQuery.data?.tickers
     },
-    enabled: isConnected() && client() !== null,
-    staleTime: DATA_STALE_TIME_MS,
-  }))
+    get isLoading() {
+      return marketsQuery.isLoading
+    },
+    get isSuccess() {
+      return marketsQuery.isSuccess
+    },
+    get isError() {
+      return marketsQuery.isError
+    },
+    get error() {
+      return marketsQuery.error
+    },
+  }
 }
 
 export const useHyperliquidLeverageLimits = () => {
-  const { client, networkMode, isConnected } = useHyperliquidClient()
+  const marketsQuery = useHyperliquidMarkets()
 
-  return useQuery(() => ({
-    queryKey: [...QUERY_KEYS.leverageLimits, networkMode()],
-    queryFn: async () => {
-      const c = client()
-      if (!c) throw new Error("Wallet not connected")
-      const result = await c.getLeverageLimits()
-
-      return result
+  return {
+    get data() {
+      return marketsQuery.data?.leverageLimits
     },
-    enabled: isConnected() && client() !== null,
-    staleTime: DATA_STALE_TIME_MS,
-  }))
+    get isLoading() {
+      return marketsQuery.isLoading
+    },
+    get isSuccess() {
+      return marketsQuery.isSuccess
+    },
+    get isError() {
+      return marketsQuery.isError
+    },
+    get error() {
+      return marketsQuery.error
+    },
+  }
 }
 
 export const useHyperliquidFundingRates = () => {

@@ -22,11 +22,18 @@ const mockMethods = {
   getAccountSummary: vi.fn(),
   getFundingRates: vi.fn(),
   getCurrentPositions: vi.fn(),
-  listPerpTickers: vi.fn(),
-  getLeverageLimits: vi.fn(),
   rebalancePositions: vi.fn(),
   getNetworkMode: vi.fn(),
   getWalletAddress: vi.fn(),
+}
+
+const mockMarketsResponse = {
+  tickers: ["BTC/USDC:USDC", "ETH/USDC:USDC", "SOL/USDC:USDC"],
+  leverageLimits: [
+    { symbol: "BTC/USDC:USDC", maxLeverage: 50 },
+    { symbol: "ETH/USDC:USDC", maxLeverage: 25 },
+  ],
+  refreshedAt: "2024-01-01T00:00:00Z",
 }
 
 // Mock the HyperliquidClient as a class
@@ -36,13 +43,10 @@ vi.mock("@/services/hyperliquid-client", () => ({
     getAccountSummary = mockMethods.getAccountSummary
     getFundingRates = mockMethods.getFundingRates
     getCurrentPositions = mockMethods.getCurrentPositions
-    listPerpTickers = mockMethods.listPerpTickers
-    getLeverageLimits = mockMethods.getLeverageLimits
     rebalancePositions = mockMethods.rebalancePositions
     getNetworkMode = mockMethods.getNetworkMode
     getWalletAddress = mockMethods.getWalletAddress
   },
-  preloadMarkets: vi.fn().mockResolvedValue(undefined),
 }))
 
 const createWrapper = () => {
@@ -116,9 +120,17 @@ describe("useTrading hooks", () => {
     vi.clearAllMocks()
     ensureLocalStorage()
     localStorage.clear()
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => mockMarketsResponse,
+      }),
+    )
   })
 
   afterEach(() => {
+    vi.unstubAllGlobals()
     ensureLocalStorage()
     localStorage.clear()
   })
@@ -240,19 +252,9 @@ describe("useTrading hooks", () => {
   })
 
   describe("useHyperliquidTickers", () => {
-    it("fetches tickers when connected", async () => {
-      mockMethods.listPerpTickers.mockResolvedValue([
-        "BTC/USDC:USDC",
-        "ETH/USDC:USDC",
-        "SOL/USDC:USDC",
-      ])
-
+    it("fetches tickers from backend markets endpoint", async () => {
       const { result } = renderHook(() => useHyperliquidTickers(), {
-        wrapper: createConnectedWrapper({
-          accountAddress: "0xTestAccountAddress",
-          apiWalletAddress: "0xTestApiWallet",
-          privateKey: "0xTestSecret",
-        }),
+        wrapper: createWrapper(),
       })
 
       await waitFor(() => {
@@ -264,22 +266,14 @@ describe("useTrading hooks", () => {
         "ETH/USDC:USDC",
         "SOL/USDC:USDC",
       ])
+      expect(global.fetch).toHaveBeenCalledWith("/api/hyperliquid/markets")
     })
   })
 
   describe("useHyperliquidLeverageLimits", () => {
-    it("fetches leverage limits when connected", async () => {
-      mockMethods.getLeverageLimits.mockResolvedValue([
-        { symbol: "BTC/USDC:USDC", maxLeverage: 50 },
-        { symbol: "ETH/USDC:USDC", maxLeverage: 25 },
-      ])
-
+    it("fetches leverage limits from backend markets endpoint", async () => {
       const { result } = renderHook(() => useHyperliquidLeverageLimits(), {
-        wrapper: createConnectedWrapper({
-          accountAddress: "0xTestAccountAddress",
-          apiWalletAddress: "0xTestApiWallet",
-          privateKey: "0xTestSecret",
-        }),
+        wrapper: createWrapper(),
       })
 
       await waitFor(() => {

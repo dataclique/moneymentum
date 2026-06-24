@@ -79,7 +79,7 @@ of them.
 - [x] Factor: 24h volume (screener tie-break) --
       [#271](https://github.com/dataclique/moneymentum/issues/271) /
       [#272](https://github.com/dataclique/moneymentum/pull/272)
-- [x] Markets metadata + persisted disable flag --
+- [x] Markets metadata ledger --
       [#275](https://github.com/dataclique/moneymentum/issues/275) /
       [#276](https://github.com/dataclique/moneymentum/pull/276)
 - [x] Tradable filter wired into ingestion --

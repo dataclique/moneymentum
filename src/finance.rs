@@ -37,6 +37,29 @@ impl Market {
         &self.0
     }
 }
+
+/// CCXT unified swap symbol for a Hyperliquid main-meta perp.
+///
+/// Mirrors `ccxt` `hyperliquid.parseMarket` for the default-collateral case
+/// (`quote` and `settle` are `USDC` when `collateralTokenName` is absent):
+/// `safeCurrencyCode(baseName)`, then `:` -> `-` in the base, then
+/// `{base}/{quote}:{settle}`.
+pub(crate) fn hyperliquid_swap_ccxt_symbol(base_name: &str) -> String {
+    hyperliquid_swap_ccxt_symbol_with_collateral(base_name, "USDC")
+}
+
+fn hyperliquid_swap_ccxt_symbol_with_collateral(base_name: &str, collateral: &str) -> String {
+    let mut base = safe_currency_code(base_name);
+    base = base.replace(':', "-");
+    let quote = safe_currency_code(collateral);
+    let settle = safe_currency_code(collateral);
+    format!("{base}/{quote}:{settle}")
+}
+
+/// CCXT `safeCurrencyCode` for Hyperliquid meta asset names.
+fn safe_currency_code(currency_code: &str) -> String {
+    currency_code.to_uppercase()
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -86,5 +109,25 @@ mod tests {
     fn uppercases() {
         assert_eq!(Symbol::from_raw("btc/usdc:usdc").as_str(), "BTC");
         assert_eq!(Symbol::from_raw("kdogs").as_str(), "KDOGS");
+    }
+
+    #[test]
+    fn hyperliquid_swap_ccxt_symbol_matches_ccxt_parse_market() {
+        assert_eq!(hyperliquid_swap_ccxt_symbol("BTC"), "BTC/USDC:USDC");
+        assert_eq!(hyperliquid_swap_ccxt_symbol("FRIEND"), "FRIEND/USDC:USDC");
+        assert_eq!(hyperliquid_swap_ccxt_symbol("kPEPE"), "KPEPE/USDC:USDC");
+        assert_eq!(hyperliquid_swap_ccxt_symbol("kDOGS"), "KDOGS/USDC:USDC");
+        assert_eq!(
+            hyperliquid_swap_ccxt_symbol("flx:crcl"),
+            "FLX-CRCL/USDC:USDC"
+        );
+    }
+
+    #[test]
+    fn hyperliquid_swap_ccxt_symbol_supports_non_usdc_collateral() {
+        assert_eq!(
+            hyperliquid_swap_ccxt_symbol_with_collateral("HYNA-BTC", "USDE"),
+            "HYNA-BTC/USDE:USDE"
+        );
     }
 }

@@ -3,17 +3,8 @@ import { pro } from "ccxt"
 import type { NetworkMode, WalletCredentials } from "@/contexts/wallet-context"
 import type { RebalanceAction } from "@/pages/Portfolio/hooks/portfolioRebalancer"
 
-const MARKETS_CACHE_KEY = "hyperliquid_markets_cache"
-const MARKETS_CACHE_TTL_MS = 24 * 60 * 60 * 1000
-
 const HYPERLIQUID_MAINNET_INFO_URL = "https://api.hyperliquid.xyz/info"
 const HYPERLIQUID_TESTNET_INFO_URL = "https://api.hyperliquid-testnet.xyz/info"
-
-interface MarketsCache {
-  markets: Record<string, unknown>
-  timestamp: number
-  networkMode: NetworkMode
-}
 
 const isDeployed = (): boolean =>
   typeof window !== "undefined" && window.location.hostname !== "localhost"
@@ -25,84 +16,6 @@ const applyApiProxy = (
   if (!isDeployed()) return
   const proxyBase = networkMode === "testnet" ? "/hl-testnet" : "/hl"
   exchange.urls["api"] = { public: proxyBase, private: proxyBase }
-}
-
-const createTempExchange = (networkMode: NetworkMode): HyperliquidExchange => {
-  const HyperliquidClass = pro.hyperliquid as unknown as new (
-    config: Record<string, unknown>,
-  ) => HyperliquidExchange
-
-  const exchange = new HyperliquidClass({
-    enableRateLimit: true,
-  })
-
-  if (networkMode === "testnet") {
-    exchange.setSandboxMode(true)
-  }
-
-  applyApiProxy(exchange, networkMode)
-
-  return exchange
-}
-
-const getCachedMarkets = (
-  networkMode: NetworkMode,
-): Record<string, unknown> | null => {
-  try {
-    const cached = localStorage.getItem(MARKETS_CACHE_KEY)
-    if (!cached) {
-      return null
-    }
-
-    const parsed: MarketsCache = JSON.parse(cached) as MarketsCache
-    const { markets, timestamp, networkMode: cachedMode } = parsed
-
-    if (cachedMode !== networkMode) {
-      return null
-    }
-
-    const ageMs = Date.now() - timestamp
-    if (ageMs >= MARKETS_CACHE_TTL_MS) {
-      return null
-    }
-
-    return markets
-  } catch {
-    return null
-  }
-}
-
-const setCachedMarkets = (
-  markets: Record<string, unknown>,
-  networkMode: NetworkMode,
-): void => {
-  const cacheData: MarketsCache = {
-    markets,
-    timestamp: Date.now(),
-    networkMode,
-  }
-  localStorage.setItem(MARKETS_CACHE_KEY, JSON.stringify(cacheData))
-}
-
-export const preloadMarkets = async (
-  networkMode: NetworkMode,
-): Promise<Record<string, unknown> | null> => {
-  const cached = getCachedMarkets(networkMode)
-  if (cached) {
-    return cached
-  }
-
-  try {
-    const tempExchange = createTempExchange(networkMode)
-    const markets = await tempExchange.loadMarkets()
-
-    setCachedMarkets(markets, networkMode)
-    return markets
-  } catch {
-    // Network errors are expected when offline or API is unreachable
-    // Markets will be loaded on-demand when needed
-    return null
-  }
 }
 
 export type OrderSide = "buy" | "sell"
@@ -202,11 +115,7 @@ export class HyperliquidClient {
   private networkMode: NetworkMode
   private vaultAddress: string | undefined
 
-  constructor(
-    credentials: WalletCredentials,
-    networkMode: NetworkMode,
-    markets?: Record<string, unknown>,
-  ) {
+  constructor(credentials: WalletCredentials, networkMode: NetworkMode) {
     this.networkMode = networkMode
     this.vaultAddress = credentials.vaultAddress
 
@@ -219,14 +128,10 @@ export class HyperliquidClient {
     const effectiveWalletAddress =
       credentials.vaultAddress ?? credentials.accountAddress
 
-    // Use pre-loaded markets if available, otherwise ccxt will load them on first use
-    const cachedMarkets = markets ?? getCachedMarkets(networkMode)
-
     this.exchange = new HyperliquidClass({
       walletAddress: effectiveWalletAddress,
       privateKey: credentials.privateKey,
       enableRateLimit: true,
-      ...(cachedMarkets && { markets: cachedMarkets }),
     })
 
     if (networkMode === "testnet") {
@@ -359,46 +264,6 @@ export class HyperliquidClient {
 
     const orderError = (info as { error: unknown }).error
     return typeof orderError === "string" ? orderError : null
-  }
-
-  async listPerpTickers(): Promise<string[]> {
-    const markets = await this.exchange.loadMarkets()
-
-    // Update cache with fresh markets data
-    setCachedMarkets(markets, this.networkMode)
-
-    const perpSymbols = Object.entries(markets)
-      .filter(
-        ([symbol, data]) =>
-          symbol.includes(":") && (data as { swap?: boolean }).swap,
-      )
-      .map(([symbol]) => symbol)
-      .sort()
-    return perpSymbols
-  }
-
-  async getLeverageLimits(): Promise<LeverageLimit[]> {
-    const tickers = await this.exchange.fetchTickers()
-    const results: LeverageLimit[] = []
-
-    for (const [symbol, ticker] of Object.entries(tickers)) {
-      if (!symbol.includes(":")) continue
-
-      let maxLeverage = 1.0
-      if (ticker.info !== undefined && ticker.info !== null) {
-        const info = ticker.info as Record<string, unknown>
-        const rawMaxLeverage = info["maxLeverage"]
-        if (typeof rawMaxLeverage === "number") {
-          maxLeverage = rawMaxLeverage
-        } else if (typeof rawMaxLeverage === "string") {
-          maxLeverage = parseFloat(rawMaxLeverage)
-        }
-      }
-
-      results.push({ symbol, maxLeverage })
-    }
-
-    return results.sort((a, b) => a.symbol.localeCompare(b.symbol))
   }
 
   async getCurrentPositions(): Promise<CurrentPosition[]> {

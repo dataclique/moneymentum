@@ -359,7 +359,7 @@ mod tests {
                 low: 95.0,
                 close: 102.0,
                 volume: 1000.0,
-                symbol: format!("{}/USDC:USDC", market.as_str()),
+                symbol: crate::finance::hyperliquid_swap_ccxt_symbol(market.as_str()),
                 ticker: Symbol::from_raw(market.as_str()),
             }])
         }

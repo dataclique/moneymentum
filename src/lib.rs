@@ -32,6 +32,7 @@ use thiserror::Error;
 use tracing::{debug, error, info};
 use tracing_subscriber::EnvFilter;
 
+use crate::hyperliquid::Hyperliquid;
 use ingestion::{IngestionJob, IngestionRunError, IngestionServices, IngestionStatus};
 use timeframe::Timeframe;
 
@@ -169,6 +170,52 @@ async fn post_screener(
         }
         Err(err) => {
             error!(error = %err, "failed to screen perps");
+            Err(Status::InternalServerError)
+        }
+    }
+}
+
+struct MarketsJson(Json<market_metadata::MarketsApiResponse>);
+
+impl<'request> Responder<'request, 'static> for MarketsJson {
+    fn respond_to(
+        self,
+        request: &'request rocket::request::Request<'_>,
+    ) -> rocket::response::Result<'static> {
+        Response::build_from(self.0.respond_to(request)?)
+            .raw_header("Cache-Control", "public, max-age=86400")
+            .ok()
+    }
+}
+
+#[get("/hyperliquid/markets")]
+async fn get_hyperliquid_markets(
+    config: &State<Config>,
+    hyperliquid: &State<Arc<dyn Hyperliquid>>,
+) -> Result<MarketsJson, Status> {
+    match market_metadata::refresh_markets_if_stale(hyperliquid.as_ref(), &config.data_dir).await {
+        Ok(response) => Ok(MarketsJson(Json(response))),
+        Err(err) => {
+            error!(error = %err, "failed to load hyperliquid markets");
+            Err(Status::InternalServerError)
+        }
+    }
+}
+
+#[post("/hyperliquid/markets/refresh")]
+async fn post_hyperliquid_markets_refresh(
+    config: &State<Config>,
+    hyperliquid: &State<Arc<dyn Hyperliquid>>,
+) -> Result<MarketsJson, Status> {
+    match market_metadata::refresh_markets_and_load_api_response(
+        hyperliquid.as_ref(),
+        &config.data_dir,
+    )
+    .await
+    {
+        Ok(response) => Ok(MarketsJson(Json(response))),
+        Err(err) => {
+            error!(error = %err, "failed to refresh hyperliquid markets");
             Err(Status::InternalServerError)
         }
     }
@@ -434,8 +481,15 @@ pub async fn rocket(
         config.max_retries,
     )
     .await?;
+    let hyperliquid: Arc<dyn Hyperliquid> = Arc::new(hyperliquid_client);
+    if market_metadata::markets_need_refresh(&config.data_dir).await
+        && let Err(err) =
+            market_metadata::refresh_markets(hyperliquid.as_ref(), &config.data_dir).await
+    {
+        error!(error = %err, "failed to refresh markets metadata on startup");
+    }
     let services = Arc::new(IngestionServices {
-        hyperliquid: Arc::new(hyperliquid_client),
+        hyperliquid: Arc::clone(&hyperliquid),
         data_dir: config.data_dir.clone(),
         max_concurrent_requests: config.max_concurrent_requests,
     });
@@ -465,6 +519,7 @@ pub async fn rocket(
         .manage(config)
         .manage(pool)
         .manage(job_queue)
+        .manage(hyperliquid)
         .mount(
             "/",
             routes![
@@ -476,7 +531,9 @@ pub async fn rocket(
                 get_ingestion_status,
                 post_beta,
                 post_portfolio_readonly_btc,
-                post_portfolio_exposure
+                post_portfolio_exposure,
+                get_hyperliquid_markets,
+                post_hyperliquid_markets_refresh
             ],
         ))
 }

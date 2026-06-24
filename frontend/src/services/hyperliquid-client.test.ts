@@ -100,19 +100,6 @@ describe("HyperliquidClient", () => {
     })
   })
 
-  it("returns only swap symbols from markets", async () => {
-    mockExchange.loadMarkets.mockResolvedValue({
-      "BTC/USDC:USDC": { swap: true },
-      "ETH/USDC:USDC": { swap: true },
-      "BTC/USDC": { swap: false },
-    })
-
-    const client = new HyperliquidClient(credentials, "mainnet")
-    const symbols = await client.listPerpTickers()
-
-    expect(symbols).toEqual(["BTC/USDC:USDC", "ETH/USDC:USDC"])
-  })
-
   it("maps positions to buy/sell current positions", async () => {
     mockExchange.fetchPositions.mockResolvedValue([
       { symbol: "BTC/USDC:USDC", side: "long", notional: 100, leverage: 2 },

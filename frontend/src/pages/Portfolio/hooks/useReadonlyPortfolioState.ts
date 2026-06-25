@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/solid-query"
 import type { NetworkMode } from "@/contexts/wallet-context"
 import type { OrderSide } from "@/hooks/useTrading"
 import { useWallet } from "@/hooks/useWallet"
+import { apiUrl } from "@/lib/api-url"
 import { validateBitcoinAddress } from "./bitcoinAddress"
 
 const readonlyBtcStorageKey = (networkMode: NetworkMode): string =>
@@ -134,24 +135,21 @@ const fetchExposure = async (
   networkMode: "testnet" | "mainnet",
   signal?: AbortSignal,
 ): Promise<ExposureResponse> => {
-  const response = await fetch(
-    `${import.meta.env.BASE_URL}api/portfolio/exposure`,
-    {
-      method: "POST",
-      signal: signal
-        ? AbortSignal.any([signal, AbortSignal.timeout(10_000)])
-        : AbortSignal.timeout(10_000),
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        btc_network: networkMode,
-        hyperliquid_positions: [],
-        readonly_btc_entries: entries.map(entry => ({
-          address: entry.address,
-          include_in_beta: entry.includeInBeta,
-        })),
-      }),
-    },
-  )
+  const response = await fetch(apiUrl("portfolio/exposure"), {
+    method: "POST",
+    signal: signal
+      ? AbortSignal.any([signal, AbortSignal.timeout(10_000)])
+      : AbortSignal.timeout(10_000),
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      btc_network: networkMode,
+      hyperliquid_positions: [],
+      readonly_btc_entries: entries.map(entry => ({
+        address: entry.address,
+        include_in_beta: entry.includeInBeta,
+      })),
+    }),
+  })
 
   if (!response.ok) {
     const responseText = await response.text()

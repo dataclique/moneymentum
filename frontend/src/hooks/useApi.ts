@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/solid-query"
 import type { Timeframe } from "@/components/ui/timeframe-select"
+import { apiUrl } from "@/lib/api-url"
 
 export type TradingData = {
   timestamp: string
@@ -45,7 +46,9 @@ export const useDateRange = (timeframe: () => Timeframe) => {
   return useQuery<DateRange>(() => ({
     queryKey: ["dateRange", timeframe()],
     queryFn: async () => {
-      const response = await fetch(`/api/date-range?timeframe=${timeframe()}`)
+      const response = await fetch(
+        apiUrl(`date-range?timeframe=${timeframe()}`),
+      )
       if (!response.ok) {
         const errorData = (await response.json().catch(() => ({}))) as ApiError
         throw new Error(
@@ -66,7 +69,7 @@ export const useAnalysisData = (params: () => AnalysisDataParams) => {
         const startDateTime = `${startDate}T00:00:00Z`
         const endDateTime = `${endDate}T23:59:59Z`
 
-        const response = await fetch(`/api/data?timeframe=${timeframe}`, {
+        const response = await fetch(apiUrl(`data?timeframe=${timeframe}`), {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -110,7 +113,7 @@ export const useTokenData = (
       }
 
       const response = await fetch(
-        `/api/token/${encodeURIComponent(t)}?timeframe=${timeframe()}`,
+        apiUrl(`token/${encodeURIComponent(t)}?timeframe=${timeframe()}`),
       )
 
       if (!response.ok) {
@@ -139,7 +142,7 @@ export const useReloadData = () => {
     mutationFn: async ({ mode }: { mode: string }) => {
       const controller = new AbortController()
 
-      const response = await fetch("/api/reload_data/stream", {
+      const response = await fetch(apiUrl("reload_data/stream"), {
         method: "POST",
         signal: controller.signal,
         headers: {
@@ -183,7 +186,7 @@ export const useReloadData = () => {
 export const useStopReload = () => {
   return useMutation(() => ({
     mutationFn: async () => {
-      const response = await fetch("/api/stop_reload", {
+      const response = await fetch(apiUrl("stop_reload"), {
         method: "POST",
       })
 
@@ -198,7 +201,7 @@ export const useBudgetPreference = () => {
   return useQuery<{ budget: number }>(() => ({
     queryKey: ["hyperliquid", "budget-preference"],
     queryFn: async () => {
-      const response = await fetch("/api/hyperliquid/budget-preference")
+      const response = await fetch(apiUrl("hyperliquid/budget-preference"))
       if (!response.ok) {
         const errorData = (await response.json().catch(() => ({}))) as ApiError
         throw new Error(errorData.detail ?? "Unable to fetch budget preference")
@@ -213,7 +216,7 @@ export const useSaveBudgetPreference = () => {
 
   return useMutation(() => ({
     mutationFn: async (payload: { budget: number }) => {
-      const response = await fetch("/api/hyperliquid/budget-preference", {
+      const response = await fetch(apiUrl("hyperliquid/budget-preference"), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

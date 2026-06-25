@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/solid-query"
 import { createMemo } from "solid-js"
+import { apiUrl } from "@/lib/api-url"
 import type { PortfolioInterface } from "./usePortfolioState"
 import type { ReadonlyBetaPosition } from "./useReadonlyPortfolioState"
 
@@ -77,7 +78,7 @@ const fetchBeta = async (
   benchmark: string,
   signal?: AbortSignal,
 ): Promise<BetaResponse> => {
-  const res = await fetch(`${import.meta.env.BASE_URL}api/beta`, {
+  const res = await fetch(apiUrl("beta"), {
     method: "POST",
     signal: signal
       ? AbortSignal.any([signal, AbortSignal.timeout(10_000)])

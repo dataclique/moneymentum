@@ -1,5 +1,6 @@
 import { type Order, type OrderRequest } from "ccxt"
 import { pro } from "ccxt"
+import { baseUrl } from "@/lib/api-url"
 import type { NetworkMode, WalletCredentials } from "@/contexts/wallet-context"
 import type { RebalanceAction } from "@/pages/Portfolio/hooks/portfolioRebalancer"
 
@@ -23,7 +24,8 @@ const applyApiProxy = (
   networkMode: NetworkMode,
 ): void => {
   if (!isDeployed()) return
-  const proxyBase = networkMode === "testnet" ? "/hl-testnet" : "/hl"
+  const proxyBase =
+    networkMode === "testnet" ? baseUrl("hl-testnet") : baseUrl("hl")
   exchange.urls["api"] = { public: proxyBase, private: proxyBase }
 }
 

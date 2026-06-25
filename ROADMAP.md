@@ -34,6 +34,9 @@ Design: [adrs/0001](./adrs/0001-event-sorcery-persistence-foundation.md).
 - [ ] Event-source portfolios, ingestion runs, and the market universe --
       [#364](https://github.com/data-cartel/moneymentum/issues/364) /
       [#362](https://github.com/data-cartel/moneymentum/pull/362)
+- [ ] Serve per-market max leverage limits from the catalog --
+      [#379](https://github.com/dataclique/moneymentum/issues/379) /
+      [#380](https://github.com/dataclique/moneymentum/pull/380)
 
 ---
 

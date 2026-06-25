@@ -101,6 +101,9 @@ front-page docs that spell out their abbreviations on first use.
 - [ ] Add the scripts/*.nu convention with gitbutler-stack + pr-stack-footer --
       [#358](https://github.com/data-cartel/moneymentum/issues/358) /
       [#367](https://github.com/data-cartel/moneymentum/pull/367)
+- [ ] Refactor pr-stack-footer.nu's main to the functional scripts/*.nu style --
+      [#371](https://github.com/data-cartel/moneymentum/issues/371) /
+      [#372](https://github.com/data-cartel/moneymentum/pull/372)
 - [ ] Replace the deprecated Big Short embed with a prototype screenshot --
       [#365](https://github.com/data-cartel/moneymentum/issues/365) /
       [#366](https://github.com/data-cartel/moneymentum/pull/366)

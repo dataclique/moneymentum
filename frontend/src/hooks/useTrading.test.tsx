@@ -12,7 +12,9 @@ import {
   useRebalanceHyperliquidPositions,
   useWalletSettings,
   useSwitchNetwork,
+  marketsRemainingStaleTimeMs,
 } from "./useTrading"
+import { MARKETS_MAX_AGE_MS } from "@/services/hyperliquid-client"
 import { WalletProvider } from "@/contexts/WalletProvider"
 import { useWallet } from "@/hooks/useWallet"
 
@@ -30,24 +32,30 @@ const mockMethods = {
 const mockMarketsResponse = {
   tickers: ["BTC/USDC:USDC", "ETH/USDC:USDC", "SOL/USDC:USDC"],
   leverageLimits: [
-    { symbol: "BTC/USDC:USDC", maxLeverage: 50 },
-    { symbol: "ETH/USDC:USDC", maxLeverage: 25 },
+    { symbol: "BTC/USDC:USDC", maxLeverage: 50, assetIndex: 0 },
+    { symbol: "ETH/USDC:USDC", maxLeverage: 25, assetIndex: 1 },
   ],
-  refreshedAt: "2024-01-01T00:00:00Z",
+  refreshedAt: new Date().toISOString(),
+  marketsMaxAgeMs: MARKETS_MAX_AGE_MS,
 }
 
-// Mock the HyperliquidClient as a class
-vi.mock("@/services/hyperliquid-client", () => ({
-  HyperliquidClient: class MockHyperliquidClient {
-    getBalance = mockMethods.getBalance
-    getAccountSummary = mockMethods.getAccountSummary
-    getFundingRates = mockMethods.getFundingRates
-    getCurrentPositions = mockMethods.getCurrentPositions
-    rebalancePositions = mockMethods.rebalancePositions
-    getNetworkMode = mockMethods.getNetworkMode
-    getWalletAddress = mockMethods.getWalletAddress
-  },
-}))
+// Mock the HyperliquidClient as a class; keep real fetchHyperliquidMarkets.
+vi.mock("@/services/hyperliquid-client", async importOriginal => {
+  const actual =
+    await importOriginal<typeof import("@/services/hyperliquid-client")>()
+  return {
+    ...actual,
+    HyperliquidClient: class MockHyperliquidClient {
+      getBalance = mockMethods.getBalance
+      getAccountSummary = mockMethods.getAccountSummary
+      getFundingRates = mockMethods.getFundingRates
+      getCurrentPositions = mockMethods.getCurrentPositions
+      rebalancePositions = mockMethods.rebalancePositions
+      getNetworkMode = mockMethods.getNetworkMode
+      getWalletAddress = mockMethods.getWalletAddress
+    },
+  }
+})
 
 const createWrapper = () => {
   const queryClient = new QueryClient({
@@ -122,9 +130,16 @@ describe("useTrading hooks", () => {
     localStorage.clear()
     vi.stubGlobal(
       "fetch",
-      vi.fn().mockResolvedValue({
-        ok: true,
-        json: async () => mockMarketsResponse,
+      vi.fn().mockImplementation(async input => {
+        const url = String(input)
+        if (!url.includes("network=testnet")) {
+          throw new Error(`expected testnet markets fetch, got ${url}`)
+        }
+        return {
+          ok: true,
+          headers: new Headers({ "cache-control": "public, max-age=86400" }),
+          json: async () => mockMarketsResponse,
+        }
       }),
     )
   })
@@ -251,6 +266,33 @@ describe("useTrading hooks", () => {
     })
   })
 
+  describe("marketsRemainingStaleTimeMs", () => {
+    it("returns remaining time until markets max age expires", () => {
+      const refreshedAt = new Date(Date.now() - 60 * 60 * 1000).toISOString()
+
+      const remaining = marketsRemainingStaleTimeMs(
+        { tickers: [], leverageLimits: [], refreshedAt },
+        MARKETS_MAX_AGE_MS,
+      )
+
+      expect(remaining).toBeGreaterThan(MARKETS_MAX_AGE_MS - 2 * 60 * 60 * 1000)
+      expect(remaining).toBeLessThanOrEqual(MARKETS_MAX_AGE_MS - 60 * 60 * 1000)
+    })
+
+    it("returns zero when markets data is already past max age", () => {
+      const refreshedAt = new Date(
+        Date.now() - MARKETS_MAX_AGE_MS - 1000,
+      ).toISOString()
+
+      expect(
+        marketsRemainingStaleTimeMs(
+          { tickers: [], leverageLimits: [], refreshedAt },
+          MARKETS_MAX_AGE_MS,
+        ),
+      ).toBe(0)
+    })
+  })
+
   describe("useHyperliquidTickers", () => {
     it("fetches tickers from backend markets endpoint", async () => {
       const { result } = renderHook(() => useHyperliquidTickers(), {
@@ -266,7 +308,9 @@ describe("useTrading hooks", () => {
         "ETH/USDC:USDC",
         "SOL/USDC:USDC",
       ])
-      expect(global.fetch).toHaveBeenCalledWith("/api/hyperliquid/markets")
+      expect(global.fetch).toHaveBeenCalledWith(
+        "/api/hyperliquid/markets?network=testnet",
+      )
     })
   })
 
@@ -281,8 +325,8 @@ describe("useTrading hooks", () => {
       })
 
       expect(result.data).toEqual([
-        { symbol: "BTC/USDC:USDC", maxLeverage: 50 },
-        { symbol: "ETH/USDC:USDC", maxLeverage: 25 },
+        { symbol: "BTC/USDC:USDC", maxLeverage: 50, assetIndex: 0 },
+        { symbol: "ETH/USDC:USDC", maxLeverage: 25, assetIndex: 1 },
       ])
     })
   })

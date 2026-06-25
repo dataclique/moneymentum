@@ -19,12 +19,12 @@ use apalis::prelude::{Monitor, Storage, WorkerBuilder, WorkerFactoryFn};
 use apalis_sql::sqlite::SqliteStorage;
 use rocket::config::Config as RocketConfig;
 use rocket::http::Status;
-use rocket::request::FromParam;
+use rocket::request::{FromParam, FromRequest, Outcome};
 use rocket::response::content::RawJson;
 use rocket::response::status::Custom;
 use rocket::response::{Responder, Response};
 use rocket::serde::json::Json;
-use rocket::{Rocket, State, get, post, routes};
+use rocket::{Request, Rocket, State, get, post, routes};
 use serde::Deserialize;
 use sqlx::SqlitePool;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode};
@@ -32,7 +32,7 @@ use thiserror::Error;
 use tracing::{debug, error, info};
 use tracing_subscriber::EnvFilter;
 
-use crate::hyperliquid::Hyperliquid;
+use crate::hyperliquid::HyperliquidClients;
 use ingestion::{IngestionJob, IngestionRunError, IngestionServices, IngestionStatus};
 use timeframe::Timeframe;
 
@@ -75,6 +75,7 @@ pub struct Config {
     log_level: LogLevel,
     max_concurrent_requests: usize,
     max_retries: usize,
+    markets_refresh_token: String,
 }
 
 impl Config {
@@ -177,26 +178,53 @@ async fn post_screener(
 
 struct MarketsJson(Json<market_metadata::MarketsApiResponse>);
 
+/// Seconds until the next UTC midnight, for `Cache-Control: max-age`.
+///
+/// Markets refresh on a daily midnight schedule; bounding shared-cache TTL to
+/// the next midnight keeps GET responses from outliving the ledger refresh.
+fn markets_cache_max_age_seconds(unix_now: u64) -> u64 {
+    const SECONDS_PER_DAY: u64 = 86_400;
+    let seconds_into_day = unix_now % SECONDS_PER_DAY;
+    (SECONDS_PER_DAY - seconds_into_day).max(1)
+}
+
 impl<'request> Responder<'request, 'static> for MarketsJson {
     fn respond_to(
         self,
         request: &'request rocket::request::Request<'_>,
     ) -> rocket::response::Result<'static> {
+        let max_age = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| markets_cache_max_age_seconds(duration.as_secs()))
+            .unwrap_or(market_metadata::MARKETS_REFRESH_INTERVAL.as_secs());
         Response::build_from(self.0.respond_to(request)?)
-            .raw_header("Cache-Control", "public, max-age=86400")
+            .raw_header(
+                "Cache-Control",
+                format!("private, max-age={max_age}, must-revalidate"),
+            )
             .ok()
     }
 }
 
-#[get("/hyperliquid/markets")]
+#[get("/hyperliquid/markets?<network>")]
 async fn get_hyperliquid_markets(
+    network: Option<&str>,
     config: &State<Config>,
-    hyperliquid: &State<Arc<dyn Hyperliquid>>,
+    hyperliquid_clients: &State<HyperliquidClients>,
 ) -> Result<MarketsJson, Status> {
-    match market_metadata::refresh_markets_if_stale(hyperliquid.as_ref(), &config.data_dir).await {
+    let ledger = network
+        .and_then(market_metadata::MarketsLedger::parse_query)
+        .unwrap_or(market_metadata::MarketsLedger::Mainnet);
+    match market_metadata::refresh_markets_if_stale(
+        hyperliquid_clients.for_ledger(ledger),
+        &config.data_dir,
+        ledger,
+    )
+    .await
+    {
         Ok(response) => Ok(MarketsJson(Json(response))),
         Err(err) => {
-            error!(error = %err, "failed to load hyperliquid markets");
+            error!(error = %err, ?ledger, "failed to load hyperliquid markets");
             Err(Status::InternalServerError)
         }
     }
@@ -204,21 +232,72 @@ async fn get_hyperliquid_markets(
 
 #[post("/hyperliquid/markets/refresh")]
 async fn post_hyperliquid_markets_refresh(
+    _auth: AuthorizedMarketsRefresh,
     config: &State<Config>,
-    hyperliquid: &State<Arc<dyn Hyperliquid>>,
+    hyperliquid_clients: &State<HyperliquidClients>,
 ) -> Result<MarketsJson, Status> {
-    match market_metadata::refresh_markets_and_load_api_response(
-        hyperliquid.as_ref(),
-        &config.data_dir,
-    )
-    .await
+    match market_metadata::refresh_all_markets(hyperliquid_clients.inner(), &config.data_dir).await
     {
-        Ok(response) => Ok(MarketsJson(Json(response))),
+        Ok(()) => match market_metadata::load_markets_api_response(
+            &config.data_dir,
+            market_metadata::MarketsLedger::Mainnet,
+        )
+        .await
+        {
+            Ok(response) => Ok(MarketsJson(Json(response))),
+            Err(err) => {
+                error!(error = %err, "failed to load hyperliquid markets after refresh");
+                Err(Status::InternalServerError)
+            }
+        },
         Err(err) => {
             error!(error = %err, "failed to refresh hyperliquid markets");
             Err(Status::InternalServerError)
         }
     }
+}
+
+struct AuthorizedMarketsRefresh;
+
+#[rocket::async_trait]
+impl<'request> FromRequest<'request> for AuthorizedMarketsRefresh {
+    type Error = Status;
+
+    async fn from_request(request: &'request Request<'_>) -> Outcome<Self, Self::Error> {
+        let Some(config) = request.rocket().state::<Config>() else {
+            return Outcome::Error((Status::InternalServerError, Status::InternalServerError));
+        };
+
+        match authorize_markets_refresh(request, config) {
+            Ok(()) => Outcome::Success(Self),
+            Err(status) => Outcome::Error((status, status)),
+        }
+    }
+}
+
+const MARKETS_REFRESH_TOKEN_HEADER: &str = "X-Markets-Refresh-Token";
+
+fn authorize_markets_refresh(request: &Request<'_>, config: &Config) -> Result<(), Status> {
+    let provided = request.headers().get_one(MARKETS_REFRESH_TOKEN_HEADER);
+    match provided {
+        None => Err(Status::Unauthorized),
+        Some(token) if markets_refresh_token_matches(token, &config.markets_refresh_token) => {
+            Ok(())
+        }
+        Some(_) => Err(Status::Forbidden),
+    }
+}
+
+fn markets_refresh_token_matches(provided: &str, expected: &str) -> bool {
+    if provided.len() != expected.len() {
+        return false;
+    }
+
+    provided
+        .bytes()
+        .zip(expected.bytes())
+        .fold(0_u8, |mismatch, (left, right)| mismatch | (left ^ right))
+        == 0
 }
 
 #[post("/ingest")]
@@ -476,20 +555,16 @@ pub async fn rocket(
     let job_queue = SqliteStorage::<IngestionJob>::new(pool.clone());
     ingestion::recover_abandoned_runs(&pool).await?;
 
-    let hyperliquid_client = hyperliquid::HyperliquidClient::new(
-        config.hyperliquid_base_url.as_ref(),
-        config.max_retries,
-    )
-    .await?;
-    let hyperliquid: Arc<dyn Hyperliquid> = Arc::new(hyperliquid_client);
-    if market_metadata::markets_need_refresh(&config.data_dir).await
-        && let Err(err) =
-            market_metadata::refresh_markets(hyperliquid.as_ref(), &config.data_dir).await
+    let hyperliquid_clients =
+        HyperliquidClients::from_config(config.hyperliquid_base_url.as_ref(), config.max_retries)
+            .await?;
+    if let Err(err) =
+        market_metadata::refresh_all_markets_if_stale(&hyperliquid_clients, &config.data_dir).await
     {
         error!(error = %err, "failed to refresh markets metadata on startup");
     }
     let services = Arc::new(IngestionServices {
-        hyperliquid: Arc::clone(&hyperliquid),
+        hyperliquid: Arc::clone(&hyperliquid_clients.mainnet),
         data_dir: config.data_dir.clone(),
         max_concurrent_requests: config.max_concurrent_requests,
     });
@@ -519,7 +594,7 @@ pub async fn rocket(
         .manage(config)
         .manage(pool)
         .manage(job_queue)
-        .manage(hyperliquid)
+        .manage(hyperliquid_clients)
         .mount(
             "/",
             routes![
@@ -578,6 +653,7 @@ mod tests {
             log_level: LogLevel::Info,
             max_concurrent_requests: 3,
             max_retries: 5,
+            markets_refresh_token: "test-markets-refresh-token".to_string(),
         };
         rocket::build().manage(config).mount(
             "/",
@@ -595,6 +671,7 @@ mod tests {
                 log_level = "info"
                 max_concurrent_requests = 3
                 max_retries = 5
+                markets_refresh_token = "test-markets-refresh-token"
             "#);
             let config: Config = toml::from_str(&toml).unwrap();
             prop_assert_eq!(config.port, port);
@@ -614,6 +691,27 @@ mod tests {
     fn config_load_returns_error_for_missing_file() {
         let result = Config::load("/nonexistent/path.toml");
         assert!(matches!(result, Err(ConfigError::Io(_))));
+    }
+
+    #[test]
+    fn markets_refresh_token_matches_expected_value() {
+        assert!(markets_refresh_token_matches(
+            "test-markets-refresh-token",
+            "test-markets-refresh-token"
+        ));
+        assert!(!markets_refresh_token_matches(
+            "wrong-markets-refresh-token",
+            "test-markets-refresh-token"
+        ));
+    }
+
+    #[test]
+    fn markets_cache_max_age_seconds_reaches_next_utc_midnight() {
+        const SECONDS_PER_DAY: u64 = 86_400;
+        let noon_utc = 12 * 60 * 60;
+        assert_eq!(markets_cache_max_age_seconds(noon_utc), 12 * 60 * 60);
+        assert_eq!(markets_cache_max_age_seconds(SECONDS_PER_DAY - 1), 1);
+        assert_eq!(markets_cache_max_age_seconds(0), SECONDS_PER_DAY);
     }
 
     #[test]

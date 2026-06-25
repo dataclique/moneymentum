@@ -7,6 +7,9 @@ database_url = "sqlite:./moneymentum.db?mode=rwc"
 
 log_level = "debug"
 
+# Shared secret for POST /hyperliquid/markets/refresh (systemd midnight job).
+markets_refresh_token = "local-markets-refresh-token"
+
 # Ingestion tuning - balance speed vs rate limiting
 max_concurrent_requests = 3
 max_retries = 5

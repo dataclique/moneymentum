@@ -1,15 +1,24 @@
 import { createMemo } from "solid-js"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/solid-query"
 import { useWallet } from "./useWallet"
-import type {
-  OrderResult,
-  CurrentPosition,
-  LeverageLimit,
-  OrderSide,
+import {
+  fetchHyperliquidMarkets,
+  MARKETS_MAX_AGE_MS,
+  type OrderResult,
+  type CurrentPosition,
+  type LeverageLimit,
+  type OrderSide,
+  type HyperliquidMarketsResponse,
 } from "@/services/hyperliquid-client"
 import type { RebalanceAction } from "@/pages/Portfolio/hooks/portfolioRebalancer"
 
-export type { OrderSide, OrderResult, CurrentPosition, LeverageLimit }
+export type {
+  OrderSide,
+  OrderResult,
+  CurrentPosition,
+  LeverageLimit,
+  HyperliquidMarketsResponse,
+}
 
 const QUERY_KEYS = {
   balance: ["hyperliquid", "balance"],
@@ -20,26 +29,18 @@ const QUERY_KEYS = {
 } as const
 
 const DATA_STALE_TIME_MS = 30_000
-const MARKETS_STALE_TIME_MS = 24 * 60 * 60 * 1000
 
-export interface HyperliquidMarketsResponse {
-  tickers: string[]
-  leverageLimits: LeverageLimit[]
-  refreshedAt: string | null
+export const marketsRemainingStaleTimeMs = (
+  markets: HyperliquidMarketsResponse | undefined,
+  maxAgeMs: number = MARKETS_MAX_AGE_MS,
+): number => {
+  if (!markets?.refreshedAt) return 0
+
+  const refreshedMs = Date.parse(markets.refreshedAt)
+  if (Number.isNaN(refreshedMs)) return 0
+
+  return Math.max(0, maxAgeMs - (Date.now() - refreshedMs))
 }
-
-const fetchHyperliquidMarkets =
-  async (): Promise<HyperliquidMarketsResponse> => {
-    const response = await fetch(
-      `${import.meta.env.BASE_URL}api/hyperliquid/markets`,
-    )
-    if (!response.ok) {
-      throw new Error(
-        `hyperliquid markets request failed: ${String(response.status)}`,
-      )
-    }
-    return response.json() as Promise<HyperliquidMarketsResponse>
-  }
 
 export const useHyperliquidClient = () => {
   const { client, credentials, networkMode, isConnected } = useWallet()
@@ -47,12 +48,14 @@ export const useHyperliquidClient = () => {
 }
 
 export const useHyperliquidMarkets = () => {
-  const { networkMode } = useWallet()
+  const { networkMode } = useHyperliquidClient()
+  const network = createMemo(() => networkMode())
 
   return useQuery(() => ({
-    queryKey: [...QUERY_KEYS.markets, networkMode()],
-    queryFn: fetchHyperliquidMarkets,
-    staleTime: MARKETS_STALE_TIME_MS,
+    queryKey: [...QUERY_KEYS.markets, network()],
+    queryFn: () => fetchHyperliquidMarkets(network()),
+    staleTime: 0,
+    gcTime: 0,
   }))
 }
 
@@ -147,10 +150,11 @@ export const useHyperliquidPositions = () => {
 
 export const useHyperliquidTickers = () => {
   const marketsQuery = useHyperliquidMarkets()
+  const tickers = createMemo(() => marketsQuery.data?.tickers)
 
   return {
     get data() {
-      return marketsQuery.data?.tickers
+      return tickers()
     },
     get isLoading() {
       return marketsQuery.isLoading
@@ -169,10 +173,11 @@ export const useHyperliquidTickers = () => {
 
 export const useHyperliquidLeverageLimits = () => {
   const marketsQuery = useHyperliquidMarkets()
+  const leverageLimits = createMemo(() => marketsQuery.data?.leverageLimits)
 
   return {
     get data() {
-      return marketsQuery.data?.leverageLimits
+      return leverageLimits()
     },
     get isLoading() {
       return marketsQuery.isLoading
@@ -218,7 +223,6 @@ export const useRebalanceHyperliquidPositions = () => {
       if (!c) throw new Error("Wallet not connected")
 
       const results = await c.rebalancePositions(params.actions)
-
       return { orders: results }
     },
     onSuccess: () => {
@@ -263,8 +267,8 @@ export const useSwitchNetwork = () => {
   return useMutation(() => ({
     mutationFn: async (network: "testnet" | "mainnet") => {
       await queryClient.cancelQueries({ queryKey: ["hyperliquid"] })
-      queryClient.removeQueries({ queryKey: ["hyperliquid"] })
       setNetworkMode(network)
+      await queryClient.invalidateQueries({ queryKey: ["hyperliquid"] })
       return network
     },
   }))

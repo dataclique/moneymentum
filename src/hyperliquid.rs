@@ -48,6 +48,8 @@ pub(crate) enum HyperliquidError {
     #[error(transparent)]
     Http(#[from] reqwest::Error),
     #[error(transparent)]
+    Url(#[from] url::ParseError),
+    #[error(transparent)]
     Polars(#[from] polars::prelude::PolarsError),
 }
 
@@ -70,6 +72,38 @@ pub(crate) trait Hyperliquid: Send + Sync {
         market: &Market,
         start: DateTime<Utc>,
     ) -> Result<Vec<FundingRate>, HyperliquidError>;
+}
+
+pub(crate) const HYPERLIQUID_TESTNET_BASE_URL: &str = "https://api.hyperliquid-testnet.xyz";
+
+/// Mainnet and testnet Hyperliquid info clients for markets refresh and ingestion.
+pub(crate) struct HyperliquidClients {
+    pub(crate) mainnet: Arc<dyn Hyperliquid>,
+    pub(crate) testnet: Arc<dyn Hyperliquid>,
+}
+
+impl HyperliquidClients {
+    pub(crate) async fn from_config(
+        mainnet_base_url: Option<&Url>,
+        max_retries: usize,
+    ) -> Result<Self, HyperliquidError> {
+        let mainnet = Arc::new(HyperliquidClient::new(mainnet_base_url, max_retries).await?)
+            as Arc<dyn Hyperliquid>;
+        let testnet_url = Url::parse(HYPERLIQUID_TESTNET_BASE_URL)?;
+        let testnet = Arc::new(HyperliquidClient::new(Some(&testnet_url), max_retries).await?)
+            as Arc<dyn Hyperliquid>;
+        Ok(Self { mainnet, testnet })
+    }
+
+    pub(crate) fn for_ledger(
+        &self,
+        ledger: crate::market_metadata::MarketsLedger,
+    ) -> &dyn Hyperliquid {
+        match ledger {
+            crate::market_metadata::MarketsLedger::Mainnet => self.mainnet.as_ref(),
+            crate::market_metadata::MarketsLedger::Testnet => self.testnet.as_ref(),
+        }
+    }
 }
 
 pub(crate) struct HyperliquidClient {
@@ -145,11 +179,18 @@ impl Hyperliquid for HyperliquidClient {
         let metadata: Vec<MarketMetadata> = raw
             .universe
             .into_iter()
-            .map(|asset| MarketMetadata {
-                symbol: Market::new(asset.name),
-                max_leverage: asset.max_leverage,
-            })
-            .collect();
+            .enumerate()
+            .map(
+                |(asset_index, asset)| -> Result<MarketMetadata, HyperliquidError> {
+                    Ok(MarketMetadata {
+                        symbol: Market::new(asset.name),
+                        max_leverage: asset.max_leverage,
+                        asset_index: u32::try_from(asset_index)
+                            .map_err(HyperliquidError::IntConversion)?,
+                    })
+                },
+            )
+            .collect::<Result<Vec<_>, _>>()?;
         debug!(count = metadata.len(), "fetched market metadata");
         Ok(metadata)
     }
@@ -465,6 +506,7 @@ mod tests {
                 market_metadata: vec![MarketMetadata {
                     symbol: Market::new("BTC".to_string()),
                     max_leverage: 50,
+                    asset_index: 0,
                 }],
                 candles: vec![Candle {
                     timestamp: Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),

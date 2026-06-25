@@ -97,7 +97,12 @@ async fn ingest_all(
     funding_ingester: &FundingRateIngester<dyn Hyperliquid>,
     data_dir: &Path,
 ) -> Result<DateTime<Utc>, HyperliquidError> {
-    let markets = crate::market_metadata::refresh_markets(client, data_dir).await?;
+    let markets = crate::market_metadata::refresh_markets(
+        client,
+        data_dir,
+        crate::market_metadata::MarketsLedger::Mainnet,
+    )
+    .await?;
 
     funding_ingester
         .ingest_with_markets(data_dir, &markets)
@@ -343,6 +348,7 @@ mod tests {
             Ok(vec![crate::market_metadata::MarketMetadata {
                 symbol: Market::new("BTC".into()),
                 max_leverage: 50,
+                asset_index: 0,
             }])
         }
 

@@ -7,6 +7,10 @@ let
 
   enabledServices = lib.filterAttrs (_: v: v.enabled) services;
 
+  moneymentumConfig =
+    builtins.fromTOML (builtins.readFile ./config/moneymentum.toml);
+  stagingConfig = builtins.fromTOML (builtins.readFile ./config/staging.toml);
+
   mkService = name: cfg:
     let
       path = "/nix/var/nix/profiles/per-service/${name}/bin/${cfg.bin}";
@@ -204,8 +208,8 @@ in {
       serviceConfig = {
         Type = "oneshot";
         DynamicUser = true;
-        ExecStart =
-          "${pkgs.curl}/bin/curl -sSf --max-time 120 -X POST http://127.0.0.1:8000/hyperliquid/markets/refresh";
+        ExecStart = ''
+          ${pkgs.curl}/bin/curl -sSf --max-time 120 -X POST -H "X-Markets-Refresh-Token: ${moneymentumConfig.markets_refresh_token}" http://127.0.0.1:8000/hyperliquid/markets/refresh'';
       };
     };
 
@@ -215,8 +219,8 @@ in {
       serviceConfig = {
         Type = "oneshot";
         DynamicUser = true;
-        ExecStart =
-          "${pkgs.curl}/bin/curl -sSf --max-time 120 -X POST http://127.0.0.1:8001/hyperliquid/markets/refresh";
+        ExecStart = ''
+          ${pkgs.curl}/bin/curl -sSf --max-time 120 -X POST -H "X-Markets-Refresh-Token: ${stagingConfig.markets_refresh_token}" http://127.0.0.1:8001/hyperliquid/markets/refresh'';
       };
     };
   };

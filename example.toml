@@ -11,6 +11,10 @@ log_level = "debug"
 max_concurrent_requests = 3
 max_retries = 5
 
+# Ingestion schedule as a 6-field cron expression
+# (sec min hour day-of-month month day-of-week). Hourly, on the hour:
+ingestion_schedule = "0 0 * * * *"
+
 # Derive (Lyra) options integration. The derive options server runs on its own
 # port and connects to the Derive REST and websocket APIs.
 [derive]

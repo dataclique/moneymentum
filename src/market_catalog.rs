@@ -33,17 +33,27 @@ impl CatalogMarket {
     pub(crate) fn symbol(&self) -> &Symbol {
         &self.symbol
     }
+
+    pub(crate) fn max_leverage(&self) -> u32 {
+        self.max_leverage
+    }
 }
 
 /// The exchange-listed universe of one venue, keyed by [`VenueRef`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct MarketCatalog {
     markets: Vec<CatalogMarket>,
+    observed_at: DateTime<Utc>,
 }
 
 impl MarketCatalog {
     pub(crate) fn markets(&self) -> &[CatalogMarket] {
         &self.markets
+    }
+
+    /// When the venue universe behind this snapshot was last observed.
+    pub(crate) fn observed_at(&self) -> DateTime<Utc> {
+        self.observed_at
     }
 }
 
@@ -90,13 +100,17 @@ impl EventSourced for MarketCatalog {
 
     const AGGREGATE_TYPE: &'static str = "MarketCatalog";
     const PROJECTION: Table = Table("market_catalog_view");
-    const SCHEMA_VERSION: u64 = 1;
+    const SCHEMA_VERSION: u64 = 2;
     const SNAPSHOT_SIZE: usize = 1;
 
     fn originate(event: &MarketCatalogEvent) -> Option<Self> {
-        let MarketCatalogEvent::VenueUniverseObserved { markets, .. } = event;
+        let MarketCatalogEvent::VenueUniverseObserved {
+            markets,
+            observed_at,
+        } = event;
         Some(Self {
             markets: markets.clone(),
+            observed_at: *observed_at,
         })
     }
 
@@ -104,9 +118,13 @@ impl EventSourced for MarketCatalog {
         _entity: &Self,
         event: &MarketCatalogEvent,
     ) -> Result<Option<Self>, MarketCatalogError> {
-        let MarketCatalogEvent::VenueUniverseObserved { markets, .. } = event;
+        let MarketCatalogEvent::VenueUniverseObserved {
+            markets,
+            observed_at,
+        } = event;
         Ok(Some(Self {
             markets: markets.clone(),
+            observed_at: *observed_at,
         }))
     }
 
@@ -197,6 +215,24 @@ mod tests {
             catalog.markets(),
             &[CatalogMarket::new(Symbol::from_raw("SOL"), 20)]
         );
+    }
+
+    #[test]
+    fn replay_exposes_the_latest_observation_time() {
+        let catalog = replay::<MarketCatalog>(vec![
+            MarketCatalogEvent::VenueUniverseObserved {
+                markets: vec![CatalogMarket::new(Symbol::from_raw("BTC"), 50)],
+                observed_at: observed_at(1),
+            },
+            MarketCatalogEvent::VenueUniverseObserved {
+                markets: vec![CatalogMarket::new(Symbol::from_raw("ETH"), 25)],
+                observed_at: observed_at(2),
+            },
+        ])
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(catalog.observed_at(), observed_at(2));
     }
 
     #[tokio::test]

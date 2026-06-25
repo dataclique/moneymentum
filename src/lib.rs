@@ -677,6 +677,24 @@ async fn get_markets(
     ))
 }
 
+/// Serves a venue's per-market max-leverage limits from the cached catalog so
+/// clients size leverage controls without each running a heavy all-market fetch.
+#[get("/markets/<venue>/leverage")]
+async fn get_markets_leverage(
+    catalog_projection: &State<Arc<Projection<MarketCatalog>>>,
+    venue: &str,
+) -> Result<Json<market_metadata::LeverageLimits>, Status> {
+    let venue = VenueRef::from_str(venue).map_err(|_| Status::NotFound)?;
+    match market_metadata::leverage_limits(venue, catalog_projection).await {
+        Ok(Some(limits)) => Ok(Json(limits)),
+        Ok(None) => Err(Status::NotFound),
+        Err(err) => {
+            error!(error = %err, "failed to read leverage limits");
+            Err(Status::InternalServerError)
+        }
+    }
+}
+
 fn parse_market_id(venue: &str, symbol: &str) -> Result<MarketId, Custom<Json<ApiErrorResponse>>> {
     let venue = VenueRef::from_str(venue).map_err(|_| bad_request("unknown venue"))?;
     Ok(MarketId::new(venue, Symbol::from_raw(symbol)))
@@ -905,6 +923,7 @@ pub async fn rocket(
                 post_market_disable,
                 post_market_enable,
                 get_markets,
+                get_markets_leverage,
                 post_beta,
                 post_portfolio_readonly_btc,
                 post_portfolio_exposure
@@ -1027,7 +1046,12 @@ mod tests {
             .manage(enablement_projection)
             .mount(
                 "/",
-                routes![post_market_disable, post_market_enable, get_markets],
+                routes![
+                    post_market_disable,
+                    post_market_enable,
+                    get_markets,
+                    get_markets_leverage
+                ],
             );
 
         rocket::local::asynchronous::Client::tracked(rocket)
@@ -1096,6 +1120,76 @@ mod tests {
         assert_eq!(bad_disable.status(), Status::BadRequest);
         let bad_list = client.get("/markets/bogus").dispatch().await;
         assert_eq!(bad_list.status(), Status::NotFound);
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn markets_leverage_serves_catalog_limits_and_rejects_unknown_venue() {
+        let data_dir = TempDir::new().unwrap();
+        let database_url = format!(
+            "sqlite://{}?mode=rwc",
+            data_dir.path().join("leverage-test.db").display()
+        );
+        let pool = SqlitePool::connect(&database_url).await.unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        let (catalog_store, catalog_projection) = StoreBuilder::<MarketCatalog>::new(pool)
+            .build()
+            .await
+            .unwrap();
+
+        catalog_store
+            .send(
+                &crate::venue::VenueRef::Hyperliquid,
+                crate::market_catalog::MarketCatalogCommand::RecordUniverse {
+                    markets: vec![
+                        crate::market_catalog::CatalogMarket::new(
+                            crate::finance::Symbol::from_raw("BTC"),
+                            50,
+                        ),
+                        crate::market_catalog::CatalogMarket::new(
+                            crate::finance::Symbol::from_raw("ETH"),
+                            25,
+                        ),
+                    ],
+                    observed_at: chrono::Utc::now(),
+                },
+            )
+            .await
+            .unwrap();
+
+        let rocket = rocket::build()
+            .manage(catalog_projection)
+            .mount("/", routes![get_markets_leverage]);
+        let client = rocket::local::asynchronous::Client::tracked(rocket)
+            .await
+            .unwrap();
+
+        let response = client.get("/markets/hyperliquid/leverage").dispatch().await;
+        assert_eq!(response.status(), Status::Ok);
+        let body: serde_json::Value =
+            serde_json::from_str(&response.into_string().await.unwrap()).unwrap();
+        assert!(body["fetchedAt"].is_string());
+        let by_symbol: std::collections::BTreeMap<String, u64> = body["limits"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|limit| {
+                (
+                    limit["symbol"].as_str().unwrap().to_string(),
+                    limit["maxLeverage"].as_u64().unwrap(),
+                )
+            })
+            .collect();
+        assert_eq!(by_symbol.get("BTC"), Some(&50));
+        assert_eq!(by_symbol.get("ETH"), Some(&25));
+        assert!(logs_contain_at(
+            tracing::Level::DEBUG,
+            &["leverage limits read", "markets=2"]
+        ));
+
+        // An unknown venue is a client error, never a 500.
+        let unknown = client.get("/markets/bogus/leverage").dispatch().await;
+        assert_eq!(unknown.status(), Status::NotFound);
     }
 
     #[traced_test]

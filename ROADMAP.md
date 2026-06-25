@@ -10,7 +10,7 @@ Stories link to their per-feature acceptance criteria in
 [stories/](./stories/README.md). Engineering work (refactors, migrations,
 internal foundations) lives in the same folder under a "Dev" sub-heading when a
 written contract is warranted, otherwise as a standalone GitHub issue -- see
-[contributions.md](./contributions.md) for the split.
+[CONTRIBUTING.md](./CONTRIBUTING.md) for the split.
 
 Numeric story IDs (`001`, `018`, etc.) reflect creation order, not
 implementation priority. Priority is defined by this roadmap's theme order and

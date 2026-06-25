@@ -17,7 +17,7 @@ AI coding agents working in this repo are expected to:
 - Read [ROADMAP.md](./ROADMAP.md) and the relevant story under
   [stories/](./stories/README.md) before changing code. The story's acceptance
   criteria are the contract.
-- Follow [contributions.md](./contributions.md): types-first, failing test,
+- Follow [CONTRIBUTING.md](./CONTRIBUTING.md): types-first, failing test,
   implementation, review.
 - Honor the rules in this document for code style, testing, and quality gates.
 - Edit code, tests, and configs in this repo. Humans own deploys, secrets, and
@@ -167,7 +167,7 @@ Concrete audit checklist:
 - [stories/](./stories/README.md): is the story status frontmatter current, is
   the index entry present, are acceptance criteria reworded to match the shipped
   behavior?
-- [contributions.md](./contributions.md) and `AGENTS.md`: did a rule change in
+- [CONTRIBUTING.md](./CONTRIBUTING.md) and `AGENTS.md`: did a rule change in
   practice? If so, the rule changes here first.
 - Per-file CLAUDE.md / AGENTS.md (e.g. `frontend/CLAUDE.md`): same audit at the
   subtree level.

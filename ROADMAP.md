@@ -85,6 +85,9 @@ of them.
 - [x] Tradable filter wired into ingestion --
       [#277](https://github.com/dataclique/moneymentum/issues/277) /
       [#278](https://github.com/dataclique/moneymentum/pull/278)
+- [x] Decouple the factors endpoint test from fixture-specific values --
+      [#354](https://github.com/dataclique/moneymentum/issues/354) /
+      [#381](https://github.com/dataclique/moneymentum/pull/381)
 
 ---
 

@@ -72,6 +72,7 @@ async fn create_test_client(mock_server: &MockServer, data_dir: &TempDir) -> Cli
         log_level = "debug"
         max_concurrent_requests = 3
         max_retries = 2
+        ingestion_schedule = "0 0 * * * *"
         "#,
         data_dir.path().display(),
         database_path.display(),

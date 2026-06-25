@@ -32,7 +32,7 @@ pub(crate) struct MarketMetadata {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct LeverageLimit {
-    pub(crate) symbol: String,
+    pub(crate) symbol: Symbol,
     pub(crate) max_leverage: u32,
 }
 
@@ -144,7 +144,7 @@ pub(crate) async fn leverage_limits(
         .markets()
         .iter()
         .map(|market| LeverageLimit {
-            symbol: market.symbol().as_str().to_string(),
+            symbol: market.symbol().clone(),
             max_leverage: market.max_leverage(),
         })
         .collect();

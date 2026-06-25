@@ -7,16 +7,17 @@
 //! [`Symbol`] normalizes these representations for consistent storage and lookup.
 //! [`Market`] preserves the exchange's native identifier for API calls.
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 /// Normalized trading symbol (e.g., "BTC", "ETH").
 ///
 /// Normalizes input like "BTC/USDC:USDC" to just "BTC".
 ///
-/// Serialization is transparent (the inner ticker string). Persisted symbols
-/// are always written through [`Symbol::from_raw`], so a deserialized value is
-/// already normalized -- replay trusts the stored representation.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+/// Serialization is transparent (the inner ticker string). Deserialization
+/// normalizes through [`Symbol::from_raw`], so a `Symbol` decoded at any boundary
+/// -- a wire request or a persisted event -- is canonical. `from_raw` is
+/// idempotent, so re-normalizing an already-stored symbol is a no-op.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
 pub(crate) struct Symbol(String);
 
 impl Symbol {
@@ -27,6 +28,16 @@ impl Symbol {
 
     pub(crate) fn as_str(&self) -> &str {
         &self.0
+    }
+}
+
+impl<'de> Deserialize<'de> for Symbol {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let raw = String::deserialize(deserializer)?;
+        Ok(Self::from_raw(&raw))
     }
 }
 
@@ -172,5 +183,17 @@ mod tests {
             hyperliquid_swap_ccxt_symbol_with_collateral("HYNA-BTC", "USDE").as_str(),
             "HYNA-BTC/USDE:USDE"
         );
+    }
+
+    #[test]
+    fn deserialize_normalizes_to_canonical_symbol() {
+        let from_ccxt: Symbol = serde_json::from_str(r#""btc/USDC:USDC""#).unwrap();
+        assert_eq!(from_ccxt.as_str(), "BTC");
+
+        let from_lowercase: Symbol = serde_json::from_str(r#""eth""#).unwrap();
+        assert_eq!(from_lowercase.as_str(), "ETH");
+
+        let already_canonical: Symbol = serde_json::from_str(r#""BTC""#).unwrap();
+        assert_eq!(already_canonical.as_str(), "BTC");
     }
 }

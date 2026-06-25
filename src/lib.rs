@@ -230,15 +230,15 @@ async fn get_ingestion_status(
 
 #[derive(Debug, Deserialize)]
 struct BetaRequest {
-    weights: std::collections::HashMap<String, f64>,
-    benchmark: String,
+    weights: std::collections::HashMap<Symbol, f64>,
+    benchmark: Symbol,
 }
 
 #[derive(Debug, serde::Serialize)]
 struct BetaResponse {
     beta: Option<f64>,
-    excluded_symbols: Vec<String>,
-    effective_weights: std::collections::BTreeMap<String, f64>,
+    excluded_symbols: Vec<Symbol>,
+    effective_weights: std::collections::BTreeMap<Symbol, f64>,
     data_age_hours: i64,
 }
 
@@ -355,7 +355,7 @@ async fn post_beta(
     config: &State<Config>,
     body: Json<BetaRequest>,
 ) -> Result<Json<BetaResponse>, Status> {
-    if body.benchmark.trim().is_empty() {
+    if body.benchmark.as_str().trim().is_empty() {
         return Err(Status::BadRequest);
     }
     if body.weights.is_empty() {
@@ -365,7 +365,7 @@ async fn post_beta(
         return Err(Status::BadRequest);
     }
 
-    let weights: Vec<(String, f64)> = {
+    let weights: Vec<(Symbol, f64)> = {
         let mut sorted_weights: Vec<_> = body
             .weights
             .iter()

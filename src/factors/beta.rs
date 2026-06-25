@@ -14,22 +14,30 @@ use tracing::{info, instrument};
 
 use super::ReturnsError;
 use super::returns::{LOG_RETURNS_LOOKBACK_CANDLES, compute_log_returns};
+use crate::finance::Symbol;
 use crate::timeframe::Timeframe;
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct PortfolioBetaReport {
     pub(crate) beta: Option<f64>,
-    pub(crate) excluded_tickers: Vec<String>,
-    pub(crate) effective_weights: BTreeMap<String, f64>,
+    pub(crate) excluded_tickers: Vec<Symbol>,
+    pub(crate) effective_weights: BTreeMap<Symbol, f64>,
     pub(crate) data_age_hours: i64,
 }
 
 #[instrument(skip_all, fields(data_dir = %data_dir.display()))]
 pub(crate) async fn compute_portfolio_beta_report(
     data_dir: &Path,
-    weights: &[(String, f64)],
-    benchmark_ticker: &str,
+    weights: &[(Symbol, f64)],
+    benchmark_ticker: &Symbol,
 ) -> Result<PortfolioBetaReport, ReturnsError> {
+    // Symbol is the domain boundary; the Polars machinery below keys on the raw
+    // ticker string, so convert to strings once here at the edge.
+    let weights: Vec<(String, f64)> = weights
+        .iter()
+        .map(|(symbol, weight)| (symbol.as_str().to_owned(), *weight))
+        .collect();
+    let benchmark_ticker = benchmark_ticker.as_str();
     let path = daily_candles_path(data_dir);
     let df = crate::dataframe::read_csv(path.clone()).await?;
 
@@ -38,15 +46,19 @@ pub(crate) async fn compute_portfolio_beta_report(
     };
 
     let data_age_hours = data_age_hours_at(&df, Utc::now())?;
-    let weights_clone = weights.to_vec();
+    let weights_clone = weights.clone();
     let benchmark_ticker_clone = benchmark_ticker.to_string();
     let lookback = LOG_RETURNS_LOOKBACK_CANDLES;
     let log_returns_df = tokio::task::spawn_blocking(move || {
         load_log_returns_last_n_candles(&df, &weights_clone, &benchmark_ticker_clone, lookback)
     })
     .await??;
-
-    compute_beta_report_from_log_returns(&log_returns_df, weights, benchmark_ticker, data_age_hours)
+    compute_beta_report_from_log_returns(
+        &log_returns_df,
+        &weights,
+        benchmark_ticker,
+        data_age_hours,
+    )
 }
 
 /// Portfolio beta from precomputed log returns `DataFrame` (e.g. from `load_log_returns_last_n_candles`).
@@ -283,7 +295,7 @@ fn compute_beta_report_from_log_returns(
                 beta: None,
                 excluded_tickers: excluded_tickers
                     .into_iter()
-                    .map(|(ticker, _weight)| ticker)
+                    .map(|(ticker, _weight)| Symbol::from_raw(&ticker))
                     .collect(),
                 effective_weights: BTreeMap::new(),
                 data_age_hours,
@@ -303,9 +315,12 @@ fn compute_beta_report_from_log_returns(
         beta,
         excluded_tickers: excluded_tickers
             .into_iter()
-            .map(|(ticker, _weight)| ticker)
+            .map(|(ticker, _weight)| Symbol::from_raw(&ticker))
             .collect(),
-        effective_weights,
+        effective_weights: effective_weights
+            .into_iter()
+            .map(|(ticker, weight)| (Symbol::from_raw(&ticker), weight))
+            .collect(),
         data_age_hours,
     })
 }
@@ -469,7 +484,7 @@ mod tests {
     #[tokio::test]
     async fn compute_portfolio_beta_errors_when_daily_candles_file_missing() {
         let dir = TempDir::new().unwrap();
-        let result = compute_portfolio_beta_report(dir.path(), &[], "BTC").await;
+        let result = compute_portfolio_beta_report(dir.path(), &[], &Symbol::from_raw("BTC")).await;
         assert!(matches!(result, Err(ReturnsError::NoData { .. })));
     }
 
@@ -623,8 +638,11 @@ mod tests {
         let report = compute_beta_report_from_log_returns(&log_returns_df, &weights, "BTC", 12)
             .expect("beta report");
 
-        assert_eq!(report.excluded_tickers, vec!["DOGE"]);
-        assert_eq!(report.effective_weights.get("ETH"), Some(&1.0));
+        assert_eq!(report.excluded_tickers, vec![Symbol::from_raw("DOGE")]);
+        assert_eq!(
+            report.effective_weights.get(&Symbol::from_raw("ETH")),
+            Some(&1.0)
+        );
         assert_eq!(report.data_age_hours, 12);
         assert!((report.beta.expect("beta") - 1.0).abs() < 1e-10);
         assert!(logs_contain_at(
@@ -651,7 +669,7 @@ mod tests {
             .expect("beta report");
 
         assert_eq!(report.beta, None);
-        assert_eq!(report.excluded_tickers, vec!["DOGE"]);
+        assert_eq!(report.excluded_tickers, vec![Symbol::from_raw("DOGE")]);
         assert!(report.effective_weights.is_empty());
         assert_eq!(report.data_age_hours, 2);
 
@@ -686,8 +704,11 @@ mod tests {
         let report = compute_beta_report_from_log_returns(&log_returns_df, &weights, "BTC", 12)
             .expect("beta report");
 
-        assert_eq!(report.excluded_tickers, vec!["DOGE"]);
-        assert_eq!(report.effective_weights.get("ETH"), Some(&1.0));
+        assert_eq!(report.excluded_tickers, vec![Symbol::from_raw("DOGE")]);
+        assert_eq!(
+            report.effective_weights.get(&Symbol::from_raw("ETH")),
+            Some(&1.0)
+        );
         assert_eq!(report.data_age_hours, 12);
         assert!((report.beta.expect("beta") - 1.0).abs() < 1e-10);
         assert!(logs_contain_at(
@@ -705,12 +726,16 @@ mod tests {
         fs::copy(src, &dst).unwrap();
 
         // 60% long BTC, 40% short ETH, benchmark BTC
-        let weights = [("BTC".to_string(), 0.6_f64), ("ETH".to_string(), -0.4_f64)];
+        let weights = [
+            (Symbol::from_raw("BTC"), 0.6_f64),
+            (Symbol::from_raw("ETH"), -0.4_f64),
+        ];
 
-        let report = compute_portfolio_beta_report(tmp_dir.path(), &weights, "BTC")
-            .await
-            .unwrap()
-            .beta;
+        let report =
+            compute_portfolio_beta_report(tmp_dir.path(), &weights, &Symbol::from_raw("BTC"))
+                .await
+                .unwrap()
+                .beta;
         let beta = report.expect("beta defined");
 
         assert!(

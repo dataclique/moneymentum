@@ -12,7 +12,7 @@ use thiserror::Error;
 use tracing::{debug, instrument};
 
 use crate::dataframe::{self, DataFrameError};
-use crate::finance::Symbol;
+use crate::finance::{Market, Symbol};
 use crate::timeframe::Timeframe;
 
 #[derive(Debug, Error)]
@@ -34,7 +34,7 @@ pub(crate) struct Candle {
     pub(crate) close: f64,
     pub(crate) volume: f64,
     /// Full market identifier in CCXT format (e.g., "BTC/USDC:USDC")
-    pub(crate) symbol: String,
+    pub(crate) symbol: Market,
     /// Normalized base symbol (e.g., "BTC")
     pub(crate) ticker: Symbol,
 }
@@ -116,7 +116,7 @@ mod tests {
                 low: 95.0,
                 close: 105.0,
                 volume: 1000.0,
-                symbol: "BTC/USDC:USDC".to_string(),
+                symbol: Market::new("BTC/USDC:USDC".to_string()),
                 ticker: Symbol::from_raw("BTC"),
             },
             Candle {
@@ -126,7 +126,7 @@ mod tests {
                 low: 100.0,
                 close: 110.0,
                 volume: 1500.0,
-                symbol: "BTC/USDC:USDC".to_string(),
+                symbol: Market::new("BTC/USDC:USDC".to_string()),
                 ticker: Symbol::from_raw("BTC"),
             },
         ]
@@ -147,7 +147,7 @@ mod tests {
                             low: 90.0,
                             close: 105.0,
                             volume: 1000.0,
-                            symbol: "BTC/USDC:USDC".to_string(),
+                            symbol: Market::new("BTC/USDC:USDC".to_string()),
                             ticker: Symbol::from_raw("BTC"),
                         }
                     })

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { renderHook } from "@solidjs/testing-library"
+import { renderHook, waitFor } from "@solidjs/testing-library"
 import { QueryClient, QueryClientProvider } from "@tanstack/solid-query"
 import type { ParentProps } from "solid-js"
 
@@ -46,11 +46,11 @@ describe("useReadonlyPortfolioState", () => {
     fetchMock.mockResolvedValue({
       ok: true,
       json: async () => ({
-        ubtc_price_usd: 0,
+        ubtc_price_usd: "0",
         positions: [],
-        gross_long_usd: 0,
-        gross_short_usd: 0,
-        net_usd: 0,
+        gross_long_usd: "0",
+        gross_short_usd: "0",
+        net_usd: "0",
       }),
     })
     vi.stubGlobal("fetch", fetchMock)
@@ -105,6 +105,43 @@ describe("useReadonlyPortfolioState", () => {
         includeInBeta: true,
       },
     ])
+  })
+
+  it("parses decimal-string notional and quantity from the exposure response into numbers", async () => {
+    localStorage.setItem(
+      storageKey("testnet"),
+      JSON.stringify([{ address: testnetAddress, includeInBeta: true }]),
+    )
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        ubtc_price_usd: "27123.45",
+        positions: [
+          {
+            source: "btc_address",
+            source_id: testnetAddress,
+            symbol: "BTC",
+            side: "buy",
+            notional_usd: "2712.345",
+            quantity_btc: "0.10000000",
+            is_tradable: false,
+            include_in_beta: true,
+          },
+        ],
+        gross_long_usd: "2712.345",
+        gross_short_usd: "0",
+        net_usd: "2712.345",
+      }),
+    })
+
+    const { result } = renderHook(() => useReadonlyPortfolioState(), {
+      wrapper: createWrapper(),
+    })
+
+    await waitFor(() => {
+      expect(result.rows[0]?.notionalUsd).toBe(2712.345)
+    })
+    expect(result.rows[0]?.quantityBtc).toBe(0.1)
   })
 
   it("canonicalizes and deduplicates bech32 address casing when restoring entries", () => {

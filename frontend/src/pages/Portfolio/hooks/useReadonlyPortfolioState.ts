@@ -29,21 +29,23 @@ interface ReadonlyBtcEntry {
   includeInBeta: boolean
 }
 
+// The backend serializes monetary values as exact decimal strings (rust_decimal),
+// not JSON numbers, to avoid floating-point drift when aggregating server-side.
 interface ExposureResponse {
-  ubtc_price_usd: number
+  ubtc_price_usd: string
   positions: Array<{
     source: "hyperliquid" | "btc_address"
     source_id: string | null
     symbol: string
     side: OrderSide
-    notional_usd: number
-    quantity_btc: number | null
+    notional_usd: string
+    quantity_btc: string | null
     is_tradable: boolean
     include_in_beta: boolean
   }>
-  gross_long_usd: number
-  gross_short_usd: number
-  net_usd: number
+  gross_long_usd: string
+  gross_short_usd: string
+  net_usd: string
 }
 
 interface ApiErrorResponse {
@@ -283,8 +285,8 @@ export const useReadonlyPortfolioState = () => {
       return {
         address: entry.address,
         includeInBeta: entry.includeInBeta,
-        quantityBtc: position?.quantity_btc ?? 0,
-        notionalUsd: position?.notional_usd ?? 0,
+        quantityBtc: Number(position?.quantity_btc ?? 0),
+        notionalUsd: Number(position?.notional_usd ?? 0),
       }
     })
   })

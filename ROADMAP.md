@@ -178,6 +178,12 @@ dependent product experience is finished.
       [#303](https://github.com/dataclique/moneymentum/issues/303), and
       [#397](https://github.com/dataclique/moneymentum/issues/397).
 
+#### Development tooling
+
+- [x] Consume shared GitButler packaging instead of maintaining a local copy --
+      [#387](https://github.com/dataclique/moneymentum/issues/387) /
+      [PR #388](https://github.com/dataclique/moneymentum/pull/388).
+
 #### Planning foundation
 
 - [x] Align performance, portfolio-construction, and shared-host priorities --

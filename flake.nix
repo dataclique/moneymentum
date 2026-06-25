@@ -38,6 +38,9 @@
     # generated from). Pinned to the feat/idl-flake-output head until
     # dataclique/fund#22 merges, then this can track the default branch.
     fund.url = "github:dataclique/fund/d6e791b4e527da86f8a7da62039aafa2ca98d2f3";
+
+    but.url = "github:dataclique/but.nix";
+    but.inputs.nixpkgs.follows = "nixpkgs";
   };
 
   outputs =
@@ -55,6 +58,7 @@
       deploy-rs,
       bun2nix,
       fund,
+      but,
       ...
     }@inputs:
     {
@@ -76,22 +80,14 @@
         pkgs = import nixpkgs {
           inherit system;
           overlays = [ rust-overlay.overlays.default ];
-          config.allowUnfreePredicate =
-            pkg:
-            builtins.elem (pkgs.lib.getName pkg) [
-              "terraform"
-              "gitbutler-cli"
-            ];
+          config.allowUnfreePredicate = pkg: builtins.elem (pkgs.lib.getName pkg) [ "terraform" ];
         };
 
         rustToolchain = pkgs.rust-bin.stable.latest.default;
         craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
         rustPkgs = pkgs.callPackage ./rust.nix { inherit craneLib; };
 
-        gitbutler-cli = import ./pkgs/gitbutler {
-          inherit pkgs;
-          inherit (pkgs) lib;
-        };
+        gitbutler-cli = but.packages.${system}.gitbutler-cli;
 
         frontendPkgs = pkgs.callPackage ./frontend {
           bun2nix = bun2nix.packages.${system}.default;
@@ -286,6 +282,7 @@
 
         packages = {
           inherit gitbutler-cli;
+          inherit (but.packages.${system}) pr-stack-footer;
           inherit (infraPkgs)
             tfInit
             tfPlan

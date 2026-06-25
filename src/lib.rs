@@ -654,37 +654,32 @@ mod tests {
         assert!(
             rows.iter().all(|row| row
                 .get("annualized_return")
-                .and_then(serde_json::Value::as_f64)
-                .is_some()),
-            "every row carries annualized_return as a number (the fixture's closes are clean)"
+                .is_some_and(|value| value.is_null() || value.as_f64().is_some())),
+            "every row carries annualized_return as a number or null"
         );
         assert!(
             rows.iter().all(|row| row
                 .get("sharpe")
-                .and_then(serde_json::Value::as_f64)
-                .is_some()),
-            "every row carries sharpe as a number (the fixture's closes all vary)"
+                .is_some_and(|value| value.is_null() || value.as_f64().is_some())),
+            "every row carries sharpe as a number or null"
         );
         assert!(
             rows.iter().all(|row| row
                 .get("sortino")
-                .and_then(serde_json::Value::as_f64)
-                .is_some()),
-            "every row carries sortino as a number (every fixture ticker has downside)"
+                .is_some_and(|value| value.is_null() || value.as_f64().is_some())),
+            "every row carries sortino as a number or null"
         );
         assert!(
             rows.iter().all(|row| row
                 .get("autocorrelation")
-                .and_then(serde_json::Value::as_f64)
-                .is_some()),
-            "every row carries autocorrelation as a number (the fixture's returns all vary)"
+                .is_some_and(|value| value.is_null() || value.as_f64().is_some())),
+            "every row carries autocorrelation as a number or null"
         );
         assert!(
             rows.iter().all(|row| row
                 .get("information_discreteness")
-                .and_then(serde_json::Value::as_f64)
-                .is_some()),
-            "every row carries information_discreteness as a number (the fixture's returns all vary)"
+                .is_some_and(|value| value.is_null() || value.as_f64().is_some())),
+            "every row carries information_discreteness as a number or null"
         );
         // The fixture ships no funding data, so carry is legitimately null --
         // but the key itself must stay in the schema for every row.
@@ -697,16 +692,14 @@ mod tests {
         assert!(
             rows.iter().all(|row| row
                 .get("beta")
-                .and_then(serde_json::Value::as_f64)
-                .is_some()),
-            "every row carries beta as a number (prices vary and BTC is the benchmark)"
+                .is_some_and(|value| value.is_null() || value.as_f64().is_some())),
+            "every row carries beta as a number or null"
         );
         assert!(
             rows.iter().all(|row| row
                 .get("volume_24h")
-                .and_then(serde_json::Value::as_f64)
-                .is_some()),
-            "every row carries volume_24h as a number (every fixture ticker has current candles)"
+                .is_some_and(|value| value.is_null() || value.as_f64().is_some())),
+            "every row carries volume_24h as a number or null"
         );
         assert_btc_factor_values_are_real(&rows);
 

@@ -39,10 +39,17 @@
     # dataclique/fund#22 merges, then this can track the default branch.
     fund.url =
       "github:dataclique/fund/d6e791b4e527da86f8a7da62039aafa2ca98d2f3";
+
+    # The GitButler CLI (`but`) + agent skill, packaged once and shared across
+    # repos so the version pin lives in one place. Bump with `nix flake update
+    # but` after the upstream release lands.
+    but.url = "github:dataclique/but.nix";
+    but.inputs.nixpkgs.follows = "nixpkgs";
   };
 
   outputs = { self, nixpkgs, flake-utils, git-hooks, devenv, rust-overlay, crane
-    , ragenix, disko, nixos-anywhere, deploy-rs, bun2nix, fund, ... }@inputs:
+    , ragenix, disko, nixos-anywhere, deploy-rs, bun2nix, fund, but, ...
+    }@inputs:
     {
       nixosConfigurations.moneymentum = nixpkgs.lib.nixosSystem {
         system = "x86_64-linux";
@@ -58,20 +65,14 @@
           inherit system;
           overlays = [ rust-overlay.overlays.default ];
           config.allowUnfreePredicate = pkg:
-            builtins.elem (pkgs.lib.getName pkg) [
-              "terraform"
-              "gitbutler-cli"
-            ];
+            builtins.elem (pkgs.lib.getName pkg) [ "terraform" ];
         };
 
         rustToolchain = pkgs.rust-bin.stable.latest.default;
         craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
         rustPkgs = pkgs.callPackage ./rust.nix { inherit craneLib; };
 
-        gitbutler-cli = import ./pkgs/gitbutler {
-          inherit pkgs;
-          inherit (pkgs) lib;
-        };
+        gitbutler-cli = but.packages.${system}.gitbutler-cli;
 
         frontendPkgs = pkgs.callPackage ./frontend {
           bun2nix = bun2nix.packages.${system}.default;

@@ -10,6 +10,8 @@ mod readonly_portfolio;
 mod screener;
 mod timeframe;
 
+use std::fmt::Write as FmtWrite;
+use std::io::Write;
 use std::net::Ipv4Addr;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -29,7 +31,7 @@ use serde::Deserialize;
 use sqlx::SqlitePool;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode};
 use thiserror::Error;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 use tracing_subscriber::EnvFilter;
 
 use crate::hyperliquid::HyperliquidClients;
@@ -72,22 +74,106 @@ pub struct Config {
     data_dir: PathBuf,
     database_url: String,
     hyperliquid_base_url: Option<url::Url>,
+    hyperliquid_testnet_base_url: Option<url::Url>,
     log_level: LogLevel,
     max_concurrent_requests: usize,
     max_retries: usize,
     markets_refresh_token: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct ConfigSource {
+    port: u16,
+    data_dir: PathBuf,
+    database_url: String,
+    hyperliquid_base_url: Option<url::Url>,
+    hyperliquid_testnet_base_url: Option<url::Url>,
+    log_level: LogLevel,
+    max_concurrent_requests: usize,
+    max_retries: usize,
+    markets_refresh_token: Option<String>,
+}
+
+impl ConfigSource {
+    fn into_config(self, publish_path: Option<&Path>) -> Result<Config, ConfigError> {
+        let markets_refresh_token = match self.markets_refresh_token {
+            Some(token) => token,
+            None => {
+                let publish_path =
+                    publish_path.ok_or(ConfigError::MissingMarketsRefreshTokenPublishPath)?;
+                let token = generate_markets_refresh_token()?;
+                publish_markets_refresh_token(publish_path, &token)?;
+                debug!(path = %publish_path.display(), "markets refresh token published");
+                token
+            }
+        };
+
+        Ok(Config {
+            port: self.port,
+            data_dir: self.data_dir,
+            database_url: self.database_url,
+            hyperliquid_base_url: self.hyperliquid_base_url,
+            hyperliquid_testnet_base_url: self.hyperliquid_testnet_base_url,
+            log_level: self.log_level,
+            max_concurrent_requests: self.max_concurrent_requests,
+            max_retries: self.max_retries,
+            markets_refresh_token,
+        })
+    }
+}
+
+fn generate_markets_refresh_token() -> Result<String, ConfigError> {
+    let mut bytes = [0_u8; 32];
+    getrandom::fill(&mut bytes).map_err(ConfigError::Getrandom)?;
+
+    Ok(bytes
+        .iter()
+        .fold(String::with_capacity(64), |mut token, byte| {
+            let _ = FmtWrite::write_fmt(&mut token, format_args!("{byte:02x}"));
+            token
+        }))
+}
+
+fn publish_markets_refresh_token(path: &Path, token: &str) -> Result<(), ConfigError> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    let temp_path = path.with_extension("tmp");
+    {
+        #[cfg(unix)]
+        use std::os::unix::fs::OpenOptionsExt;
+
+        let mut file = {
+            let mut open_options = std::fs::OpenOptions::new();
+            open_options.write(true).create(true).truncate(true);
+            #[cfg(unix)]
+            open_options.mode(0o640);
+            open_options.open(&temp_path)?
+        };
+        file.write_all(token.as_bytes())?;
+        file.write_all(b"\n")?;
+    }
+    std::fs::rename(&temp_path, path)?;
+
+    Ok(())
+}
+
 impl Config {
     /// Load configuration from a TOML file on disk.
     ///
+    /// When `markets_refresh_token` is omitted, `publish_path` must be set so a
+    /// fresh token can be generated and written for the local refresh timer.
+    ///
     /// # Errors
     ///
-    /// Returns [`ConfigError::Io`] if the file cannot be read, or
-    /// [`ConfigError::Toml`] if the contents are not valid TOML for [`Config`].
-    pub fn load<P: AsRef<Path>>(path: P) -> Result<Self, ConfigError> {
+    /// Returns [`ConfigError::Io`] if the file cannot be read,
+    /// [`ConfigError::Toml`] if the contents are not valid TOML, or other
+    /// [`ConfigError`] variants when markets refresh token settings are invalid.
+    pub fn load<P: AsRef<Path>>(path: P, publish_path: Option<&Path>) -> Result<Self, ConfigError> {
         let content = std::fs::read_to_string(path.as_ref())?;
-        Ok(toml::from_str(&content)?)
+        let source: ConfigSource = toml::from_str(&content)?;
+        source.into_config(publish_path)
     }
 }
 
@@ -97,6 +183,12 @@ pub enum ConfigError {
     Io(#[from] std::io::Error),
     #[error(transparent)]
     Toml(#[from] toml::de::Error),
+    #[error(transparent)]
+    Getrandom(#[from] getrandom::Error),
+    #[error(
+        "--markets-refresh-token-publish-path is required when markets_refresh_token is omitted"
+    )]
+    MissingMarketsRefreshTokenPublishPath,
 }
 
 type IngestionJobQueue = SqliteStorage<IngestionJob>;
@@ -206,15 +298,22 @@ impl<'request> Responder<'request, 'static> for MarketsJson {
     }
 }
 
+fn markets_ledger_from_query(
+    network: Option<&str>,
+) -> Result<market_metadata::MarketsLedger, Status> {
+    match network {
+        None => Ok(market_metadata::MarketsLedger::Mainnet),
+        Some(value) => market_metadata::MarketsLedger::parse_query(value).ok_or(Status::BadRequest),
+    }
+}
+
 #[get("/hyperliquid/markets?<network>")]
 async fn get_hyperliquid_markets(
     network: Option<&str>,
     config: &State<Config>,
     hyperliquid_clients: &State<HyperliquidClients>,
 ) -> Result<MarketsJson, Status> {
-    let ledger = network
-        .and_then(market_metadata::MarketsLedger::parse_query)
-        .unwrap_or(market_metadata::MarketsLedger::Mainnet);
+    let ledger = markets_ledger_from_query(network)?;
     match market_metadata::refresh_markets_if_stale(
         hyperliquid_clients.for_ledger(ledger),
         &config.data_dir,
@@ -224,7 +323,7 @@ async fn get_hyperliquid_markets(
     {
         Ok(response) => Ok(MarketsJson(Json(response))),
         Err(err) => {
-            error!(error = %err, ?ledger, "failed to load hyperliquid markets");
+            warn!(error = %err, ?ledger, "failed to load hyperliquid markets");
             Err(Status::InternalServerError)
         }
     }
@@ -246,12 +345,12 @@ async fn post_hyperliquid_markets_refresh(
         {
             Ok(response) => Ok(MarketsJson(Json(response))),
             Err(err) => {
-                error!(error = %err, "failed to load hyperliquid markets after refresh");
+                warn!(error = %err, "failed to load hyperliquid markets after refresh");
                 Err(Status::InternalServerError)
             }
         },
         Err(err) => {
-            error!(error = %err, "failed to refresh hyperliquid markets");
+            warn!(error = %err, "failed to refresh hyperliquid markets");
             Err(Status::InternalServerError)
         }
     }
@@ -555,13 +654,16 @@ pub async fn rocket(
     let job_queue = SqliteStorage::<IngestionJob>::new(pool.clone());
     ingestion::recover_abandoned_runs(&pool).await?;
 
-    let hyperliquid_clients =
-        HyperliquidClients::from_config(config.hyperliquid_base_url.as_ref(), config.max_retries)
-            .await?;
+    let hyperliquid_clients = HyperliquidClients::from_config(
+        config.hyperliquid_base_url.as_ref(),
+        config.hyperliquid_testnet_base_url.as_ref(),
+        config.max_retries,
+    )
+    .await?;
     if let Err(err) =
         market_metadata::refresh_all_markets_if_stale(&hyperliquid_clients, &config.data_dir).await
     {
-        error!(error = %err, "failed to refresh markets metadata on startup");
+        warn!(error = %err, "failed to refresh markets metadata on startup");
     }
     let services = Arc::new(IngestionServices {
         hyperliquid: Arc::clone(&hyperliquid_clients.mainnet),
@@ -650,6 +752,7 @@ mod tests {
             data_dir: data_dir.to_path_buf(),
             database_url: "sqlite::memory:".to_string(),
             hyperliquid_base_url: None,
+            hyperliquid_testnet_base_url: None,
             log_level: LogLevel::Info,
             max_concurrent_requests: 3,
             max_retries: 5,
@@ -689,20 +792,109 @@ mod tests {
 
     #[test]
     fn config_load_returns_error_for_missing_file() {
-        let result = Config::load("/nonexistent/path.toml");
+        let result = Config::load("/nonexistent/path.toml", None);
         assert!(matches!(result, Err(ConfigError::Io(_))));
     }
 
     #[test]
-    fn markets_refresh_token_matches_expected_value() {
+    fn config_load_generates_and_publishes_markets_refresh_token() {
+        let temp_dir = TempDir::new().unwrap();
+        let token_path = temp_dir.path().join("markets-refresh-token");
+        let config_path = temp_dir.path().join("config.toml");
+        std::fs::write(
+            &config_path,
+            r#"
+            port = 8000
+            data_dir = "data"
+            database_url = "sqlite::memory:"
+            log_level = "info"
+            max_concurrent_requests = 3
+            max_retries = 5
+            "#,
+        )
+        .unwrap();
+
+        let config = Config::load(&config_path, Some(&token_path)).unwrap();
+        let published = std::fs::read_to_string(&token_path).unwrap();
+        let published_token = published.trim();
+
+        assert_eq!(config.markets_refresh_token, published_token);
+        assert_eq!(published_token.len(), 64);
         assert!(markets_refresh_token_matches(
-            "test-markets-refresh-token",
-            "test-markets-refresh-token"
+            published_token,
+            &config.markets_refresh_token
         ));
-        assert!(!markets_refresh_token_matches(
-            "wrong-markets-refresh-token",
-            "test-markets-refresh-token"
+    }
+
+    #[test]
+    fn config_load_requires_publish_path_without_inline_token() {
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("config.toml");
+        std::fs::write(
+            &config_path,
+            r#"
+            port = 8000
+            data_dir = "data"
+            database_url = "sqlite::memory:"
+            log_level = "info"
+            max_concurrent_requests = 3
+            max_retries = 5
+            "#,
+        )
+        .unwrap();
+
+        let result = Config::load(&config_path, None);
+        assert!(matches!(
+            result,
+            Err(ConfigError::MissingMarketsRefreshTokenPublishPath)
         ));
+    }
+
+    #[test]
+    fn markets_refresh_token_matches_expected_value() {
+        assert!(
+            markets_refresh_token_matches(
+                "test-markets-refresh-token",
+                "test-markets-refresh-token"
+            ),
+            "identical refresh tokens should authorize"
+        );
+        assert!(
+            !markets_refresh_token_matches(
+                "wrong-markets-refresh-token",
+                "test-markets-refresh-token"
+            ),
+            "a different refresh token should be rejected"
+        );
+    }
+
+    #[test]
+    fn markets_ledger_from_query_defaults_to_mainnet_when_absent() {
+        assert_eq!(
+            markets_ledger_from_query(None).unwrap(),
+            market_metadata::MarketsLedger::Mainnet
+        );
+    }
+
+    #[test]
+    fn markets_ledger_from_query_parses_known_network_values() {
+        assert_eq!(
+            markets_ledger_from_query(Some("mainnet")).unwrap(),
+            market_metadata::MarketsLedger::Mainnet
+        );
+        assert_eq!(
+            markets_ledger_from_query(Some("testnet")).unwrap(),
+            market_metadata::MarketsLedger::Testnet
+        );
+    }
+
+    #[test]
+    fn markets_ledger_from_query_rejects_unknown_network_values() {
+        assert_eq!(
+            markets_ledger_from_query(Some("banana")),
+            Err(Status::BadRequest)
+        );
+        assert_eq!(markets_ledger_from_query(Some("")), Err(Status::BadRequest));
     }
 
     #[test]

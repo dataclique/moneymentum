@@ -74,6 +74,7 @@ const stubBackendMarketsFetch = (
   tickers: Array<{
     symbol: string
     assetIndex: number
+    universeName?: string
     maxLeverage?: number
     szDecimals?: number
     markPx?: number
@@ -104,7 +105,7 @@ const stubBackendMarketsFetch = (
           json: async () => [
             {
               universe: tickers.map(entry => ({
-                name: entry.symbol.split("/")[0],
+                name: entry.universeName ?? entry.symbol.split("/")[0],
                 szDecimals: entry.szDecimals ?? 5,
               })),
             },
@@ -403,7 +404,11 @@ describe("HyperliquidClient", () => {
     await client.rebalancePositions(actions)
 
     expect(globalThis.fetch).toHaveBeenCalledWith(
-      expect.stringContaining("api/hyperliquid/markets?network=mainnet"),
+      expect.stringContaining("/api/hyperliquid/markets?network=mainnet"),
+      expect.objectContaining({
+        cache: "no-store",
+        signal: expect.any(AbortSignal),
+      }),
     )
     expect(mockExchange.setMarkets).toHaveBeenCalled()
     expect(mockExchange.markets?.["BTC/USDC:USDC"]).toMatchObject({
@@ -456,6 +461,89 @@ describe("HyperliquidClient", () => {
     expect(mockExchange.markets?.["AERO/USDC:USDC"]).toMatchObject({
       baseId: "198",
       precision: { amount: 1, price: 0.00001 },
+    })
+  })
+
+  it("rebalance hydrates markets when universe name casing differs from ccxt base", async () => {
+    stubBackendMarketsFetch("testnet", [
+      {
+        symbol: "KPEPE/USDC:USDC",
+        assetIndex: 42,
+        universeName: "kPEPE",
+        szDecimals: 5,
+        markPx: 0.007,
+      },
+    ])
+
+    const actions: RebalanceAction[] = [
+      {
+        kind: "rebalance",
+        symbol: "KPEPE/USDC:USDC",
+        signedNotionalDelta: -10,
+        leverage: 2,
+        leverageChanged: false,
+      },
+    ]
+
+    mockExchange.fetchTickers.mockResolvedValue({
+      "KPEPE/USDC:USDC": { last: 0.007 },
+    })
+    mockExchange.fetchPositions.mockResolvedValue([])
+    mockExchange.createOrdersWs.mockResolvedValue([
+      { status: "closed", info: {} },
+    ])
+
+    const client = new HyperliquidClient(credentials, "testnet")
+    await client.rebalancePositions(actions)
+
+    expect(mockExchange.setMarkets).toHaveBeenCalled()
+    expect(mockExchange.markets?.["KPEPE/USDC:USDC"]).toMatchObject({
+      baseId: "42",
+      precision: { amount: 0.00001, price: 0.1 },
+    })
+    expect(mockExchange.markets?.["KPEPE/USDC:USDC"]).not.toMatchObject({
+      precision: { amount: 1, price: 0.0001 },
+    })
+  })
+
+  it("rebalance hydrates markets when universe name contains colons", async () => {
+    stubBackendMarketsFetch("testnet", [
+      {
+        symbol: "FLX-CRCL/USDC:USDC",
+        assetIndex: 77,
+        universeName: "flx:crcl",
+        szDecimals: 3,
+        markPx: 12.5,
+      },
+    ])
+
+    const actions: RebalanceAction[] = [
+      {
+        kind: "rebalance",
+        symbol: "FLX-CRCL/USDC:USDC",
+        signedNotionalDelta: 10,
+        leverage: 2,
+        leverageChanged: false,
+      },
+    ]
+
+    mockExchange.fetchTickers.mockResolvedValue({
+      "FLX-CRCL/USDC:USDC": { last: 12.5 },
+    })
+    mockExchange.fetchPositions.mockResolvedValue([])
+    mockExchange.createOrdersWs.mockResolvedValue([
+      { status: "closed", info: {} },
+    ])
+
+    const client = new HyperliquidClient(credentials, "testnet")
+    await client.rebalancePositions(actions)
+
+    expect(mockExchange.markets?.["FLX-CRCL/USDC:USDC"]).toMatchObject({
+      baseId: "77",
+      precision: { amount: 0.001, price: 0.001 },
+    })
+    expect(mockExchange.markets?.["FLX-CRCL/USDC:USDC"]).not.toMatchObject({
+      precision: { amount: 1, price: 0.0001 },
     })
   })
 

@@ -3,7 +3,6 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/solid-query"
 import { useWallet } from "./useWallet"
 import {
   fetchHyperliquidMarkets,
-  MARKETS_MAX_AGE_MS,
   type OrderResult,
   type CurrentPosition,
   type LeverageLimit,
@@ -29,18 +28,6 @@ const QUERY_KEYS = {
 } as const
 
 const DATA_STALE_TIME_MS = 30_000
-
-export const marketsRemainingStaleTimeMs = (
-  markets: HyperliquidMarketsResponse | undefined,
-  maxAgeMs: number = MARKETS_MAX_AGE_MS,
-): number => {
-  if (!markets?.refreshedAt) return 0
-
-  const refreshedMs = Date.parse(markets.refreshedAt)
-  if (Number.isNaN(refreshedMs)) return 0
-
-  return Math.max(0, maxAgeMs - (Date.now() - refreshedMs))
-}
 
 export const useHyperliquidClient = () => {
   const { client, credentials, networkMode, isConnected } = useWallet()

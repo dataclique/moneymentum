@@ -13,6 +13,7 @@ bitcoin = "0.32.8"
 chrono = { version = "0.4.43", features = ["serde"] }
 clap = { version = "4.5.57", features = ["derive", "env"] }
 futures = "0.3.31"
+getrandom = "0.4.3"
 hyperliquid_rust_sdk = "0.6.0"
 polars = { version = "0.51", features = [
   "parquet",

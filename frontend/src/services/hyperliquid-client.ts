@@ -11,10 +11,33 @@ const hyperliquidInfoUrl = (network: NetworkMode): string =>
     ? HYPERLIQUID_TESTNET_INFO_URL
     : HYPERLIQUID_MAINNET_INFO_URL
 
+const HYPERLIQUID_REQUEST_TIMEOUT_MS = 10_000
+
+type LeverageChangedAction = Extract<
+  RebalanceAction,
+  { kind: "rebalance" } | { kind: "preciseRebalance" }
+> & { leverageChanged: true }
+
+const isLeverageChangedAction = (
+  action: RebalanceAction,
+): action is LeverageChangedAction =>
+  (action.kind === "rebalance" || action.kind === "preciseRebalance") &&
+  action.leverageChanged
+
 interface PerpMarketContext {
   szDecimals: number
   markPx: number
 }
+
+/** Matches `finance::hyperliquid_swap_ccxt_symbol` base normalization. */
+const normalizePerpMarketLookupKey = (base: string): string =>
+  base.toUpperCase().replace(/:/g, "-")
+
+const lookupPerpMarketContext = (
+  contexts: Map<string, PerpMarketContext>,
+  base: string,
+): PerpMarketContext | undefined =>
+  contexts.get(normalizePerpMarketLookupKey(base))
 
 const amountPrecisionStepFromSzDecimals = (szDecimals: number): number =>
   szDecimals <= 0 ? 1 : 10 ** -szDecimals
@@ -62,6 +85,7 @@ const fetchPerpMarketContexts = async (
 ): Promise<Map<string, PerpMarketContext>> => {
   const response = await fetch(hyperliquidInfoUrl(network), {
     method: "POST",
+    signal: AbortSignal.timeout(HYPERLIQUID_REQUEST_TIMEOUT_MS),
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ type: "metaAndAssetCtxs" }),
   })
@@ -92,7 +116,7 @@ const fetchPerpMarketContexts = async (
     const rawMarkPx = assetContexts[index]?.markPx ?? 0
     const markPx =
       typeof rawMarkPx === "number" ? rawMarkPx : Number.parseFloat(rawMarkPx)
-    contexts.set(name, {
+    contexts.set(normalizePerpMarketLookupKey(name), {
       szDecimals: asset.szDecimals ?? 0,
       markPx: Number.isFinite(markPx) ? markPx : 0,
     })
@@ -175,7 +199,10 @@ export const fetchHyperliquidMarkets = async (
   network: NetworkMode,
 ): Promise<HyperliquidMarketsResponse> => {
   const url = `${import.meta.env.BASE_URL}api/hyperliquid/markets?network=${network}`
-  const response = await fetch(url, { cache: "no-store" })
+  const response = await fetch(url, {
+    cache: "no-store",
+    signal: AbortSignal.timeout(HYPERLIQUID_REQUEST_TIMEOUT_MS),
+  })
   if (!response.ok) {
     throw new Error(
       `hyperliquid markets request failed: ${String(response.status)}`,
@@ -316,7 +343,7 @@ export class HyperliquidClient {
     const response = await fetch(infoUrl, {
       method: "POST",
       // Abort if the info endpoint is unresponsive for too long to avoid hanging the UI.
-      signal: AbortSignal.timeout(10_000),
+      signal: AbortSignal.timeout(HYPERLIQUID_REQUEST_TIMEOUT_MS),
       headers: {
         "Content-Type": "application/json",
       },
@@ -497,7 +524,10 @@ export class HyperliquidClient {
         entry.symbol,
       )
       const baseId = String(entry.assetIndex)
-      const context = perpContexts.get(base) ?? { szDecimals: 0, markPx: 1 }
+      const context = lookupPerpMarketContext(perpContexts, base) ?? {
+        szDecimals: 0,
+        markPx: 1,
+      }
       const amountStep = amountPrecisionStepFromSzDecimals(context.szDecimals)
       const priceDecimals = calculateHyperliquidPricePrecision(
         context.markPx,
@@ -755,11 +785,8 @@ export class HyperliquidClient {
 
     this.hydrateMarketsFromBackend(backendMarkets.leverageLimits, perpContexts)
 
-    const leverageActions = actions.filter(
-      action => "leverageChanged" in action && action.leverageChanged,
-    )
+    const leverageActions = actions.filter(isLeverageChangedAction)
     for (const action of leverageActions) {
-      if (!("leverageChanged" in action) || !action.leverageChanged) continue
       await this.setLeverage(action.symbol, action.leverage)
     }
 

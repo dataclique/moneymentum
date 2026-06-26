@@ -69,6 +69,7 @@ async fn create_test_client(mock_server: &MockServer, data_dir: &TempDir) -> Cli
         data_dir = "{}"
         database_url = "sqlite://{}?mode=rwc"
         hyperliquid_base_url = "{}"
+        hyperliquid_testnet_base_url = "{}"
         log_level = "debug"
         max_concurrent_requests = 3
         max_retries = 2
@@ -76,6 +77,7 @@ async fn create_test_client(mock_server: &MockServer, data_dir: &TempDir) -> Cli
         "#,
         data_dir.path().display(),
         database_path.display(),
+        mock_server.uri(),
         mock_server.uri()
     );
     let config: Config = toml::from_str(&toml_str).unwrap();

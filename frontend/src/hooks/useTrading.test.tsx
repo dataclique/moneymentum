@@ -12,7 +12,6 @@ import {
   useRebalanceHyperliquidPositions,
   useWalletSettings,
   useSwitchNetwork,
-  marketsRemainingStaleTimeMs,
 } from "./useTrading"
 import { MARKETS_MAX_AGE_MS } from "@/services/hyperliquid-client"
 import { WalletProvider } from "@/contexts/WalletProvider"
@@ -263,33 +262,6 @@ describe("useTrading hooks", () => {
       expect(result.data?.totalNotional).toBe(1000)
       expect(result.data?.positions[0].percentage).toBe(50)
       expect(result.data?.positions[1].percentage).toBe(50)
-    })
-  })
-
-  describe("marketsRemainingStaleTimeMs", () => {
-    it("returns remaining time until markets max age expires", () => {
-      const refreshedAt = new Date(Date.now() - 60 * 60 * 1000).toISOString()
-
-      const remaining = marketsRemainingStaleTimeMs(
-        { tickers: [], leverageLimits: [], refreshedAt },
-        MARKETS_MAX_AGE_MS,
-      )
-
-      expect(remaining).toBeGreaterThan(MARKETS_MAX_AGE_MS - 2 * 60 * 60 * 1000)
-      expect(remaining).toBeLessThanOrEqual(MARKETS_MAX_AGE_MS - 60 * 60 * 1000)
-    })
-
-    it("returns zero when markets data is already past max age", () => {
-      const refreshedAt = new Date(
-        Date.now() - MARKETS_MAX_AGE_MS - 1000,
-      ).toISOString()
-
-      expect(
-        marketsRemainingStaleTimeMs(
-          { tickers: [], leverageLimits: [], refreshedAt },
-          MARKETS_MAX_AGE_MS,
-        ),
-      ).toBe(0)
     })
   })
 

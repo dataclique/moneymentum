@@ -2,26 +2,26 @@ use uuid::Uuid;
 
 /// Turnkey organization identifier.
 ///
-/// Wraps the UUID string that Turnkey uses to scope all API operations to a
-/// single organization. Constructed only through [`OrganizationId::new`], so an
-/// instance is always a syntactically valid UUID. Shared by every chain-specific
-/// Turnkey wallet.
+/// Wraps the UUID that Turnkey uses to scope all API operations to a single
+/// organization. Constructed only through [`OrganizationId::new`], which parses
+/// and stores a real [`Uuid`], so an instance is always a valid UUID and the raw
+/// string is never retained. Shared by every chain-specific Turnkey wallet.
 #[derive(Debug, Clone)]
-pub struct OrganizationId(String);
+pub struct OrganizationId(Uuid);
 
 impl OrganizationId {
     /// Parses a Turnkey organization id, rejecting anything that is not a UUID
-    /// so an invalid id cannot reach an API call and fail late.
+    /// so an invalid id cannot reach an API call and fail late. The parsed
+    /// [`Uuid`] is stored directly.
     pub fn new(id: impl Into<String>) -> Result<Self, OrganizationIdError> {
-        let id = id.into();
-        Uuid::parse_str(&id)?;
-        Ok(Self(id))
+        Ok(Self(Uuid::parse_str(&id.into())?))
     }
+}
 
-    /// Borrows the validated UUID string to scope a Turnkey API call to this
-    /// organization. Crate-internal so the raw id never escapes the newtype.
-    pub(crate) fn as_str(&self) -> &str {
-        &self.0
+impl std::fmt::Display for OrganizationId {
+    /// Renders the canonical hyphenated UUID to scope a Turnkey API call.
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(&self.0, formatter)
     }
 }
 

@@ -73,7 +73,7 @@ impl<S: Stamp + Send + Sync> Wallet for TurnkeySolanaWallet<S> {
         let result = self
             .client
             .sign_raw_payload(
-                self.organization_id.as_str().to_owned(),
+                self.organization_id.to_string(),
                 self.client.current_timestamp(),
                 SignRawPayloadIntentV2 {
                     sign_with: self.account.to_string(),
@@ -110,7 +110,7 @@ pub async fn provision_solana_wallet<S: Stamp + Send + Sync>(
 ) -> Result<ProvisionedSolanaWallet, TurnkeySolanaWalletError> {
     let result = client
         .create_wallet(
-            organization_id.as_str().to_owned(),
+            organization_id.to_string(),
             client.current_timestamp(),
             CreateWalletIntent {
                 wallet_name: wallet_name.into(),

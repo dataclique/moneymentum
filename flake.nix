@@ -86,6 +86,17 @@
             localSystem = system;
           };
 
+        cargoClippyHook = pkgs.writeShellScript "moneymentum-cargo-clippy" ''
+          set -euo pipefail
+          export RUSTFLAGS="-D warnings"
+          export DATABASE_URL="''${DATABASE_URL:-sqlite::memory:}"
+          export SSL_CERT_FILE="${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
+          export NIX_SSL_CERT_FILE="${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
+          export FUND_IDL="${fund.packages.${system}.idl}/idl/fund.json"
+          exec ${rustToolchain}/bin/cargo clippy --all-targets --locked -- \
+            -D clippy::all
+        '';
+
         hooks = {
           # Nix
           nil.enable = true;
@@ -123,12 +134,23 @@
             files = "\\.rs$";
             pass_filenames = true;
           };
+          clippy = {
+            enable = true;
+            entry = "${cargoClippyHook}";
+            files = "\\.(rs|toml)$|^Cargo\\.lock$";
+            pass_filenames = false;
+          };
         };
         hooksForChecks = hooks // {
           eslint = hooks.eslint // {
             # The CI frontend job runs eslint inside the frontend shell with Bun
             # dependencies installed. Keeping eslint in this pure Nix hook check
             # forces a cold bun2nix dependency build and duplicates that gate.
+            enable = false;
+          };
+          clippy = hooks.clippy // {
+            # Same gate as moneymentum-clippy in the backend CI job; the pure
+            # hook check cannot compile the crate graph in its sandbox.
             enable = false;
           };
         };

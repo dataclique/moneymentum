@@ -39,8 +39,16 @@ const lookupPerpMarketContext = (
 ): PerpMarketContext | undefined =>
   contexts.get(normalizePerpMarketLookupKey(base))
 
+const decimalStep = (fractionDigits: number): number => {
+  if (fractionDigits <= 0) {
+    return 1
+  }
+
+  return Number(`0.${"0".repeat(fractionDigits - 1)}1`)
+}
+
 const amountPrecisionStepFromSzDecimals = (szDecimals: number): number =>
-  szDecimals <= 0 ? 1 : 10 ** -szDecimals
+  szDecimals <= 0 ? 1 : decimalStep(szDecimals)
 
 /** Mirrors CCXT hyperliquid.calculatePricePrecision for perps (maxDecimals = 6). */
 const calculateHyperliquidPricePrecision = (
@@ -78,7 +86,7 @@ const calculateHyperliquidPricePrecision = (
 }
 
 const pricePrecisionStepFromDecimals = (priceDecimals: number): number =>
-  priceDecimals <= 0 ? 1 : 10 ** -priceDecimals
+  priceDecimals <= 0 ? 1 : decimalStep(priceDecimals)
 
 const fetchPerpMarketContexts = async (
   network: NetworkMode,

@@ -282,6 +282,10 @@ describe("useTrading hooks", () => {
       ])
       expect(global.fetch).toHaveBeenCalledWith(
         "/api/hyperliquid/markets?network=testnet",
+        expect.objectContaining({
+          cache: "no-store",
+          signal: expect.any(AbortSignal),
+        }),
       )
     })
   })

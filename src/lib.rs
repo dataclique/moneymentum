@@ -96,16 +96,15 @@ struct ConfigSource {
 
 impl ConfigSource {
     fn into_config(self, publish_path: Option<&Path>) -> Result<Config, ConfigError> {
-        let markets_refresh_token = match self.markets_refresh_token {
-            Some(token) => token,
-            None => {
-                let publish_path =
-                    publish_path.ok_or(ConfigError::MissingMarketsRefreshTokenPublishPath)?;
-                let token = generate_markets_refresh_token()?;
-                publish_markets_refresh_token(publish_path, &token)?;
-                debug!(path = %publish_path.display(), "markets refresh token published");
-                token
-            }
+        let markets_refresh_token = if let Some(token) = self.markets_refresh_token {
+            token
+        } else {
+            let publish_path =
+                publish_path.ok_or(ConfigError::MissingMarketsRefreshTokenPublishPath)?;
+            let token = generate_markets_refresh_token()?;
+            publish_markets_refresh_token(publish_path, &token)?;
+            debug!(path = %publish_path.display(), "markets refresh token published");
+            token
         };
 
         Ok(Config {
@@ -301,10 +300,9 @@ impl<'request> Responder<'request, 'static> for MarketsJson {
 fn markets_ledger_from_query(
     network: Option<&str>,
 ) -> Result<market_metadata::MarketsLedger, Status> {
-    match network {
-        None => Ok(market_metadata::MarketsLedger::Mainnet),
-        Some(value) => market_metadata::MarketsLedger::parse_query(value).ok_or(Status::BadRequest),
-    }
+    network.map_or(Ok(market_metadata::MarketsLedger::Mainnet), |value| {
+        market_metadata::MarketsLedger::parse_query(value).ok_or(Status::BadRequest)
+    })
 }
 
 #[get("/hyperliquid/markets?<network>")]

@@ -79,11 +79,6 @@ impl MarketsLedger {
     }
 }
 
-/// Mainnet markets ledger file name inside the data directory.
-pub(crate) fn file_name() -> &'static str {
-    MarketsLedger::Mainnet.file_name()
-}
-
 /// Refreshes `markets.csv` from the live exchange and returns the current
 /// perp universe. Ingestion consumes the returned list directly.
 pub(crate) async fn refresh_markets(
@@ -262,16 +257,6 @@ pub(crate) async fn refresh_markets_if_stale(
     if markets_need_refresh(data_dir, ledger).await {
         refresh_markets(client, data_dir, ledger).await?;
     }
-    load_markets_api_response(data_dir, ledger).await
-}
-
-/// Refreshes markets from Hyperliquid unconditionally, then returns the API payload.
-pub(crate) async fn refresh_markets_and_load_api_response(
-    client: &dyn Hyperliquid,
-    data_dir: &Path,
-    ledger: MarketsLedger,
-) -> Result<MarketsApiResponse, MarketsMetadataError> {
-    refresh_markets(client, data_dir, ledger).await?;
     load_markets_api_response(data_dir, ledger).await
 }
 
@@ -454,10 +439,11 @@ mod tests {
             &["markets metadata refreshed"]
         ));
 
-        let reloaded = crate::dataframe::read_csv(data_dir.path().join(file_name()))
-            .await
-            .unwrap()
-            .unwrap();
+        let reloaded =
+            crate::dataframe::read_csv(data_dir.path().join(MarketsLedger::Mainnet.file_name()))
+                .await
+                .unwrap()
+                .unwrap();
         assert_eq!(
             reloaded.get_column_names(),
             ["symbol", "max_leverage", "asset_index"]
@@ -474,9 +460,12 @@ mod tests {
             "asset_index" => &[0_u32],
         }
         .unwrap();
-        crate::dataframe::write_csv(data_dir.path().join(file_name()), stale_ledger)
-            .await
-            .unwrap();
+        crate::dataframe::write_csv(
+            data_dir.path().join(MarketsLedger::Mainnet.file_name()),
+            stale_ledger,
+        )
+        .await
+        .unwrap();
 
         let client = StubClient {
             metadata: vec![
@@ -510,9 +499,12 @@ mod tests {
             "asset_index" => &[1_u32, 0],
         }
         .unwrap();
-        crate::dataframe::write_csv(data_dir.path().join(file_name()), frame)
-            .await
-            .unwrap();
+        crate::dataframe::write_csv(
+            data_dir.path().join(MarketsLedger::Mainnet.file_name()),
+            frame,
+        )
+        .await
+        .unwrap();
 
         let response = load_markets_api_response(data_dir.path(), MarketsLedger::Mainnet)
             .await
@@ -541,9 +533,12 @@ mod tests {
             "asset_index" => &[0_u32],
         }
         .unwrap();
-        crate::dataframe::write_csv(data_dir.path().join(file_name()), frame)
-            .await
-            .unwrap();
+        crate::dataframe::write_csv(
+            data_dir.path().join(MarketsLedger::Mainnet.file_name()),
+            frame,
+        )
+        .await
+        .unwrap();
 
         let response = load_markets_api_response(data_dir.path(), MarketsLedger::Mainnet)
             .await
@@ -565,9 +560,12 @@ mod tests {
             "asset_index" => &[0_i64, 1],
         }
         .unwrap();
-        crate::dataframe::write_csv(data_dir.path().join(file_name()), frame)
-            .await
-            .unwrap();
+        crate::dataframe::write_csv(
+            data_dir.path().join(MarketsLedger::Mainnet.file_name()),
+            frame,
+        )
+        .await
+        .unwrap();
 
         let error = load_markets_api_response(data_dir.path(), MarketsLedger::Mainnet)
             .await
@@ -586,9 +584,12 @@ mod tests {
             "asset_index" => &[0_i64, 1],
         }
         .unwrap();
-        crate::dataframe::write_csv(data_dir.path().join(file_name()), frame)
-            .await
-            .unwrap();
+        crate::dataframe::write_csv(
+            data_dir.path().join(MarketsLedger::Mainnet.file_name()),
+            frame,
+        )
+        .await
+        .unwrap();
 
         let error = load_markets_api_response(data_dir.path(), MarketsLedger::Mainnet)
             .await
@@ -607,9 +608,12 @@ mod tests {
             "asset_index" => &[0_u32],
         }
         .unwrap();
-        crate::dataframe::write_csv(data_dir.path().join(file_name()), frame)
-            .await
-            .unwrap();
+        crate::dataframe::write_csv(
+            data_dir.path().join(MarketsLedger::Mainnet.file_name()),
+            frame,
+        )
+        .await
+        .unwrap();
 
         let response = load_markets_api_response(data_dir.path(), MarketsLedger::Mainnet)
             .await

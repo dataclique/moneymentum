@@ -12,7 +12,7 @@ use thiserror::Error;
 use tokio::sync::Mutex;
 use tracing::{info, warn};
 
-use crate::finance::{self, Market};
+use crate::finance::{self, CcxtSymbol, Market};
 use crate::hyperliquid::{Hyperliquid, HyperliquidError};
 
 /// Markets metadata is refreshed at most once per day on the server.
@@ -48,7 +48,7 @@ pub(crate) enum MarketsMetadataError {
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct LeverageLimitEntry {
-    pub(crate) symbol: String,
+    pub(crate) symbol: CcxtSymbol,
     pub(crate) max_leverage: u32,
     pub(crate) asset_index: u32,
 }
@@ -56,7 +56,7 @@ pub(crate) struct LeverageLimitEntry {
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct MarketsApiResponse {
-    pub(crate) tickers: Vec<String>,
+    pub(crate) tickers: Vec<CcxtSymbol>,
     pub(crate) leverage_limits: Vec<LeverageLimitEntry>,
     pub(crate) refreshed_at: Option<String>,
 }
@@ -586,14 +586,15 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            response.tickers,
-            vec!["BTC/USDC:USDC".to_string(), "ETH/USDC:USDC".to_string()]
+            response
+                .tickers
+                .iter()
+                .map(CcxtSymbol::as_str)
+                .collect::<Vec<_>>(),
+            vec!["BTC/USDC:USDC", "ETH/USDC:USDC"]
         );
         assert_eq!(response.leverage_limits.len(), 2);
-        assert_eq!(
-            response.leverage_limits[0].symbol,
-            "BTC/USDC:USDC".to_string()
-        );
+        assert_eq!(response.leverage_limits[0].symbol.as_str(), "BTC/USDC:USDC");
         assert_eq!(response.leverage_limits[0].max_leverage, 50);
         assert_eq!(response.leverage_limits[0].asset_index, 0);
         assert!(response.refreshed_at.is_some());
@@ -619,10 +620,17 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(response.tickers, vec!["KPEPE/USDC:USDC".to_string()]);
         assert_eq!(
-            response.leverage_limits[0].symbol,
-            "KPEPE/USDC:USDC".to_string()
+            response
+                .tickers
+                .iter()
+                .map(CcxtSymbol::as_str)
+                .collect::<Vec<_>>(),
+            vec!["KPEPE/USDC:USDC"]
+        );
+        assert_eq!(
+            response.leverage_limits[0].symbol.as_str(),
+            "KPEPE/USDC:USDC"
         );
     }
 
@@ -694,6 +702,13 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(response.tickers, vec!["FLX-CRCL/USDC:USDC".to_string()]);
+        assert_eq!(
+            response
+                .tickers
+                .iter()
+                .map(CcxtSymbol::as_str)
+                .collect::<Vec<_>>(),
+            vec!["FLX-CRCL/USDC:USDC"]
+        );
     }
 }

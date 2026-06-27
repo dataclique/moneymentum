@@ -10,6 +10,7 @@ const mockExchange = {
   walletAddress: "0xWallet",
   markets: undefined as Record<string, unknown> | undefined,
   markets_by_id: undefined as Record<string, unknown[]> | undefined,
+
   setMarkets: vi.fn(
     (
       markets: Array<{ id: string; symbol: string } & Record<string, unknown>>,
@@ -26,6 +27,7 @@ const mockExchange = {
       mockExchange.markets_by_id = byId
     },
   ),
+
   fetchBalance: vi.fn(),
   fetchTickers: vi.fn(),
   fetchTicker: vi.fn(),
@@ -43,6 +45,7 @@ vi.mock("ccxt", () => ({
       options = mockExchange.options
       urls = mockExchange.urls
       walletAddress = mockExchange.walletAddress
+
       get markets() {
         return mockExchange.markets
       }
@@ -55,6 +58,7 @@ vi.mock("ccxt", () => ({
       set markets_by_id(value) {
         mockExchange.markets_by_id = value
       }
+
       setMarkets = mockExchange.setMarkets
       fetchBalance = mockExchange.fetchBalance
       fetchTickers = mockExchange.fetchTickers
@@ -87,6 +91,7 @@ const stubBackendMarketsFetch = (
         : input instanceof URL
           ? input.href
           : input.url
+
     if (url.includes("/info")) {
       const rawBody = init?.body
       const bodyText =
@@ -95,9 +100,11 @@ const stubBackendMarketsFetch = (
           : rawBody === undefined
             ? "{}"
             : null
+
       if (bodyText === null) {
         throw new Error("unexpected fetch body type in test stub")
       }
+
       const body = JSON.parse(bodyText) as { type?: string }
       if (body.type === "metaAndAssetCtxs") {
         return {
@@ -116,9 +123,11 @@ const stubBackendMarketsFetch = (
         } as Response
       }
     }
+
     if (!url.includes(`network=${network}`)) {
       throw new Error(`unexpected fetch: ${url}`)
     }
+
     return {
       ok: true,
       headers: new Headers({ "cache-control": "public, max-age=86400" }),
@@ -146,14 +155,17 @@ describe("HyperliquidClient", () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.restoreAllMocks()
+
     mockExchange.options = {}
     mockExchange.urls = {}
     mockExchange.markets = undefined
     mockExchange.markets_by_id = undefined
+
     stubBackendMarketsFetch("mainnet", [
       { symbol: "BTC/USDC:USDC", assetIndex: 0 },
       { symbol: "ETH/USDC:USDC", assetIndex: 1 },
     ])
+
     const globalAny = globalThis as { localStorage?: Storage }
     if (
       !globalAny.localStorage ||
@@ -253,6 +265,7 @@ describe("HyperliquidClient", () => {
       "BTC/USDC:USDC",
       undefined,
     )
+
     expect(mockExchange.createOrdersWs).toHaveBeenCalledTimes(2)
     expect(mockExchange.fetchPositions).toHaveBeenCalledTimes(1)
     expect(result).toHaveLength(2)
@@ -273,6 +286,7 @@ describe("HyperliquidClient", () => {
       symbol: "BTC/USDC:USDC",
       side: "buy",
     })
+
     expect(secondBatch[0].params).not.toMatchObject({
       reduceOnly: true,
     })
@@ -317,6 +331,7 @@ describe("HyperliquidClient", () => {
     mockExchange.fetchTickers.mockResolvedValue({
       "BTC/USDC:USDC": { last: 50_000 },
     })
+
     mockExchange.fetchPositions.mockResolvedValue([
       {
         symbol: "BTC/USDC:USDC",
@@ -325,6 +340,7 @@ describe("HyperliquidClient", () => {
         notional: 100,
       },
     ])
+
     mockExchange.createOrdersWs.mockResolvedValue([
       { status: "closed", info: {} },
     ])
@@ -354,6 +370,7 @@ describe("HyperliquidClient", () => {
     mockExchange.fetchTickers.mockResolvedValue({
       "BTC/USDC:USDC": { last: 50_000 },
     })
+
     mockExchange.fetchPositions.mockResolvedValue([])
     mockExchange.createOrdersWs.mockResolvedValue([
       { status: "closed", info: {} },
@@ -410,6 +427,7 @@ describe("HyperliquidClient", () => {
         signal: expect.any(AbortSignal),
       }),
     )
+
     expect(mockExchange.setMarkets).toHaveBeenCalled()
     expect(mockExchange.markets?.["BTC/USDC:USDC"]).toMatchObject({
       symbol: "BTC/USDC:USDC",
@@ -443,6 +461,7 @@ describe("HyperliquidClient", () => {
     mockExchange.fetchTickers.mockResolvedValue({
       "AERO/USDC:USDC": { last: 0.5288 },
     })
+
     mockExchange.fetchPositions.mockResolvedValue([
       {
         symbol: "AERO/USDC:USDC",
@@ -451,6 +470,7 @@ describe("HyperliquidClient", () => {
         notional: 10.5,
       },
     ])
+
     mockExchange.createOrdersWs.mockResolvedValue([
       { status: "closed", info: {} },
     ])
@@ -501,6 +521,7 @@ describe("HyperliquidClient", () => {
       baseId: "42",
       precision: { amount: 0.00001, price: 0.1 },
     })
+
     expect(mockExchange.markets?.["KPEPE/USDC:USDC"]).not.toMatchObject({
       precision: { amount: 1, price: 0.0001 },
     })
@@ -542,6 +563,7 @@ describe("HyperliquidClient", () => {
       baseId: "77",
       precision: { amount: 0.001, price: 0.001 },
     })
+
     expect(mockExchange.markets?.["FLX-CRCL/USDC:USDC"]).not.toMatchObject({
       precision: { amount: 1, price: 0.0001 },
     })
@@ -572,6 +594,7 @@ describe("HyperliquidClient", () => {
     expect(mockExchange.fetchTickers).toHaveBeenCalledWith(["BTC/USDC:USDC"], {
       type: "swap",
     })
+
     expect(mockExchange.fetchPositions).toHaveBeenCalledWith()
   })
 
@@ -580,6 +603,7 @@ describe("HyperliquidClient", () => {
       ...credentials,
       vaultAddress: "0xVault",
     }
+
     const actions: RebalanceAction[] = [
       {
         kind: "rebalance",
@@ -593,6 +617,7 @@ describe("HyperliquidClient", () => {
     mockExchange.fetchTickers.mockResolvedValue({
       "BTC/USDC:USDC": { last: 50_000 },
     })
+
     mockExchange.fetchPositions.mockResolvedValue([])
     mockExchange.createOrdersWs.mockResolvedValue([
       { status: "closed", info: {} },
@@ -604,6 +629,7 @@ describe("HyperliquidClient", () => {
     expect(mockExchange.setLeverage).toHaveBeenCalledWith(3, "BTC/USDC:USDC", {
       vaultAddress: "0xVault",
     })
+
     expect(mockExchange.createOrdersWs).toHaveBeenCalledWith(
       expect.arrayContaining([
         expect.objectContaining({
@@ -617,6 +643,7 @@ describe("HyperliquidClient", () => {
     mockExchange.fetchTickers.mockResolvedValue({
       "BTC/USDC:USDC": { last: 50_000 },
     })
+
     mockExchange.fetchPositions.mockResolvedValue([
       {
         symbol: "BTC/USDC:USDC",
@@ -625,6 +652,7 @@ describe("HyperliquidClient", () => {
         notional: 100,
       },
     ])
+
     mockExchange.createOrdersWs.mockResolvedValue([
       { status: "closed", info: {} },
     ])

@@ -252,7 +252,7 @@ impl Hyperliquid for HyperliquidClient {
                     close,
                     volume,
                     // CCXT perpetual format: BASE/USDC:USDC
-                    symbol: finance::hyperliquid_swap_ccxt_symbol(market.as_str()),
+                    symbol: finance::hyperliquid_swap_ccxt_symbol(market.as_str()).into_string(),
                     ticker: Symbol::from_raw(market.as_str()),
                 })
             })

@@ -168,6 +168,21 @@ pub(crate) struct TailRisk {
     conditional_value_at_risk: f64,
 }
 
+/// Historical drawdown of the realized cumulative portfolio path over the
+/// measurement window.
+///
+/// `max_drawdown` is the deepest peak-to-trough decline as a positive fraction
+/// of the peak (`0.4` = a 40% decline); `peak_to_trough_periods` is that
+/// decline's length in sampling periods. A wealth path that touches zero (a
+/// leveraged or short leg can lose more than 100% in one period) reports a
+/// full `1.0` drawdown.
+#[derive(Debug, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct Drawdown {
+    max_drawdown: f64,
+    peak_to_trough_periods: usize,
+}
+
 /// Risk analytics for the active portfolio: the resolved measurement contract
 /// plus every metric computed under it.
 #[derive(Debug, Serialize)]
@@ -175,6 +190,7 @@ pub(crate) struct TailRisk {
 pub(crate) struct RiskResponse {
     contract: MeasurementContract,
     tail_risk: Vec<TailRisk>,
+    drawdown: Drawdown,
 }
 
 /// Errors from assessing risk: contract validation, candle data access, or a
@@ -213,15 +229,18 @@ pub(crate) async fn assess_risk(
 
     let portfolio_returns = portfolio_simple_returns(&candles, &contract, &request.weights)?;
     let tail_risk = compute_tail_risk(&portfolio_returns, &contract.confidence_levels)?;
+    let drawdown = compute_drawdown(&portfolio_returns);
     debug!(
         observations = portfolio_returns.len(),
         levels = tail_risk.len(),
+        max_drawdown = drawdown.max_drawdown,
         "risk metrics computed"
     );
 
     Ok(RiskResponse {
         contract,
         tail_risk,
+        drawdown,
     })
 }
 
@@ -409,6 +428,65 @@ fn tail_risk_at(
         value_at_risk,
         conditional_value_at_risk,
     })
+}
+
+/// Deepest peak-to-trough decline of the compounded portfolio wealth path.
+///
+/// Wealth starts at 1 and compounds each simple return; the drawdown at every
+/// step is measured against the running peak, and the deepest one is reported
+/// with its peak-to-trough length in sampling periods.
+fn compute_drawdown(portfolio_returns: &[f64]) -> Drawdown {
+    let initial = DrawdownScan {
+        wealth: 1.0,
+        running_peak: 1.0,
+        periods_since_peak: 0,
+        max_drawdown: 0.0,
+        peak_to_trough_periods: 0,
+    };
+
+    let scan = portfolio_returns
+        .iter()
+        .fold(initial, |state, simple_return| {
+            // A leveraged or short leg can lose more than 100% in one period;
+            // wealth is floored at zero because the path cannot recover from a
+            // wipeout under proportional weights.
+            let wealth = (state.wealth * (1.0 + simple_return)).max(0.0);
+            let (running_peak, periods_since_peak) = if wealth > state.running_peak {
+                (wealth, 0)
+            } else {
+                (state.running_peak, state.periods_since_peak + 1)
+            };
+
+            let drawdown = 1.0 - wealth / running_peak;
+            let (max_drawdown, peak_to_trough_periods) = if drawdown > state.max_drawdown {
+                (drawdown, periods_since_peak)
+            } else {
+                (state.max_drawdown, state.peak_to_trough_periods)
+            };
+
+            DrawdownScan {
+                wealth,
+                running_peak,
+                periods_since_peak,
+                max_drawdown,
+                peak_to_trough_periods,
+            }
+        });
+
+    Drawdown {
+        max_drawdown: scan.max_drawdown,
+        peak_to_trough_periods: scan.peak_to_trough_periods,
+    }
+}
+
+/// Accumulator for the single pass over the wealth path in
+/// [`compute_drawdown`].
+struct DrawdownScan {
+    wealth: f64,
+    running_peak: f64,
+    periods_since_peak: usize,
+    max_drawdown: f64,
+    peak_to_trough_periods: usize,
 }
 
 /// Each weighted ticker's closes within the measurement window, keyed by date.
@@ -922,6 +1000,47 @@ mod tests {
         }
     }
 
+    #[test]
+    fn drawdown_reports_deepest_peak_to_trough_decline_and_its_length() {
+        // Wealth path: 1.1, 0.88, 0.66, 0.99 -- the peak is 1.1, the trough
+        // 0.66, so the deepest decline is 40% over two periods.
+        let drawdown = compute_drawdown(&[0.1, -0.2, -0.25, 0.5]);
+
+        assert!((drawdown.max_drawdown - 0.4).abs() < 1e-12);
+        assert_eq!(drawdown.peak_to_trough_periods, 2);
+    }
+
+    #[test]
+    fn drawdown_is_zero_for_a_monotonically_rising_path() {
+        let drawdown = compute_drawdown(&[0.01, 0.02, 0.03]);
+
+        assert!(drawdown.max_drawdown.abs() < 1e-12);
+        assert_eq!(drawdown.peak_to_trough_periods, 0);
+    }
+
+    #[test]
+    fn drawdown_caps_at_full_loss_when_wealth_touches_zero() {
+        // A 150% single-period loss (leveraged short leg) wipes the path out.
+        let drawdown = compute_drawdown(&[0.1, -1.5, 0.2]);
+
+        assert!((drawdown.max_drawdown - 1.0).abs() < 1e-12);
+    }
+
+    proptest! {
+        /// Drawdown is a fraction of the peak: within [0, 1] for any return
+        /// path bounded below by -100%, with a duration within the path length.
+        #[test]
+        fn drawdown_is_bounded_by_zero_and_one(
+            returns in prop::collection::vec(-0.99_f64..2.0, 1..60),
+        ) {
+            let drawdown = compute_drawdown(&returns);
+
+            prop_assert!(drawdown.max_drawdown >= 0.0);
+            prop_assert!(drawdown.max_drawdown <= 1.0 + 1e-12);
+            prop_assert!(drawdown.peak_to_trough_periods <= returns.len());
+        }
+    }
+
     #[traced_test]
     #[tokio::test]
     async fn assess_risk_reports_tail_metrics_for_ingested_candles() {
@@ -949,9 +1068,14 @@ mod tests {
                 metric.value_at_risk
             );
         }
+        assert!(
+            response.drawdown.max_drawdown > 0.0 && response.drawdown.max_drawdown <= 1.0,
+            "the fixture's oscillating closes must produce a real drawdown, got {}",
+            response.drawdown.max_drawdown
+        );
         assert!(logs_contain_at(
             Level::DEBUG,
-            &["risk metrics computed", "observations="]
+            &["risk metrics computed", "observations=", "max_drawdown="]
         ));
     }
 

@@ -114,6 +114,9 @@ of them.
 - [x] Risk metrics: historical VaR/CVaR --
       [#343](https://github.com/dataclique/moneymentum/issues/343) /
       [#344](https://github.com/dataclique/moneymentum/pull/344)
+- [x] Risk metrics: historical max drawdown --
+      [#345](https://github.com/dataclique/moneymentum/issues/345) /
+      [#346](https://github.com/dataclique/moneymentum/pull/346)
 
 ---
 
@@ -214,8 +217,11 @@ Portfolio risk assessment beyond beta and crash-specific simulations.
       [#284](https://github.com/data-cartel/moneymentum/pull/284)); historical
       VaR/CVaR shipped
       ([#343](https://github.com/data-cartel/moneymentum/issues/343) /
-      [#344](https://github.com/data-cartel/moneymentum/pull/344)); correlation,
-      drawdown, ENB, Monte Carlo metrics and the frontend pending
+      [#344](https://github.com/data-cartel/moneymentum/pull/344)); historical
+      max drawdown shipped
+      ([#345](https://github.com/data-cartel/moneymentum/issues/345) /
+      [#346](https://github.com/data-cartel/moneymentum/pull/346)); correlation,
+      ENB, Monte Carlo metrics and the frontend pending
 
 ---
 

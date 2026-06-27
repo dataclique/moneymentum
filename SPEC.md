@@ -63,8 +63,8 @@ This tool enforces proportion-based thinking.
    return to target proportions, or adjust the target and rebalance to that
 
 [ROADMAP](./ROADMAP.md) groups in-flight workflow improvements into themes;
-[stories/](./stories/README.md) breaks each into deliverable units with
-acceptance criteria.
+[story issues](https://github.com/data-cartel/moneymentum/issues?q=label%3Auser-story)
+break each into deliverable units with acceptance criteria.
 
 ## Core Architectural Principle
 

@@ -48,15 +48,17 @@ to main; human review is still required at the PR stage.
 
 The planning game runs in short cycles. At the start of each cycle:
 
-1. The human reviews the backlog in `docs/user-stories/` and selects which
-   stories to pull into the current iteration. Priority is set by business
-   value, not technical convenience.
-2. Stories selected for the iteration are marked `status: in progress`.
+1. The human reviews the backlog -- GitHub issues labeled
+   [`user-story`](https://github.com/data-cartel/moneymentum/issues?q=label%3Auser-story)
+   -- and selects which stories to pull into the current iteration. Priority is
+   set by business value, not technical convenience.
+2. Stories selected for the iteration are assigned to the current iteration on
+   the project board.
 3. Each story goes to one agent session (or one AI-AI pair). An agent must not
    hold multiple stories in parallel without explicit instruction.
 
-Stories in the backlog are options, not a schedule. Ordering within a theme file
-does not imply implementation order. The human decides what comes next.
+Stories in the backlog are options, not a schedule. Ordering within a theme does
+not imply implementation order. The human decides what comes next.
 
 ---
 
@@ -93,8 +95,9 @@ agent that holds the full story in context while the implementor works narrowly.
 ## The Story Contract
 
 A story is the unit of work. Agents do not write code outside of a story.
-Stories live in `docs/user-stories/` — read `docs/user-stories/README.md` for
-format and conventions.
+Stories live as GitHub issues labeled
+[`user-story`](https://github.com/data-cartel/moneymentum/issues?q=label%3Auser-story)
+— see [contributions.md](./contributions.md) for format and conventions.
 
 **Entering a story**: Before writing any code, the agent reads the full story
 including context. If anything in the acceptance criteria or context is

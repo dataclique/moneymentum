@@ -1722,6 +1722,20 @@ mod tests {
             body["drawdown"]["peakToTroughPeriods"].as_u64().is_some(),
             "peakToTroughPeriods is an integer"
         );
+
+        let correlation_rows = body["correlation"]["matrix"]
+            .as_array()
+            .expect("correlation matrix is an array of rows");
+        assert_eq!(correlation_rows.len(), 2);
+        assert_eq!(
+            body["correlation"]["matrix"][0][0].as_f64(),
+            Some(1.0),
+            "correlation diagonal is exactly 1"
+        );
+        assert!(
+            body["correlation"]["shrinkageIntensity"].as_f64().is_some(),
+            "shrinkageIntensity is a number"
+        );
     }
 
     #[test]

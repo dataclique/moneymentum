@@ -117,6 +117,9 @@ of them.
 - [x] Risk metrics: historical max drawdown --
       [#345](https://github.com/dataclique/moneymentum/issues/345) /
       [#346](https://github.com/dataclique/moneymentum/pull/346)
+- [x] Risk metrics: Ledoit-Wolf shrunk correlation matrix --
+      [#347](https://github.com/dataclique/moneymentum/issues/347) /
+      [#348](https://github.com/dataclique/moneymentum/pull/348)
 
 ---
 
@@ -220,8 +223,11 @@ Portfolio risk assessment beyond beta and crash-specific simulations.
       [#344](https://github.com/data-cartel/moneymentum/pull/344)); historical
       max drawdown shipped
       ([#345](https://github.com/data-cartel/moneymentum/issues/345) /
-      [#346](https://github.com/data-cartel/moneymentum/pull/346)); correlation,
-      ENB, Monte Carlo metrics and the frontend pending
+      [#346](https://github.com/data-cartel/moneymentum/pull/346)); shrunk
+      correlation matrix shipped
+      ([#347](https://github.com/data-cartel/moneymentum/issues/347) /
+      [#348](https://github.com/data-cartel/moneymentum/pull/348)); ENB, Monte
+      Carlo metrics and the frontend pending
 
 ---
 

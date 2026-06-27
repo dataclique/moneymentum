@@ -489,6 +489,32 @@ impl ApiKey {
 into proper types immediately at the boundary. Never pass raw strings through
 the system.
 
+**Dates and domain values are never `String`.** A calendar date is
+`chrono::NaiveDate` and an instant is `DateTime<Utc>` -- `start_date:
+Option<String>` is a bug, write `Option<NaiveDate>`. A ticker/symbol is the
+`Symbol` (or `CcxtSymbol`) newtype, never `String` -- `weights: HashMap<String,
+f64>` is a bug, write `HashMap<Symbol, f64>`. This applies **especially to
+request/response types** deserialized from the API (`RiskRequest`,
+`SimulationRequest`, and the like): parse the wire string into the domain type at
+the serde boundary (a typed field, a custom `Deserialize`, or `#[serde(with)]`
+that parses and normalizes), and carry only the domain type inward. A
+stringly-typed date or symbol anywhere past the deserialization boundary is a
+defect, not a shortcut.
+
+```rust
+// Bad: dates and symbols smuggled through as String
+pub(crate) struct RiskRequest {
+    start_date: Option<String>,    // a date, as text
+    weights: HashMap<String, f64>, // symbols, as text keys
+}
+
+// Good: domain types, parsed at the serde boundary
+pub(crate) struct RiskRequest {
+    start_date: Option<NaiveDate>,
+    weights: HashMap<Symbol, f64>,
+}
+```
+
 **Persistent IDs must be newtypes.** Never use raw `String` or `&str` for domain
 identifiers that are persisted or passed between async boundaries:
 

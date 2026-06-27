@@ -291,15 +291,26 @@ pub(crate) async fn refresh_all_markets_if_stale(
     clients: &crate::hyperliquid::HyperliquidClients,
     data_dir: &Path,
 ) -> Result<(), MarketsMetadataError> {
+    let mut last_error = None;
     for ledger in [MarketsLedger::Mainnet, MarketsLedger::Testnet] {
         if markets_need_refresh(data_dir, ledger).await {
             let _guard = refresh_lock(ledger).lock().await;
             if markets_need_refresh(data_dir, ledger).await {
-                refresh_markets(clients.for_ledger(ledger), data_dir, ledger).await?;
+                if let Err(error) =
+                    refresh_markets(clients.for_ledger(ledger), data_dir, ledger).await
+                {
+                    warn!(%error, ?ledger, "markets refresh failed for ledger");
+                    last_error = Some(error);
+                }
             }
         }
     }
-    Ok(())
+    // Refresh each stale ledger independently so one ledger's outage does not
+    // skip refreshing the others.
+    match last_error {
+        Some(error) => Err(error.into()),
+        None => Ok(()),
+    }
 }
 
 pub(crate) async fn refresh_all_markets(

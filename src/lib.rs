@@ -286,8 +286,10 @@ impl<'request> Responder<'request, 'static> for MarketsJson {
     ) -> rocket::response::Result<'static> {
         let max_age = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map(|duration| markets_cache_max_age_seconds(duration.as_secs()))
-            .unwrap_or(market_metadata::MARKETS_REFRESH_INTERVAL.as_secs());
+            .map_or(
+                market_metadata::MARKETS_REFRESH_INTERVAL.as_secs(),
+                |duration| markets_cache_max_age_seconds(duration.as_secs()),
+            );
         Response::build_from(self.0.respond_to(request)?)
             .raw_header(
                 "Cache-Control",

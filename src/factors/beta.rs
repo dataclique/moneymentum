@@ -32,9 +32,11 @@ pub(crate) async fn compute_portfolio_beta_report(
 ) -> Result<PortfolioBetaReport, ReturnsError> {
     let path = daily_candles_path(data_dir);
     let df = crate::dataframe::read_csv(path.clone()).await?;
+
     let Some(df) = df else {
         return Err(ReturnsError::NoData { path });
     };
+
     let data_age_hours = data_age_hours_at(&df, Utc::now())?;
     let weights_clone = weights.to_vec();
     let benchmark_ticker_clone = benchmark_ticker.to_string();
@@ -43,6 +45,7 @@ pub(crate) async fn compute_portfolio_beta_report(
         load_log_returns_last_n_candles(&df, &weights_clone, &benchmark_ticker_clone, lookback)
     })
     .await??;
+
     compute_beta_report_from_log_returns(&log_returns_df, weights, benchmark_ticker, data_age_hours)
 }
 
@@ -69,6 +72,7 @@ pub(super) fn compute_beta_from_log_returns(
         .column("portfolio_log_return")?
         .as_materialized_series()
         .clone();
+
     let benchmark_series = clean_pair_df
         .column("benchmark_log_return")?
         .as_materialized_series()
@@ -90,11 +94,13 @@ fn data_age_hours_at(df: &DataFrame, now: DateTime<Utc>) -> Result<i64, ReturnsE
     let timestamp_col = df.column("timestamp")?;
     let latest_timestamp = any_value_to_string(timestamp_col.max_reduce()?.as_any_value())
         .ok_or(ReturnsError::NoTimestamps)?;
+
     let latest_timestamp = DateTime::parse_from_rfc3339(&latest_timestamp)
         .map(|parsed_timestamp| parsed_timestamp.with_timezone(&Utc))
         .map_err(|_| ReturnsError::InvalidTimestamp {
             timestamp: latest_timestamp,
         })?;
+
     if latest_timestamp > now {
         return Err(ReturnsError::FutureTimestamp {
             timestamp: latest_timestamp.to_rfc3339(),
@@ -123,6 +129,7 @@ fn load_log_returns_last_n_candles(
     let benchmark_ticker_df = DataFrame::new(vec![
         Series::new("ticker".into(), vec![benchmark_ticker.to_string()]).into(),
     ])?;
+
     let benchmark_rows = df.join(
         &benchmark_ticker_df,
         ["ticker"],
@@ -130,15 +137,18 @@ fn load_log_returns_last_n_candles(
         JoinArgs::new(JoinType::Inner),
         None,
     )?;
+
     let benchmark_timestamp_col = benchmark_rows.column("timestamp")?;
     let benchmark_unique_timestamps = benchmark_timestamp_col
         .unique()?
         .sort(SortOptions::default())?;
+
     let benchmark_timestamp_series = benchmark_unique_timestamps.as_materialized_series().clone();
     let timestamp_count = benchmark_timestamp_series.len();
     let start = i64::try_from(timestamp_count.saturating_sub(lookback)).unwrap_or(0);
     let last_benchmark_timestamps =
         benchmark_timestamp_series.slice(start, lookback.min(timestamp_count));
+
     let ts_window_df = DataFrame::new(vec![
         last_benchmark_timestamps
             .with_name("timestamp".into())
@@ -152,6 +162,7 @@ fn load_log_returns_last_n_candles(
         .collect::<std::collections::HashSet<_>>()
         .into_iter()
         .collect();
+
     let ticker_df = DataFrame::new(vec![Series::new("ticker".into(), tickers).into()])?;
 
     let filtered = df.join(
@@ -236,6 +247,7 @@ fn build_portfolio_and_benchmark_df(
 
     let portfolio_series = Series::new("portfolio_log_return".into(), portfolio);
     let benchmark_series = Series::new("benchmark_log_return".into(), benchmark);
+
     DataFrame::new(vec![portfolio_series.into(), benchmark_series.into()])
         .map_err(ReturnsError::from)
 }
@@ -250,6 +262,7 @@ fn compute_beta_report_from_log_returns(
     let benchmark_return_timestamps = return_timestamps
         .get(benchmark_ticker)
         .ok_or(ReturnsError::BetaUndefined)?;
+
     if benchmark_return_timestamps.is_empty() {
         return Err(ReturnsError::BetaUndefined);
     }
@@ -278,10 +291,12 @@ fn compute_beta_report_from_log_returns(
         }
         Err(err) => return Err(err),
     };
+
     let beta_weights = effective_weights
         .iter()
         .map(|(ticker, weight)| (ticker.clone(), *weight))
         .collect::<Vec<_>>();
+
     let beta = compute_beta_from_log_returns(log_returns_df, &beta_weights, benchmark_ticker)?;
 
     Ok(PortfolioBetaReport {
@@ -316,11 +331,13 @@ fn finite_return_timestamps_by_ticker(
         let Some(ticker) = ticker else {
             continue;
         };
+
         let has_return = log_return_col
             .get(row_index)
             .ok()
             .and_then(|value| value.try_extract::<f64>().ok())
             .is_some_and(f64::is_finite);
+
         if has_return {
             return_timestamps
                 .entry(ticker)
@@ -339,6 +356,7 @@ fn renormalize_abs_weights(
         .iter()
         .map(|(_ticker, weight)| weight.abs())
         .sum::<f64>();
+
     if absolute_weight_sum <= 0.0 {
         return Err(ReturnsError::BetaUndefined);
     }
@@ -353,6 +371,7 @@ fn renormalize_abs_weights(
 fn covariance(portfolio: &Series, benchmark: &Series) -> Result<f64, ReturnsError> {
     let df = DataFrame::new(vec![portfolio.clone().into(), benchmark.clone().into()])
         .map_err(ReturnsError::from)?;
+
     let out = df
         .lazy()
         .select([
@@ -362,6 +381,7 @@ fn covariance(portfolio: &Series, benchmark: &Series) -> Result<f64, ReturnsErro
             .alias("_cov"),
         ])
         .collect()?;
+
     out.column("_cov")?
         .get(0)
         .ok()
@@ -381,20 +401,25 @@ fn variance(benchmark: &Series) -> Result<f64, ReturnsError> {
                 .alias("_var"),
         ])
         .collect()?;
+
     let variance = out
         .column("_var")?
         .get(0)
         .ok()
         .and_then(|value| value.try_extract::<f64>().ok())
         .ok_or(ReturnsError::BetaUndefined)?;
+
     if variance.abs() < 1e-20 {
         return Err(ReturnsError::BetaUndefined);
     }
+
     Ok(variance)
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::logs_contain_at;
+
     use super::*;
     use polars::prelude::df;
     use proptest::prelude::*;
@@ -427,7 +452,7 @@ mod tests {
                 .unwrap()
                 .unwrap();
             prop_assert!((beta - weight).abs() < 1e-9, "beta {beta} != weight {weight}");
-            prop_assert!(crate::logs_contain_at(
+            prop_assert!(logs_contain_at(
                 tracing::Level::INFO,
                 &["portfolio beta calculated", "beta="]
             ));
@@ -456,12 +481,12 @@ mod tests {
             "close" => &[100.0, 200.0],
         }
         .unwrap();
+
         let now = DateTime::parse_from_rfc3339("2024-01-03T12:00:00.000Z")
             .unwrap()
             .with_timezone(&Utc);
 
         let age_hours = data_age_hours_at(&df, now).unwrap();
-
         assert_eq!(age_hours, 36);
     }
 
@@ -473,12 +498,12 @@ mod tests {
             "close" => &[100.0],
         }
         .unwrap();
+
         let now = DateTime::parse_from_rfc3339("2024-01-03T12:00:00.000Z")
             .unwrap()
             .with_timezone(&Utc);
 
         let age_hours = data_age_hours_at(&df, now);
-
         assert!(matches!(
             age_hours,
             Err(ReturnsError::FutureTimestamp { .. })
@@ -494,14 +519,17 @@ mod tests {
             "log_return" => &[0.01_f64, -0.02, 0.015],
         }
         .unwrap();
+
         let weights = [("BTC".to_string(), 1.0)];
         let result = compute_beta_from_log_returns(&log_returns_df, &weights, "BTC").unwrap();
         let beta = result.expect("beta defined");
+
         assert!(
             (beta - 1.0).abs() < 1e-10,
             "beta of portfolio vs self should be 1, got {beta}"
         );
-        assert!(crate::logs_contain_at(
+
+        assert!(logs_contain_at(
             tracing::Level::INFO,
             &["portfolio beta calculated"]
         ));
@@ -515,8 +543,10 @@ mod tests {
             "log_return" => &[0.0_f64, 0.0],
         }
         .unwrap();
+
         let weights = [("BTC".to_string(), 1.0)];
         let result = compute_beta_from_log_returns(&log_returns_df, &weights, "BTC");
+
         assert!(matches!(result, Err(ReturnsError::BetaUndefined)));
     }
 
@@ -533,8 +563,8 @@ mod tests {
             "close" => &[100.0_f64, 101.0, 102.0, 50.0, 51.0, 52.0, 53.0, 54.0],
         }
         .unwrap();
-        let weights = [("ETH".to_string(), 1.0_f64)];
 
+        let weights = [("ETH".to_string(), 1.0_f64)];
         let log_returns = load_log_returns_last_n_candles(&candles, &weights, "BTC", 3).unwrap();
         let timestamp_col = log_returns.column("timestamp").unwrap();
         let ticker_col = log_returns.column("ticker").unwrap();
@@ -544,6 +574,7 @@ mod tests {
             "2024-01-02T00:00:00Z".to_string(),
             "2024-01-03T00:00:00Z".to_string(),
         ];
+
         let timestamps_for_ticker = |target_ticker: &str| {
             (0..log_returns.height())
                 .filter_map(|row_index| {
@@ -562,12 +593,13 @@ mod tests {
                 })
                 .collect::<Vec<_>>()
         };
+
         let benchmark_timestamps = timestamps_for_ticker("BTC");
         let portfolio_timestamps = timestamps_for_ticker("ETH");
 
         assert_eq!(benchmark_timestamps, expected_timestamps);
         assert_eq!(portfolio_timestamps, expected_timestamps);
-        assert!(crate::logs_contain_at(
+        assert!(logs_contain_at(
             tracing::Level::DEBUG,
             &["log returns computed", "rows=6"]
         ));
@@ -595,7 +627,7 @@ mod tests {
         assert_eq!(report.effective_weights.get("ETH"), Some(&1.0));
         assert_eq!(report.data_age_hours, 12);
         assert!((report.beta.expect("beta") - 1.0).abs() < 1e-10);
-        assert!(crate::logs_contain_at(
+        assert!(logs_contain_at(
             tracing::Level::INFO,
             &["portfolio beta calculated"]
         ));
@@ -627,7 +659,7 @@ mod tests {
         // "portfolio beta calculated" would trip a bare negative assertion.
         // Scope it to this test's own span (traced_test prefixes every line
         // emitted here with the test name).
-        assert!(!crate::logs_contain_at(
+        assert!(!logs_contain_at(
             tracing::Level::INFO,
             &[
                 "beta_report_returns_none_when_all_portfolio_assets_are_excluded",
@@ -658,7 +690,7 @@ mod tests {
         assert_eq!(report.effective_weights.get("ETH"), Some(&1.0));
         assert_eq!(report.data_age_hours, 12);
         assert!((report.beta.expect("beta") - 1.0).abs() < 1e-10);
-        assert!(crate::logs_contain_at(
+        assert!(logs_contain_at(
             tracing::Level::INFO,
             &["portfolio beta calculated"]
         ));
@@ -685,7 +717,7 @@ mod tests {
             (beta - 0.592_091_722_3_f64).abs() < 1e-10,
             "beta mismatch: got {beta}"
         );
-        assert!(crate::logs_contain_at(
+        assert!(logs_contain_at(
             tracing::Level::INFO,
             &["portfolio beta calculated"]
         ));

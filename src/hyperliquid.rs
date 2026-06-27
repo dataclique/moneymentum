@@ -23,7 +23,7 @@ use crate::candle::{Candle, CandleError, candles_to_dataframe};
 use crate::dataframe::{self, DataFrameError};
 use crate::finance::{self, Market, Symbol};
 use crate::funding::{self, FundingError, FundingRate};
-use crate::market_metadata::MarketMetadata;
+use crate::market_metadata::{MarketMetadata, MarketsLedger};
 use crate::timeframe::Timeframe;
 
 /// Maximum number of data points returned by Hyperliquid's historical data endpoints.
@@ -99,13 +99,10 @@ impl HyperliquidClients {
         Ok(Self { mainnet, testnet })
     }
 
-    pub(crate) fn for_ledger(
-        &self,
-        ledger: crate::market_metadata::MarketsLedger,
-    ) -> &dyn Hyperliquid {
+    pub(crate) fn for_ledger(&self, ledger: MarketsLedger) -> &dyn Hyperliquid {
         match ledger {
-            crate::market_metadata::MarketsLedger::Mainnet => self.mainnet.as_ref(),
-            crate::market_metadata::MarketsLedger::Testnet => self.testnet.as_ref(),
+            MarketsLedger::Mainnet => self.mainnet.as_ref(),
+            MarketsLedger::Testnet => self.testnet.as_ref(),
         }
     }
 }

@@ -16,7 +16,7 @@ use crate::finance::{self, Market};
 use crate::hyperliquid::{Hyperliquid, HyperliquidError};
 
 /// Markets metadata is refreshed at most once per day on the server.
-pub(crate) const MARKETS_REFRESH_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
+pub(crate) const MARKETS_REFRESH_INTERVAL: Duration = Duration::from_hours(24);
 
 /// Serializes refreshes per ledger so concurrent requests cannot both pass the
 /// staleness check and double-fetch from Hyperliquid or race writes to the same
@@ -272,16 +272,16 @@ pub(crate) async fn refresh_markets_if_stale(
         let _guard = refresh_lock(ledger).lock().await;
         // Re-check under the lock: a concurrent request may have refreshed this
         // ledger while we waited, so we skip the redundant upstream fetch.
-        if markets_need_refresh(data_dir, ledger).await {
-            if let Err(error) = refresh_markets(client, data_dir, ledger).await {
-                // A stale-but-valid ledger on disk is strictly more useful than
-                // a 500 in a trading-critical path, so fall back to it when the
-                // upstream refresh fails. Only propagate if no ledger exists.
-                if !markets_file_path(data_dir, ledger).exists() {
-                    return Err(error.into());
-                }
-                warn!(%error, ?ledger, "markets refresh failed; serving stale ledger");
+        if markets_need_refresh(data_dir, ledger).await
+            && let Err(error) = refresh_markets(client, data_dir, ledger).await
+        {
+            // A stale-but-valid ledger on disk is strictly more useful than a
+            // 500 in a trading-critical path, so fall back to it when the
+            // upstream refresh fails. Only propagate if no ledger exists.
+            if !markets_file_path(data_dir, ledger).exists() {
+                return Err(error.into());
             }
+            warn!(%error, ?ledger, "markets refresh failed; serving stale ledger");
         }
     }
     load_markets_api_response(data_dir, ledger).await
@@ -295,13 +295,12 @@ pub(crate) async fn refresh_all_markets_if_stale(
     for ledger in [MarketsLedger::Mainnet, MarketsLedger::Testnet] {
         if markets_need_refresh(data_dir, ledger).await {
             let _guard = refresh_lock(ledger).lock().await;
-            if markets_need_refresh(data_dir, ledger).await {
-                if let Err(error) =
+            if markets_need_refresh(data_dir, ledger).await
+                && let Err(error) =
                     refresh_markets(clients.for_ledger(ledger), data_dir, ledger).await
-                {
-                    warn!(%error, ?ledger, "markets refresh failed for ledger");
-                    last_error = Some(error);
-                }
+            {
+                warn!(%error, ?ledger, "markets refresh failed for ledger");
+                last_error = Some(error);
             }
         }
     }

@@ -128,19 +128,16 @@
           nixfmt.enable = true;
 
           # TypeScript
+          prettier.enable = true;
+          prettier.excludes = [ "\\.md$" ];
           eslint = {
             enable = true;
             files = "^frontend/.*\\.(ts|tsx|js|jsx)$";
-            entry = "${pkgs.bash}/bin/bash -c 'cd frontend && ${pkgs.bun}/bin/bun run lint'";
             pass_filenames = false;
+            entry = ''
+              ${pkgs.bash}/bin/bash -c 'cd frontend && ${pkgs.bun}/bin/bun run lint'
+            '';
           };
-          prettier = {
-            enable = true;
-            excludes = [ "\\.md$" ];
-          };
-
-          # TOML
-          taplo.enable = true;
 
           # Markdown
           denofmt = {
@@ -151,6 +148,8 @@
             pass_filenames = true;
           };
 
+          # TOML
+          taplo.enable = true;
           # Rust - custom entry to avoid git-hooks.nix/nixpkgs version mismatch
           rustfmt = {
             enable = true;
@@ -165,6 +164,7 @@
             pass_filenames = false;
           };
         };
+
         hooksForChecks = hooks // {
           eslint = hooks.eslint // {
             # The CI frontend job runs eslint inside the frontend shell with Bun

@@ -221,19 +221,38 @@ async fn post_portfolio_simulate(
 }
 
 #[post("/risk", data = "<body>")]
-fn post_risk(
+async fn post_risk(
+    config: &State<Config>,
     body: Json<risk::RiskRequest>,
-) -> Result<Json<risk::MeasurementContract>, Custom<Json<ApiErrorResponse>>> {
-    risk::resolve_contract(&body.into_inner())
-        .map(Json)
-        .map_err(|err| {
-            Custom(
-                Status::UnprocessableEntity,
+) -> Result<Json<risk::RiskResponse>, Custom<Json<ApiErrorResponse>>> {
+    match risk::assess_risk(&config.data_dir, &body.into_inner()).await {
+        Ok(response) => Ok(Json(response)),
+        Err(err @ risk::RiskAssessmentError::NoData { .. }) => Err(Custom(
+            Status::NotFound,
+            Json(ApiErrorResponse {
+                error: err.to_string(),
+            }),
+        )),
+        Err(
+            err @ (risk::RiskAssessmentError::Contract(_)
+            | risk::RiskAssessmentError::MissingTickerData { .. }
+            | risk::RiskAssessmentError::InsufficientObservations { .. }),
+        ) => Err(Custom(
+            Status::UnprocessableEntity,
+            Json(ApiErrorResponse {
+                error: err.to_string(),
+            }),
+        )),
+        Err(err) => {
+            error!(error = %err, "failed to assess portfolio risk");
+            Err(Custom(
+                Status::InternalServerError,
                 Json(ApiErrorResponse {
-                    error: err.to_string(),
+                    error: "failed to assess portfolio risk".to_string(),
                 }),
-            )
-        })
+            ))
+        }
+    }
 }
 
 #[post("/ingest")]
@@ -1658,8 +1677,14 @@ mod tests {
     }
 
     #[test]
-    fn post_risk_returns_resolved_contract_baseline() {
+    fn post_risk_returns_contract_and_tail_metrics() {
         let data_dir = TempDir::new().unwrap();
+        std::fs::copy(
+            std::path::Path::new("fixtures/ohlcv_1d_beta.csv"),
+            data_dir.path().join("ohlcv_1d.csv"),
+        )
+        .unwrap();
+
         let client = Client::tracked(test_rocket(data_dir.path())).unwrap();
         let response = client
             .post("/risk")
@@ -1670,9 +1695,37 @@ mod tests {
         assert_eq!(response.status(), Status::Ok);
         let body: serde_json::Value =
             serde_json::from_str(&response.into_string().unwrap()).unwrap();
-        assert_eq!(body["window"]["lookbackDays"].as_u64(), Some(90));
-        assert_eq!(body["samplingFrequency"].as_str(), Some("daily"));
-        assert_eq!(body["confidenceLevels"].as_array().map(Vec::len), Some(3));
+        let contract = &body["contract"];
+        assert_eq!(contract["window"]["lookbackDays"].as_u64(), Some(90));
+        assert_eq!(contract["samplingFrequency"].as_str(), Some("daily"));
+        assert_eq!(
+            contract["confidenceLevels"].as_array().map(Vec::len),
+            Some(3)
+        );
+
+        let tail_risk = body["tailRisk"].as_array().expect("tailRisk is an array");
+        assert_eq!(tail_risk.len(), 3);
+        for metric in tail_risk {
+            let confidence = metric["confidenceLevel"].as_f64().expect("level number");
+            let value_at_risk = metric["var"].as_f64().expect("var is a number");
+            let conditional = metric["cvar"].as_f64().expect("cvar is a number");
+            assert!((0.0..1.0).contains(&confidence) && confidence >= 0.9);
+            assert!(value_at_risk > 0.0, "VaR must be a positive loss fraction");
+            assert!(conditional >= value_at_risk, "CVaR must dominate VaR");
+        }
+    }
+
+    #[test]
+    fn post_risk_returns_404_when_no_data() {
+        let data_dir = TempDir::new().unwrap();
+        let client = Client::tracked(test_rocket(data_dir.path())).unwrap();
+        let response = client
+            .post("/risk")
+            .header(rocket::http::ContentType::JSON)
+            .body(r#"{"weights":{"BTC":0.6,"ETH":-0.4}}"#)
+            .dispatch();
+
+        assert_eq!(response.status(), Status::NotFound);
     }
 
     #[test]

@@ -71,7 +71,7 @@ impl<S: Stamp + Send + Sync> Wallet for TurnkeyEvmWallet<S> {
                 self.client.current_timestamp(),
                 SignRawPayloadIntentV2 {
                     sign_with: self.account.to_checksum(None),
-                    payload: hex::encode_prefixed(payload),
+                    payload: crate::hex_prefixed(payload),
                     encoding: PayloadEncoding::Hexadecimal,
                     hash_function: HashFunction::NoOp,
                 },

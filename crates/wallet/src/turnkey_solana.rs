@@ -77,7 +77,7 @@ impl<S: Stamp + Send + Sync> Wallet for TurnkeySolanaWallet<S> {
                 self.client.current_timestamp(),
                 SignRawPayloadIntentV2 {
                     sign_with: self.account.to_string(),
-                    payload: format!("0x{}", hex::encode(payload)),
+                    payload: crate::hex_prefixed(payload),
                     encoding: PayloadEncoding::Hexadecimal,
                     hash_function: HashFunction::NotApplicable,
                 },

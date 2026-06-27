@@ -49,3 +49,11 @@ pub trait Wallet: Send + Sync {
     /// Signs the given payload and returns a chain-valid signature.
     async fn sign(&self, payload: &Self::Payload) -> Result<Self::Signature, Self::Error>;
 }
+
+/// Lowercase hex with a `0x` prefix -- the form Turnkey's `signRawPayload`
+/// expects. Shared by the Solana and EVM wallets so both encode payloads
+/// identically, without pulling the EVM `alloy` hex helpers into Solana code.
+#[cfg(feature = "turnkey")]
+pub(crate) fn hex_prefixed(bytes: impl AsRef<[u8]>) -> String {
+    format!("0x{}", hex::encode(bytes))
+}

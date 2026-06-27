@@ -307,10 +307,7 @@ pub(crate) async fn refresh_all_markets_if_stale(
     }
     // Refresh each stale ledger independently so one ledger's outage does not
     // skip refreshing the others.
-    match last_error {
-        Some(error) => Err(error.into()),
-        None => Ok(()),
-    }
+    last_error.map_or_else(|| Ok(()), |error| Err(error.into()))
 }
 
 pub(crate) async fn refresh_all_markets(

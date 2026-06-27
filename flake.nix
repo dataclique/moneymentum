@@ -1,6 +1,6 @@
 {
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
     flake-utils.url = "github:numtide/flake-utils";
 
     git-hooks.url = "github:cachix/git-hooks.nix";
@@ -37,27 +37,47 @@
     # `packages.idl` output (the Anchor IDL json client bindings are
     # generated from). Pinned to the feat/idl-flake-output head until
     # dataclique/fund#22 merges, then this can track the default branch.
-    fund.url =
-      "github:dataclique/fund/d6e791b4e527da86f8a7da62039aafa2ca98d2f3";
+    fund.url = "github:dataclique/fund/d6e791b4e527da86f8a7da62039aafa2ca98d2f3";
   };
 
-  outputs = { self, nixpkgs, flake-utils, git-hooks, devenv, rust-overlay, crane
-    , ragenix, disko, nixos-anywhere, deploy-rs, bun2nix, fund, ... }@inputs:
+  outputs =
+    {
+      self,
+      nixpkgs,
+      flake-utils,
+      git-hooks,
+      devenv,
+      rust-overlay,
+      crane,
+      ragenix,
+      disko,
+      nixos-anywhere,
+      deploy-rs,
+      bun2nix,
+      fund,
+      ...
+    }@inputs:
     {
       nixosConfigurations.moneymentum = nixpkgs.lib.nixosSystem {
         system = "x86_64-linux";
 
-        modules =
-          [ disko.nixosModules.disko ragenix.nixosModules.default ./os.nix ];
+        modules = [
+          disko.nixosModules.disko
+          ragenix.nixosModules.default
+          ./os.nix
+        ];
       };
 
       deploy = (import ./deploy.nix { inherit deploy-rs self; }).config;
-    } // flake-utils.lib.eachDefaultSystem (system:
+    }
+    // flake-utils.lib.eachDefaultSystem (
+      system:
       let
         pkgs = import nixpkgs {
           inherit system;
           overlays = [ rust-overlay.overlays.default ];
-          config.allowUnfreePredicate = pkg:
+          config.allowUnfreePredicate =
+            pkg:
             builtins.elem (pkgs.lib.getName pkg) [
               "terraform"
               "gitbutler-cli"
@@ -77,14 +97,19 @@
           bun2nix = bun2nix.packages.${system}.default;
         };
 
-        infraPkgs =
-          import ./infra { inherit pkgs ragenix nixos-anywhere system; };
+        infraPkgs = import ./infra {
+          inherit
+            pkgs
+            ragenix
+            nixos-anywhere
+            system
+            ;
+        };
 
-        deployPkgs =
-          (import ./deploy.nix { inherit deploy-rs self; }).wrappers {
-            inherit pkgs infraPkgs;
-            localSystem = system;
-          };
+        deployPkgs = (import ./deploy.nix { inherit deploy-rs self; }).wrappers {
+          inherit pkgs infraPkgs;
+          localSystem = system;
+        };
 
         cargoClippyHook = pkgs.writeShellScript "moneymentum-cargo-clippy" ''
           set -euo pipefail
@@ -100,14 +125,13 @@
         hooks = {
           # Nix
           nil.enable = true;
-          nixfmt-classic.enable = true;
+          nixfmt.enable = true;
 
           # TypeScript
           eslint = {
             enable = true;
             files = "^frontend/.*\\.(ts|tsx|js|jsx)$";
-            entry =
-              "${pkgs.bash}/bin/bash -c 'cd frontend && ${pkgs.bun}/bin/bun run lint'";
+            entry = "${pkgs.bash}/bin/bash -c 'cd frontend && ${pkgs.bun}/bin/bun run lint'";
             pass_filenames = false;
           };
           prettier = {
@@ -135,7 +159,7 @@
             pass_filenames = true;
           };
           clippy = {
-            enable = true;
+            enable = false; # clippy is way too fucking slow to be a pre-commit hook
             entry = "${cargoClippyHook}";
             files = "\\.(rs|toml)$|^Cargo\\.lock$";
             pass_filenames = false;
@@ -155,22 +179,29 @@
           };
         };
 
-        deps = with pkgs; [ cacert openssl.dev pkg-config sqlite.dev ];
+        deps = with pkgs; [
+          cacert
+          openssl.dev
+          pkg-config
+          sqlite.dev
+        ];
 
         frontendShell = devenv.lib.mkShell {
           inherit inputs pkgs;
-          modules = [{
-            languages.javascript = {
-              enable = true;
-              directory = "frontend";
-              bun = {
+          modules = [
+            {
+              languages.javascript = {
                 enable = true;
-                install.enable = true;
+                directory = "frontend";
+                bun = {
+                  enable = true;
+                  install.enable = true;
+                };
               };
-            };
 
-            git-hooks = { inherit hooks; };
-          }];
+              git-hooks = { inherit hooks; };
+            }
+          ];
         };
 
         devShell = devenv.lib.mkShell {
@@ -178,8 +209,10 @@
           modules = [
             ({ config, ... }: {
               # https://devenv.sh/reference/options/
-              packages = with pkgs;
-                deps ++ [
+              packages =
+                with pkgs;
+                deps
+                ++ [
                   git
                   gitbutler-cli
                   ragenix.packages.${system}.default
@@ -226,14 +259,14 @@
 
               # Use pre-commit instead of git-hooks
               git-hooks = { inherit hooks; };
-
               difftastic.enable = true;
               cachix.enable = true;
             })
           ];
         };
 
-      in {
+      in
+      {
         devShells.default = devShell;
         devShells.frontend = frontendShell;
 
@@ -243,38 +276,56 @@
             src = self;
           };
         };
+
         packages = {
+          inherit gitbutler-cli;
+          inherit (infraPkgs)
+            tfInit
+            tfPlan
+            tfApply
+            tfImport
+            tfEditVars
+            tfCreateVars
+            tfRekey
+            rekey
+            bootstrap
+            remote
+            ;
+          inherit (deployPkgs)
+            deployNixos
+            deployService
+            deployServer
+            deployFrontend
+            ;
+
           default = rustPkgs.package;
           moneymentum = rustPkgs.package;
           moneymentum-test = rustPkgs.test;
           moneymentum-clippy = rustPkgs.clippy;
-
-          inherit gitbutler-cli;
-
           frontend = frontendPkgs.package;
           frontend-lint = frontendPkgs.lint;
           frontend-test = frontendPkgs.test;
 
           resolveIp = pkgs.writeShellApplication {
             name = "resolve-ip";
-            runtimeInputs = [ pkgs.rage pkgs.jq ];
+            runtimeInputs = [
+              pkgs.rage
+              pkgs.jq
+            ];
             text = ''
               ${infraPkgs.resolveIp}
               echo "$host_ip"
             '';
           };
-
-          inherit (infraPkgs)
-            tfInit tfPlan tfApply tfImport tfEditVars tfCreateVars tfRekey rekey
-            bootstrap remote;
-          inherit (deployPkgs)
-            deployNixos deployService deployServer deployFrontend;
         };
-      });
+      }
+    );
 
   nixConfig = {
-    extra-substituters =
-      [ "https://devenv.cachix.org" "https://nix-community.cachix.org" ];
+    extra-substituters = [
+      "https://devenv.cachix.org"
+      "https://nix-community.cachix.org"
+    ];
     extra-trusted-public-keys = [
       "devenv.cachix.org-1:w1cLUi8dv3hnoSPGAuibQv+f9TZLr6cv/Hm9XgU50cw="
       "nix-community.cachix.org-1:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs="

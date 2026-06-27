@@ -60,6 +60,7 @@ fn hyperliquid_swap_ccxt_symbol_with_collateral(base_name: &str, collateral: &st
 fn safe_currency_code(currency_code: &str) -> String {
     currency_code.to_uppercase()
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;

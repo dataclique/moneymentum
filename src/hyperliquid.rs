@@ -155,12 +155,17 @@ impl Hyperliquid for HyperliquidClient {
         struct RawAsset {
             name: String,
             max_leverage: u32,
+            is_delisted: Option<bool>,
         }
 
         let url = format!("{}/info", self.info.http_client.base_url);
+        // Bound each attempt so a hung upstream cannot stall startup or the
+        // markets endpoint indefinitely (matches the frontend's 10s guard).
+        let http = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .build()?;
         let raw = (|| async {
-            reqwest::Client::new()
-                .post(&url)
+            http.post(&url)
                 .json(&MetaRequest {
                     request_type: "meta",
                 })
@@ -184,6 +189,7 @@ impl Hyperliquid for HyperliquidClient {
             .universe
             .into_iter()
             .enumerate()
+            .filter(|(_, asset)| asset.is_delisted != Some(true))
             .map(
                 |(asset_index, asset)| -> Result<MarketMetadata, HyperliquidError> {
                     Ok(MarketMetadata {

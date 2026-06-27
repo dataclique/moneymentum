@@ -1,3 +1,5 @@
+use tracing::debug;
+
 use crate::Wallet;
 
 /// Deterministic wallet for testing. Uses a fixed 32-byte "address" derived
@@ -28,12 +30,14 @@ impl Wallet for MockWallet {
     type Error = MockWalletError;
 
     async fn address(&self) -> Result<Self::Address, Self::Error> {
+        debug!("mock wallet address resolved");
         Ok(self.address)
     }
 
     async fn sign(&self, payload: &Self::Payload) -> Result<Self::Signature, Self::Error> {
         let mut signature = b"sig:".to_vec();
         signature.extend_from_slice(payload.as_ref());
+        debug!("mock wallet payload signed");
         Ok(signature)
     }
 }
@@ -41,15 +45,19 @@ impl Wallet for MockWallet {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tracing_test::traced_test;
 
+    #[traced_test]
     #[tokio::test]
     async fn address_returns_seed_filled_bytes() {
         let wallet = MockWallet::new(0xAB);
         let address = wallet.address().await.ok();
 
         assert_eq!(address, Some([0xAB; 32]));
+        assert!(logs_contain("mock wallet address resolved"));
     }
 
+    #[traced_test]
     #[tokio::test]
     async fn sign_prepends_sig_prefix() {
         let wallet = MockWallet::new(1);
@@ -57,16 +65,20 @@ mod tests {
         let signature = wallet.sign(&payload).await.ok();
 
         assert_eq!(signature, Some(b"sig:hello".to_vec()));
+        assert!(logs_contain("mock wallet payload signed"));
     }
 
+    #[traced_test]
     #[tokio::test]
     async fn sign_empty_payload() {
         let wallet = MockWallet::new(0);
         let signature = wallet.sign(&vec![]).await.ok();
 
         assert_eq!(signature, Some(b"sig:".to_vec()));
+        assert!(logs_contain("mock wallet payload signed"));
     }
 
+    #[traced_test]
     #[tokio::test]
     async fn different_seeds_produce_different_addresses() {
         let wallet_a = MockWallet::new(1);
@@ -76,5 +88,6 @@ mod tests {
         let addr_b = wallet_b.address().await.ok();
 
         assert_ne!(addr_a, addr_b);
+        assert!(logs_contain("mock wallet address resolved"));
     }
 }

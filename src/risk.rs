@@ -22,6 +22,7 @@ use thiserror::Error;
 use tracing::{debug, instrument};
 
 use crate::dataframe::DataFrameError;
+use crate::finance::Symbol;
 use crate::timeframe::Timeframe;
 
 /// Inclusive lower bound on the measurement window, in days (story 0x01b).
@@ -42,8 +43,6 @@ pub(crate) enum RiskError {
     LookbackOutOfRange { days: u16 },
     #[error("start_date and end_date must be provided together")]
     IncompleteDateRange,
-    #[error("invalid date {value}, expected YYYY-MM-DD")]
-    InvalidDate { value: String },
     #[error("start_date must be strictly earlier than end_date")]
     NonChronologicalRange,
     #[error("window span {days} days is outside the [{MIN_WINDOW_DAYS}, {MAX_WINDOW_DAYS}] range")]
@@ -129,18 +128,19 @@ pub(crate) enum MeasurementWindow {
 
 /// A request for the active portfolio's risk analytics.
 ///
-/// Dates are `YYYY-MM-DD` strings. When `start_date`/`end_date` are present they
-/// take precedence over `lookback_days`. Weights are signed active-position
-/// proportions and must sum to 1 in absolute value.
+/// Dates arrive as `YYYY-MM-DD` and parse to `NaiveDate` at the serde boundary.
+/// When `start_date`/`end_date` are present they take precedence over
+/// `lookback_days`. Weights are signed active-position proportions, keyed by
+/// `Symbol`, and must sum to 1 in absolute value.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct RiskRequest {
     lookback_days: Option<u16>,
-    start_date: Option<String>,
-    end_date: Option<String>,
+    start_date: Option<NaiveDate>,
+    end_date: Option<NaiveDate>,
     sampling_frequency: Option<SamplingFrequency>,
     confidence_levels: Option<Vec<f64>>,
-    weights: HashMap<String, f64>,
+    weights: HashMap<Symbol, f64>,
 }
 
 /// The validated measurement contract every metric shares.
@@ -195,7 +195,7 @@ pub(crate) struct Drawdown {
 #[derive(Debug, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct CorrelationReport {
-    tickers: Vec<String>,
+    tickers: Vec<Symbol>,
     /// Row-major entries ordered like `tickers`; symmetric with unit diagonal.
     matrix: Vec<Vec<f64>>,
     shrinkage_intensity: f64,
@@ -244,14 +244,14 @@ pub(crate) enum RiskAssessmentError {
     Polars(#[from] polars::prelude::PolarsError),
     #[error("no candle data at {path}")]
     NoData { path: PathBuf },
-    #[error("no candle data for {ticker} in the measurement window")]
-    MissingTickerData { ticker: String },
+    #[error("no candle data for {} in the measurement window", .ticker.as_str())]
+    MissingTickerData { ticker: Symbol },
     #[error(
         "only {observations} portfolio returns in the window, need at least {MIN_PORTFOLIO_RETURNS}"
     )]
     InsufficientObservations { observations: usize },
-    #[error("ticker {ticker} has zero return variance in the window, correlation is undefined")]
-    ZeroVarianceTicker { ticker: String },
+    #[error("ticker {} has zero return variance in the window, correlation is undefined", .ticker.as_str())]
+    ZeroVarianceTicker { ticker: Symbol },
     #[error("portfolio variance is zero under the estimated covariance, effective bets undefined")]
     DegenerateCovariance,
 }
@@ -319,10 +319,8 @@ fn resolve_contract(request: &RiskRequest) -> Result<MeasurementContract, RiskEr
 }
 
 fn resolve_window(request: &RiskRequest) -> Result<MeasurementWindow, RiskError> {
-    match (&request.start_date, &request.end_date) {
-        (Some(start), Some(end)) => {
-            let start_date = parse_date(start)?;
-            let end_date = parse_date(end)?;
+    match (request.start_date, request.end_date) {
+        (Some(start_date), Some(end_date)) => {
             if start_date >= end_date {
                 return Err(RiskError::NonChronologicalRange);
             }
@@ -360,7 +358,7 @@ fn resolve_confidence_levels(levels: Option<&[f64]>) -> Result<Vec<ConfidenceLev
 
 /// Validates active-position weights: non-empty and summing to 1 in absolute
 /// value. The weights themselves are consumed by the metrics as they land.
-fn validate_weights(weights: &HashMap<String, f64>) -> Result<(), RiskError> {
+fn validate_weights(weights: &HashMap<Symbol, f64>) -> Result<(), RiskError> {
     if weights.is_empty() {
         return Err(RiskError::EmptyWeights);
     }
@@ -371,19 +369,13 @@ fn validate_weights(weights: &HashMap<String, f64>) -> Result<(), RiskError> {
     Ok(())
 }
 
-fn parse_date(value: &str) -> Result<NaiveDate, RiskError> {
-    NaiveDate::parse_from_str(value, "%Y-%m-%d").map_err(|_| RiskError::InvalidDate {
-        value: value.to_string(),
-    })
-}
-
 /// Each weighted ticker's log returns over the contract window at the contract
 /// sampling frequency -- the shared estimation input for every metric.
 fn log_returns_in_window(
     candles: &DataFrame,
     contract: &MeasurementContract,
-    weights: &HashMap<String, f64>,
-) -> Result<BTreeMap<String, BTreeMap<NaiveDate, f64>>, RiskAssessmentError> {
+    weights: &HashMap<Symbol, f64>,
+) -> Result<BTreeMap<Symbol, BTreeMap<NaiveDate, f64>>, RiskAssessmentError> {
     let closes_by_ticker = window_closes_by_ticker(candles, contract.window, weights)?;
     let sampled_closes = sample_closes(closes_by_ticker, contract.sampling_frequency);
     Ok(per_ticker_log_returns(sampled_closes))
@@ -429,7 +421,7 @@ fn compute_correlation(shrunk: &ShrunkCovariance) -> CorrelationReport {
 /// common dates -- the regularized estimate shared by the correlation matrix
 /// and the effective-number-of-bets calculation.
 struct ShrunkCovariance {
-    tickers: Vec<String>,
+    tickers: Vec<Symbol>,
     /// Row-major shrunk covariance entries ordered like `tickers`; the
     /// diagonal carries the sample variances (the constant-correlation target
     /// leaves variances untouched), all strictly positive.
@@ -439,7 +431,7 @@ struct ShrunkCovariance {
 
 /// Estimates the Ledoit-Wolf-shrunk covariance of the tickers' log returns.
 fn shrunk_covariance(
-    log_returns_by_ticker: &BTreeMap<String, BTreeMap<NaiveDate, f64>>,
+    log_returns_by_ticker: &BTreeMap<Symbol, BTreeMap<NaiveDate, f64>>,
 ) -> Result<ShrunkCovariance, RiskAssessmentError> {
     let DemeanedReturns {
         tickers,
@@ -523,7 +515,7 @@ const RELATIVE_EIGENVALUE_FLOOR: f64 = 1e-12;
 /// and the inverse-Herfindahl cross-check.
 fn compute_effective_bets(
     shrunk: &ShrunkCovariance,
-    weights: &HashMap<String, f64>,
+    weights: &HashMap<Symbol, f64>,
 ) -> Result<EffectiveBets, RiskAssessmentError> {
     let weight_vector: Vec<f64> = shrunk
         .tickers
@@ -646,14 +638,14 @@ fn covariance_diagonal(covariance: &[Vec<f64>]) -> Vec<f64> {
 
 /// Per-ticker demeaned log-return columns on the dates shared by every ticker.
 struct DemeanedReturns {
-    tickers: Vec<String>,
+    tickers: Vec<Symbol>,
     demeaned_columns: Vec<Vec<f64>>,
     observations: u32,
 }
 
 /// Demeans each ticker's log returns on the dates shared by every ticker.
 fn demeaned_return_columns(
-    log_returns_by_ticker: &BTreeMap<String, BTreeMap<NaiveDate, f64>>,
+    log_returns_by_ticker: &BTreeMap<Symbol, BTreeMap<NaiveDate, f64>>,
 ) -> Result<DemeanedReturns, RiskAssessmentError> {
     let common_dates: BTreeSet<NaiveDate> = log_returns_by_ticker
         .values()
@@ -668,7 +660,7 @@ fn demeaned_return_columns(
         .map_err(|_| RiskAssessmentError::InsufficientObservations { observations: 0 })?;
     let scale = f64::from(observations);
 
-    let tickers: Vec<String> = log_returns_by_ticker.keys().cloned().collect();
+    let tickers: Vec<Symbol> = log_returns_by_ticker.keys().cloned().collect();
     let demeaned_columns: Vec<Vec<f64>> = log_returns_by_ticker
         .values()
         .map(|log_returns| {
@@ -1009,15 +1001,15 @@ struct DrawdownScan {
 fn window_closes_by_ticker(
     candles: &DataFrame,
     window: MeasurementWindow,
-    weights: &HashMap<String, f64>,
-) -> Result<BTreeMap<String, BTreeMap<NaiveDate, f64>>, RiskAssessmentError> {
+    weights: &HashMap<Symbol, f64>,
+) -> Result<BTreeMap<Symbol, BTreeMap<NaiveDate, f64>>, RiskAssessmentError> {
     let timestamp_column = candles.column("timestamp")?;
     let ticker_column = candles.column("ticker")?;
     let close_column = candles.column("close")?;
 
-    let mut closes_by_ticker: BTreeMap<String, BTreeMap<NaiveDate, f64>> = BTreeMap::new();
+    let mut closes_by_ticker: BTreeMap<Symbol, BTreeMap<NaiveDate, f64>> = BTreeMap::new();
     for row_index in 0..candles.height() {
-        let ticker = string_at(ticker_column, row_index);
+        let ticker = string_at(ticker_column, row_index).map(|raw| Symbol::from_raw(&raw));
         let Some(ticker) = ticker.filter(|ticker| weights.contains_key(ticker)) else {
             continue;
         };
@@ -1081,9 +1073,9 @@ fn window_closes_by_ticker(
 /// The alphabetically first weighted ticker without closes, for deterministic
 /// missing-data errors.
 fn first_missing_ticker(
-    closes_by_ticker: &BTreeMap<String, BTreeMap<NaiveDate, f64>>,
-    weights: &HashMap<String, f64>,
-) -> Option<String> {
+    closes_by_ticker: &BTreeMap<Symbol, BTreeMap<NaiveDate, f64>>,
+    weights: &HashMap<Symbol, f64>,
+) -> Option<Symbol> {
     weights
         .keys()
         .filter(|ticker| !closes_by_ticker.contains_key(*ticker))
@@ -1103,9 +1095,9 @@ fn string_at(column: &polars::prelude::Column, row_index: usize) -> Option<Strin
 /// Resamples each ticker's closes to the sampling frequency: daily passes
 /// through; weekly keeps the last close of each ISO week, keyed by its date.
 fn sample_closes(
-    closes_by_ticker: BTreeMap<String, BTreeMap<NaiveDate, f64>>,
+    closes_by_ticker: BTreeMap<Symbol, BTreeMap<NaiveDate, f64>>,
     frequency: SamplingFrequency,
-) -> BTreeMap<String, BTreeMap<NaiveDate, f64>> {
+) -> BTreeMap<Symbol, BTreeMap<NaiveDate, f64>> {
     match frequency {
         SamplingFrequency::Daily => closes_by_ticker,
         SamplingFrequency::Weekly => closes_by_ticker
@@ -1133,8 +1125,8 @@ fn last_close_per_iso_week(closes: BTreeMap<NaiveDate, f64>) -> BTreeMap<NaiveDa
 /// Per-ticker log returns between consecutive sampled closes, keyed by the
 /// later close's date.
 fn per_ticker_log_returns(
-    closes_by_ticker: BTreeMap<String, BTreeMap<NaiveDate, f64>>,
-) -> BTreeMap<String, BTreeMap<NaiveDate, f64>> {
+    closes_by_ticker: BTreeMap<Symbol, BTreeMap<NaiveDate, f64>>,
+) -> BTreeMap<Symbol, BTreeMap<NaiveDate, f64>> {
     closes_by_ticker
         .into_iter()
         .map(|(ticker, closes)| {
@@ -1156,8 +1148,8 @@ fn per_ticker_log_returns(
 /// Aggregates per-ticker log returns into portfolio simple returns on the
 /// dates where every weighted ticker has a return.
 fn aggregate_in_simple_space(
-    log_returns_by_ticker: &BTreeMap<String, BTreeMap<NaiveDate, f64>>,
-    weights: &HashMap<String, f64>,
+    log_returns_by_ticker: &BTreeMap<Symbol, BTreeMap<NaiveDate, f64>>,
+    weights: &HashMap<Symbol, f64>,
 ) -> Result<Vec<f64>, RiskAssessmentError> {
     let common_dates: Vec<NaiveDate> = log_returns_by_ticker
         .values()
@@ -1211,7 +1203,7 @@ mod tests {
             confidence_levels: None,
             weights: weights
                 .iter()
-                .map(|(symbol, weight)| ((*symbol).to_string(), *weight))
+                .map(|(symbol, weight)| (Symbol::from_raw(symbol), *weight))
                 .collect(),
         }
     }
@@ -1244,8 +1236,8 @@ mod tests {
     fn explicit_range_takes_precedence_and_is_validated() {
         let mut request = request_with(&[("BTC", 1.0)]);
         request.lookback_days = Some(90);
-        request.start_date = Some("2024-01-01".to_string());
-        request.end_date = Some("2024-03-01".to_string());
+        request.start_date = Some(NaiveDate::from_ymd_opt(2024, 1, 1).unwrap());
+        request.end_date = Some(NaiveDate::from_ymd_opt(2024, 3, 1).unwrap());
 
         let contract = resolve_contract(&request).unwrap();
         assert_eq!(
@@ -1260,8 +1252,8 @@ mod tests {
     #[test]
     fn rejects_non_chronological_range() {
         let mut request = request_with(&[("BTC", 1.0)]);
-        request.start_date = Some("2024-03-01".to_string());
-        request.end_date = Some("2024-01-01".to_string());
+        request.start_date = Some(NaiveDate::from_ymd_opt(2024, 3, 1).unwrap());
+        request.end_date = Some(NaiveDate::from_ymd_opt(2024, 1, 1).unwrap());
         assert_eq!(
             resolve_contract(&request),
             Err(RiskError::NonChronologicalRange)
@@ -1271,8 +1263,8 @@ mod tests {
     #[test]
     fn rejects_range_span_outside_bounds() {
         let mut request = request_with(&[("BTC", 1.0)]);
-        request.start_date = Some("2024-01-01".to_string());
-        request.end_date = Some("2024-01-10".to_string());
+        request.start_date = Some(NaiveDate::from_ymd_opt(2024, 1, 1).unwrap());
+        request.end_date = Some(NaiveDate::from_ymd_opt(2024, 1, 10).unwrap());
         assert_eq!(
             resolve_contract(&request),
             Err(RiskError::WindowSpanOutOfRange { days: 9 })
@@ -1282,7 +1274,7 @@ mod tests {
     #[test]
     fn rejects_a_half_specified_range() {
         let mut request = request_with(&[("BTC", 1.0)]);
-        request.start_date = Some("2024-01-01".to_string());
+        request.start_date = Some(NaiveDate::from_ymd_opt(2024, 1, 1).unwrap());
         assert_eq!(
             resolve_contract(&request),
             Err(RiskError::IncompleteDateRange)
@@ -1420,8 +1412,8 @@ mod tests {
             .collect();
         let candles = candle_frame(&rows);
         let mut request = request_with(&[("BTC", 1.0)]);
-        request.start_date = Some("2024-01-01".to_string());
-        request.end_date = Some("2024-01-31".to_string());
+        request.start_date = Some(NaiveDate::from_ymd_opt(2024, 1, 1).unwrap());
+        request.end_date = Some(NaiveDate::from_ymd_opt(2024, 1, 31).unwrap());
 
         let returns = portfolio_returns_for(&candles, &request).unwrap();
 
@@ -1438,7 +1430,7 @@ mod tests {
 
         assert!(matches!(
             result,
-            Err(RiskAssessmentError::MissingTickerData { ticker }) if ticker == "DOGE"
+            Err(RiskAssessmentError::MissingTickerData { ticker }) if ticker.as_str() == "DOGE"
         ));
     }
 
@@ -1519,7 +1511,7 @@ mod tests {
 
     /// Builds the per-ticker log-return map [`compute_correlation`] consumes,
     /// with each series keyed on consecutive dates from 2024-01-01.
-    fn log_returns_map(series: &[(&str, &[f64])]) -> BTreeMap<String, BTreeMap<NaiveDate, f64>> {
+    fn log_returns_map(series: &[(&str, &[f64])]) -> BTreeMap<Symbol, BTreeMap<NaiveDate, f64>> {
         series
             .iter()
             .map(|(ticker, log_returns)| {
@@ -1532,14 +1524,14 @@ mod tests {
                         (date, *log_return)
                     })
                     .collect();
-                ((*ticker).to_string(), by_date)
+                (Symbol::from_raw(ticker), by_date)
             })
             .collect()
     }
 
     /// Shrinks and converts to correlations in one step, as `assess_risk` does.
     fn correlation_for(
-        log_returns_by_ticker: &BTreeMap<String, BTreeMap<NaiveDate, f64>>,
+        log_returns_by_ticker: &BTreeMap<Symbol, BTreeMap<NaiveDate, f64>>,
     ) -> Result<CorrelationReport, RiskAssessmentError> {
         Ok(compute_correlation(&shrunk_covariance(
             log_returns_by_ticker,
@@ -1584,7 +1576,10 @@ mod tests {
         let report = correlation_for(&log_returns).unwrap();
 
         let expected = sample_correlation(&btc_returns, &eth_returns);
-        assert_eq!(report.tickers, vec!["BTC", "ETH"]);
+        assert_eq!(
+            report.tickers.iter().map(Symbol::as_str).collect::<Vec<_>>(),
+            ["BTC", "ETH"]
+        );
         assert!((report.matrix[0][1] - expected).abs() < 1e-12);
         assert!((report.matrix[1][0] - expected).abs() < 1e-12);
         assert!((report.matrix[0][0] - 1.0).abs() < 1e-12);
@@ -1625,7 +1620,7 @@ mod tests {
 
         assert!(matches!(
             result,
-            Err(RiskAssessmentError::ZeroVarianceTicker { ticker }) if ticker == "USDC"
+            Err(RiskAssessmentError::ZeroVarianceTicker { ticker }) if ticker.as_str() == "USDC"
         ));
     }
 
@@ -1709,12 +1704,12 @@ mod tests {
 
     /// Shrinks and computes effective bets in one step, as `assess_risk` does.
     fn effective_bets_for(
-        log_returns_by_ticker: &BTreeMap<String, BTreeMap<NaiveDate, f64>>,
+        log_returns_by_ticker: &BTreeMap<Symbol, BTreeMap<NaiveDate, f64>>,
         weights: &[(&str, f64)],
     ) -> Result<EffectiveBets, RiskAssessmentError> {
-        let weights: HashMap<String, f64> = weights
+        let weights: HashMap<Symbol, f64> = weights
             .iter()
-            .map(|(ticker, weight)| ((*ticker).to_string(), *weight))
+            .map(|(ticker, weight)| (Symbol::from_raw(ticker), *weight))
             .collect();
 
         compute_effective_bets(&shrunk_covariance(log_returns_by_ticker)?, &weights)
@@ -1882,7 +1877,10 @@ mod tests {
             "the fixture's oscillating closes must produce a real drawdown, got {}",
             response.drawdown.max_drawdown
         );
-        assert_eq!(response.correlation.tickers, vec!["BTC", "ETH"]);
+        assert_eq!(
+            response.correlation.tickers.iter().map(Symbol::as_str).collect::<Vec<_>>(),
+            ["BTC", "ETH"]
+        );
         assert!(
             response.correlation.matrix[0][1].abs() <= 1.0,
             "off-diagonal correlation must be within [-1, 1], got {}",

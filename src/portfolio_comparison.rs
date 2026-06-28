@@ -8,6 +8,8 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tracing::debug;
 
+use crate::finance::Symbol;
+
 /// A request to compare target vs current portfolio weights.
 ///
 /// Weights are signed proportions (negative for shorts); a symbol absent from a
@@ -17,8 +19,8 @@ use tracing::debug;
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct PortfolioComparisonRequest {
-    target: HashMap<String, f64>,
-    current: HashMap<String, f64>,
+    target: HashMap<Symbol, f64>,
+    current: HashMap<Symbol, f64>,
     min_tradable_change: f64,
 }
 
@@ -26,7 +28,7 @@ pub(crate) struct PortfolioComparisonRequest {
 #[derive(Debug, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct PositionComparison {
-    symbol: String,
+    symbol: Symbol,
     target_weight: f64,
     current_weight: f64,
     delta: f64,
@@ -69,7 +71,7 @@ pub(crate) fn compare_portfolios(
         return Err(ComparisonError::InvalidThreshold);
     }
 
-    let mut symbols: Vec<&String> = request
+    let mut symbols: Vec<&Symbol> = request
         .target
         .keys()
         .chain(request.current.keys())
@@ -118,11 +120,11 @@ mod tests {
         PortfolioComparisonRequest {
             target: target
                 .iter()
-                .map(|(symbol, weight)| ((*symbol).to_string(), *weight))
+                .map(|(symbol, weight)| (Symbol::from_raw(symbol), *weight))
                 .collect(),
             current: current
                 .iter()
-                .map(|(symbol, weight)| ((*symbol).to_string(), *weight))
+                .map(|(symbol, weight)| (Symbol::from_raw(symbol), *weight))
                 .collect(),
             min_tradable_change,
         }
@@ -131,7 +133,7 @@ mod tests {
     fn row<'a>(comparisons: &'a [PositionComparison], symbol: &str) -> &'a PositionComparison {
         comparisons
             .iter()
-            .find(|row| row.symbol == symbol)
+            .find(|row| row.symbol.as_str() == symbol)
             .expect("symbol present")
     }
 

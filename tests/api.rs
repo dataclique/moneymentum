@@ -69,12 +69,15 @@ async fn create_test_client(mock_server: &MockServer, data_dir: &TempDir) -> Cli
         data_dir = "{}"
         database_url = "sqlite://{}?mode=rwc"
         hyperliquid_base_url = "{}"
+        hyperliquid_testnet_base_url = "{}"
         log_level = "debug"
         max_concurrent_requests = 3
         max_retries = 2
+        markets_refresh_token = "test-markets-refresh-token"
         "#,
         data_dir.path().display(),
         database_path.display(),
+        mock_server.uri(),
         mock_server.uri()
     );
     let config: Config = toml::from_str(&toml_str).unwrap();
@@ -216,5 +219,63 @@ async fn status_shows_running_after_restart_from_failed() {
     assert!(
         saw_running,
         "status should transition to Running (or Completed) after restart from Failed"
+    );
+}
+
+async fn info_request_count(server: &MockServer) -> usize {
+    server
+        .received_requests()
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|request| request.url.path() == "/info")
+        .count()
+}
+
+#[rocket::async_test]
+async fn get_hyperliquid_markets_serves_universe_with_cache_header() {
+    let mock_server = MockServer::start().await;
+    mount_meta_mock(&mock_server).await;
+
+    let data_dir = TempDir::new().unwrap();
+    let client = create_test_client(&mock_server, &data_dir).await;
+
+    let response = client.get("/hyperliquid/markets").dispatch().await;
+    assert_eq!(response.status(), Status::Ok);
+    let cache_control = response
+        .headers()
+        .get_one("Cache-Control")
+        .unwrap_or_default()
+        .to_owned();
+    let body = response.into_string().await.unwrap();
+    assert!(
+        body.contains("BTC"),
+        "markets response should list the BTC ticker: {body}"
+    );
+    assert!(
+        cache_control.contains("max-age"),
+        "markets response should carry a Cache-Control max-age header, got: {cache_control:?}"
+    );
+}
+
+#[rocket::async_test]
+async fn get_hyperliquid_markets_serves_fresh_ledger_without_refetching() {
+    let mock_server = MockServer::start().await;
+    mount_meta_mock(&mock_server).await;
+
+    let data_dir = TempDir::new().unwrap();
+    let client = create_test_client(&mock_server, &data_dir).await;
+
+    let first = client.get("/hyperliquid/markets").dispatch().await;
+    assert_eq!(first.status(), Status::Ok);
+    let after_first = info_request_count(&mock_server).await;
+
+    let second = client.get("/hyperliquid/markets").dispatch().await;
+    assert_eq!(second.status(), Status::Ok);
+    let after_second = info_request_count(&mock_server).await;
+
+    assert_eq!(
+        after_first, after_second,
+        "a second GET against a fresh ledger must not re-fetch from Hyperliquid"
     );
 }

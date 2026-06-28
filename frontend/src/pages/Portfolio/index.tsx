@@ -173,7 +173,7 @@ const PortfolioPage = () => {
                 onReadonlyBtcIncludeInBetaChange={
                   portfolio.setReadonlyBtcIncludeInBeta
                 }
-                screenerSymbols={screenerSymbols()}
+                screenerSymbols={screenerSymbols}
                 onAddSymbol={portfolio.handleAddToken}
               />
             </div>

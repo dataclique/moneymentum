@@ -3,8 +3,7 @@
 let
   version = "0.20.0";
   build = "3069";
-  baseUrl =
-    "https://releases.gitbutler.com/releases/release/${version}-${build}";
+  baseUrl = "https://releases.gitbutler.com/releases/release/${version}-${build}";
 
   sources = {
     aarch64-darwin = {
@@ -26,10 +25,9 @@ let
   };
 
   system = pkgs.stdenv.hostPlatform.system;
-  source = sources.${system} or (throw
-    "gitbutler-cli: unsupported platform '${system}'. Supported platforms: ${
-      builtins.concatStringsSep ", " (builtins.attrNames sources)
-    }");
+  source =
+    sources.${system}
+      or (throw "gitbutler-cli: unsupported platform '${system}'. Supported platforms: ${builtins.concatStringsSep ", " (builtins.attrNames sources)}");
 
   meta = {
     description = "GitButler CLI";
@@ -38,15 +36,19 @@ let
     platforms = builtins.attrNames sources;
     mainProgram = "but";
   };
-in if pkgs.stdenv.hostPlatform.isDarwin then
-# The macOS .app bundle ships no standalone `but`; the desktop binary
-# `gitbutler-tauri` dispatches into CLI mode when invoked as `but`.
+in
+if pkgs.stdenv.hostPlatform.isDarwin then
+  # The macOS .app bundle ships no standalone `but`; the desktop binary
+  # `gitbutler-tauri` dispatches into CLI mode when invoked as `but`.
   pkgs.stdenvNoCC.mkDerivation {
     pname = "gitbutler-cli";
     inherit version meta;
     src = pkgs.fetchurl { inherit (source) url hash; };
     sourceRoot = ".";
-    nativeBuildInputs = [ pkgs.darwin.sigtool pkgs.darwin.cctools ];
+    nativeBuildInputs = [
+      pkgs.darwin.sigtool
+      pkgs.darwin.cctools
+    ];
     installPhase = ''
       mkdir -p $out/bin
       cp GitButler.app/Contents/MacOS/gitbutler-tauri $out/bin/but
@@ -58,15 +60,23 @@ in if pkgs.stdenv.hostPlatform.isDarwin then
     '';
   }
 else
-# On Linux `usr/bin/but` is a symlink to `gitbutler-tauri`; copy the real
-# binary, which dispatches into CLI mode when invoked as `but`.
+  # On Linux `usr/bin/but` is a symlink to `gitbutler-tauri`; copy the real
+  # binary, which dispatches into CLI mode when invoked as `but`.
   pkgs.stdenvNoCC.mkDerivation {
     pname = "gitbutler-cli";
     inherit version meta;
     src = pkgs.fetchurl { inherit (source) url hash; };
     sourceRoot = ".";
-    nativeBuildInputs = [ pkgs.dpkg pkgs.autoPatchelfHook ];
-    buildInputs = [ pkgs.stdenv.cc.cc.lib pkgs.openssl pkgs.zlib pkgs.dbus ];
+    nativeBuildInputs = [
+      pkgs.dpkg
+      pkgs.autoPatchelfHook
+    ];
+    buildInputs = [
+      pkgs.stdenv.cc.cc.lib
+      pkgs.openssl
+      pkgs.zlib
+      pkgs.dbus
+    ];
     # gitbutler-tauri links GTK/WebKit for the desktop GUI, but we only run it
     # headlessly as a CLI. Ignore exactly the GUI libraries it never loads in
     # CLI mode (gitbutler-git-askpass needs only libc/libgcc_s, both provided).

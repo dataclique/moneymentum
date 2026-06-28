@@ -5,10 +5,15 @@ let
   # standard Cargo sources for tests.
   src = pkgs.lib.cleanSourceWith {
     src = ./.;
-    filter = path: type:
-      let base = builtins.baseNameOf path;
-      in (craneLib.filterCargoSources path type) || base == "fixtures" || base
-      == "migrations" || base == "data_test"
+    filter =
+      path: type:
+      let
+        base = builtins.baseNameOf path;
+      in
+      (craneLib.filterCargoSources path type)
+      || base == "fixtures"
+      || base == "migrations"
+      || base == "data_test"
       || (pkgs.lib.hasPrefix (toString ./fixtures) path)
       || (pkgs.lib.hasPrefix (toString ./migrations) path)
       || (pkgs.lib.hasPrefix (toString ./data_test) path);
@@ -17,9 +22,12 @@ let
   # Cargo manifests only -- deps derivation hash changes only when dependencies change
   depsSrc = pkgs.lib.cleanSourceWith {
     src = ./.;
-    filter = path: type:
-      let base = builtins.baseNameOf path;
-      in type == "directory" || base == "Cargo.toml" || base == "Cargo.lock";
+    filter =
+      path: type:
+      let
+        base = builtins.baseNameOf path;
+      in
+      type == "directory" || base == "Cargo.toml" || base == "Cargo.lock";
   };
 
   # Use depsSrc (Cargo manifests only) so the vendor hash is stable across
@@ -36,9 +44,11 @@ let
 
     nativeBuildInputs = [ pkgs.pkg-config ];
 
-    buildInputs = [ pkgs.openssl pkgs.sqlite ]
-      ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isDarwin
-      [ pkgs.apple-sdk_15 ];
+    buildInputs = [
+      pkgs.openssl
+      pkgs.sqlite
+    ]
+    ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isDarwin [ pkgs.apple-sdk_15 ];
 
     RUSTFLAGS = "-D warnings";
 
@@ -50,17 +60,24 @@ let
 
   cargoArtifacts = craneLib.buildDepsOnly (commonArgs // { src = depsSrc; });
 
-in {
-  package = craneLib.buildPackage (commonArgs // {
-    inherit cargoArtifacts;
-    doCheck = true;
-  });
+in
+{
+  package = craneLib.buildPackage (
+    commonArgs
+    // {
+      inherit cargoArtifacts;
+      doCheck = true;
+    }
+  );
 
   # CI check derivations -- lighter than buildPackage (no final link step)
   test = craneLib.cargoTest (commonArgs // { inherit cargoArtifacts; });
 
-  clippy = craneLib.cargoClippy (commonArgs // {
-    inherit cargoArtifacts;
-    cargoClippyExtraArgs = "--all-targets -- -D clippy::all";
-  });
+  clippy = craneLib.cargoClippy (
+    commonArgs
+    // {
+      inherit cargoArtifacts;
+      cargoClippyExtraArgs = "--all-targets -- -D clippy::all";
+    }
+  );
 }

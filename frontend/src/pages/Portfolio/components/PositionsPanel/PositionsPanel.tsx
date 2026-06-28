@@ -4,6 +4,7 @@ import {
   createEffect,
   createMemo,
   createSignal,
+  type Accessor,
   type JSX,
 } from "solid-js"
 import { Settings } from "lucide-solid"
@@ -91,7 +92,7 @@ interface PositionsPanelProps {
     address: string,
     includeInBeta: boolean,
   ) => void
-  screenerSymbols: string[]
+  screenerSymbols: Accessor<string[]>
   onAddSymbol: (symbol: string) => void
 }
 
@@ -185,7 +186,7 @@ export const PositionsPanel = (props: PositionsPanelProps): JSX.Element => {
 
   const allSymbolRows = createMemo(() =>
     buildAllSymbolRows(
-      props.screenerSymbols,
+      props.screenerSymbols(),
       factorScoresQuery.data ?? [],
       props.fundingRatesByBaseSymbol,
     ),

@@ -80,6 +80,7 @@ mod tests {
             (carry.get(0).unwrap() - 0.0003).abs() < 1e-12,
             "BTC carry should be the latest funding rate 0.0003"
         );
+
         assert_eq!(tickers.get(1), Some("ETH"));
         assert!(
             (carry.get(1).unwrap() - (-0.0002)).abs() < 1e-12,

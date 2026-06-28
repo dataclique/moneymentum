@@ -115,7 +115,10 @@ const fetchPerpMarketContexts = async (
   const assetContexts = json[1] as Array<
     { markPx?: string | number } | null | undefined
   >
-  const universe = meta.universe ?? []
+  if (!Array.isArray(meta.universe) || !Array.isArray(assetContexts)) {
+    throw new Error("Unexpected metaAndAssetCtxs payload shape")
+  }
+  const universe = meta.universe
   const contexts = new Map<string, PerpMarketContext>()
 
   universe.forEach((asset, index) => {

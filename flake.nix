@@ -86,6 +86,48 @@
             localSystem = system;
           };
 
+        # Package a scripts/<name>.nu as an executable on PATH, running
+        # its scripts/<name>.test.nu in checkPhase so `nix build`/`nix
+        # flake check` gate the script the same as compiled code. The
+        # wrapper puts nushell and any runtime deps on PATH.
+        mkNuScript = { name, runtimeInputs ? [ ] }:
+          pkgs.stdenvNoCC.mkDerivation {
+            inherit name;
+            src = ./scripts;
+            nativeBuildInputs = [ pkgs.makeWrapper pkgs.nushell ];
+            dontConfigure = true;
+            dontBuild = true;
+            doCheck = true;
+            checkPhase = ''
+              runHook preCheck
+              nu ${name}.test.nu
+              runHook postCheck
+            '';
+            installPhase = ''
+              runHook preInstall
+              mkdir -p $out/bin
+              install -m755 ${name}.nu $out/bin/${name}
+              wrapProgram $out/bin/${name} \
+                --prefix PATH : ${
+                  pkgs.lib.makeBinPath ([ pkgs.nushell ] ++ runtimeInputs)
+                }
+              runHook postInstall
+            '';
+            meta.mainProgram = name;
+          };
+
+        # Enumerate a GitButler workspace's branches in sweep order.
+        gitbutler-stack = mkNuScript {
+          name = "gitbutler-stack";
+          runtimeInputs = [ gitbutler-cli ];
+        };
+
+        # Refresh the GitButler stack footer on every stacked PR.
+        pr-stack-footer = mkNuScript {
+          name = "pr-stack-footer";
+          runtimeInputs = [ gitbutler-cli pkgs.gh ];
+        };
+
         hooks = {
           # Nix
           nil.enable = true;
@@ -160,6 +202,9 @@
                 deps ++ [
                   git
                   gitbutler-cli
+                  gitbutler-stack
+                  pr-stack-footer
+                  nushell
                   ragenix.packages.${system}.default
                   sqlx-cli
                   doctl
@@ -220,6 +265,9 @@
             hooks = hooksForChecks;
             src = self;
           };
+
+          inherit gitbutler-stack;
+          inherit pr-stack-footer;
         };
         packages = {
           default = rustPkgs.package;
@@ -228,6 +276,8 @@
           moneymentum-clippy = rustPkgs.clippy;
 
           inherit gitbutler-cli;
+          inherit gitbutler-stack;
+          inherit pr-stack-footer;
 
           frontend = frontendPkgs.package;
           frontend-lint = frontendPkgs.lint;

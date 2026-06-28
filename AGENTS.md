@@ -417,6 +417,26 @@ predictable quoting/word-splitting. Bash files accumulate footguns (unquoted
 expansions, `set -e` corner cases, IFS surprises) that nushell avoids by
 construction.
 
+A reusable script is not a throwaway snippet -- treat it like code:
+
+- **Live in `scripts/`**: a standalone reusable script is `scripts/<name>.nu`,
+  not a one-off pasted into a shell or buried in `.tmp/`. Parameterize it with
+  typed flags/subcommands (`def main [--start: string]`) instead of hardcoding
+  the values you happened to need; keep a pure, importable function for the
+  logic and a thin `main` that wires I/O to it.
+- **Has a test module**: ship `scripts/<name>.test.nu` alongside it that `use`s
+  the script's exported functions and asserts (via `std assert`) against a
+  realistic fixture. Exit nonzero on failure so the build can gate it.
+- **Exposed via a nix derivation**: wrap it with `mkNuScript` in `flake.nix` so
+  it lands on `PATH` (in the dev shell and as `nix run .#<name>`), declares its
+  runtime deps, and runs its `.test.nu` in `checkPhase` -- the script is gated
+  by `nix flake check` exactly like compiled code. `scripts/gitbutler-stack.nu`
+  is the reference example.
+
+Ad-hoc one-liners for a single inspection are still fine inline; the moment a
+script is worth keeping or reusing, it earns its `scripts/` file, test, and
+derivation.
+
 ---
 
 ## Rust Code Style

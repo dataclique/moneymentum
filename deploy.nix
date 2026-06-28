@@ -94,6 +94,13 @@ in
         map (name: "systemctl reset-failed ${name} || true") enabledServices
       );
 
+      # nixpkgs#398370: an earlier `switch-to-configuration` activation can hang
+      # in the systemd settle loop while holding an exclusive flock on
+      # /run/nixos/switch-to-configuration.lock, after which every subsequent
+      # deploy fails fast with "Could not acquire lock" (exit 11). Drop the
+      # stale lock before activating so the new switch takes a fresh one.
+      staleLockCleanup = "rm -f /run/nixos/switch-to-configuration.lock";
+
     in
     {
       deployNixos = pkgs.writeShellApplication {
@@ -122,7 +129,7 @@ in
         text = ''
           ${deployPreamble}
 
-          ssh -i "$identity" "root@$host_ip" '${serviceCleanup}'
+          ssh -i "$identity" "root@$host_ip" '${staleLockCleanup}; ${serviceCleanup}'
 
           deploy ${deployFlags} --hostname "$host_ip" ''${ssh_flag:+"$ssh_flag"} "$@" .#moneymentum
         '';

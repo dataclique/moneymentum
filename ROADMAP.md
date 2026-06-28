@@ -96,6 +96,8 @@ the next user-facing priority; it runs in parallel to the Dev track above.
 - [ ] [Keep The App Deployed And Reachable](./stories/0x008.keep-app-deployed-and-reachable.md)
 - [ ] [Verify Deployed Hyperliquid Long-Short Rebalancing](./stories/0x00a.verify-deployed-hyperliquid-long-short-rebalancing.md)
 - [ ] [Serve The App From A Domain](./stories/0x009.serve-app-from-domain.md)
+- [x] [Clear stale switch-to-configuration lock blocking deploys](https://github.com/dataclique/moneymentum/issues/394)
+      ([#395](https://github.com/dataclique/moneymentum/pull/395))
 
 ---
 

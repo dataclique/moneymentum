@@ -97,7 +97,12 @@ struct ConfigSource {
 impl ConfigSource {
     fn into_config(self, publish_path: Option<&Path>) -> Result<Config, ConfigError> {
         let markets_refresh_token = if let Some(token) = self.markets_refresh_token {
-            token
+            let trimmed_token = token.trim();
+            if trimmed_token.is_empty() {
+                warn!("rejected blank markets_refresh_token");
+                return Err(ConfigError::BlankMarketsRefreshToken);
+            }
+            trimmed_token.to_owned()
         } else {
             let publish_path =
                 publish_path.ok_or(ConfigError::MissingMarketsRefreshTokenPublishPath)?;
@@ -188,6 +193,10 @@ pub enum ConfigError {
         "--markets-refresh-token-publish-path is required when markets_refresh_token is omitted"
     )]
     MissingMarketsRefreshTokenPublishPath,
+    #[error(
+        "markets_refresh_token must not be blank; omit it to auto-generate or set a non-empty value"
+    )]
+    BlankMarketsRefreshToken,
 }
 
 type IngestionJobQueue = SqliteStorage<IngestionJob>;
@@ -847,6 +856,60 @@ mod tests {
         assert!(matches!(
             result,
             Err(ConfigError::MissingMarketsRefreshTokenPublishPath)
+        ));
+    }
+
+    #[traced_test]
+    #[test]
+    fn config_load_rejects_blank_inline_token() {
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("config.toml");
+        std::fs::write(
+            &config_path,
+            r#"
+            port = 8000
+            data_dir = "data"
+            database_url = "sqlite::memory:"
+            log_level = "info"
+            max_concurrent_requests = 3
+            max_retries = 5
+            markets_refresh_token = ""
+            "#,
+        )
+        .unwrap();
+
+        let result = Config::load(&config_path, None);
+        assert!(matches!(result, Err(ConfigError::BlankMarketsRefreshToken)));
+        assert!(logs_contain_at(
+            tracing::Level::WARN,
+            &["rejected", "markets_refresh_token"]
+        ));
+    }
+
+    #[traced_test]
+    #[test]
+    fn config_load_rejects_whitespace_only_inline_token() {
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("config.toml");
+        std::fs::write(
+            &config_path,
+            r#"
+            port = 8000
+            data_dir = "data"
+            database_url = "sqlite::memory:"
+            log_level = "info"
+            max_concurrent_requests = 3
+            max_retries = 5
+            markets_refresh_token = "  \t  "
+            "#,
+        )
+        .unwrap();
+
+        let result = Config::load(&config_path, None);
+        assert!(matches!(result, Err(ConfigError::BlankMarketsRefreshToken)));
+        assert!(logs_contain_at(
+            tracing::Level::WARN,
+            &["rejected", "markets_refresh_token"]
         ));
     }
 

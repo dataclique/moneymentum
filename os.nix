@@ -280,7 +280,7 @@ in
   systemd.timers.moneymentum-markets-refresh = {
     wantedBy = [ "timers.target" ];
     timerConfig = {
-      OnCalendar = "*-*-* 00:00:00";
+      OnCalendar = "*-*-* 00:00:00 UTC";
       Persistent = true;
     };
   };
@@ -288,7 +288,7 @@ in
   systemd.timers.staging-markets-refresh = {
     wantedBy = [ "timers.target" ];
     timerConfig = {
-      OnCalendar = "*-*-* 00:00:00";
+      OnCalendar = "*-*-* 00:00:00 UTC";
       Persistent = true;
     };
   };

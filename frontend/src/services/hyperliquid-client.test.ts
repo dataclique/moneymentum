@@ -230,6 +230,81 @@ describe("HyperliquidClient", () => {
     expect(positions[1].side).toBe("sell")
   })
 
+  it("rejects a malformed metaAndAssetCtxs payload shape", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async input => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.href
+            : input.url
+
+      if (url.includes("/info")) {
+        return { ok: true, json: async () => [null, []] } as Response
+      }
+
+      return {
+        ok: true,
+        headers: new Headers({ "cache-control": "public, max-age=86400" }),
+        json: async () => ({
+          tickers: ["BTC/USDC:USDC"],
+          leverageLimits: [
+            { symbol: "BTC/USDC:USDC", maxLeverage: 50, assetIndex: 0 },
+          ],
+          refreshedAt: new Date().toISOString(),
+        }),
+      } as Response
+    })
+
+    const actions: RebalanceAction[] = [
+      { kind: "close", symbol: "BTC/USDC:USDC", side: "buy" },
+    ]
+
+    const client = new HyperliquidClient(credentials, "mainnet")
+    await expect(client.rebalancePositions(actions)).rejects.toThrow(
+      "Unexpected metaAndAssetCtxs payload shape",
+    )
+  })
+
+  it("rejects a metaAndAssetCtxs universe with a null entry", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async input => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.href
+            : input.url
+
+      if (url.includes("/info")) {
+        return {
+          ok: true,
+          json: async () => [{ universe: [null] }, []],
+        } as Response
+      }
+
+      return {
+        ok: true,
+        headers: new Headers({ "cache-control": "public, max-age=86400" }),
+        json: async () => ({
+          tickers: ["BTC/USDC:USDC"],
+          leverageLimits: [
+            { symbol: "BTC/USDC:USDC", maxLeverage: 50, assetIndex: 0 },
+          ],
+          refreshedAt: new Date().toISOString(),
+        }),
+      } as Response
+    })
+
+    const actions: RebalanceAction[] = [
+      { kind: "close", symbol: "BTC/USDC:USDC", side: "buy" },
+    ]
+
+    const client = new HyperliquidClient(credentials, "mainnet")
+    await expect(client.rebalancePositions(actions)).rejects.toThrow(
+      "Unexpected metaAndAssetCtxs payload shape",
+    )
+  })
+
   it("sets leverage first then sends reduction batch and expansion batch", async () => {
     const actions: RebalanceAction[] = [
       {

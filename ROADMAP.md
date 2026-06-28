@@ -98,6 +98,8 @@ the next user-facing priority; it runs in parallel to the Dev track above.
 - [ ] [Serve The App From A Domain](./stories/0x009.serve-app-from-domain.md)
 - [x] [Clear stale switch-to-configuration lock blocking deploys](https://github.com/dataclique/moneymentum/issues/394)
       ([#395](https://github.com/dataclique/moneymentum/pull/395))
+- [x] [Address #377 review follow-ups](https://github.com/dataclique/moneymentum/issues/392)
+      ([#393](https://github.com/dataclique/moneymentum/pull/393))
 
 ---
 

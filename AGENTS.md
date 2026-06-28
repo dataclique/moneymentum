@@ -323,7 +323,8 @@ such a sweep, and never apply it to `*.tsx`, `*.ts`, or to quoted strings inside
   specific case (e.g., conventional loop indices in tight numeric code where a
   longer name would obscure intent).
 - No abbreviations unless universally understood (`id`, `url`, `http`, `msg`,
-  `tx` are fine)
+  `tx` are fine). This includes namespace import aliases: `import * as Hl` is
+  wrong, use `import * as Hyperliquid`
 
 ### Colocate types
 

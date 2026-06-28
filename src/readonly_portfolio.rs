@@ -367,7 +367,7 @@ pub(crate) async fn load_portfolio_exposure(
         for (entry, holding) in request
             .readonly_btc_entries
             .iter()
-            .zip(readonly_balances.holdings.into_iter())
+            .zip(readonly_balances.holdings)
         {
             merged_positions.push(ExposurePosition {
                 source: ExposureSource::BtcAddress,

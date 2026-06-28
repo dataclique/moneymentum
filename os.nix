@@ -1,4 +1,9 @@
-{ pkgs, lib, modulesPath, ... }:
+{
+  pkgs,
+  lib,
+  modulesPath,
+  ...
+}:
 
 let
   inherit (import ./keys.nix) roles;
@@ -8,29 +13,39 @@ let
   enabledServices = lib.filterAttrs (_: v: v.enabled) services;
 
   mkMarketsRefreshService =
-    { description, readyMarker, port, runtimeTokenPath, }: {
+    {
+      description,
+      readyMarker,
+      port,
+      runtimeTokenPath,
+    }:
+    {
       inherit description;
-      unitConfig.ConditionPathExists = [ readyMarker runtimeTokenPath ];
+      unitConfig.ConditionPathExists = [
+        readyMarker
+        runtimeTokenPath
+      ];
       serviceConfig = {
         Type = "oneshot";
         DynamicUser = true;
         LoadCredential = "markets_refresh_token:${runtimeTokenPath}";
-        ExecStart = pkgs.writeShellScript
-          "markets-refresh-${builtins.baseNameOf runtimeTokenPath}" ''
-            ${pkgs.curl}/bin/curl -sSf --max-time 120 -X POST \
-              -H "X-Markets-Refresh-Token: $(<"$CREDENTIALS_DIRECTORY/markets_refresh_token")" \
-              http://127.0.0.1:${toString port}/hyperliquid/markets/refresh
-          '';
+        ExecStart = pkgs.writeShellScript "markets-refresh-${builtins.baseNameOf runtimeTokenPath}" ''
+          ${pkgs.curl}/bin/curl -sSf --max-time 120 -X POST \
+            -H "X-Markets-Refresh-Token: $(<"$CREDENTIALS_DIRECTORY/markets_refresh_token")" \
+            http://127.0.0.1:${toString port}/hyperliquid/markets/refresh
+        '';
       };
     };
 
-  mkService = name: cfg:
+  mkService =
+    name: cfg:
     let
       path = "/nix/var/nix/profiles/per-service/${name}/bin/${cfg.bin}";
       configFile = ./config/${name}.toml;
       runtimeDir = "/run/moneymentum/${name}";
       runtimeTokenPath = "${runtimeDir}/markets-refresh-token";
-    in {
+    in
+    {
       description = "moneymentum ${cfg.bin} (${name})";
 
       wantedBy = [ ];
@@ -46,15 +61,18 @@ let
       serviceConfig = {
         User = "moneymentum";
         Group = "warehouse";
-        ExecStart =
-          "${path} --config ${configFile} --markets-refresh-token-publish-path ${runtimeTokenPath}";
+        ExecStart = "${path} --config ${configFile} --markets-refresh-token-publish-path ${runtimeTokenPath}";
         Restart = "always";
         RestartSec = 5;
-        ReadWritePaths = [ cfg.dataDir runtimeDir ];
+        ReadWritePaths = [
+          cfg.dataDir
+          runtimeDir
+        ];
       };
     };
 
-in {
+in
+{
   imports = [
     (modulesPath + "/virtualisation/digital-ocean-config.nix")
     (modulesPath + "/profiles/qemu-guest.nix")
@@ -73,7 +91,10 @@ in {
       enable = true;
       network.enable = true;
       settings = {
-        datasource_list = [ "ConfigDrive" "Digitalocean" ];
+        datasource_list = [
+          "ConfigDrive"
+          "Digitalocean"
+        ];
         datasource.ConfigDrive = { };
         datasource.Digitalocean = { };
         cloud_init_modules = [
@@ -86,8 +107,12 @@ in {
           "update_hostname"
           "set_password"
         ];
-        cloud_config_modules =
-          [ "ssh-import-id" "keyboard" "runcmd" "disable_ec2_metadata" ];
+        cloud_config_modules = [
+          "ssh-import-id"
+          "keyboard"
+          "runcmd"
+          "disable_ec2_metadata"
+        ];
         cloud_final_modules = [
           "write_files_deferred"
           "scripts_per_once"
@@ -115,14 +140,18 @@ in {
 
       virtualHosts.default = {
         default = true;
-        listen = [{
-          addr = "0.0.0.0";
-          port = 80;
-        }];
+        listen = [
+          {
+            addr = "0.0.0.0";
+            port = 80;
+          }
+        ];
         root = "/var/lib/moneymentum/frontend";
         locations = {
           "/".tryFiles = "$uri $uri/ /index.html";
-          "/api/" = { proxyPass = "http://127.0.0.1:8000/"; };
+          "/api/" = {
+            proxyPass = "http://127.0.0.1:8000/";
+          };
           "/hl/" = {
             proxyPass = "https://api.hyperliquid.xyz/";
             extraConfig = ''
@@ -141,14 +170,18 @@ in {
       };
 
       virtualHosts.staging = {
-        listen = [{
-          addr = "0.0.0.0";
-          port = 8080;
-        }];
+        listen = [
+          {
+            addr = "0.0.0.0";
+            port = 8080;
+          }
+        ];
         root = "/var/lib/moneymentum/frontend";
         locations = {
           "/".tryFiles = "$uri $uri/ /index.html";
-          "/api/" = { proxyPass = "http://127.0.0.1:8001/"; };
+          "/api/" = {
+            proxyPass = "http://127.0.0.1:8001/";
+          };
           "/hl/" = {
             proxyPass = "https://api.hyperliquid.xyz/";
             extraConfig = ''
@@ -186,7 +219,10 @@ in {
 
   nix = {
     settings = {
-      experimental-features = [ "nix-command" "flakes" ];
+      experimental-features = [
+        "nix-command"
+        "flakes"
+      ];
       auto-optimise-store = true;
       download-buffer-size = 268435456;
     };
@@ -213,8 +249,7 @@ in {
       serviceConfig = {
         Type = "oneshot";
         DynamicUser = true;
-        ExecStart =
-          "${pkgs.curl}/bin/curl -sSf --max-time 300 -X POST http://127.0.0.1:8000/ingest";
+        ExecStart = "${pkgs.curl}/bin/curl -sSf --max-time 300 -X POST http://127.0.0.1:8000/ingest";
       };
     };
 
@@ -258,18 +293,20 @@ in {
     };
   };
 
-  systemd.tmpfiles.rules = let
-    dataDirs = lib.mapAttrsToList (_: cfg: cfg.dataDir) enabledServices;
-    runtimeDirs = lib.mapAttrsToList
-      (name: _: "d /run/moneymentum/${name} 0770 moneymentum warehouse -")
-      enabledServices;
-  in map (dir: "d ${dir} 0770 moneymentum warehouse -") dataDirs ++ runtimeDirs
-  ++ [ "d /var/lib/moneymentum/frontend 0755 root root -" ];
+  systemd.tmpfiles.rules =
+    let
+      dataDirs = lib.mapAttrsToList (_: cfg: cfg.dataDir) enabledServices;
+      runtimeDirs = lib.mapAttrsToList (
+        name: _: "d /run/moneymentum/${name} 0770 moneymentum warehouse -"
+      ) enabledServices;
+    in
+    map (dir: "d ${dir} 0770 moneymentum warehouse -") dataDirs
+    ++ runtimeDirs
+    ++ [ "d /var/lib/moneymentum/frontend 0755 root root -" ];
 
   system.activationScripts.moneymentum-init.text = "mkdir -p /run/moneymentum";
 
-  system.activationScripts.per-service-profiles.text =
-    "mkdir -p /nix/var/nix/profiles/per-service";
+  system.activationScripts.per-service-profiles.text = "mkdir -p /nix/var/nix/profiles/per-service";
 
   environment.systemPackages = with pkgs; [
     bat

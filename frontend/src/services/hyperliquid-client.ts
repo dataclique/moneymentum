@@ -109,20 +109,22 @@ const fetchPerpMarketContexts = async (
     throw new Error("Unexpected metaAndAssetCtxs payload shape")
   }
 
-  const meta = json[0] as {
-    universe?: Array<{ name?: string; szDecimals?: number }>
-  } | null
+  const meta = json[0] as { universe?: unknown[] } | null
   const assetContexts = json[1] as Array<
     { markPx?: string | number } | null | undefined
   >
   if (
     meta === null ||
     !Array.isArray(meta.universe) ||
+    meta.universe.some(asset => asset === null || typeof asset !== "object") ||
     !Array.isArray(assetContexts)
   ) {
     throw new Error("Unexpected metaAndAssetCtxs payload shape")
   }
-  const universe = meta.universe
+  const universe = meta.universe as Array<{
+    name?: string
+    szDecimals?: number
+  }>
   const contexts = new Map<string, PerpMarketContext>()
 
   universe.forEach((asset, index) => {

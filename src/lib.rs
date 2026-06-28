@@ -99,6 +99,7 @@ impl ConfigSource {
         let markets_refresh_token = if let Some(token) = self.markets_refresh_token {
             let trimmed_token = token.trim();
             if trimmed_token.is_empty() {
+                warn!("rejected blank markets_refresh_token");
                 return Err(ConfigError::BlankMarketsRefreshToken);
             }
             trimmed_token.to_owned()
@@ -858,6 +859,7 @@ mod tests {
         ));
     }
 
+    #[traced_test]
     #[test]
     fn config_load_rejects_blank_inline_token() {
         let temp_dir = TempDir::new().unwrap();
@@ -878,8 +880,13 @@ mod tests {
 
         let result = Config::load(&config_path, None);
         assert!(matches!(result, Err(ConfigError::BlankMarketsRefreshToken)));
+        assert!(logs_contain_at(
+            tracing::Level::WARN,
+            &["rejected", "markets_refresh_token"]
+        ));
     }
 
+    #[traced_test]
     #[test]
     fn config_load_rejects_whitespace_only_inline_token() {
         let temp_dir = TempDir::new().unwrap();
@@ -900,6 +907,10 @@ mod tests {
 
         let result = Config::load(&config_path, None);
         assert!(matches!(result, Err(ConfigError::BlankMarketsRefreshToken)));
+        assert!(logs_contain_at(
+            tracing::Level::WARN,
+            &["rejected", "markets_refresh_token"]
+        ));
     }
 
     #[test]

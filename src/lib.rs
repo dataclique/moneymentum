@@ -1,5 +1,6 @@
 mod candle;
 mod dataframe;
+pub mod derive;
 mod factors;
 mod finance;
 mod funding;
@@ -79,6 +80,7 @@ pub struct Config {
     max_concurrent_requests: usize,
     max_retries: usize,
     markets_refresh_token: String,
+    pub derive: Option<derive::DeriveConfig>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -92,6 +94,7 @@ struct ConfigSource {
     max_concurrent_requests: usize,
     max_retries: usize,
     markets_refresh_token: Option<String>,
+    derive: Option<derive::DeriveConfig>,
 }
 
 impl ConfigSource {
@@ -122,6 +125,7 @@ impl ConfigSource {
             max_concurrent_requests: self.max_concurrent_requests,
             max_retries: self.max_retries,
             markets_refresh_token,
+            derive: self.derive,
         })
     }
 }
@@ -197,6 +201,8 @@ pub enum ConfigError {
         "markets_refresh_token must not be blank; omit it to auto-generate or set a non-empty value"
     )]
     BlankMarketsRefreshToken,
+    #[error("the [derive] config section is required to run the derive server")]
+    MissingDeriveConfig,
 }
 
 type IngestionJobQueue = SqliteStorage<IngestionJob>;
@@ -766,6 +772,7 @@ mod tests {
             max_concurrent_requests: 3,
             max_retries: 5,
             markets_refresh_token: "test-markets-refresh-token".to_string(),
+            derive: None,
         };
         rocket::build().manage(config).mount(
             "/",

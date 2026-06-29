@@ -63,18 +63,22 @@ describe("useWallet", () => {
     expect(result.networkMode()).toBe("testnet")
   })
 
-  it("restores credentials from localStorage on mount", () => {
-    const storedMetadata = {
-      accountAddress: "0xStoredAccountAddress",
-      apiWalletAddress: "0xStoredApiWalletAddress",
-      privateKey: "STORED_PRIVATE_KEY",
-    }
-    localStorage.setItem("hyperliquid-wallet", JSON.stringify(storedMetadata))
+  it("does not auto-restore credentials on mount (private key is never persisted)", () => {
+    // Even a legacy or tampered entry that contains a private key must not be
+    // trusted: credentials are never restored from localStorage on mount.
+    localStorage.setItem(
+      "hyperliquid-wallet",
+      JSON.stringify({
+        accountAddress: "0xStoredAccountAddress",
+        apiWalletAddress: "0xStoredApiWalletAddress",
+        privateKey: "STORED_PRIVATE_KEY",
+      }),
+    )
 
     const { result } = renderHook(() => useWallet(), { wrapper })
 
-    expect(result.credentials()).toEqual(storedMetadata)
-    expect(result.isConnected()).toBe(true)
+    expect(result.credentials()).toBeNull()
+    expect(result.isConnected()).toBe(false)
   })
 
   it("reads network mode from localStorage", () => {
@@ -84,7 +88,7 @@ describe("useWallet", () => {
     expect(result.networkMode()).toBe("mainnet")
   })
 
-  it("connect stores credentials and disconnect clears them", () => {
+  it("keeps the private key in memory but never in localStorage; disconnect clears both", () => {
     const { result } = renderHook(() => useWallet(), { wrapper })
     const credentials = {
       accountAddress: "0xTestAccountAddress",
@@ -96,10 +100,18 @@ describe("useWallet", () => {
     result.connect(credentials)
 
     expect(result.isConnected()).toBe(true)
+    // Full credentials (including the private key) live in memory only.
     expect(result.credentials()).toEqual(credentials)
-    expect(
-      JSON.parse(localStorage.getItem("hyperliquid-wallet") ?? "{}"),
-    ).toEqual(credentials)
+    // localStorage holds public address metadata only -- never the private key.
+    const stored = JSON.parse(
+      localStorage.getItem("hyperliquid-wallet") ?? "{}",
+    )
+    expect(stored).toEqual({
+      accountAddress: "0xTestAccountAddress",
+      apiWalletAddress: "0xTestApiWalletAddress",
+      vaultAddress: "0xVault",
+    })
+    expect(stored.privateKey).toBeUndefined()
 
     result.disconnect()
     expect(result.isConnected()).toBe(false)

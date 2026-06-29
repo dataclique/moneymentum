@@ -9,7 +9,6 @@ import {
   WalletContext,
   WALLET_STORAGE_KEY,
   NETWORK_STORAGE_KEY,
-  getStoredWalletMetadata,
   getStoredNetworkMode,
   type NetworkMode,
   type WalletCredentials,
@@ -34,16 +33,13 @@ export const WalletProvider = (props: ParentProps) => {
 
   const connect = (newCredentials: WalletCredentials) => {
     setCredentials(newCredentials)
-    const { accountAddress, apiWalletAddress, privateKey, vaultAddress } =
-      newCredentials
+    const { accountAddress, apiWalletAddress, vaultAddress } = newCredentials
+    // SECURITY: never persist the private key. Only public address metadata is
+    // stored, so the reconnect dialog can pre-fill it; the user re-enters the
+    // private key on reload. Credentials never leave the browser to disk.
     localStorage.setItem(
       WALLET_STORAGE_KEY,
-      JSON.stringify({
-        accountAddress,
-        apiWalletAddress,
-        privateKey,
-        vaultAddress,
-      }),
+      JSON.stringify({ accountAddress, apiWalletAddress, vaultAddress }),
     )
   }
 
@@ -67,16 +63,9 @@ export const WalletProvider = (props: ParentProps) => {
   }
 
   onMount(() => {
-    const stored = getStoredWalletMetadata()
-    if (stored?.privateKey) {
-      setCredentials({
-        accountAddress: stored.accountAddress,
-        apiWalletAddress: stored.apiWalletAddress,
-        privateKey: stored.privateKey,
-        vaultAddress: stored.vaultAddress,
-      })
-    }
-
+    // The private key is never persisted, so a full session cannot be restored
+    // on mount; the reconnect dialog pre-fills the stored public metadata and
+    // the user re-enters the key. Only wire the cross-tab storage listener.
     window.addEventListener("storage", handleStorageChange)
   })
   onCleanup(() => {

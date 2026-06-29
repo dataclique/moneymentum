@@ -72,6 +72,7 @@ pub struct Config {
     log_level: LogLevel,
     max_concurrent_requests: usize,
     max_retries: usize,
+    pub derive: derive::DeriveConfig,
 }
 
 impl Config {
@@ -343,6 +344,11 @@ mod tests {
             log_level: LogLevel::Info,
             max_concurrent_requests: 3,
             max_retries: 5,
+            derive: derive::DeriveConfig {
+                port: 8100,
+                rest_base_url: url::Url::parse("https://api.lyra.finance").expect("valid url"),
+                ws_url: url::Url::parse("wss://api.lyra.finance/ws").expect("valid url"),
+            },
         };
         rocket::build()
             .manage(config)
@@ -359,6 +365,11 @@ mod tests {
                 log_level = "info"
                 max_concurrent_requests = 3
                 max_retries = 5
+
+                [derive]
+                port = 8100
+                rest_base_url = "https://api.lyra.finance"
+                ws_url = "wss://api.lyra.finance/ws"
             "#);
             let config: Config = toml::from_str(&toml).unwrap();
             prop_assert_eq!(config.port, port);
@@ -372,6 +383,15 @@ mod tests {
 
         assert_eq!(config.port, 8000);
         assert_eq!(config.data_dir, PathBuf::from("data"));
+
+        assert_eq!(config.derive.port, 8100);
+        assert_eq!(config.derive.rest_base_url.scheme(), "https");
+        assert_eq!(
+            config.derive.rest_base_url.host_str(),
+            Some("api.lyra.finance")
+        );
+        assert_eq!(config.derive.ws_url.scheme(), "wss");
+        assert_eq!(config.derive.ws_url.host_str(), Some("api.lyra.finance"));
     }
 
     #[test]

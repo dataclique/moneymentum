@@ -26,6 +26,11 @@ const BTC_ASSET: &str = "BTC";
 const TICKER_SLIM_INTERVAL_MS: &str = "100";
 const SUBSCRIBE_CHANNELS_PER_MESSAGE: usize = 25;
 
+type DeriveWsWriter = futures::stream::SplitSink<
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
+    Message,
+>;
+
 #[derive(Debug, Error)]
 pub enum DeriveError {
     #[error(transparent)]
@@ -38,8 +43,6 @@ pub enum DeriveError {
     Api { message: String },
     #[error(transparent)]
     WebSocket(#[from] tokio_tungstenite::tungstenite::Error),
-    #[error("serialization failed: {message}")]
-    Serialization { message: String },
 }
 
 #[derive(Debug, Deserialize)]
@@ -128,13 +131,6 @@ pub struct DeriveConfig {
     pub port: u16,
     pub rest_base_url: Url,
     pub ws_url: Url,
-}
-
-impl DeriveConfig {
-    pub fn load(path: &str) -> Result<Self, super::ConfigError> {
-        let content = std::fs::read_to_string(path)?;
-        Ok(toml::from_str(&content)?)
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -406,12 +402,7 @@ fn parse_instrument_from_channel(channel: &str) -> Option<String> {
 }
 
 async fn send_subscribe_batch(
-    writer: &mut futures::stream::SplitSink<
-        tokio_tungstenite::WebSocketStream<
-            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-        >,
-        Message,
-    >,
+    writer: &mut DeriveWsWriter,
     channels: &[String],
     message_id: &mut i64,
 ) -> Result<(), DeriveError> {
@@ -430,12 +421,7 @@ async fn send_subscribe_batch(
 }
 
 async fn send_unsubscribe_batch(
-    writer: &mut futures::stream::SplitSink<
-        tokio_tungstenite::WebSocketStream<
-            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-        >,
-        Message,
-    >,
+    writer: &mut DeriveWsWriter,
     channels: &[String],
     message_id: &mut i64,
 ) -> Result<(), DeriveError> {
@@ -631,29 +617,19 @@ fn build_tab_snapshot(
 }
 
 fn aggregate_risk(quotes: &[OptionQuote]) -> PortfolioRiskSummary {
-    let aggregate_delta = quotes
+    let totals = quotes
         .iter()
-        .filter_map(|quote| quote.greeks.delta)
-        .sum::<f64>();
-    let aggregate_gamma = quotes
-        .iter()
-        .filter_map(|quote| quote.greeks.gamma)
-        .sum::<f64>();
-    let aggregate_vega = quotes
-        .iter()
-        .filter_map(|quote| quote.greeks.vega)
-        .sum::<f64>();
-    let aggregate_theta = quotes
-        .iter()
-        .filter_map(|quote| quote.greeks.theta)
-        .sum::<f64>();
+        .fold(PortfolioRiskSummary::default(), |mut totals, quote| {
+            totals.aggregate_delta += quote.greeks.delta.unwrap_or(0.0);
+            totals.aggregate_gamma += quote.greeks.gamma.unwrap_or(0.0);
+            totals.aggregate_vega += quote.greeks.vega.unwrap_or(0.0);
+            totals.aggregate_theta += quote.greeks.theta.unwrap_or(0.0);
+            totals
+        });
 
     PortfolioRiskSummary {
-        aggregate_delta,
-        aggregate_gamma,
-        aggregate_vega,
-        aggregate_theta,
-        hedge_ratio_btc: -aggregate_delta,
+        hedge_ratio_btc: -totals.aggregate_delta,
+        ..totals
     }
 }
 
@@ -675,12 +651,7 @@ async fn run_websocket_hub(
     let mut active_expiry_unix = initial_expiry_unix;
 
     async fn apply_tab_switch(
-        writer: &mut futures::stream::SplitSink<
-            tokio_tungstenite::WebSocketStream<
-                tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-            >,
-            Message,
-        >,
+        writer: &mut DeriveWsWriter,
         message_id: &mut i64,
         subscribed_channels: &mut Vec<String>,
         quote_map: &mut HashMap<String, QuoteState>,
@@ -735,7 +706,8 @@ async fn run_websocket_hub(
         .await
         {
             error!(error = %error, "derive initial tab subscriptions failed");
-            return Err(error);
+            tokio::time::sleep(Duration::from_secs(3)).await;
+            continue 'reconnect;
         }
 
         let initial_snapshot = build_tab_snapshot(
@@ -770,7 +742,7 @@ async fn run_websocket_hub(
                         active_expiry_unix,
                     ).await {
                         error!(error = %error, "derive tab switch failed");
-                        return Err(error);
+                        break 'session;
                     }
                     let switched = build_tab_snapshot(
                         asset.as_str(),
@@ -799,9 +771,7 @@ async fn run_websocket_hub(
                     if !message.is_text() {
                         continue;
                     }
-                    let text = message.to_text().map_err(|error| DeriveError::Serialization {
-                        message: error.to_string(),
-                    })?;
+                    let text = message.to_text()?;
                     let Ok(notification) = serde_json::from_str::<WsNotification>(text) else {
                         continue;
                     };
@@ -890,6 +860,12 @@ fn options_active_expiry() -> Status {
     Status::NoContent
 }
 
+/// Switch the active expiry that the server streams.
+///
+/// The derive server holds a single, process-global active expiry shared by
+/// every SSE subscriber, so it is intended for single-client use: if two
+/// clients select different expiries, the most recent request wins and both
+/// clients see that expiry's data.
 #[post("/derive/options/active_expiry", format = "json", data = "<body>")]
 async fn post_active_expiry(
     state: &State<DeriveState>,
@@ -914,11 +890,15 @@ pub async fn derive_rocket(config: DeriveConfig) -> Result<Rocket<Build>, Derive
     let http = Client::new();
     let catalogue =
         Arc::new(fetch_options_catalogue(&http, &config.rest_base_url, BTC_ASSET).await?);
-    let default_expiry_unix = catalogue
-        .expiry_unix_sorted_asc
-        .first()
-        .copied()
-        .unwrap_or(0);
+    let Some(default_expiry_unix) = catalogue.expiry_unix_sorted_asc.first().copied() else {
+        error!(
+            asset = BTC_ASSET,
+            "derive returned no active option expiries"
+        );
+        return Err(DeriveError::Api {
+            message: "derive returned no active option expiries".to_string(),
+        });
+    };
 
     let empty_snapshot = build_tab_snapshot(
         BTC_ASSET,
@@ -1032,5 +1012,232 @@ mod tests {
         let greeks = build_greeks(&ticker);
         assert_eq!(greeks.delta, None);
         assert_eq!(greeks.iv, None);
+    }
+
+    fn quote_with_greeks(
+        instrument_name: &str,
+        strike: f64,
+        spot: f64,
+        delta: Option<f64>,
+        gamma: Option<f64>,
+        vega: Option<f64>,
+        theta: Option<f64>,
+    ) -> OptionQuote {
+        OptionQuote {
+            instrument_name: instrument_name.to_string(),
+            kind: OptionKind::Call,
+            strike,
+            expiry: Utc
+                .timestamp_opt(1_700_000_000, 0)
+                .single()
+                .expect("valid timestamp"),
+            expiry_unix: 1_700_000_000,
+            bid: None,
+            ask: None,
+            bid_size: None,
+            ask_size: None,
+            mark: None,
+            spot_price: spot,
+            moneyness: Moneyness::AtTheMoney,
+            greeks: OptionGreeks {
+                delta,
+                gamma,
+                vega,
+                theta,
+                ..OptionGreeks::default()
+            },
+        }
+    }
+
+    #[test]
+    fn compute_moneyness_classifies_calls_and_puts_outside_the_atm_band() {
+        assert_eq!(
+            compute_moneyness(OptionKind::Call, 60000.0, 70000.0),
+            Moneyness::InTheMoney
+        );
+        assert_eq!(
+            compute_moneyness(OptionKind::Call, 80000.0, 70000.0),
+            Moneyness::OutOfTheMoney
+        );
+        assert_eq!(
+            compute_moneyness(OptionKind::Put, 80000.0, 70000.0),
+            Moneyness::InTheMoney
+        );
+        assert_eq!(
+            compute_moneyness(OptionKind::Put, 60000.0, 70000.0),
+            Moneyness::OutOfTheMoney
+        );
+    }
+
+    #[test]
+    fn compute_moneyness_returns_atm_inside_the_tolerance_band() {
+        // |70100 - 70000| / 70000 = 0.0014, which is below ATM_TOLERANCE (0.005).
+        assert_eq!(
+            compute_moneyness(OptionKind::Call, 70100.0, 70000.0),
+            Moneyness::AtTheMoney
+        );
+        assert_eq!(
+            compute_moneyness(OptionKind::Put, 69900.0, 70000.0),
+            Moneyness::AtTheMoney
+        );
+    }
+
+    #[test]
+    fn compute_moneyness_treats_nonpositive_spot_as_atm() {
+        assert_eq!(
+            compute_moneyness(OptionKind::Call, 70000.0, 0.0),
+            Moneyness::AtTheMoney
+        );
+        assert_eq!(
+            compute_moneyness(OptionKind::Put, 70000.0, -5.0),
+            Moneyness::AtTheMoney
+        );
+    }
+
+    #[test]
+    fn aggregate_risk_sums_present_greeks_and_negates_delta_for_hedge() {
+        let quotes = vec![
+            quote_with_greeks(
+                "BTC-A",
+                70000.0,
+                70000.0,
+                Some(0.5),
+                Some(0.01),
+                Some(2.0),
+                Some(-1.0),
+            ),
+            quote_with_greeks(
+                "BTC-B",
+                71000.0,
+                70000.0,
+                Some(-0.25),
+                None,
+                Some(3.0),
+                Some(-0.5),
+            ),
+        ];
+
+        let risk = aggregate_risk(&quotes);
+
+        assert!((risk.aggregate_delta - 0.25).abs() < 1e-9);
+        assert!((risk.aggregate_gamma - 0.01).abs() < 1e-9);
+        assert!((risk.aggregate_vega - 5.0).abs() < 1e-9);
+        assert!((risk.aggregate_theta - (-1.5)).abs() < 1e-9);
+        assert!((risk.hedge_ratio_btc - (-0.25)).abs() < 1e-9);
+    }
+
+    #[test]
+    fn aggregate_risk_is_zero_for_empty_holdings() {
+        let risk = aggregate_risk(&[]);
+
+        assert!(risk.aggregate_delta.abs() < 1e-9);
+        assert!(risk.aggregate_gamma.abs() < 1e-9);
+        assert!(risk.aggregate_vega.abs() < 1e-9);
+        assert!(risk.aggregate_theta.abs() < 1e-9);
+        assert!(risk.hedge_ratio_btc.abs() < 1e-9);
+    }
+
+    #[test]
+    fn scenario_pnl_combines_delta_and_gamma_terms() {
+        let risk = PortfolioRiskSummary {
+            aggregate_delta: 2.0,
+            aggregate_gamma: 0.5,
+            aggregate_vega: 0.0,
+            aggregate_theta: 0.0,
+            hedge_ratio_btc: -2.0,
+        };
+
+        // spot 100, +10% move: spot_move = 10
+        // pnl = 2 * 10 + 0.5 * 0.5 * 10 * 10 = 20 + 25 = 45
+        assert!((scenario_pnl(&risk, 100.0, 0.10) - 45.0).abs() < 1e-9);
+
+        // spot 100, -10% move: spot_move = -10
+        // pnl = 2 * -10 + 0.5 * 0.5 * 100 = -20 + 25 = 5
+        assert!((scenario_pnl(&risk, 100.0, -0.10) - 5.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn parse_optional_number_treats_zero_and_garbage_as_absent() {
+        assert_eq!(parse_optional_number("0"), None);
+        assert_eq!(parse_optional_number("0.0"), None);
+        assert_eq!(parse_optional_number("not-a-number"), None);
+        assert_eq!(parse_optional_number("12.5"), Some(12.5));
+        assert_eq!(parse_optional_number("-3.25"), Some(-3.25));
+    }
+
+    #[test]
+    fn parse_instrument_from_channel_requires_three_segment_ticker_slim() {
+        assert_eq!(
+            parse_instrument_from_channel("ticker_slim.BTC-20240101-70000-C.100"),
+            Some("BTC-20240101-70000-C".to_string())
+        );
+        assert_eq!(parse_instrument_from_channel("orderbook.BTC.100"), None);
+        assert_eq!(parse_instrument_from_channel("ticker_slim.BTC"), None);
+    }
+
+    #[test]
+    fn build_tab_snapshot_dedups_strikes_and_selects_first_positive_spot() {
+        let expiry = Utc
+            .timestamp_opt(1_700_000_000, 0)
+            .single()
+            .expect("valid timestamp");
+        let metas = vec![
+            InstrumentMeta {
+                instrument_name: "BTC-C-70000".to_string(),
+                kind: OptionKind::Call,
+                strike: 70000.0,
+                expiry,
+                expiry_unix: 1_700_000_000,
+            },
+            InstrumentMeta {
+                instrument_name: "BTC-P-70000".to_string(),
+                kind: OptionKind::Put,
+                strike: 70000.0,
+                expiry,
+                expiry_unix: 1_700_000_000,
+            },
+            InstrumentMeta {
+                instrument_name: "BTC-C-71000".to_string(),
+                kind: OptionKind::Call,
+                strike: 71000.0,
+                expiry,
+                expiry_unix: 1_700_000_000,
+            },
+        ];
+
+        let mut instrument_by_name = HashMap::new();
+        let mut names = Vec::new();
+        for meta in &metas {
+            instrument_by_name.insert(meta.instrument_name.clone(), meta.clone());
+            names.push(meta.instrument_name.clone());
+        }
+        let mut names_by_expiry_unix = HashMap::new();
+        names_by_expiry_unix.insert(1_700_000_000, names);
+        let catalogue = OptionsCatalogue {
+            instrument_by_name,
+            names_by_expiry_unix,
+            expiry_unix_sorted_asc: vec![1_700_000_000],
+        };
+
+        let mut quote_map: HashMap<String, QuoteState> = HashMap::new();
+        quote_map.insert(
+            "BTC-C-70000".to_string(),
+            QuoteState {
+                spot: 70500.0,
+                greeks: OptionGreeks {
+                    delta: Some(0.4),
+                    ..OptionGreeks::default()
+                },
+                ..QuoteState::default()
+            },
+        );
+
+        let snapshot = build_tab_snapshot("BTC", &catalogue, 1_700_000_000, &quote_map);
+
+        assert_eq!(snapshot.strikes, vec![70000.0, 71000.0]);
+        assert!((snapshot.spot_price - 70500.0).abs() < 1e-9);
+        assert_eq!(snapshot.quotes.len(), 3);
+        assert!((snapshot.risk.aggregate_delta - 0.4).abs() < 1e-9);
+        assert_eq!(snapshot.scenarios.len(), 4);
     }
 }

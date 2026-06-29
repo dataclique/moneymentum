@@ -122,8 +122,12 @@ where
                         Poll::Pending => return Poll::Pending,
                     }
 
-                    // `Buffered` always carries `Some` until it transitions to
-                    // `Second`, so this take never observes `None`.
+                    // `Buffered` is always constructed with `Some` and is replaced
+                    // by `Second` immediately after this take, so `None` is
+                    // unreachable. `unreachable!()` is forbidden in production code,
+                    // so the impossible branch falls back to `Poll::Pending`: a
+                    // future invariant violation would stall this task rather than
+                    // panic. The state machine guarantees the branch is never taken.
                     let Some(value) = intermediate.take() else {
                         return Poll::Pending;
                     };
@@ -143,7 +147,11 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
+    use std::task::{Context, Poll};
+
     use polars::prelude::{Column, DataFrame, DataType, NamedFrom, Series, TimeUnit};
+    use tower::Service;
     use tracing::Level;
     use tracing_test::traced_test;
 
@@ -217,6 +225,72 @@ mod tests {
             Level::DEBUG,
             &["computed simple returns from prices"]
         ));
+        assert!(logs_contain_at(
+            Level::DEBUG,
+            &["computed rolling volatility"]
+        ));
+    }
+
+    /// A `Service` adapter that returns `Poll::Pending` from `poll_ready` a fixed
+    /// number of times (waking the task each time) before delegating to `inner`.
+    /// It forces the pipeline's `Buffered` state to hold the intermediate across
+    /// real backpressure -- the exact scenario that state exists to handle.
+    #[derive(Clone)]
+    struct PendingThenReady<S> {
+        inner: S,
+        remaining_pending: Cell<u32>,
+    }
+
+    impl<S, Req> Service<Req> for PendingThenReady<S>
+    where
+        S: Service<Req>,
+    {
+        type Response = S::Response;
+        type Error = S::Error;
+        type Future = S::Future;
+
+        fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+            let remaining = self.remaining_pending.get();
+            if remaining > 0 {
+                self.remaining_pending.set(remaining - 1);
+                cx.waker().wake_by_ref();
+                return Poll::Pending;
+            }
+            self.inner.poll_ready(cx)
+        }
+
+        fn call(&mut self, request: Req) -> Self::Future {
+            self.inner.call(request)
+        }
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn pipeline_preserves_intermediate_under_backpressure() {
+        let prices = [
+            100.0, 102.0, 101.0, 105.0, 103.0, 108.0, 107.0, 110.0, 109.0, 112.0,
+        ];
+
+        // The second stage yields Pending twice before becoming ready. The
+        // original bug re-polled the completed first future here and panicked;
+        // the Buffered state must instead hold the intermediate until ready.
+        let backpressured_vol = PendingThenReady {
+            inner: RollingVolatility::new(3).unwrap(),
+            remaining_pending: Cell::new(2),
+        };
+        let mut pipeline = chain(SimpleReturns, backpressured_vol);
+        let result = pipeline.call(sample_price_series(&prices)).await.unwrap();
+
+        // Output is identical to the no-backpressure pipeline -- nothing lost.
+        let mut returns_service = SimpleReturns;
+        let returns = returns_service
+            .call(sample_price_series(&prices))
+            .into_inner()
+            .unwrap();
+        let mut vol_service = RollingVolatility::new(3).unwrap();
+        let expected = vol_service.call(returns).into_inner().unwrap();
+        assert_eq!(extract_values(&result), extract_values(&expected));
+
         assert!(logs_contain_at(
             Level::DEBUG,
             &["computed rolling volatility"]

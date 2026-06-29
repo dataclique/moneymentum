@@ -43,6 +43,10 @@ pub enum TransformError {
 /// by zero, `ln` of a non-positive number), so the price-consuming transforms
 /// reject such input rather than silently emit `NaN`/`Inf`. `TimeSeries::new`
 /// already guarantees finite values, so the minimum is always a real number.
+///
+/// Precondition: the series is non-empty. On an empty series the fold returns
+/// `f64::INFINITY` and the check passes vacuously; every caller rejects
+/// empty/short input before reaching this guard.
 fn ensure_positive_prices(input: &TimeSeries<Price>) -> Result<(), TransformError> {
     let min = input
         .as_dataframe()

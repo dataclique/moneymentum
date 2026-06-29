@@ -72,13 +72,13 @@ impl<M: Observation> TimeSeries<M> {
             });
         }
 
+        if df.width() != 2 {
+            return Err(SeriesError::UnexpectedColumns { width: df.width() });
+        }
+
         let value_floats = value_col.as_materialized_series().f64()?;
         if value_floats.null_count() > 0 || !value_floats.into_no_null_iter().all(f64::is_finite) {
             return Err(SeriesError::NonFiniteValue);
-        }
-
-        if df.width() != 2 {
-            return Err(SeriesError::UnexpectedColumns { width: df.width() });
         }
 
         let sorted = df
@@ -249,6 +249,25 @@ mod tests {
         let df = DataFrame::new(vec![Column::from(timestamps), Column::from(values)]).unwrap();
         let result = TimeSeries::<Price>::new(df);
         assert!(matches!(result, Err(SeriesError::NonFiniteValue)));
+    }
+
+    #[test]
+    fn extra_columns_take_precedence_over_non_finite() {
+        let timestamps = make_timestamps(2);
+        let values = Series::new("value".into(), &[1.0, f64::NAN]);
+        let extra = Series::new("ticker".into(), &["BTC", "ETH"]);
+        let df = DataFrame::new(vec![
+            Column::from(timestamps),
+            Column::from(values),
+            Column::from(extra),
+        ])
+        .unwrap();
+        // Structural (shape) errors are reported before value-content errors.
+        let result = TimeSeries::<Price>::new(df);
+        assert!(matches!(
+            result,
+            Err(SeriesError::UnexpectedColumns { width: 3 })
+        ));
     }
 
     #[test]

@@ -22,12 +22,14 @@ pub struct Pipeline<A, B> {
     second: B,
 }
 
-/// Creates a pipeline that feeds the output of `first` into `second`.
-///
-/// Type-safe: only compiles when `first`'s `Response` matches
-/// `second`'s request type.
-pub fn chain<A, B>(first: A, second: B) -> Pipeline<A, B> {
-    Pipeline { first, second }
+impl<A, B> Pipeline<A, B> {
+    /// Creates a pipeline that feeds the output of `first` into `second`.
+    ///
+    /// Type-safe: the `Service` impl only compiles when `first`'s `Response`
+    /// matches `second`'s request type.
+    pub fn new(first: A, second: B) -> Self {
+        Self { first, second }
+    }
 }
 
 impl<A, B, Req> Service<Req> for Pipeline<A, B>
@@ -199,7 +201,7 @@ mod tests {
             100.0, 102.0, 101.0, 105.0, 103.0, 108.0, 107.0, 110.0, 109.0, 112.0,
         ];
 
-        let mut pipeline = chain(SimpleReturns, RollingVolatility::new(3).unwrap());
+        let mut pipeline = Pipeline::new(SimpleReturns, RollingVolatility::new(3).unwrap());
         let result = pipeline.call(sample_price_series(&prices)).await.unwrap();
 
         assert_eq!(result.len(), 7);
@@ -278,7 +280,7 @@ mod tests {
             inner: RollingVolatility::new(3).unwrap(),
             remaining_pending: Cell::new(2),
         };
-        let mut pipeline = chain(SimpleReturns, backpressured_vol);
+        let mut pipeline = Pipeline::new(SimpleReturns, backpressured_vol);
         let result = pipeline.call(sample_price_series(&prices)).await.unwrap();
 
         // Output is identical to the no-backpressure pipeline -- nothing lost.

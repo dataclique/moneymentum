@@ -616,7 +616,6 @@ mod tests {
         );
     }
 
-    #[traced_test]
     #[test]
     fn composable_labels_reflect_nesting() {
         assert_eq!(Price::label().as_ref(), "price");
@@ -756,6 +755,56 @@ mod tests {
                 prop_assert!(value.is_finite());
                 prop_assert!(value > -1.0);
             }
+        }
+
+        #[test]
+        fn drawdown_is_never_positive(
+            prices in proptest::collection::vec(0.01f64..1_000_000.0, 1..64)
+        ) {
+            let series = sample_price_series(&prices);
+            let mut service = PeakDrawdown;
+            let result = service.call(series).into_inner().unwrap();
+            for value in extract_values(&result) {
+                prop_assert!(value.is_finite());
+                prop_assert!(value <= 0.0);
+            }
+        }
+
+        #[test]
+        fn rolling_volatility_is_never_negative(
+            prices in proptest::collection::vec(0.01f64..1_000_000.0, 4..64)
+        ) {
+            let series = sample_price_series(&prices);
+            let mut returns_service = SimpleReturns;
+            let returns = returns_service.call(series).into_inner().unwrap();
+            let mut vol_service = RollingVolatility::new(3).unwrap();
+            let vol = vol_service.call(returns).into_inner().unwrap();
+            for value in extract_values(&vol) {
+                prop_assert!(value.is_finite());
+                prop_assert!(value >= 0.0);
+            }
+        }
+
+        #[test]
+        fn z_scores_have_zero_mean_and_unit_std(
+            prices in proptest::collection::vec(0.01f64..1_000_000.0, 3..64)
+        ) {
+            let series = sample_price_series(&prices);
+            let mut service = Normalize;
+            let outcome = service.call(series).into_inner();
+            // Constant series are rejected as ZeroVariance by design; skip them.
+            prop_assume!(outcome.is_ok());
+            let result = outcome.unwrap();
+            let values = extract_values(&result);
+
+            let count = f64::from(u32::try_from(values.len()).unwrap());
+            let mean = values.iter().sum::<f64>() / count;
+            let variance =
+                values.iter().map(|value| (value - mean).powi(2)).sum::<f64>() / (count - 1.0);
+            let std = variance.sqrt();
+
+            prop_assert!(mean.abs() < 1e-6, "mean = {mean}");
+            prop_assert!((std - 1.0).abs() < 1e-6, "std = {std}");
         }
     }
 }

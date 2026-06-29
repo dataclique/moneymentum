@@ -6,6 +6,7 @@ polars = { version = "0.51" }
 proptest = "1.10.0"
 thiserror = "2.0.18"
 tokio = { version = "1.49.0" }
+tower = { version = "0.5" }
 tracing = "0.1.44"
 tracing-test = "0.2.5"
 

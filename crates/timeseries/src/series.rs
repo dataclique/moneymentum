@@ -270,6 +270,7 @@ mod tests {
         ));
     }
 
+    #[traced_test]
     #[test]
     fn sorts_unsorted_timestamps() {
         let epoch_start: i64 = 1_704_067_200_000;
@@ -294,5 +295,10 @@ mod tests {
 
         // After sorting by timestamp: day 1=100, day 2=200, day 3=300
         assert_eq!(result_values, vec![100.0, 200.0, 300.0]);
+
+        assert!(logs_contain_at(
+            Level::DEBUG,
+            &["time series constructed", "price"]
+        ));
     }
 }

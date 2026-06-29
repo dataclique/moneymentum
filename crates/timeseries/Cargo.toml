@@ -13,7 +13,7 @@ polars = { workspace = true, features = [
   "log",
 ] }
 thiserror.workspace = true
-tower = { version = "0.5", features = ["util"] }
+tower = { workspace = true, features = ["util"] }
 tracing.workspace = true
 
 [dev-dependencies]

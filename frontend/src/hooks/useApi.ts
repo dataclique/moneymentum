@@ -12,6 +12,14 @@ export class EmptyStreamError extends Data.TaggedError("EmptyStreamError")<
   Record<string, never>
 > {}
 
+export class StreamReadError extends Data.TaggedError("StreamReadError")<{
+  readonly cause: unknown
+}> {}
+
+export class ApiMessageError extends Data.TaggedError("ApiMessageError")<{
+  readonly message: string
+}> {}
+
 export type TradingData = {
   timestamp: string
   close: number
@@ -83,7 +91,7 @@ const fetchTokenData = (
     ),
     Effect.flatMap(tokenResponse =>
       tokenResponse.message
-        ? Effect.fail(new Error(tokenResponse.message))
+        ? Effect.fail(new ApiMessageError({ message: tokenResponse.message }))
         : Effect.succeed(tokenResponse),
     ),
   )
@@ -117,7 +125,7 @@ const streamReload = (mode: string) =>
             reader.releaseLock()
           }
         },
-        catch: cause => new Error(String(cause)),
+        catch: cause => new StreamReadError({ cause }),
       }),
     ),
   )

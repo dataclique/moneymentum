@@ -7,6 +7,7 @@ import {
   type Timeframe,
 } from "@/components/ui/timeframe-select"
 import { cn } from "@/lib/cn"
+import { getErrorMessage } from "@/lib/error-message"
 import { Button } from "@/components/ui/button"
 import {
   useDateRange,
@@ -108,8 +109,10 @@ const MainPage = () => {
     dateRangeQuery.isLoading ||
     analysisQuery.isLoading ||
     reloadMutation.isPending
-  const error = () =>
-    dateRangeQuery.error?.message ?? analysisQuery.error?.message ?? null
+  const error = () => {
+    const failure = dateRangeQuery.error ?? analysisQuery.error
+    return failure ? getErrorMessage(failure) : null
+  }
   const data = () => analysisQuery.data?.data ?? []
   const message = () => analysisQuery.data?.message ?? null
 

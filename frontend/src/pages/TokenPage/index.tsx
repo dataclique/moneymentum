@@ -108,7 +108,7 @@ const TokenPage = (props: { timeframe: Timeframe }) => {
                     optionValue="value"
                     optionTextValue="label"
                     value={AVAILABLE_METRICS.find(
-                      m => m.value === selectedMetric(),
+                      metric => metric.value === selectedMetric(),
                     )}
                     onChange={option => {
                       if (option) {

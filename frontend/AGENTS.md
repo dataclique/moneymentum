@@ -113,14 +113,31 @@ Programs:
 ### Bridge to TanStack Query
 
 `Effect.runPromise(program)` inside `queryFn`. When the Effect fails,
-`runPromise` rejects with a typed error that has `_tag` -- components can
-pattern-match on `error._tag` instead of parsing strings.
+`runPromise` rejects with a `FiberFailure` that wraps the typed error in its
+`Cause` -- so `query.error` is the `FiberFailure`, not the tagged error itself.
 
 ```ts
 queryFn: (({ signal }) => Effect.runPromise(fetchJson<T>(url, { signal })));
 ```
 
 Always forward the `signal` from TanStack Query's context into the HTTP helpers.
+
+### Displaying errors in the UI
+
+Never render `error.message` directly -- the `FiberFailure` message is generic
+("An error has occurred"). Pass `query.error` through `getErrorMessage`
+(`src/lib/error-message.ts`), which unwraps the `FiberFailure` to the tagged
+error and maps each `_tag` to display text:
+
+```tsx
+<Show when={query.error}>
+  <p>{getErrorMessage(query.error)}</p>
+</Show>;
+```
+
+Add a `case` to `getErrorMessage` whenever you introduce a new tagged error so
+every failure surfaces a user-facing message instead of falling back to the raw
+string.
 
 ### Hyperliquid service (`src/services/hyperliquid.ts`)
 

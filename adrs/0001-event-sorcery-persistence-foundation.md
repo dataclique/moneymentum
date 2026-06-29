@@ -224,13 +224,14 @@ startup reconciler fails any orphaned run); the migration creates the 1.0-rc
    and the `set_ignore_missing` ordering hack (no second migrator competes for
    `_sqlx_migrations` anymore).
 
-**Startup wiring** (`rocket()` in `src/lib.rs`): one sqlx 0.9 pool -> plain
+**Startup wiring** (`app()` in `src/lib.rs`): one sqlx 0.9 pool -> plain
 forward-only `sqlx::migrate!` -> build exactly one `Store` per aggregate via
 `StoreBuilder` (schema reconcile + stale-snapshot clearing happen inside
-`build()`) -> `.manage` each `Store`/`Projection` for Rocket -> spawn the single
-apalis 1.0-rc `Monitor`. Production reads go through
-`Projection::load/
-load_all/filter`, never raw SQL on the event/view tables.
+`build()`) -> inject each `Store`/`Projection` into the Axum router via
+`.with_state` -> spawn the single apalis 1.0-rc `Monitor`. Production reads go
+through `Projection::load/
+load_all/filter`, never raw SQL on the event/view
+tables.
 
 ## Consequences
 

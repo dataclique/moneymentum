@@ -37,6 +37,19 @@ Design: [adrs/0001](./adrs/0001-event-sorcery-persistence-foundation.md).
 
 ---
 
+## Dev: tower-native HTTP foundation
+
+Bring the backend HTTP layer onto the tower middleware ecosystem the rest of the
+Rust stack already uses, so the apalis job queue and every HTTP cross-cutting
+concern -- instrumentation, timeouts, rate limiting, auth -- share one
+middleware vocabulary instead of being reimplemented per framework. Resolving
+this early keeps new handlers from accumulating against a framework outside the
+stack's ecosystem, and unifies HTTP observability with the rest of the service.
+
+- [ ] Bring the HTTP layer onto the tower middleware ecosystem -- #397 / #119
+
+---
+
 ## Dev: finish the Python -> Rust analytics migration
 
 Port the deleted Python quant analytics to Rust as the factor and risk engine
@@ -248,13 +261,13 @@ primitives.
 
 ## Completed: Backend foundation and portfolio beta
 
-Rust backend with Rocket, Polars, and SQLite-backed ingestion runs/job queue.
+Rust backend with Axum, Polars, and SQLite-backed ingestion runs/job queue.
 Ingestion pipeline fetches OHLCV and funding rates from Hyperliquid, stores as
 CSV. Beta calculation computes rolling covariance/variance against BTC. Deployed
 to DigitalOcean via NixOS + deploy-rs.
 
 - [x] Cargo workspace + Nix flake + CI/CD
-- [x] Rocket HTTP server with health check
+- [x] Axum HTTP server with health check
 - [x] Ingestion run ledger + Apalis job queue (SQLite)
 - [x] Hyperliquid OHLCV ingestion (15m, 1h, 1d candles)
 - [x] Funding rate ingestion

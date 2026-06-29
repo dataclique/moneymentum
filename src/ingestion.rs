@@ -7,7 +7,6 @@
 //! unique index; an unconditional startup reconciler abandons every still-running
 //! stream before /ingest is served, so a crash can never wedge the slot.
 
-use std::convert::Infallible;
 use std::fmt::{self, Display};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -22,6 +21,7 @@ use event_sorcery::{
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tracing::{debug, error, info, warn};
+use uuid::Uuid;
 
 use crate::hyperliquid::{CandleIngester, FundingRateIngester, Hyperliquid};
 use crate::market_catalog::MarketCatalog;
@@ -39,40 +39,87 @@ const ABANDONED_RUN_REASON: &str = "backend restarted before ingestion completed
 const LOST_RACE_REASON: &str = "lost the one-running race to a concurrent ingestion";
 
 /// Identity of a single ingestion attempt, permanent for the life of its event
-/// stream. Derived from the start instant so it is unique per attempt and sorts
-/// by start time. `Display`/`FromStr` round-trip the stored string losslessly.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub(crate) struct IngestionRunId(String);
+/// stream. It is the two values that determine it -- the microsecond the run
+/// started (so ids sort by start time) and a random nonce (so two runs started
+/// in the same microsecond cannot collide onto one stream, which would surface a
+/// legitimate concurrent `/ingest` as a spurious 500 rather than a 409). The
+/// wire form `ingestion-{micros}-{nonce}` is *derived* from those fields by
+/// [`Display`] and parsed back by [`FromStr`]; the fields, not the string, are
+/// the source of truth. The start time is held at microsecond precision -- the
+/// resolution the wire form preserves -- so an id always equals the value parsed
+/// back from its own [`Display`] output.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) struct IngestionRunId {
+    started_at_micros: i64,
+    nonce: Uuid,
+}
+
+const INGESTION_RUN_ID_PREFIX: &str = "ingestion-";
 
 impl IngestionRunId {
     fn new(started_at: DateTime<Utc>) -> Self {
-        // The timestamp prefix keeps ids sortable by start time; the random
-        // suffix guarantees uniqueness so two runs started within the same
-        // microsecond cannot collide onto one stream (which would surface a
-        // legitimate concurrent /ingest as a spurious 500 rather than a 409).
-        Self(format!(
-            "ingestion-{}-{}",
-            started_at.timestamp_micros(),
-            uuid::Uuid::new_v4().simple()
-        ))
-    }
-
-    fn as_str(&self) -> &str {
-        &self.0
+        Self {
+            started_at_micros: started_at.timestamp_micros(),
+            nonce: Uuid::new_v4(),
+        }
     }
 }
 
 impl Display for IngestionRunId {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.0)
+        write!(
+            formatter,
+            "{INGESTION_RUN_ID_PREFIX}{}-{}",
+            self.started_at_micros,
+            self.nonce.simple()
+        )
     }
 }
 
 impl FromStr for IngestionRunId {
-    type Err = Infallible;
+    type Err = IngestionRunIdParseError;
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
-        Ok(Self(value.to_string()))
+        let body = value
+            .strip_prefix(INGESTION_RUN_ID_PREFIX)
+            .ok_or(IngestionRunIdParseError::MissingPrefix)?;
+        let (micros, nonce) = body
+            .split_once('-')
+            .ok_or(IngestionRunIdParseError::MissingNonce)?;
+        let started_at_micros = micros
+            .parse::<i64>()
+            .map_err(IngestionRunIdParseError::Timestamp)?;
+        let nonce = Uuid::parse_str(nonce).map_err(IngestionRunIdParseError::Nonce)?;
+        Ok(Self {
+            started_at_micros,
+            nonce,
+        })
+    }
+}
+
+/// Why a string is not a valid [`IngestionRunId`].
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum IngestionRunIdParseError {
+    #[error("ingestion run id must start with `{INGESTION_RUN_ID_PREFIX}`")]
+    MissingPrefix,
+    #[error("ingestion run id is missing its nonce segment")]
+    MissingNonce,
+    #[error("ingestion run id has a non-numeric start timestamp")]
+    Timestamp(#[source] std::num::ParseIntError),
+    #[error("ingestion run id has a malformed nonce")]
+    Nonce(#[source] uuid::Error),
+}
+
+impl Serialize for IngestionRunId {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_str(self)
+    }
+}
+
+impl<'de> Deserialize<'de> for IngestionRunId {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let raw = String::deserialize(deserializer)?;
+        raw.parse().map_err(serde::de::Error::custom)
     }
 }
 
@@ -313,19 +360,19 @@ impl IngestionJob {
                 // terminalization failure so the worker retries instead of
                 // leaving the slot wedged until the next startup reconcile.
                 if let Err(err) = complete_run(&store, &self.run_id, last_record).await {
-                    error!(error = %err, run_id = self.run_id.as_str(), "failed to record ingestion completion");
+                    error!(error = %err, run_id = %self.run_id, "failed to record ingestion completion");
                     return Err(err);
                 }
-                info!(run_id = self.run_id.as_str(), "ingestion complete");
+                info!(run_id = %self.run_id, "ingestion complete");
             }
             Err(err) => {
-                error!(error = %err, run_id = self.run_id.as_str(), "ingestion failed");
+                error!(error = %err, run_id = %self.run_id, "ingestion failed");
                 // If we cannot even record the failure the run stays Running;
                 // surface it so the worker retries rather than wedging the slot.
                 if let Err(record_err) = fail_run(&store, &self.run_id, &err.to_string()).await {
                     error!(
                         error = %record_err,
-                        run_id = self.run_id.as_str(),
+                        run_id = %self.run_id,
                         "failed to record ingestion failure"
                     );
                     return Err(record_err);
@@ -714,11 +761,40 @@ mod tests {
         let status = latest_status(&projection).await.unwrap();
 
         assert_eq!(status, Some(IngestionRunStatus::Running));
-        assert!(run_id.as_str().starts_with("ingestion-"));
+        let run_id = run_id.to_string();
+        assert!(run_id.starts_with("ingestion-"));
         assert!(logs_contain_at(
             Level::DEBUG,
             &["ingestion run created", run_id.as_str()]
         ));
+    }
+
+    #[test]
+    fn ingestion_run_id_round_trips_through_its_string_form() {
+        let started_at = Utc.with_ymd_and_hms(2026, 1, 2, 3, 4, 5).unwrap();
+        let run_id = IngestionRunId::new(started_at);
+
+        let rendered = run_id.to_string();
+        let parsed: IngestionRunId = rendered.parse().unwrap();
+
+        assert!(rendered.starts_with("ingestion-"));
+        assert_eq!(parsed, run_id);
+    }
+
+    #[test]
+    fn ingestion_run_id_rejects_malformed_strings() {
+        assert!("missing-prefix".parse::<IngestionRunId>().is_err());
+        assert!("ingestion-123".parse::<IngestionRunId>().is_err());
+        assert!(
+            "ingestion-notanumber-7a8b"
+                .parse::<IngestionRunId>()
+                .is_err()
+        );
+        assert!(
+            "ingestion-123-not-a-uuid"
+                .parse::<IngestionRunId>()
+                .is_err()
+        );
     }
 
     #[traced_test]
@@ -770,6 +846,7 @@ mod tests {
         let status = latest_status(&projection).await.unwrap();
 
         assert_eq!(status, Some(IngestionRunStatus::Abandoned));
+        let run_id = run_id.to_string();
         assert!(logs_contain_at(
             Level::WARN,
             &["skipping ingestion for a finished run", run_id.as_str()]
@@ -793,6 +870,7 @@ mod tests {
         let status = latest_status(&projection).await.unwrap();
 
         assert_eq!(status, Some(IngestionRunStatus::Completed));
+        let run_id = run_id.to_string();
         assert!(logs_contain_at(
             Level::INFO,
             &["ingestion complete", run_id.as_str()]

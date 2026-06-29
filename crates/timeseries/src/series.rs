@@ -59,6 +59,10 @@ impl<M: Observation> TimeSeries<M> {
             });
         }
 
+        if timestamp_col.null_count() > 0 {
+            return Err(SeriesError::NullTimestamp);
+        }
+
         let value_col = df.column("value").map_err(|_| SeriesError::MissingColumn {
             column: "value".into(),
         })?;
@@ -134,6 +138,9 @@ pub enum SeriesError {
         actual: String,
     },
 
+    #[error("timestamp column contains a null entry")]
+    NullTimestamp,
+
     #[error("value column contains a null, NaN, or infinite entry")]
     NonFiniteValue,
 
@@ -159,7 +166,7 @@ mod tests {
     fn make_timestamps(count: usize) -> Series {
         let epoch_start: i64 = 1_704_067_200_000; // 2024-01-01T00:00:00Z
         let millis: Vec<i64> = (0..count)
-            .map(|idx| epoch_start + (idx as i64) * DAY_MS)
+            .map(|idx| epoch_start + i64::try_from(idx).unwrap() * DAY_MS)
             .collect();
         Series::new("timestamp".into(), millis)
             .cast(&DataType::Datetime(TimeUnit::Milliseconds, None))
@@ -249,6 +256,18 @@ mod tests {
         let df = DataFrame::new(vec![Column::from(timestamps), Column::from(values)]).unwrap();
         let result = TimeSeries::<Price>::new(df);
         assert!(matches!(result, Err(SeriesError::NonFiniteValue)));
+    }
+
+    #[test]
+    fn rejects_null_timestamp() {
+        let millis: Vec<Option<i64>> = vec![Some(1_704_067_200_000), None];
+        let timestamps = Series::new("timestamp".into(), millis)
+            .cast(&DataType::Datetime(TimeUnit::Milliseconds, None))
+            .unwrap();
+        let values = Series::new("value".into(), &[1.0, 2.0]);
+        let df = DataFrame::new(vec![Column::from(timestamps), Column::from(values)]).unwrap();
+        let result = TimeSeries::<Price>::new(df);
+        assert!(matches!(result, Err(SeriesError::NullTimestamp)));
     }
 
     #[test]

@@ -168,7 +168,7 @@ mod tests {
     fn sample_price_series(prices: &[f64]) -> TimeSeries<Price> {
         let epoch_start: i64 = 1_704_067_200_000; // 2024-01-01T00:00:00Z
         let millis: Vec<i64> = (0..prices.len())
-            .map(|idx| epoch_start + (idx as i64) * DAY_MS)
+            .map(|idx| epoch_start + i64::try_from(idx).unwrap() * DAY_MS)
             .collect();
         let timestamps = Series::new("timestamp".into(), millis)
             .cast(&DataType::Datetime(TimeUnit::Milliseconds, None))

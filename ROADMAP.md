@@ -85,6 +85,10 @@ of them.
 - [x] Tradable filter wired into ingestion --
       [#277](https://github.com/dataclique/moneymentum/issues/277) /
       [#278](https://github.com/dataclique/moneymentum/pull/278)
+- [x] Type-safe time-series transforms crate (returns, log-returns, rolling
+      volatility, drawdown, normalization) --
+      [#303](https://github.com/dataclique/moneymentum/issues/303) /
+      [#145](https://github.com/dataclique/moneymentum/pull/145)
 
 ---
 

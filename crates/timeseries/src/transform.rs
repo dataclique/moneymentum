@@ -371,7 +371,7 @@ mod tests {
     fn sample_price_series(prices: &[f64]) -> TimeSeries<Price> {
         let epoch_start: i64 = 1_704_067_200_000; // 2024-01-01T00:00:00Z
         let millis: Vec<i64> = (0..prices.len())
-            .map(|idx| epoch_start + (idx as i64) * DAY_MS)
+            .map(|idx| epoch_start + i64::try_from(idx).unwrap() * DAY_MS)
             .collect();
         let timestamps = Series::new("timestamp".into(), millis)
             .cast(&DataType::Datetime(TimeUnit::Milliseconds, None))
@@ -462,12 +462,30 @@ mod tests {
         let mut return_svc = SimpleReturns;
         let returns = return_svc.call(prices).into_inner().unwrap();
         assert_eq!(returns.len(), 5);
+        let returns_values = extract_values(&returns);
 
         let mut vol_svc = RollingVolatility::new(3).unwrap();
         let vol = vol_svc.call(returns).into_inner().unwrap();
 
         assert_eq!(vol.len(), 3);
         let values = extract_values(&vol);
+
+        // Independently recompute the first window's sample std (ddof=1) over the
+        // returns, so a wrong ddof, an off-by-factor, or a window misalignment in
+        // the composed Returns -> RollingVolatility path is caught numerically.
+        let window = &returns_values[0..3];
+        let window_mean = window.iter().sum::<f64>() / 3.0;
+        let window_var = window
+            .iter()
+            .map(|rate| (rate - window_mean).powi(2))
+            .sum::<f64>()
+            / 2.0;
+        let expected_first = window_var.sqrt();
+        assert!(
+            (values[0] - expected_first).abs() < 1e-10,
+            "vol[0] = {}, expected {expected_first}",
+            values[0]
+        );
 
         // All volatility values should be positive
         for value in &values {
@@ -670,6 +688,48 @@ mod tests {
             Err(TransformError::InsufficientData {
                 needed: 2,
                 actual: 1
+            })
+        ));
+    }
+
+    #[test]
+    fn simple_returns_rejects_empty_series() {
+        let prices = sample_price_series(&[]);
+        let mut service = SimpleReturns;
+        let result = service.call(prices).into_inner();
+        assert!(matches!(
+            result,
+            Err(TransformError::InsufficientData {
+                needed: 2,
+                actual: 0
+            })
+        ));
+    }
+
+    #[test]
+    fn log_returns_rejects_empty_series() {
+        let prices = sample_price_series(&[]);
+        let mut service = LogReturns;
+        let result = service.call(prices).into_inner();
+        assert!(matches!(
+            result,
+            Err(TransformError::InsufficientData {
+                needed: 2,
+                actual: 0
+            })
+        ));
+    }
+
+    #[test]
+    fn normalize_rejects_empty_series() {
+        let prices = sample_price_series(&[]);
+        let mut service = Normalize;
+        let result = service.call(prices).into_inner();
+        assert!(matches!(
+            result,
+            Err(TransformError::InsufficientData {
+                needed: 2,
+                actual: 0
             })
         ));
     }

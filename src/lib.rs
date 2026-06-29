@@ -628,6 +628,8 @@ pub async fn rocket(
     // Ignore error if subscriber already set (e.g., multiple tests running)
     let _ = tracing_subscriber::fmt().with_env_filter(filter).try_init();
 
+    ensure_shared_database(&config.database_url)?;
+
     let rocket_config = RocketConfig {
         port: config.port,
         address: Ipv4Addr::UNSPECIFIED.into(),
@@ -720,6 +722,25 @@ pub async fn rocket(
                 post_hyperliquid_markets_refresh
             ],
         ))
+}
+
+/// The event store and the apalis worker each open their own pool against
+/// `database_url` (sqlx 0.9 and sqlx 0.8 respectively, which cannot share a
+/// pool). An in-memory SQLite URL gives each pool a *private* database, so the
+/// worker never sees the migrated tables -- the queue silently breaks. Only a
+/// file-backed database keeps the two pools pointed at the same data.
+#[derive(Debug, thiserror::Error)]
+#[error(
+    "in-memory SQLite database_url is unsupported: the event store and the apalis worker open separate pools, and an in-memory URL gives each its own private database; use a file-backed database_url"
+)]
+struct InMemoryDatabaseUnsupported;
+
+fn ensure_shared_database(database_url: &str) -> Result<(), InMemoryDatabaseUnsupported> {
+    let normalized = database_url.to_ascii_lowercase();
+    if normalized.contains(":memory:") || normalized.contains("mode=memory") {
+        return Err(InMemoryDatabaseUnsupported);
+    }
+    Ok(())
 }
 
 /// Asserts that a log line at the given level contains all snippets.
@@ -1270,5 +1291,70 @@ mod tests {
             eth_candle.get("open").and_then(serde_json::Value::as_f64),
             Some(2000.0)
         );
+    }
+
+    #[test]
+    fn ensure_shared_database_rejects_in_memory_urls() {
+        for url in [
+            "sqlite::memory:",
+            "sqlite://:memory:",
+            ":memory:",
+            "sqlite:file:store.db?mode=memory&cache=shared",
+        ] {
+            assert!(
+                ensure_shared_database(url).is_err(),
+                "expected {url} to be rejected as in-memory"
+            );
+        }
+    }
+
+    #[test]
+    fn ensure_shared_database_accepts_file_backed_urls() {
+        assert!(ensure_shared_database("sqlite:./moneymentum.db?mode=rwc").is_ok());
+        assert!(ensure_shared_database("sqlite://data/moneymentum.db").is_ok());
+    }
+
+    #[tokio::test]
+    async fn reconcile_migration_preserves_existing_snapshots() {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        // Stand up the pre-reconcile event store (snapshots without the
+        // `snapshot_version` column) and seed a snapshot from the cqrs-es era.
+        sqlx::raw_sql(include_str!(
+            "../migrations/20260208011202_cqrs_event_store.sql"
+        ))
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            r"
+            INSERT INTO snapshots
+                (aggregate_type, aggregate_id, last_sequence, payload, timestamp)
+            VALUES ('Portfolio', 'portfolio-1', 7, '{}', '2026-01-01T00:00:00Z')
+            ",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::raw_sql(include_str!(
+            "../migrations/20260618052212_reconcile_event_store_for_event_sorcery.sql"
+        ))
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let (last_sequence, snapshot_version): (i64, i64) = sqlx::query_as(
+            r"
+            SELECT last_sequence, snapshot_version
+            FROM snapshots
+            WHERE aggregate_id = 'portfolio-1'
+            ",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        assert_eq!(last_sequence, 7);
+        assert_eq!(snapshot_version, 0);
     }
 }

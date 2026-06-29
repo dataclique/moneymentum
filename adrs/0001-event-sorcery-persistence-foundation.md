@@ -1,6 +1,6 @@
 # ADR 0001: event-sorcery as the persistence foundation
 
-- Status: Proposed (under review)
+- Status: Approved
 - Date: 2026-06-18
 - Tracking issue: [#184](https://github.com/data-cartel/moneymentum/issues/184)
   (refactor: switch event sourcing from cqrs-es to event-sorcery)
@@ -30,13 +30,13 @@ Consequences of that history that shape this decision:
   `/portfolio/simulate`, `/portfolio/exposure` are stateless analytics.
 
 **The goal (from the maintainer):** make
-[`event-sorcery`](https://github.com/ST0X-Technology/event-sorcery) (the
-maintainer's own library; v0.2.0-rc1) the persistence foundation, with
-**portfolio management as the centerpiece** -- persisted target portfolios
-(needed later for auto-rebalancing), historic performance, performance
-predictions, enabled/disabled markets, and ingestion lifecycle -- and the model
-must be **extensible to multiple instruments and venues** (the SPEC's
-dual-abstraction principle: abstract both data sources and execution venues).
+[`event-sorcery`](https://github.com/ST0X-Technology/event-sorcery) (v0.2.0-rc2)
+the persistence foundation, with **portfolio management as the centerpiece** --
+persisted target portfolios (needed later for auto-rebalancing), historic
+performance, performance predictions, enabled/disabled markets, and ingestion
+lifecycle -- and the model must be **extensible to multiple instruments and
+venues** (the SPEC's dual-abstraction principle: abstract both data sources and
+execution venues).
 
 **event-sorcery in one paragraph.** A Rust event-sourcing library wrapping
 cqrs-es 0.5 plus a SQLite event store. Consumers implement `EventSourced` on a

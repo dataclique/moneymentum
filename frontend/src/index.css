@@ -128,6 +128,16 @@
   }
 }
 
+/* Disable pointer events for entire row, but allow on explicit children */
+.pointer-events-none-except-action {
+  pointer-events: none;
+}
+
+.pointer-events-none-except-action button,
+.pointer-events-none-except-action .pointer-events-auto {
+  pointer-events: auto;
+}
+
 @theme inline {
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);

@@ -1,17 +1,145 @@
-import ccxt from "ccxt"
-import Decimal from "decimal.js"
+import { type Order, type OrderRequest } from "ccxt"
+import { pro } from "ccxt"
 import type { NetworkMode, WalletCredentials } from "@/contexts/wallet-context"
-
-const MARKETS_CACHE_KEY = "hyperliquid_markets_cache"
-const MARKETS_CACHE_TTL_MS = 24 * 60 * 60 * 1000
+import type { RebalanceAction } from "@/pages/Portfolio/hooks/portfolioRebalancer"
 
 const HYPERLIQUID_MAINNET_INFO_URL = "https://api.hyperliquid.xyz/info"
 const HYPERLIQUID_TESTNET_INFO_URL = "https://api.hyperliquid-testnet.xyz/info"
 
-interface MarketsCache {
-  markets: Record<string, unknown>
-  timestamp: number
-  networkMode: NetworkMode
+const hyperliquidInfoUrl = (network: NetworkMode): string =>
+  network === "testnet"
+    ? HYPERLIQUID_TESTNET_INFO_URL
+    : HYPERLIQUID_MAINNET_INFO_URL
+
+const HYPERLIQUID_REQUEST_TIMEOUT_MS = 10_000
+
+type LeverageChangedAction = Extract<
+  RebalanceAction,
+  { kind: "rebalance" } | { kind: "preciseRebalance" }
+> & { leverageChanged: true }
+
+const isLeverageChangedAction = (
+  action: RebalanceAction,
+): action is LeverageChangedAction =>
+  (action.kind === "rebalance" || action.kind === "preciseRebalance") &&
+  action.leverageChanged
+
+interface PerpMarketContext {
+  szDecimals: number
+  markPx: number
+}
+
+/** Matches `finance::hyperliquid_swap_ccxt_symbol` base normalization. */
+const normalizePerpMarketLookupKey = (base: string): string =>
+  base.toUpperCase().replace(/:/g, "-")
+
+const lookupPerpMarketContext = (
+  contexts: Map<string, PerpMarketContext>,
+  base: string,
+): PerpMarketContext | undefined =>
+  contexts.get(normalizePerpMarketLookupKey(base))
+
+const decimalStep = (fractionDigits: number): number => {
+  if (fractionDigits <= 0) {
+    return 1
+  }
+
+  return Number(`0.${"0".repeat(fractionDigits - 1)}1`)
+}
+
+const amountPrecisionStepFromSzDecimals = (szDecimals: number): number =>
+  szDecimals <= 0 ? 1 : decimalStep(szDecimals)
+
+/** Mirrors CCXT hyperliquid.calculatePricePrecision for perps (maxDecimals = 6). */
+const calculateHyperliquidPricePrecision = (
+  price: number,
+  szDecimals: number,
+  maxDecimals = 6,
+): number => {
+  if (!Number.isFinite(price) || price < 0) return 0
+
+  const priceText = String(price)
+
+  if (price === 0) {
+    return Math.min(maxDecimals - szDecimals, 5)
+  }
+
+  if (price > 0 && price < 1) {
+    const decimalPart = priceText.split(".")[1] ?? ""
+    let leadingZeros = 0
+    while (
+      leadingZeros < decimalPart.length &&
+      decimalPart.charAt(leadingZeros) === "0"
+    ) {
+      leadingZeros += 1
+    }
+    const pricePrecision = leadingZeros + 5
+    return Math.min(maxDecimals - szDecimals, pricePrecision)
+  }
+
+  const integerPart = priceText.split(".")[0] ?? "0"
+  const significantDigits = Math.max(5, integerPart.length)
+  return Math.min(
+    maxDecimals - szDecimals,
+    significantDigits - integerPart.length,
+  )
+}
+
+const pricePrecisionStepFromDecimals = (priceDecimals: number): number =>
+  priceDecimals <= 0 ? 1 : decimalStep(priceDecimals)
+
+const fetchPerpMarketContexts = async (
+  network: NetworkMode,
+): Promise<Map<string, PerpMarketContext>> => {
+  const response = await fetch(hyperliquidInfoUrl(network), {
+    method: "POST",
+    signal: AbortSignal.timeout(HYPERLIQUID_REQUEST_TIMEOUT_MS),
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ type: "metaAndAssetCtxs" }),
+  })
+
+  if (!response.ok) {
+    throw new Error(
+      `Failed to fetch perp market contexts: ${response.statusText}`,
+    )
+  }
+
+  const json = (await response.json()) as unknown
+  if (!Array.isArray(json) || json.length < 2) {
+    throw new Error("Unexpected metaAndAssetCtxs payload shape")
+  }
+
+  const meta = json[0] as { universe?: unknown[] } | null
+  const assetContexts = json[1] as Array<
+    { markPx?: string | number } | null | undefined
+  >
+  if (
+    meta === null ||
+    !Array.isArray(meta.universe) ||
+    meta.universe.some(asset => asset === null || typeof asset !== "object") ||
+    !Array.isArray(assetContexts)
+  ) {
+    throw new Error("Unexpected metaAndAssetCtxs payload shape")
+  }
+  const universe = meta.universe as Array<{
+    name?: string
+    szDecimals?: number
+  }>
+  const contexts = new Map<string, PerpMarketContext>()
+
+  universe.forEach((asset, index) => {
+    const name = asset.name
+    if (!name) return
+    const rawMarkPx = assetContexts[index]?.markPx ?? 0
+    const markPx =
+      typeof rawMarkPx === "number" ? rawMarkPx : Number.parseFloat(rawMarkPx)
+    contexts.set(normalizePerpMarketLookupKey(name), {
+      szDecimals: asset.szDecimals ?? 0,
+      markPx: Number.isFinite(markPx) ? markPx : 0,
+    })
+  })
+
+  return contexts
 }
 
 const isDeployed = (): boolean =>
@@ -26,87 +154,9 @@ const applyApiProxy = (
   exchange.urls["api"] = { public: proxyBase, private: proxyBase }
 }
 
-const createTempExchange = (networkMode: NetworkMode): HyperliquidExchange => {
-  const HyperliquidClass = ccxt.hyperliquid as unknown as new (
-    config: Record<string, unknown>,
-  ) => HyperliquidExchange
-
-  const exchange = new HyperliquidClass({
-    enableRateLimit: true,
-  })
-
-  if (networkMode === "testnet") {
-    exchange.setSandboxMode(true)
-  }
-
-  applyApiProxy(exchange, networkMode)
-
-  return exchange
-}
-
-const getCachedMarkets = (
-  networkMode: NetworkMode,
-): Record<string, unknown> | null => {
-  try {
-    const cached = localStorage.getItem(MARKETS_CACHE_KEY)
-    if (!cached) {
-      return null
-    }
-
-    const parsed: MarketsCache = JSON.parse(cached) as MarketsCache
-    const { markets, timestamp, networkMode: cachedMode } = parsed
-
-    if (cachedMode !== networkMode) {
-      return null
-    }
-
-    const ageMs = Date.now() - timestamp
-    if (ageMs >= MARKETS_CACHE_TTL_MS) {
-      return null
-    }
-
-    return markets
-  } catch {
-    return null
-  }
-}
-
-const setCachedMarkets = (
-  markets: Record<string, unknown>,
-  networkMode: NetworkMode,
-): void => {
-  const cacheData: MarketsCache = {
-    markets,
-    timestamp: Date.now(),
-    networkMode,
-  }
-  localStorage.setItem(MARKETS_CACHE_KEY, JSON.stringify(cacheData))
-}
-
-export const preloadMarkets = async (
-  networkMode: NetworkMode,
-): Promise<Record<string, unknown> | null> => {
-  const cached = getCachedMarkets(networkMode)
-  if (cached) {
-    return cached
-  }
-
-  try {
-    const tempExchange = createTempExchange(networkMode)
-    const markets = await tempExchange.loadMarkets()
-
-    setCachedMarkets(markets, networkMode)
-    return markets
-  } catch {
-    // Network errors are expected when offline or API is unreachable
-    // Markets will be loaded on-demand when needed
-    return null
-  }
-}
-
 export type OrderSide = "buy" | "sell"
 export type PositionStatus =
-  | "untouched"
+  | "synced"
   | "modified"
   | "deleted"
   | "idle"
@@ -114,7 +164,7 @@ export type PositionStatus =
 
 export interface Position {
   symbol: string
-  percentage: number
+  notional: number
   side: OrderSide
   leverage: number
   leverageChanged: boolean
@@ -135,7 +185,6 @@ export interface CurrentPosition {
 export interface OrderResult {
   symbol: string
   side: OrderSide
-  percentage: number
   status: "working" | "filled" | "failed"
   message?: string | null
 }
@@ -143,10 +192,74 @@ export interface OrderResult {
 export interface LeverageLimit {
   symbol: string
   maxLeverage: number
+  assetIndex: number
+}
+
+export interface HyperliquidMarketsResponse {
+  tickers: string[]
+  leverageLimits: LeverageLimit[]
+  refreshedAt: string | null
+  marketsMaxAgeMs?: number
+}
+
+export const MARKETS_MAX_AGE_MS = 24 * 60 * 60 * 1000
+
+const parseCacheMaxAgeMs = (cacheControl: string | null): number | null => {
+  if (!cacheControl) return null
+  const match = cacheControl.match(/max-age=(\d+)/)
+  if (!match) return null
+  const maxAgeSeconds = Number(match[1])
+  return Number.isFinite(maxAgeSeconds) ? maxAgeSeconds * 1000 : null
+}
+
+export const fetchHyperliquidMarkets = async (
+  network: NetworkMode,
+): Promise<HyperliquidMarketsResponse> => {
+  const url = `${import.meta.env.BASE_URL}api/hyperliquid/markets?network=${network}`
+  const response = await fetch(url, {
+    cache: "no-store",
+    signal: AbortSignal.timeout(HYPERLIQUID_REQUEST_TIMEOUT_MS),
+  })
+  if (!response.ok) {
+    throw new Error(
+      `hyperliquid markets request failed: ${String(response.status)}`,
+    )
+  }
+  const markets = (await response.json()) as HyperliquidMarketsResponse
+  const marketsMaxAgeMs =
+    parseCacheMaxAgeMs(response.headers.get("cache-control")) ??
+    MARKETS_MAX_AGE_MS
+  return { ...markets, marketsMaxAgeMs }
+}
+
+interface CcxtMarket {
+  id: string
+  baseId: string
+  quoteId: string
+  settleId: string
+  symbol: string
+  base: string
+  quote: string
+  settle: string
+  type: string
+  spot: boolean
+  margin: boolean
+  swap: boolean
+  future: boolean
+  option: boolean
+  active: boolean
+  contract: boolean
+  linear: boolean
+  precision: { amount: number; price: number }
+  limits: {
+    amount: { min?: number; max?: number }
+    price: { min?: number; max?: number }
+    cost: { min?: number; max?: number }
+  }
+  info: Record<string, unknown>
 }
 
 // Minimum order size on Hyperliquid is $10, but we use $11 to guarantee orders will be opened
-const MIN_ORDER_VALUE = 11.0
 const SLIPPAGE = 0.05
 
 interface HyperliquidExchange {
@@ -154,13 +267,16 @@ interface HyperliquidExchange {
   options: Record<string, unknown>
   urls: Record<string, string | Record<string, string>>
   walletAddress?: string
-  loadMarkets: () => Promise<Record<string, unknown>>
+  markets?: Record<string, CcxtMarket>
+  markets_by_id?: Record<string, CcxtMarket[]>
+  setMarkets: (markets: CcxtMarket[]) => void
   fetchBalance: () => Promise<{
     total: Record<string, unknown>
     info?: Record<string, unknown>
   }>
   fetchTickers: (
     symbols?: string[],
+    params?: { type?: "spot" | "swap" },
   ) => Promise<
     Record<
       string,
@@ -192,6 +308,10 @@ interface HyperliquidExchange {
     price?: number,
     params?: Record<string, unknown>,
   ) => Promise<unknown>
+  createOrdersWs: (
+    orders: OrderRequest[],
+    params?: Record<string, unknown>,
+  ) => Promise<Order[]>
 }
 
 export class HyperliquidClient {
@@ -199,15 +319,11 @@ export class HyperliquidClient {
   private networkMode: NetworkMode
   private vaultAddress: string | undefined
 
-  constructor(
-    credentials: WalletCredentials,
-    networkMode: NetworkMode,
-    markets?: Record<string, unknown>,
-  ) {
+  constructor(credentials: WalletCredentials, networkMode: NetworkMode) {
     this.networkMode = networkMode
     this.vaultAddress = credentials.vaultAddress
 
-    const HyperliquidClass = ccxt.hyperliquid as unknown as new (
+    const HyperliquidClass = pro.hyperliquid as unknown as new (
       config: Record<string, unknown>,
     ) => HyperliquidExchange
 
@@ -216,14 +332,10 @@ export class HyperliquidClient {
     const effectiveWalletAddress =
       credentials.vaultAddress ?? credentials.accountAddress
 
-    // Use pre-loaded markets if available, otherwise ccxt will load them on first use
-    const cachedMarkets = markets ?? getCachedMarkets(networkMode)
-
     this.exchange = new HyperliquidClass({
       walletAddress: effectiveWalletAddress,
       privateKey: credentials.privateKey,
       enableRateLimit: true,
-      ...(cachedMarkets && { markets: cachedMarkets }),
     })
 
     if (networkMode === "testnet") {
@@ -248,7 +360,7 @@ export class HyperliquidClient {
     const response = await fetch(infoUrl, {
       method: "POST",
       // Abort if the info endpoint is unresponsive for too long to avoid hanging the UI.
-      signal: AbortSignal.timeout(10_000),
+      signal: AbortSignal.timeout(HYPERLIQUID_REQUEST_TIMEOUT_MS),
       headers: {
         "Content-Type": "application/json",
       },
@@ -349,44 +461,13 @@ export class HyperliquidClient {
     return fallback
   }
 
-  async listPerpTickers(): Promise<string[]> {
-    const markets = await this.exchange.loadMarkets()
-
-    // Update cache with fresh markets data
-    setCachedMarkets(markets, this.networkMode)
-
-    const perpSymbols = Object.entries(markets)
-      .filter(
-        ([symbol, data]) =>
-          symbol.includes(":") && (data as { swap?: boolean }).swap,
-      )
-      .map(([symbol]) => symbol)
-      .sort()
-    return perpSymbols
-  }
-
-  async getLeverageLimits(): Promise<LeverageLimit[]> {
-    const tickers = await this.exchange.fetchTickers()
-    const results: LeverageLimit[] = []
-
-    for (const [symbol, ticker] of Object.entries(tickers)) {
-      if (!symbol.includes(":")) continue
-
-      let maxLeverage = 1.0
-      if (ticker.info !== undefined && ticker.info !== null) {
-        const info = ticker.info as Record<string, unknown>
-        const rawMaxLeverage = info["maxLeverage"]
-        if (typeof rawMaxLeverage === "number") {
-          maxLeverage = rawMaxLeverage
-        } else if (typeof rawMaxLeverage === "string") {
-          maxLeverage = parseFloat(rawMaxLeverage)
-        }
-      }
-
-      results.push({ symbol, maxLeverage })
+  private parseOrderErrorMessage(info: unknown): string | null {
+    if (typeof info !== "object" || info === null || !("error" in info)) {
+      return null
     }
 
-    return results.sort((a, b) => a.symbol.localeCompare(b.symbol))
+    const orderError = (info as { error: unknown }).error
+    return typeof orderError === "string" ? orderError : null
   }
 
   async getCurrentPositions(): Promise<CurrentPosition[]> {
@@ -426,55 +507,6 @@ export class HyperliquidClient {
     return processed
   }
 
-  private buildCurrentPositionsMapFromPayload(
-    positions: Position[],
-  ): Record<string, CurrentPosition> {
-    const result: Record<string, CurrentPosition> = {}
-    for (const pos of positions) {
-      if (
-        pos.currentNotional !== undefined &&
-        pos.currentNotional > 0 &&
-        pos.currentSide !== undefined
-      ) {
-        result[pos.symbol] = {
-          symbol: pos.symbol,
-          side: pos.currentSide,
-          notional: pos.currentNotional,
-          entryPrice: 0,
-          unrealizedPnl: 0,
-          leverage: pos.leverage,
-        }
-      }
-    }
-    return result
-  }
-
-  private async fetchSymbolPrices(
-    symbols: string[],
-  ): Promise<Record<string, number>> {
-    if (symbols.length === 0) return {}
-
-    const prices: Record<string, number> = {}
-
-    const tickers = await this.exchange.fetchTickers(symbols)
-
-    for (const symbol of symbols) {
-      const lastPrice = tickers[symbol].last
-      if (lastPrice === undefined || lastPrice <= 0) {
-        throw new Error(
-          `Could not fetch price for ${symbol}. The asset may be untradeable or delisted.`,
-        )
-      }
-      prices[symbol] = lastPrice
-    }
-
-    return prices
-  }
-
-  private signedNotional(side: OrderSide, notional: number): number {
-    return side === "buy" ? notional : -notional
-  }
-
   private async setLeverage(symbol: string, leverage: number): Promise<void> {
     await this.exchange.setLeverage(leverage, symbol, this.vaultParams)
   }
@@ -483,594 +515,330 @@ export class HyperliquidClient {
     return this.vaultAddress ? { vaultAddress: this.vaultAddress } : undefined
   }
 
-  private async closePosition(position: Position): Promise<OrderResult> {
-    const symbol = position.symbol
+  private parseCcxtPerpSymbolParts(symbol: string): {
+    base: string
+    quote: string
+    settle: string
+  } {
+    const colonIndex = symbol.indexOf(":")
+    const pair = colonIndex === -1 ? symbol : symbol.slice(0, colonIndex)
+    const settle = colonIndex === -1 ? "" : symbol.slice(colonIndex + 1)
+    const slashIndex = pair.indexOf("/")
+    if (slashIndex === -1) {
+      return { base: pair, quote: "USDC", settle: settle || "USDC" }
+    }
+    const base = pair.slice(0, slashIndex)
+    const quote = pair.slice(slashIndex + 1)
+    return { base, quote, settle: settle || quote }
+  }
 
-    try {
-      const ticker = await this.exchange.fetchTicker(symbol)
-      const currentPrice = ticker.last
-
-      if (currentPrice === undefined) {
-        throw new Error(`Could not fetch price for ${symbol} to close position`)
+  private hydrateMarketsFromBackend(
+    leverageLimits: LeverageLimit[],
+    perpContexts: Map<string, PerpMarketContext>,
+  ): void {
+    const markets = leverageLimits.map(entry => {
+      const { base, quote, settle } = this.parseCcxtPerpSymbolParts(
+        entry.symbol,
+      )
+      const baseId = String(entry.assetIndex)
+      const context = lookupPerpMarketContext(perpContexts, base) ?? {
+        szDecimals: 0,
+        markPx: 1,
       }
+      const amountStep = amountPrecisionStepFromSzDecimals(context.szDecimals)
+      const priceDecimals = calculateHyperliquidPricePrecision(
+        context.markPx,
+        context.szDecimals,
+      )
+      const priceStep = pricePrecisionStepFromDecimals(priceDecimals)
+      return {
+        id: baseId,
+        baseId,
+        quoteId: quote,
+        settleId: settle,
+        symbol: entry.symbol,
+        base,
+        quote,
+        settle,
+        type: "swap",
+        spot: false,
+        margin: false,
+        swap: true,
+        future: false,
+        option: false,
+        active: true,
+        contract: true,
+        linear: true,
+        precision: { amount: amountStep, price: priceStep },
+        limits: {
+          amount: { min: undefined, max: undefined },
+          price: { min: undefined, max: undefined },
+          cost: { min: 10, max: undefined },
+        },
+        info: { szDecimals: context.szDecimals },
+      } satisfies CcxtMarket
+    })
+    this.exchange.setMarkets(markets)
+  }
 
-      const positions = await this.exchange.fetchPositions([symbol])
-      if (
-        !positions.length ||
-        parseFloat(String(positions[0].contracts)) === 0
-      ) {
+  private mapOrderResults(
+    requests: OrderRequest[],
+    responses: Order[],
+  ): OrderResult[] {
+    return requests.map((request, index): OrderResult => {
+      const res: Order | undefined =
+        index < responses.length ? responses[index] : undefined
+      if (res === undefined) {
         return {
-          symbol,
-          side: position.side,
-          percentage: 0,
-          status: "filled",
-          message: "Position already closed.",
+          symbol: request.symbol,
+          side: (request.side ?? "buy") as OrderSide,
+          status: "working",
+          message: "order response missing",
         }
       }
-
-      const fetchedPosition = positions[0]
-      const side: OrderSide = fetchedPosition.side === "long" ? "sell" : "buy"
-      const amount = parseFloat(String(fetchedPosition.contracts))
-
-      const slippagePrice =
-        side === "buy"
-          ? currentPrice * (1 + SLIPPAGE)
-          : currentPrice * (1 - SLIPPAGE)
-
-      await this.exchange.createOrder(
-        symbol,
-        "market",
-        side,
-        amount,
-        slippagePrice,
-        {
-          reduceOnly: true,
-          ...this.vaultParams,
-        },
-      )
-
       return {
-        symbol,
-        side: position.side,
-        percentage: 0,
-        status: "filled",
+        symbol: request.symbol,
+        side: (request.side ?? "buy") as OrderSide,
+        status:
+          res.status === "closed" || res.status === "filled"
+            ? "filled"
+            : "working",
+        message: this.parseOrderErrorMessage(res.info),
       }
-    } catch (error) {
-      return {
-        symbol,
-        side: position.side,
-        percentage: position.percentage,
-        status: "failed",
-        message: error instanceof Error ? error.message : String(error),
-      }
-    }
+    })
   }
 
-  private async placeOrder(
-    symbol: string,
+  private positionSideIsBuy(pos: { side: string }): boolean {
+    return pos.side === "long" || pos.side === "buy"
+  }
+
+  private positionUsdApprox(
+    pos: {
+      notional?: number | string
+      contracts: number | string
+    },
     price: number,
-    notionalDelta: number,
-    percentage: number,
-  ): Promise<OrderResult> {
-    const side: OrderSide = notionalDelta > 0 ? "buy" : "sell"
-    const usdAmount = Math.abs(notionalDelta)
-    const coinAmount = usdAmount / price
-
-    if (usdAmount < MIN_ORDER_VALUE) {
-      return {
-        symbol,
-        side,
-        percentage,
-        status: "filled",
-        message: `No action taken: change ($${usdAmount.toFixed(2)}) is below minimum order size ($${String(MIN_ORDER_VALUE)}).`,
+  ): number {
+    const raw = pos.notional
+    if (raw !== undefined && raw !== "") {
+      const parsed = typeof raw === "number" ? raw : parseFloat(raw)
+      if (Number.isFinite(parsed) && Math.abs(parsed) > 0) {
+        return Math.abs(parsed)
       }
     }
-
-    try {
-      const slippagePrice =
-        side === "buy" ? price * (1 + SLIPPAGE) : price * (1 - SLIPPAGE)
-
-      await this.exchange.createOrder(
-        symbol,
-        "market",
-        side,
-        coinAmount,
-        slippagePrice,
-        this.vaultParams,
-      )
-
-      return {
-        symbol,
-        side,
-        percentage,
-        status: "filled",
-      }
-    } catch (error) {
-      return {
-        symbol,
-        side,
-        percentage,
-        status: "failed",
-        message: error instanceof Error ? error.message : String(error),
-      }
-    }
+    return Math.abs(parseFloat(String(pos.contracts))) * price
   }
 
-  /** Close a portion of position by notional (USD). Bypasses MIN_ORDER_VALUE for reduce-only. */
-  private async closeReduceOnlyNotional(
+  /** Long: sell reduces. Short: buy (cover) reduces. */
+  private rebalanceIsReduction(
+    pos: { side: string },
+    notional: number,
+  ): boolean {
+    const long = this.positionSideIsBuy(pos)
+    if (long) return notional < 0
+    return notional > 0
+  }
+
+  private buildPreciseRebalanceOrderRequests(opts: {
+    symbol: string
+    side: OrderSide
+    closeNotional: number
+    openNotional: number
+    price: number
+    position: {
+      side: string
+      contracts: number | string
+      notional?: number | string
+    }
+  }): { closeRequest: OrderRequest | null; openRequest: OrderRequest | null } {
+    const { symbol, side, closeNotional, openNotional, price, position } = opts
+
+    const isPositionBuy = this.positionSideIsBuy(position)
+    const currentUsd = this.positionUsdApprox(position, price)
+
+    // Full close (Wipes) to avoid leaving dust
+    const closeWipes =
+      closeNotional >= currentUsd - 0.02 || closeNotional >= currentUsd * 0.999
+
+    const closeAmount = closeWipes
+      ? Math.abs(parseFloat(String(position.contracts)))
+      : closeNotional / price
+
+    const closeRequest = this.buildOrderRequest(
+      symbol,
+      isPositionBuy ? "sell" : "buy",
+      closeAmount,
+      price,
+      true,
+    )
+
+    const openRequest = this.buildOrderRequest(
+      symbol,
+      side,
+      openNotional / price,
+      price,
+      false,
+    )
+
+    return { closeRequest, openRequest }
+  }
+
+  private buildOrderRequest(
     symbol: string,
+    side: OrderSide,
+    amount: number,
     price: number,
-    usdAmount: number,
-    closeSide: OrderSide,
-    _targetSide: OrderSide,
-    percentage: number,
-  ): Promise<OrderResult> {
-    const coinAmount = usdAmount / price
-    if (coinAmount <= 0) {
-      return {
-        symbol,
-        side: closeSide,
-        percentage,
-        status: "filled",
-        message: "No close needed: amount is zero.",
-      }
-    }
+    reduceOnly: boolean,
+  ): OrderRequest | null {
+    if (amount <= 0 || !Number.isFinite(amount)) return null
 
-    try {
-      const slippagePrice =
-        closeSide === "buy" ? price * (1 + SLIPPAGE) : price * (1 - SLIPPAGE)
-
-      await this.exchange.createOrder(
-        symbol,
-        "market",
-        closeSide,
-        coinAmount,
-        slippagePrice,
-        {
-          reduceOnly: true,
-          ...this.vaultParams,
-        },
-      )
-
-      return { symbol, side: closeSide, percentage, status: "filled" }
-    } catch (error) {
-      return {
-        symbol,
-        side: closeSide,
-        percentage,
-        status: "failed",
-        message: error instanceof Error ? error.message : String(error),
-      }
+    return {
+      symbol,
+      type: "market",
+      side,
+      amount,
+      price,
+      params: reduceOnly
+        ? { reduceOnly: true, ...this.vaultParams }
+        : { ...this.vaultParams },
     }
   }
 
-  async rebalancePositions(
-    positions: Position[],
-    accountValue: number,
-    crossAccountLeverage: number = 1,
-    precise: boolean = false,
-  ): Promise<OrderResult[]> {
-    if (accountValue <= 0) {
-      throw new Error("Account value must be positive")
+  private splitRebalanceActionsIntoPhases(
+    actions: RebalanceAction[],
+    tickers: Partial<
+      Record<
+        string,
+        { last?: number; bid?: number; ask?: number; info?: unknown }
+      >
+    >,
+    positions: Array<{
+      symbol: string
+      side: string
+      contracts: number | string
+      notional?: number | string
+    }>,
+  ): {
+    reduction: OrderRequest[]
+    expansion: OrderRequest[]
+  } {
+    const reduction: OrderRequest[] = []
+    const expansion: OrderRequest[] = []
+
+    for (const action of actions) {
+      const position = positions.find(
+        candidate => candidate.symbol === action.symbol,
+      )
+      const price = tickers[action.symbol]?.last ?? undefined
+      if (price === undefined) continue
+
+      switch (action.kind) {
+        case "close": {
+          if (position === undefined) continue
+          const closingSide: OrderSide = action.side === "buy" ? "sell" : "buy"
+          const request = this.buildOrderRequest(
+            action.symbol,
+            closingSide,
+            Math.abs(parseFloat(String(position.contracts))),
+            price,
+            true,
+          )
+          if (request) reduction.push(request)
+          break
+        }
+        case "rebalance": {
+          const side = action.signedNotionalDelta > 0 ? "buy" : "sell"
+          const amount = Math.abs(action.signedNotionalDelta) / price
+
+          const request = this.buildOrderRequest(
+            action.symbol,
+            side,
+            amount,
+            price,
+            false,
+          )
+          if (request) {
+            const isRed = position
+              ? this.rebalanceIsReduction(position, action.signedNotionalDelta)
+              : false
+
+            if (isRed) reduction.push(request)
+            else expansion.push(request)
+          }
+          break
+        }
+        case "preciseRebalance": {
+          if (position === undefined) continue
+
+          const { closeRequest, openRequest } =
+            this.buildPreciseRebalanceOrderRequests({
+              symbol: action.symbol,
+              side: action.side,
+              closeNotional: action.closeNotional,
+              openNotional: action.openNotional,
+              price,
+              position,
+            })
+
+          if (closeRequest) reduction.push(closeRequest)
+          if (openRequest) expansion.push(openRequest)
+          break
+        }
+        default:
+          break
+      }
     }
 
-    // Pre-load markets once so subsequent ccxt calls don't re-fetch them
-    await this.exchange.loadMarkets()
+    return { reduction, expansion }
+  }
 
-    const totalNotional = accountValue * crossAccountLeverage
+  async rebalancePositions(actions: RebalanceAction[]): Promise<OrderResult[]> {
+    const allSymbols = [...new Set(actions.map(action => action.symbol))]
+
+    const [backendMarkets, perpContexts] = await Promise.all([
+      fetchHyperliquidMarkets(this.networkMode),
+      fetchPerpMarketContexts(this.networkMode),
+    ])
+
+    this.hydrateMarketsFromBackend(backendMarkets.leverageLimits, perpContexts)
+
+    const leverageActions = actions.filter(isLeverageChangedAction)
+    for (const action of leverageActions) {
+      await this.setLeverage(action.symbol, action.leverage)
+    }
+
+    const [tickers, positions] = await Promise.all([
+      this.exchange.fetchTickers(allSymbols, { type: "swap" }),
+      this.exchange.fetchPositions(),
+    ])
+
+    const { reduction, expansion } = this.splitRebalanceActionsIntoPhases(
+      actions,
+      tickers,
+      positions,
+    )
 
     const results: OrderResult[] = []
 
-    // 1. Process deletions first
-    const deletions = positions.filter(p => p.status === "deleted")
-    if (deletions.length > 0) {
-      const deletionsPreview = deletions.map(position => ({
-        symbol: position.symbol,
-        side: position.side,
-        currentNotional: position.currentNotional ?? 0,
-        percentage: Number(position.percentage.toFixed(2)),
-      }))
-      console.log(
-        "%c[Rebalance] Deletions:",
-        "background: purple; color: white; padding: 2px 6px; border-radius: 3px",
+    if (reduction.length > 0) {
+      const reductionResponses = await this.exchange.createOrdersWs(reduction)
+      const reductionResults = this.mapOrderResults(
+        reduction,
+        reductionResponses,
       )
-      console.table(deletionsPreview)
-    }
-    for (const position of deletions) {
-      const closeResult = await this.closePosition(position)
-      results.push(closeResult)
+      results.push(...reductionResults)
     }
 
-    // 2. Filter for positions that need rebalancing
-    const positionsToRebalance = positions.filter(
-      p => p.status !== "untouched" && p.status !== "deleted",
-    )
-
-    if (positionsToRebalance.length === 0) {
-      return results
-    }
-
-    // 3. Set leverages only where changed (using leverageChanged flag from hook)
-    const positionsNeedingLeverageChange = positionsToRebalance.filter(
-      p => p.leverageChanged,
-    )
-    const positionsWithUnchangedLeverage = positionsToRebalance.filter(
-      p => !p.leverageChanged,
-    )
-
-    const successfulPositions: Position[] = [...positionsWithUnchangedLeverage]
-
-    if (positionsNeedingLeverageChange.length > 0) {
-      const leverageResults = await Promise.allSettled(
-        positionsNeedingLeverageChange.map(async position => {
-          await this.setLeverage(position.symbol, position.leverage)
-          return position
-        }),
+    if (expansion.length > 0) {
+      const expansionResponses = await this.exchange.createOrdersWs(expansion)
+      const expansionResults = this.mapOrderResults(
+        expansion,
+        expansionResponses,
       )
-      for (let i = 0; i < leverageResults.length; i++) {
-        const result = leverageResults[i]
-        const position = positionsNeedingLeverageChange[i]
-        if (result.status === "fulfilled") {
-          successfulPositions.push(result.value)
-        } else {
-          results.push({
-            symbol: position.symbol,
-            side: position.side,
-            percentage: position.percentage,
-            status: "failed",
-            message:
-              result.reason instanceof Error
-                ? result.reason.message
-                : String(result.reason),
-          })
-        }
-      }
+      results.push(...expansionResults)
     }
 
-    if (successfulPositions.length === 0) {
-      return results
-    }
-
-    // 4. Build target and current notional values
-    const targetNotional: Record<string, number> = {}
-    const currentNotional: Record<string, number> = {}
-    for (const position of successfulPositions) {
-      const unsignedTarget = new Decimal(position.percentage)
-        .mul(totalNotional)
-        .toDecimalPlaces(2, Decimal.ROUND_HALF_UP)
-        .toNumber()
-
-      targetNotional[position.symbol] = this.signedNotional(
-        position.side,
-        unsignedTarget,
-      )
-      // Use passed currentNotional (from cached positions), default to 0 for new positions
-      // Sign with currentSide when available (actual exchange side), else position.side
-      if (position.currentNotional !== undefined) {
-        const sideForSign = position.currentSide ?? position.side
-        currentNotional[position.symbol] = this.signedNotional(
-          sideForSign,
-          position.currentNotional,
-        )
-      }
-    }
-
-    // 5. Fetch prices only (positions data already passed from cache)
-    const symbolsToRebalance = successfulPositions.map(p => p.symbol)
-    const prices = await this.fetchSymbolPrices(symbolsToRebalance)
-
-    const currentPositionsMap: Record<string, CurrentPosition> = precise
-      ? this.buildCurrentPositionsMapFromPayload(successfulPositions)
-      : {}
-
-    if (successfulPositions.length > 0) {
-      const orderPreview = successfulPositions.map(position => {
-        const symbol = position.symbol
-        const price = prices[symbol]
-        const targetValue = targetNotional[symbol] ?? 0
-        const currentValue = currentNotional[symbol] ?? 0
-        const notionalDelta = targetValue - currentValue
-        return {
-          symbol,
-          side: position.side,
-          leverage: position.leverage,
-          targetNotional: Number(targetValue.toFixed(2)),
-          currentNotional: Number(currentValue.toFixed(2)),
-          deltaNotional: Number(notionalDelta.toFixed(2)),
-          price: Number(price.toFixed(4)),
-          percentage: Number(position.percentage.toFixed(2)),
-        }
-      })
-      console.log(
-        "%c[Rebalance] Order preview:",
-        "background: purple; color: white; padding: 2px 6px; border-radius: 3px",
-      )
-      console.table(orderPreview)
-    }
-    for (const position of successfulPositions) {
-      const symbol = position.symbol
-      const price = prices[symbol]
-
-      const targetValue = targetNotional[symbol] ?? 0
-      const currentValue = currentNotional[symbol] ?? 0
-      const currentPosition = currentPositionsMap[symbol]
-
-      const orderResults = await this.processPosition(
-        position,
-        price,
-        targetValue,
-        currentValue,
-        currentPosition,
-        currentNotional,
-        precise,
-      )
-
-      for (const orderResult of orderResults) {
-        results.push(orderResult)
-      }
-    }
     return results
-  }
-
-  private async processPosition(
-    position: Position,
-    price: number,
-    targetValue: number,
-    currentValue: number,
-    currentPosition: CurrentPosition | undefined,
-    currentNotional: Record<string, number>,
-    precise: boolean,
-  ): Promise<OrderResult[]> {
-    const { symbol, side, percentage } = position
-    const notionalDelta = targetValue - currentValue
-
-    // Negligible change
-    if (Math.abs(notionalDelta) < 1.0) {
-      return [
-        {
-          symbol,
-          side,
-          percentage,
-          status: "filled",
-          message: "No action taken: change is negligible.",
-        },
-      ]
-    }
-
-    // Precise mode for small changes
-    if (precise && Math.abs(notionalDelta) < MIN_ORDER_VALUE) {
-      const currentNotionalAbs =
-        currentPosition?.notional ?? Math.abs(currentNotional[symbol] ?? 0)
-      return this.processPositionPreciseMode(
-        position,
-        price,
-        targetValue,
-        currentValue,
-        currentPosition,
-        currentNotionalAbs,
-      )
-    }
-
-    // Normal order
-    const result = await this.placeOrder(
-      symbol,
-      price,
-      notionalDelta,
-      percentage,
-    )
-    return [result]
-  }
-
-  private async processPositionPreciseMode(
-    position: Position,
-    price: number,
-    targetValue: number,
-    currentValue: number,
-    currentPosition: CurrentPosition | undefined,
-    currentNotionalAbs: number,
-  ): Promise<OrderResult[]> {
-    const { symbol, side: targetSide, percentage } = position
-
-    // New position - open exactly $11
-    if (!currentPosition) {
-      const result = await this.placeOrder(
-        symbol,
-        price,
-        targetSide === "buy" ? MIN_ORDER_VALUE : -MIN_ORDER_VALUE,
-        percentage,
-      )
-      return [result]
-    }
-
-    const currentSide = currentPosition.side
-    const sidesMatch = currentSide === targetSide
-
-    // Side changed - close entire position and open target
-    if (!sidesMatch) {
-      const closeSide: OrderSide = currentSide === "buy" ? "sell" : "buy"
-      const closeResult = await this.closeReduceOnlyNotional(
-        symbol,
-        price,
-        currentNotionalAbs,
-        closeSide,
-        targetSide,
-        percentage,
-      )
-
-      const targetNotionalAbs = Math.abs(targetValue)
-      const openAmount = Math.max(targetNotionalAbs, MIN_ORDER_VALUE)
-      const openResult = await this.placeOrder(
-        symbol,
-        price,
-        targetSide === "buy" ? openAmount : -openAmount,
-        percentage,
-      )
-
-      return [closeResult, openResult]
-    }
-
-    // Same side - adjust using precise mode logic
-    const currentNotionalAbsValue = Math.abs(currentValue)
-    const targetNotionalAbs = Math.abs(targetValue)
-    const notionalDelta = targetValue - currentValue
-    const deltaAbs = Math.abs(notionalDelta)
-    const isIncreasing = targetNotionalAbs > currentNotionalAbsValue
-    const closeSide: OrderSide = currentSide === "buy" ? "sell" : "buy"
-
-    if (isIncreasing) {
-      return this.handlePreciseModeIncreasing(
-        symbol,
-        price,
-        percentage,
-        targetSide,
-        closeSide,
-        currentNotionalAbsValue,
-        targetNotionalAbs,
-        deltaAbs,
-      )
-    }
-
-    return this.handlePreciseModeDecreasing(
-      symbol,
-      price,
-      percentage,
-      targetSide,
-      closeSide,
-      currentNotionalAbsValue,
-      targetNotionalAbs,
-      deltaAbs,
-    )
-  }
-
-  private async handlePreciseModeIncreasing(
-    symbol: string,
-    price: number,
-    percentage: number,
-    targetSide: OrderSide,
-    closeSide: OrderSide,
-    currentNotionalAbs: number,
-    targetNotionalAbs: number,
-    deltaAbs: number,
-  ): Promise<OrderResult[]> {
-    const closeAmount = MIN_ORDER_VALUE
-    const openAmount = MIN_ORDER_VALUE + deltaAbs
-
-    // Close amount exceeds or equals position size - close fully and open target
-    if (closeAmount >= currentNotionalAbs) {
-      const actualCloseAmount = Math.min(closeAmount, currentNotionalAbs)
-      const closeResult = await this.closeReduceOnlyNotional(
-        symbol,
-        price,
-        actualCloseAmount,
-        closeSide,
-        targetSide,
-        percentage,
-      )
-
-      const openNotional =
-        targetNotionalAbs >= MIN_ORDER_VALUE
-          ? targetSide === "buy"
-            ? targetNotionalAbs
-            : -targetNotionalAbs
-          : targetSide === "buy"
-            ? MIN_ORDER_VALUE
-            : -MIN_ORDER_VALUE
-      const openResult = await this.placeOrder(
-        symbol,
-        price,
-        openNotional,
-        percentage,
-      )
-
-      return [closeResult, openResult]
-    }
-
-    // Normal increasing: close $11, open ($11 + delta)
-    const closeResult = await this.closeReduceOnlyNotional(
-      symbol,
-      price,
-      closeAmount,
-      closeSide,
-      targetSide,
-      percentage,
-    )
-
-    const openNotional = targetSide === "buy" ? openAmount : -openAmount
-    const openResult = await this.placeOrder(
-      symbol,
-      price,
-      openNotional,
-      percentage,
-    )
-
-    return [closeResult, openResult]
-  }
-
-  private async handlePreciseModeDecreasing(
-    symbol: string,
-    price: number,
-    percentage: number,
-    targetSide: OrderSide,
-    closeSide: OrderSide,
-    currentNotionalAbs: number,
-    targetNotionalAbs: number,
-    deltaAbs: number,
-  ): Promise<OrderResult[]> {
-    const closeAmount = MIN_ORDER_VALUE + deltaAbs
-    const openAmount = MIN_ORDER_VALUE
-
-    // Close amount exceeds position size - close entire position
-    if (closeAmount >= currentNotionalAbs) {
-      const actualCloseAmount = Math.min(closeAmount, currentNotionalAbs)
-      const closeResult =
-        actualCloseAmount < MIN_ORDER_VALUE
-          ? await this.closeReduceOnlyNotional(
-              symbol,
-              price,
-              actualCloseAmount,
-              closeSide,
-              targetSide,
-              percentage,
-            )
-          : await this.placeOrder(
-              symbol,
-              price,
-              closeSide === "buy" ? actualCloseAmount : -actualCloseAmount,
-              percentage,
-            )
-
-      // Only open if target >= $11
-      if (targetNotionalAbs >= MIN_ORDER_VALUE) {
-        const openResult = await this.placeOrder(
-          symbol,
-          price,
-          targetSide === "buy" ? targetNotionalAbs : -targetNotionalAbs,
-          percentage,
-        )
-        return [closeResult, openResult]
-      }
-
-      return [closeResult]
-    }
-
-    // Normal decreasing: close ($11 + |delta|), open $11
-    const closeNotional = closeSide === "buy" ? closeAmount : -closeAmount
-    const closeResult = await this.placeOrder(
-      symbol,
-      price,
-      closeNotional,
-      percentage,
-    )
-
-    const openNotional = targetSide === "buy" ? openAmount : -openAmount
-    const openResult = await this.placeOrder(
-      symbol,
-      price,
-      openNotional,
-      percentage,
-    )
-
-    return [closeResult, openResult]
   }
 
   getNetworkMode(): NetworkMode {

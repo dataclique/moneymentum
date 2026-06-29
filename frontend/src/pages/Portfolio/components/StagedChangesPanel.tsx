@@ -2,30 +2,17 @@ import { For, Show } from "solid-js"
 import { cn } from "@/lib/cn"
 import { Send } from "lucide-solid"
 import { Button } from "@/components/ui/button"
-import type { AllocationStatus } from "../hooks/usePortfolioState"
-
-type Side = "buy" | "sell"
-
-export interface StagedTrade {
-  id: string
-  underlying: string
-  side: Side
-  notional: number
-  previousWeight?: number
-  newWeight?: number
-  status: AllocationStatus
-  message: string | null
-}
+import type { StagedTradeItem } from "@/pages/Portfolio/hooks/usePortfolioState"
 
 interface StagedChangesPanelProps {
-  stagedTrades?: StagedTrade[]
-  initialTotalNotional?: number
-  targetNotional?: number
-  initialCrossAccountLeverage?: number | null
-  crossAccountLeverage?: number
+  stagedTrades: StagedTradeItem[]
+  currentTotalNotional: number
+  targetTotalNotional: number
+  currentCrossAccountLeverage: number
+  targetCrossAccountLeverage: number
   onRebalance?: () => void
   isRebalancing?: boolean
-  disableSubmit?: boolean
+  canSubmit: boolean
   onClearAll?: () => void
 }
 
@@ -39,28 +26,35 @@ const formatUnsignedPct = (weightFraction: number): string =>
 
 const formatUsdPrecise = (value: number): string => `$${value.toFixed(2)}`
 
-// Minimum notional change to show an arrow in the notional preview.
-// Difference between initial and target notional arises because
-// initial total notional is rounded to 2 decimal places while target
-// is computed from accountValue * leverage separately.
 const NOTIONAL_EPSILON_USD = 0.1
+const LEVERAGE_EPSILON = 0.001
 
 export const StagedChangesPanel = (props: StagedChangesPanelProps) => {
-  const stagedTrades = () => props.stagedTrades ?? []
+  const stagedTrades = () => props.stagedTrades
   const hasStaged = () => stagedTrades().length > 0
+
+  const isRebalanceButtonDisabled = () =>
+    !props.canSubmit || // outside reasons (validation errors)
+    !hasStaged() || // no trades - nothing to rebalance
+    props.isRebalancing
+
   const isRebalancing = () => props.isRebalancing ?? false
-  const disableSubmit = () => props.disableSubmit ?? false
-  const shouldShowNotionalArrow = () =>
-    props.initialTotalNotional !== undefined &&
-    props.targetNotional !== undefined &&
-    Math.abs(props.targetNotional - props.initialTotalNotional) >=
+
+  const currentTotalNotional = () => props.currentTotalNotional
+  const targetTotalNotional = () => props.targetTotalNotional
+  const currentLeverage = () => props.currentCrossAccountLeverage
+  const targetLeverage = () => props.targetCrossAccountLeverage
+
+  const shouldShowNotionalArrow = () => {
+    return (
+      Math.abs(targetTotalNotional() - currentTotalNotional()) >=
       NOTIONAL_EPSILON_USD
-  const initialLeverage = () => props.initialCrossAccountLeverage
-  const currentLeverage = () => props.crossAccountLeverage
-  const shouldShowLeverageArrow = () =>
-    initialLeverage() !== null &&
-    currentLeverage() !== undefined &&
-    initialLeverage() !== currentLeverage()
+    )
+  }
+
+  const shouldShowLeverageArrow = () => {
+    return Math.abs(currentLeverage() - targetLeverage()) > LEVERAGE_EPSILON
+  }
 
   return (
     <div class="flex-1 border border-border rounded flex flex-col min-w-0">
@@ -92,14 +86,13 @@ export const StagedChangesPanel = (props: StagedChangesPanelProps) => {
         <div class="overflow-auto scrollbar-hide h-full">
           <For each={stagedTrades()}>
             {stagedTrade => {
-              const baseSymbol =
-                stagedTrade.underlying.split("/")[0] ?? stagedTrade.underlying
+              const baseSymbol = stagedTrade.underlying.split("/")[0] || "???"
 
               const prevWeight = stagedTrade.previousWeight ?? 0
               const nextWeight = stagedTrade.newWeight ?? prevWeight
               const weightDelta = nextWeight - prevWeight
 
-              const arrow = weightDelta > 0 ? "^" : weightDelta < 0 ? "v" : "->"
+              const arrow = weightDelta > 0 ? "↑" : weightDelta < 0 ? "↓" : "→"
               const deltaClass =
                 weightDelta > 0
                   ? "text-emerald-500"
@@ -108,17 +101,7 @@ export const StagedChangesPanel = (props: StagedChangesPanelProps) => {
                     : "text-muted-foreground"
 
               return (
-                <div
-                  class={cn(
-                    STAGED_ROW_GRID_TEMPLATE,
-                    (stagedTrade.status === "working" ||
-                      stagedTrade.status === "deleted") &&
-                      isRebalancing() &&
-                      "bg-yellow-500/10 border-yellow-500/40",
-                    stagedTrade.status === "failed" &&
-                      "bg-red-500/5 border-red-500/40",
-                  )}
-                >
+                <div class={cn(STAGED_ROW_GRID_TEMPLATE)}>
                   <span
                     class={cn(
                       "text-[10px] font-medium px-1 py-0.5 rounded w-[5ch] text-center",
@@ -149,16 +132,6 @@ export const StagedChangesPanel = (props: StagedChangesPanelProps) => {
                   <span class="font-mono text-muted-foreground justify-self-end w-full text-right">
                     {formatUsdPrecise(stagedTrade.notional)}
                   </span>
-                  <Show
-                    when={
-                      stagedTrade.status === "failed" &&
-                      stagedTrade.message !== null
-                    }
-                  >
-                    <span class="ml-2 text-[9px] text-red-400 truncate max-w-[140px]">
-                      {stagedTrade.message}
-                    </span>
-                  </Show>
                 </div>
               )
             }}
@@ -174,29 +147,20 @@ export const StagedChangesPanel = (props: StagedChangesPanelProps) => {
               <span class="text-muted-foreground">Notional</span>
               <span class="font-mono">
                 <Show
-                  when={
-                    props.initialTotalNotional !== undefined &&
-                    props.targetNotional !== undefined
-                  }
-                  fallback="--"
+                  when={shouldShowNotionalArrow()}
+                  fallback={formatUsdPrecise(targetTotalNotional())}
                 >
-                  <Show
-                    when={shouldShowNotionalArrow()}
-                    fallback={formatUsdPrecise(props.targetNotional ?? 0)}
+                  {formatUsdPrecise(currentTotalNotional())}{" "}
+                  <span class="text-muted-foreground">→</span>{" "}
+                  <span
+                    class={
+                      targetTotalNotional() >= currentTotalNotional()
+                        ? "text-green-500"
+                        : "text-red-500"
+                    }
                   >
-                    {formatUsdPrecise(props.initialTotalNotional ?? 0)}{" "}
-                    <span class="text-muted-foreground">-&gt;</span>{" "}
-                    <span
-                      class={
-                        (props.targetNotional ?? 0) >=
-                        (props.initialTotalNotional ?? 0)
-                          ? "text-green-500"
-                          : "text-red-500"
-                      }
-                    >
-                      {formatUsdPrecise(props.targetNotional ?? 0)}
-                    </span>
-                  </Show>
+                    {formatUsdPrecise(targetTotalNotional())}
+                  </span>
                 </Show>
               </span>
             </div>
@@ -204,19 +168,14 @@ export const StagedChangesPanel = (props: StagedChangesPanelProps) => {
               <span class="text-muted-foreground">Leverage</span>
               <span class="font-mono">
                 <Show
-                  when={props.crossAccountLeverage !== undefined}
-                  fallback="--"
+                  when={shouldShowLeverageArrow()}
+                  fallback={`${targetLeverage().toFixed(2)}x`}
                 >
-                  <Show
-                    when={shouldShowLeverageArrow()}
-                    fallback={`${(props.crossAccountLeverage ?? 0).toFixed(2)}x`}
-                  >
-                    {initialLeverage()?.toFixed(2)}x{" "}
-                    <span class="text-muted-foreground">-&gt;</span>{" "}
-                    <span class="text-yellow-500">
-                      {(currentLeverage() ?? 0).toFixed(2)}x
-                    </span>
-                  </Show>
+                  {currentLeverage().toFixed(2)}x{" "}
+                  <span class="text-muted-foreground">→</span>{" "}
+                  <span class="text-yellow-500">
+                    {targetLeverage().toFixed(2)}x
+                  </span>
                 </Show>
               </span>
             </div>
@@ -229,7 +188,7 @@ export const StagedChangesPanel = (props: StagedChangesPanelProps) => {
             if (
               !props.onRebalance ||
               !hasStaged() ||
-              disableSubmit() ||
+              isRebalanceButtonDisabled() ||
               isRebalancing()
             ) {
               return
@@ -237,16 +196,18 @@ export const StagedChangesPanel = (props: StagedChangesPanelProps) => {
             props.onRebalance()
           }}
           disabled={
-            !props.onRebalance ||
-            disableSubmit() ||
-            isRebalancing() ||
-            !hasStaged()
+            // !props.onRebalance ||
+            isRebalanceButtonDisabled()
+            // ||
+            // isRebalancing() ||
+            // !hasStaged()
           }
           aria-disabled={
-            !props.onRebalance ||
-            disableSubmit() ||
-            isRebalancing() ||
-            !hasStaged()
+            // !props.onRebalance ||
+            isRebalanceButtonDisabled()
+            // ||
+            // isRebalancing() ||
+            // !hasStaged()
           }
         >
           <Send class="h-3 w-3" />

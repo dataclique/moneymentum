@@ -1,6 +1,5 @@
 import {
   createSignal,
-  createEffect,
   createMemo,
   onMount,
   onCleanup,
@@ -10,14 +9,12 @@ import {
   WalletContext,
   WALLET_STORAGE_KEY,
   NETWORK_STORAGE_KEY,
+  getStoredWalletMetadata,
   getStoredNetworkMode,
   type NetworkMode,
   type WalletCredentials,
 } from "./wallet-context"
-import {
-  HyperliquidClient,
-  preloadMarkets,
-} from "@/services/hyperliquid-client"
+import { HyperliquidClient } from "@/services/hyperliquid-client"
 
 export const WalletProvider = (props: ParentProps) => {
   const [credentials, setCredentials] = createSignal<WalletCredentials | null>(
@@ -26,11 +23,6 @@ export const WalletProvider = (props: ParentProps) => {
   const [networkMode, setNetworkModeState] = createSignal<NetworkMode>(
     getStoredNetworkMode(),
   )
-
-  // createEffect: eagerly preload market metadata whenever networkMode changes
-  createEffect(() => {
-    void preloadMarkets(networkMode())
-  })
 
   const isConnected = createMemo(() => credentials() !== null)
 
@@ -42,10 +34,16 @@ export const WalletProvider = (props: ParentProps) => {
 
   const connect = (newCredentials: WalletCredentials) => {
     setCredentials(newCredentials)
-    const { accountAddress, apiWalletAddress, vaultAddress } = newCredentials
+    const { accountAddress, apiWalletAddress, privateKey, vaultAddress } =
+      newCredentials
     localStorage.setItem(
       WALLET_STORAGE_KEY,
-      JSON.stringify({ accountAddress, apiWalletAddress, vaultAddress }),
+      JSON.stringify({
+        accountAddress,
+        apiWalletAddress,
+        privateKey,
+        vaultAddress,
+      }),
     )
   }
 
@@ -69,6 +67,16 @@ export const WalletProvider = (props: ParentProps) => {
   }
 
   onMount(() => {
+    const stored = getStoredWalletMetadata()
+    if (stored?.privateKey) {
+      setCredentials({
+        accountAddress: stored.accountAddress,
+        apiWalletAddress: stored.apiWalletAddress,
+        privateKey: stored.privateKey,
+        vaultAddress: stored.vaultAddress,
+      })
+    }
+
     window.addEventListener("storage", handleStorageChange)
   })
   onCleanup(() => {

@@ -31,6 +31,8 @@ const formatPublicKey = (key: string): string => {
 
 interface WalletHeaderProps {
   autoOpen?: boolean
+  handleDisconnect?: () => void
+  handleNetworkSwitch?: () => void
 }
 
 export const WalletHeader = (props: WalletHeaderProps) => {
@@ -71,6 +73,7 @@ export const WalletHeader = (props: WalletHeaderProps) => {
 
     try {
       await switchNetworkMutation.mutateAsync(checked ? "testnet" : "mainnet")
+      props.handleNetworkSwitch?.()
     } catch (error) {
       console.error("Failed to toggle testnet/mainnet:", error)
       toast.error("Failed to toggle network. Please try again.")
@@ -115,7 +118,8 @@ export const WalletHeader = (props: WalletHeaderProps) => {
     toast.success("Wallet connected")
   }
 
-  const handleDisconnect = () => {
+  const onDisconnectClick = () => {
+    props.handleDisconnect?.()
     disconnect()
     setDialogOpen(false)
     setMenuOpen(false)
@@ -275,7 +279,7 @@ export const WalletHeader = (props: WalletHeaderProps) => {
               <Button
                 type="button"
                 variant="outline"
-                onClick={handleDisconnect}
+                onClick={onDisconnectClick}
               >
                 Disconnect
               </Button>

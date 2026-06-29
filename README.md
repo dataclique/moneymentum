@@ -2,43 +2,38 @@
 
 [![His name is Yang](https://img.youtube.com/vi/FoYC_8cutb0/0.jpg)](https://www.youtube.com/watch?v=FoYC_8cutb0)
 
-A factor-based portfolio management toolkit for DeFi trading. Think in terms of
-exposures (beta, momentum, carry) rather than individual positions.
+Moneymentum is an institutional-grade quant toolkit for crypto portfolio
+management. Define portfolios as proportions, not positions. Stage and simulate
+before executing. Manage factor exposures, not symbols. Most crypto holders
+cannot answer basic questions about their portfolio's factor exposure;
+Moneymentum makes those exposures legible and adjustable.
 
-See [SPEC.md](./SPEC.md) for the vision and [ROADMAP.md](./ROADMAP.md) for the
-path there.
+## Status
 
----
+- **Frontend rebalancer** (working, used daily): weight-based positions,
+  cross-account leverage, staged trade preview, execution against Hyperliquid
+  perps.
+- **Frontend prototype** at `/prototype`: design reference for the target UI.
+- **Backend** (active development): Rust + Rocket API, Polars analytics,
+  SQLite-backed ingestion runs and job queue. Ingests Hyperliquid
+  open-high-low-close-volume (OHLCV) and funding rates; computes rolling beta to
+  BTC and serves per-asset factor scores via `GET /factors/<timeframe>`.
+- **Vault program** (planned): Anchor program on Solana for non-custodial
+  managed deposits with two-phase withdrawal.
 
-## What Works Today
+See [ROADMAP.md](./ROADMAP.md) for what's next.
 
-**Portfolio Rebalancer** (`/`): Set positions by weight, adjust cross-account
-leverage while maintaining proportions. Currently shows net notional exposure;
-beta-aware hedging coming soon.
+## Documentation
 
-**Design Reference** (`/prototype`): Interactive mockup of the target UI/UX.
+| Doc                                    | Purpose                                            |
+| -------------------------------------- | -------------------------------------------------- |
+| [SPEC.md](./SPEC.md)                   | Product vision and target architecture             |
+| [ROADMAP.md](./ROADMAP.md)             | Themed stories ordered by priority                 |
+| [stories/](./stories/README.md)        | User and dev stories with acceptance tests         |
+| [contributions.md](./contributions.md) | Extreme Programming (XP) workflow for contributors |
+| [AGENTS.md](./AGENTS.md)               | Per-repo rules for AI coding agents                |
 
----
-
-## Architecture
-
-| Layer          | Technology           | Status         |
-| -------------- | -------------------- | -------------- |
-| Frontend       | TypeScript + SolidJS | Active         |
-| Backend        | Rust                 | Building       |
-| Legacy Backend | Python               | Being replaced |
-
-The frontend holds credentials and executes trades directly to venues. The
-backend provides analytics and execution plans but never touches credentials.
-
-The Rust backend's analytics are organized as focused crates: the `timeseries`
-crate provides typed, composable time-series transforms (returns, log-returns,
-rolling volatility, drawdown, normalization) as the foundation for the risk
-engine.
-
----
-
-## Getting Started
+## Quick start
 
 ### Prerequisites
 
@@ -48,93 +43,98 @@ engine.
 ### Setup
 
 ```bash
-git clone https://github.com/data-cartel/moneymentum.git
+git clone https://github.com/dataclique/moneymentum.git
 cd moneymentum
 direnv allow  # or: nix develop
 ```
 
-### Run Frontend
+### Frontend
+
+Run from `frontend/`:
 
 ```bash
-cd frontend
-bun run dev  # http://localhost:5173
+bun run typecheck   # type check
+bun run lint        # eslint
+bun run test        # vitest
+bun run dev         # dev server on :5173
+bun run build       # production bundle
 ```
 
-### Run Legacy Backend (Python)
+### Backend
+
+Run from repo root:
 
 ```bash
-python server.py  # FastAPI on port 8000
+cargo check         # fast compilation verification
+cargo test -q       # tests
+cargo clippy        # lints (pedantic + nursery, panic-free)
+cargo fmt           # format
+
+cargo run -- --help # see CLI options
 ```
 
----
+Configuration is loaded from a TOML file modeled on
+[example.toml](./example.toml).
 
-## Development
+### Pre-commit
 
 ```bash
-# Frontend (from frontend/)
-bun run typecheck
-bun run lint
-bun run test
-
-# Legacy Python
-ruff check .
-ruff format .
-pytest
-
-# Pre-commit (must pass)
 pre-commit run -a
 ```
 
-### Running AI Coding Agents
+All dependencies are managed through Nix. Do not use `bun install` or similar
+directly.
 
-Launch agents directly via nix develop rather than relying on direnv:
+### Running AI coding agents
+
+Launch agents via `nix develop --impure` rather than relying on direnv to avoid
+shell-init quirks:
 
 ```bash
-# Example with Claude Code
 nix develop --impure -c claude
 ```
 
-This avoids occasional shell initialization quirks that can occur when agents
-are spawned in a direnv-managed shell.
-
-All dependencies managed through Nix. Do not use pip install or bun install
-directly.
-
----
+Agents must follow [AGENTS.md](./AGENTS.md).
 
 ## Infrastructure
 
 Terraform provisions the server, then NixOS is bootstrapped onto it.
 
-### First-time setup
-
 ```bash
-# Create and encrypt terraform variables
-nix run .#tfCreateVars
-
-# Initialize terraform
+nix run .#tfCreateVars   # create + encrypt terraform vars
 nix run .#tfInit
-
-# Plan and apply infrastructure
 nix run .#tfPlan
 nix run .#tfApply
+nix run .#bootstrap      # bootstrap NixOS
 
-# Bootstrap NixOS on the provisioned server
-nix run .#bootstrap
+nix run .#remote         # SSH
+nix run .#tfEditVars
 ```
 
-### Ongoing operations
+Infrastructure commands use age-encrypted state. The `-i` flag selects a custom
+SSH identity (defaults to `~/.ssh/id_ed25519`).
+
+`master` deploys automatically through the `Deploy` GitHub Actions workflow. The
+workflow pins the SSH host key from `keys.nix`, resolves the host IP from
+encrypted Terraform state, builds the frontend with Bun and cached dependencies,
+runs `nix run .#deployServer` for NixOS and backend services, then runs
+`nix run .#deployFrontend` to publish the static frontend files. The
+`post-deploy-smoke-test` job verifies the public frontend and `/api/health`.
+
+Manual deployment uses the same split flow:
 
 ```bash
-# SSH into the server
-nix run .#remote
-
-# Edit terraform variables
-nix run .#tfEditVars
-
-# Destroy infrastructure
-nix run .#tfDestroy
+nix develop --impure .#frontend --command bash -c 'cd frontend && bun install --frozen-lockfile && bun run build'
+nix run .#deployServer
+nix run .#deployFrontend
 ```
 
-All infrastructure commands use age-encrypted state files. The `-i` flag can be
-passed to specify a custom SSH identity file (defaults to `~/.ssh/id_ed25519`).
+Set `DEPLOY_FRONTEND_URL` and `DEPLOY_HEALTH_URL` repository variables when the
+public checks should use a domain or HTTPS instead of the raw droplet IP. Set
+`DEPLOY_SMOKE_HOST` when the post-deploy smoke test needs an explicit `Host`
+header, such as targeting a domain behind a load balancer; set
+`DEPLOY_SMOKE_INSECURE` to `true` only when those frontend and `/api/health`
+checks must skip TLS verification for self-signed certificates.
+
+There is no standalone destroy command. To remove or reprovision resources, edit
+`infra/main.tf`, inspect `nix run .#tfPlan`, then apply the reviewed plan.

@@ -1,22 +1,32 @@
+import * as Effect from "effect/Effect"
 import { createMemo } from "solid-js"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/solid-query"
 import { useWallet } from "./useWallet"
-import type {
-  Position,
+import {
+  fetchHyperliquidMarkets,
+  MARKETS_MAX_AGE_MS,
+  type OrderResult,
+  type CurrentPosition,
+  type LeverageLimit,
+  type OrderSide,
+  type HyperliquidMarketsResponse,
+} from "@/services/hyperliquid-client"
+import * as Hyperliquid from "@/services/hyperliquid"
+import type { RebalanceAction } from "@/pages/Portfolio/hooks/portfolioRebalancer"
+
+export type {
+  OrderSide,
   OrderResult,
   CurrentPosition,
   LeverageLimit,
-  OrderSide,
-} from "@/services/hyperliquid-client"
-
-export type { OrderSide, OrderResult, CurrentPosition, LeverageLimit }
+  HyperliquidMarketsResponse,
+}
 
 const QUERY_KEYS = {
   balance: ["hyperliquid", "balance"],
   accountSummary: ["hyperliquid", "account-summary"],
   positions: ["hyperliquid", "positions"],
-  tickers: ["hyperliquid", "tickers"],
-  leverageLimits: ["hyperliquid", "leverage-limits"],
+  markets: ["hyperliquid", "markets"],
   fundingRates: ["hyperliquid", "funding-rates"],
 } as const
 
@@ -25,6 +35,18 @@ const DATA_STALE_TIME_MS = 30_000
 export const useHyperliquidClient = () => {
   const { client, credentials, networkMode, isConnected } = useWallet()
   return { client, credentials, isConnected, networkMode }
+}
+
+export const useHyperliquidMarkets = () => {
+  const { networkMode } = useHyperliquidClient()
+  const network = createMemo(() => networkMode())
+
+  return useQuery(() => ({
+    queryKey: [...QUERY_KEYS.markets, network()],
+    queryFn: () => fetchHyperliquidMarkets(network()),
+    staleTime: MARKETS_MAX_AGE_MS,
+    gcTime: MARKETS_MAX_AGE_MS,
+  }))
 }
 
 export const useHyperliquidBalance = () => {
@@ -37,11 +59,7 @@ export const useHyperliquidBalance = () => {
       credentials()?.accountAddress,
       networkMode(),
     ],
-    queryFn: async () => {
-      const c = client()
-      if (!c) throw new Error("Wallet not connected")
-      return c.getBalance()
-    },
+    queryFn: () => Effect.runPromise(Hyperliquid.getBalance(client())),
     enabled: isConnected() && client() !== null,
     staleTime: Infinity,
   }))
@@ -64,18 +82,18 @@ export const useHyperliquidAccountSummary = () => {
       credentials()?.accountAddress,
       networkMode(),
     ],
-    queryFn: async (): Promise<AccountSummary> => {
-      const c = client()
-      if (!c) throw new Error("Wallet not connected")
-      const summary = await c.getAccountSummary()
-
-      const crossAccountLeverage =
-        summary.accountValue > 0
-          ? summary.totalNotionalPosition / summary.accountValue
-          : 0
-
-      return { ...summary, crossAccountLeverage }
-    },
+    queryFn: (): Promise<AccountSummary> =>
+      Effect.runPromise(
+        Hyperliquid.getAccountSummary(client()).pipe(
+          Effect.map(summary => {
+            const crossAccountLeverage =
+              summary.accountValue > 0
+                ? summary.totalNotionalPosition / summary.accountValue
+                : 0
+            return { ...summary, crossAccountLeverage }
+          }),
+        ),
+      ),
     enabled: isConnected() && client() !== null,
     staleTime: DATA_STALE_TIME_MS,
   }))
@@ -91,61 +109,74 @@ export const useHyperliquidPositions = () => {
       credentials()?.accountAddress,
       networkMode(),
     ],
-    queryFn: async () => {
-      const c = client()
-      if (!c) throw new Error("Wallet not connected")
-
-      const positions = await c.getCurrentPositions()
-      const totalNotional = positions.reduce(
-        (sum, pos) => sum + pos.notional,
-        0,
-      )
-      const result = {
-        positions: positions.map(pos => ({
-          ...pos,
-          percentage:
-            totalNotional > 0 ? (pos.notional / totalNotional) * 100 : 0,
-        })),
-        totalNotional,
-      }
-
-      return result
-    },
+    queryFn: () =>
+      Effect.runPromise(
+        Hyperliquid.getCurrentPositions(client()).pipe(
+          Effect.map(positions => {
+            const totalNotional = positions.reduce(
+              (sum, pos) => sum + pos.notional,
+              0,
+            )
+            return {
+              positions: positions.map(pos => ({
+                ...pos,
+                percentage:
+                  totalNotional > 0 ? (pos.notional / totalNotional) * 100 : 0,
+              })),
+              totalNotional,
+            }
+          }),
+        ),
+      ),
     enabled: isConnected() && client() !== null,
     staleTime: DATA_STALE_TIME_MS,
   }))
 }
 
 export const useHyperliquidTickers = () => {
-  const { client, networkMode, isConnected } = useHyperliquidClient()
+  const marketsQuery = useHyperliquidMarkets()
+  const tickers = createMemo(() => marketsQuery.data?.tickers)
 
-  return useQuery(() => ({
-    queryKey: [...QUERY_KEYS.tickers, networkMode()],
-    queryFn: async () => {
-      const c = client()
-      if (!c) throw new Error("Wallet not connected")
-      return c.listPerpTickers()
+  return {
+    get data() {
+      return tickers()
     },
-    enabled: isConnected() && client() !== null,
-    staleTime: DATA_STALE_TIME_MS,
-  }))
+    get isLoading() {
+      return marketsQuery.isLoading
+    },
+    get isSuccess() {
+      return marketsQuery.isSuccess
+    },
+    get isError() {
+      return marketsQuery.isError
+    },
+    get error() {
+      return marketsQuery.error
+    },
+  }
 }
 
 export const useHyperliquidLeverageLimits = () => {
-  const { client, networkMode, isConnected } = useHyperliquidClient()
+  const marketsQuery = useHyperliquidMarkets()
+  const leverageLimits = createMemo(() => marketsQuery.data?.leverageLimits)
 
-  return useQuery(() => ({
-    queryKey: [...QUERY_KEYS.leverageLimits, networkMode()],
-    queryFn: async () => {
-      const c = client()
-      if (!c) throw new Error("Wallet not connected")
-      const result = await c.getLeverageLimits()
-
-      return result
+  return {
+    get data() {
+      return leverageLimits()
     },
-    enabled: isConnected() && client() !== null,
-    staleTime: DATA_STALE_TIME_MS,
-  }))
+    get isLoading() {
+      return marketsQuery.isLoading
+    },
+    get isSuccess() {
+      return marketsQuery.isSuccess
+    },
+    get isError() {
+      return marketsQuery.isError
+    },
+    get error() {
+      return marketsQuery.error
+    },
+  }
 }
 
 export const useHyperliquidFundingRates = () => {
@@ -153,30 +184,14 @@ export const useHyperliquidFundingRates = () => {
 
   return useQuery(() => ({
     queryKey: [...QUERY_KEYS.fundingRates, networkMode()],
-    queryFn: async () => {
-      const c = client()
-      if (!c) throw new Error("Wallet not connected")
-      return c.getFundingRates()
-    },
+    queryFn: () => Effect.runPromise(Hyperliquid.getFundingRates(client())),
     enabled: isConnected() && client() !== null,
     staleTime: DATA_STALE_TIME_MS,
   }))
 }
 
 export interface RebalanceParams {
-  accountValue: number
-  crossAccountLeverage: number
-  precise: boolean
-  positions: Array<{
-    symbol: string
-    percentage: number
-    side: "buy" | "sell"
-    leverage: number
-    leverageChanged: boolean
-    currentNotional?: number
-    currentSide?: "buy" | "sell"
-    status: "untouched" | "modified" | "idle" | "deleted" | "working"
-  }>
+  actions: RebalanceAction[]
 }
 
 export const useRebalanceHyperliquidPositions = () => {
@@ -184,42 +199,12 @@ export const useRebalanceHyperliquidPositions = () => {
   const queryClient = useQueryClient()
 
   return useMutation(() => ({
-    mutationFn: async (params: RebalanceParams) => {
-      const c = client()
-      if (!c) throw new Error("Wallet not connected")
-
-      const positions: Position[] = params.positions.map(pos => ({
-        symbol: pos.symbol,
-        percentage: pos.percentage,
-        side: pos.side,
-        leverage: pos.leverage,
-        leverageChanged: pos.leverageChanged,
-        currentNotional: pos.currentNotional,
-        currentSide: pos.currentSide,
-        status: pos.status === "working" ? "idle" : pos.status,
-      }))
-
-      console.table(
-        positions.map(position => ({
-          symbol: position.symbol,
-          percentage: position.percentage,
-          side: position.side,
-          leverage: position.leverage,
-          leverageChanged: position.leverageChanged,
-          currentNotional: position.currentNotional ?? "--",
-          status: position.status,
-        })),
-      )
-
-      const results = await c.rebalancePositions(
-        positions,
-        params.accountValue,
-        params.crossAccountLeverage,
-        params.precise,
-      )
-
-      return { orders: results }
-    },
+    mutationFn: (params: RebalanceParams) =>
+      Effect.runPromise(
+        Hyperliquid.rebalancePositions(client(), params.actions).pipe(
+          Effect.map(orders => ({ orders })),
+        ),
+      ),
     onSuccess: () => {
       const account = credentials()?.accountAddress
       const network = networkMode()
@@ -257,18 +242,14 @@ export const useFullHyperliquidRefresh = () => {
 
 export const useSwitchNetwork = () => {
   const { setNetworkMode } = useWallet()
+  const queryClient = useQueryClient()
 
   return useMutation(() => ({
-    mutationFn: (network: "testnet" | "mainnet") => {
+    mutationFn: async (network: "testnet" | "mainnet") => {
+      await queryClient.cancelQueries({ queryKey: ["hyperliquid"] })
       setNetworkMode(network)
-      return Promise.resolve(network)
-    },
-    onSuccess: () => {
-      // Force a full UI reload so all state and local storage-backed
-      // portfolio snapshots are re-initialized for the new network.
-      if (typeof window !== "undefined") {
-        window.location.reload()
-      }
+      await queryClient.invalidateQueries({ queryKey: ["hyperliquid"] })
+      return network
     },
   }))
 }

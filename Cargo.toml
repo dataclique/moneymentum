@@ -40,16 +40,18 @@ redundant_pub_crate = "allow"
 name = "moneymentum"
 version = "0.1.0"
 edition = "2024"
+authors = ["Data Clique Software Design FZCO"]
 
 [dependencies]
 apalis = "0.7.4"
 apalis-sql = { version = "0.7.4", features = ["sqlite"] }
 async-trait = "0.1.89"
 backon = "1.6.0"
+bitcoin = "0.32.8"
 chrono = { version = "0.4.43", features = ["serde"] }
 clap = { version = "4.5.57", features = ["derive", "env"] }
-cqrs-es = "0.4.11"
 futures = "0.3.31"
+getrandom = "0.4.3"
 hyperliquid_rust_sdk = "0.6.0"
 polars = { workspace = true, features = [
   "parquet",
@@ -60,10 +62,11 @@ polars = { workspace = true, features = [
   "temporal",
   "json",
 ] }
+reqwest = { version = "0.13.2", features = ["json", "rustls"] }
 rocket = { version = "0.5.1", features = ["json"] }
 rust_decimal = { version = "1.40.0", features = ["serde-with-str"] }
 serde = { version = "1.0.228", features = ["derive"] }
-sqlite-es = { git = "https://github.com/ST0x-Technology/st0x.issuance" }
+serde_json = "1.0.149"
 sqlx = { version = "0.8.6", features = [
   "sqlite",
   "runtime-tokio-rustls",

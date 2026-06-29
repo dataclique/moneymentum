@@ -10,64 +10,25 @@ this document is a directive, not a suggestion.
 This project is an institutional-grade quant toolkit. See [SPEC.md](./SPEC.md)
 for the vision and [ROADMAP.md](./ROADMAP.md) for the path.
 
-### Agent Implementations
+### Agent expectations
 
-This section documents concrete AI agents used in this repository. Each agent
-entry includes a short identifier, its purpose, core capabilities and
-limitations, typical usage patterns, and orchestration boundaries so
-contributors know what the agent owns vs. what human workflows or other
-automation must handle.
+AI coding agents working in this repo are expected to:
 
-#### Cursor Coding Agent (`cursor-coding`)
+- Read [ROADMAP.md](./ROADMAP.md) and the relevant story under
+  [stories/](./stories/README.md) before changing code. The story's acceptance
+  criteria are the contract.
+- Follow [contributions.md](./contributions.md): types-first, failing test,
+  implementation, review.
+- Honor the rules in this document for code style, testing, and quality gates.
+- Edit code, tests, and configs in this repo. Humans own deploys, secrets, and
+  external systems outside git.
+- Never relax quality checks (clippy, eslint, tests) without explicit
+  permission. Ask if a check seems wrong; don't suppress.
+- Don't substitute approaches, libraries, or tools without checking in. Scope is
+  whatever was asked, not whatever you'd prefer.
 
-- **Purpose**: Assist with day-to-day development on the Rust backend and
-  frontend, following this document’s rules.
-- **Capabilities**:
-  - Reads and understands existing Rust, TypeScript, Nix, and documentation.
-  - Proposes and implements code changes inside the repo (including tests),
-    respecting project style and TTDD workflow.
-  - Runs local tooling via the provided commands (e.g., `cargo check`,
-    `bun run lint`, `nix flake check`) when explicitly instructed or when needed
-    to validate changes.
-  - Suggests refactors, test cases, and documentation improvements.
-  - **Limitations**:
-    - Does not manage secrets or production infrastructure directly; only edits
-      code and config checked into git.
-    - Does not bypass or relax quality gates (clippy, linters, tests) unless
-      explicitly authorized in a discussion and annotated in code.
-- **Usage patterns**:
-  - **When to invoke**: Implementing new features (e.g., portfolio beta
-    analytics), updating API endpoints, adjusting frontend behavior, or
-    refactoring existing modules (Rust, TS, Nix).
-  - **Expected inputs**: A clear description of the change, relevant file
-    references (e.g., `@tests/api.rs`, `@rust.nix`), and any constraints
-    (performance, backwards compatibility, rollout considerations).
-  - **Expected outputs**: Updated code, tests, and configuration with a short,
-    high-level summary of what changed and how to run checks.
-  - **Integration points**: Works within local dev flows (`cargo check`,
-    `cargo test -q`, `bun run test`, `nix flake check`) and existing CI. Human
-    contributors remain responsible for reviewing diffs, running deployments,
-    and updating external systems (e.g., Terraform, Hyperliquid keys).
-  - **Handoff boundaries**: The agent owns code and test changes inside this
-    repo; humans own orchestration, approvals, production deploys, and any
-    manual secret/config management outside git.
-  - **Runtime requirements / config keys**: Assumes the Nix-based dev
-    environment is active (`direnv allow`, `nix develop`/`devenv shell`) and
-    that project configuration files (e.g., `example.toml`-derived configs) are
-    present when running or testing the binaries.
-
-**Current state:**
-
-- Frontend at `/` is a working portfolio rebalancer (weight-based positions,
-  cross-account leverage). Used daily.
-- Frontend at `/prototype` is a design reference (like Figma in code).
-- Rust backend provides analytics and API.
-
-**What's being built:**
-
-- Rust backend for analytics and API (polars, cqrs-es, rocket)
-- First priority: portfolio beta calculation (current tool shows net notional,
-  which ignores correlations and makes hedging guesswork)
+For status -- what works today vs. what's planned -- see
+[README.md](./README.md) and [ROADMAP.md](./ROADMAP.md).
 
 **Key architectural decisions:**
 
@@ -135,8 +96,16 @@ sqlx migrate run                   # Applies pending migrations
 ### Environment
 
 - **Nix + Direnv**: `direnv allow` activates the dev environment
-- All dependencies managed through Nix flake - do not use pip install, bun
+- All dependencies managed through Nix flake - do not use bun install, cargo
   install, or similar
+
+### Version control
+
+All write operations go through the GitButler CLI (`but`) -- never `git add`,
+`git commit`, `git push`, `git checkout`, `git rebase`, or other git writes.
+Read-only git inspection (`git status`, `git log`, `git diff`) is fine. See
+[ai/skills/gitbutler/SKILL.md](./ai/skills/gitbutler/SKILL.md) for the full
+command reference and workflow.
 
 ---
 
@@ -150,9 +119,88 @@ Fix immediately. The user never sends messages just for the sake of it.
 
 Never add "Generated with [Tool Name]" to commits, PRs, or code.
 
-### PR descriptions
+### PR titles and descriptions
 
-Explain WHY the PR exists, not what changed.
+**Titles**: Lowercase, imperative, concise. Describe the outcome, not the
+mechanism. No prefixes like `feat:` or `fix:`.
+
+- Good: `migrate frontend from React to SolidJS`
+- Good: `replace exceptions with typed Effect errors`
+- Bad: `Add Effect library for functional HTTP error handling`
+- Bad: `Refactor API hooks to use Effect-based error handling`
+
+**Descriptions**: Two sections -- `## Why` and `## How`.
+
+- **Why**: The problem or motivation. Why does this PR exist?
+- **How**: High-level approach. Explain the solution, not the file changes --
+  the diff tab handles that. No file paths, no bullet lists of changes.
+
+```
+## Why
+
+<1-3 sentences explaining the problem or motivation>
+
+## How
+
+<1-3 sentences explaining the approach and key decisions>
+```
+
+### Every PR is tracked by an issue and the roadmap
+
+Every PR `Closes` a problem-only GitHub issue, and that issue is a checklist
+item in the relevant [ROADMAP.md](./ROADMAP.md) section linking the issue and
+the PR. Keep the roadmap in lockstep: the entry and its tick land on the feature
+PR itself, so the roadmap always matches what merged. The `pr-tracking` skill
+makes a whole stack conform.
+
+### Every stacked PR carries the GitButler stack footer
+
+Every PR that belongs to a multi-branch stack must carry the GitButler
+stack-navigation footer -- the
+`This is part X of N in a stack made with
+GitButler:` block (between the
+`<!-- GitButler Footer Boundary -->` markers) listing the stack's PRs
+top-to-bottom with the current one marked. It orients reviewers in the stack and
+links the sibling PRs.
+
+GitButler writes this footer when it opens or pushes a PR, but it **drifts**: a
+no-op push does not rewrite it, so after a rebase, a branch add/remove, or a
+merge it goes stale (lists merged PRs, wrong `N`, wrong position) or is missing
+entirely on PRs that were not opened through GitButler. There is no `but`
+command to refresh it. Keep every stacked PR's footer current by running
+`nix run .#pr-stack-footer` (`scripts/pr-stack-footer.nu`), which rebuilds each
+stack's footer from the live workspace and splices it into the PR bodies. Run it
+after any operation that reshapes the stack.
+
+### Documentation stays in lockstep with the code
+
+Every PR must leave the documentation in a true state. Before handing off work
+-- requesting review, marking a task done, declaring a story complete -- audit
+the docs that touch what you changed and update anything that has gone stale.
+
+Concrete audit checklist:
+
+- [README.md](./README.md): does it still describe the system accurately (status
+  of components, doc index)?
+- [SPEC.md](./SPEC.md): does the vision or architecture description still match
+  the code?
+- [ROADMAP.md](./ROADMAP.md): are completed items marked completed, are new
+  themes/stories listed, are stale ones removed?
+- [stories/](./stories/README.md): is the story status frontmatter current, is
+  the index entry present, are acceptance criteria reworded to match the shipped
+  behavior?
+- [contributions.md](./contributions.md) and `AGENTS.md`: did a rule change in
+  practice? If so, the rule changes here first.
+- Per-file CLAUDE.md / AGENTS.md (e.g. `frontend/CLAUDE.md`): same audit at the
+  subtree level.
+- Inline doc comments and module-level docstrings on any code you touched.
+
+If a doc has fallen out of sync with reality and is not directly in your
+change's path, either fix it in the same PR (preferred) or open a follow-up
+issue immediately -- do not leave silent drift.
+
+Stale documentation is a bug. Treat it like any other defect: do not ship work
+that introduces it, and do not ignore it when you see it.
 
 ### Quality checks
 
@@ -161,7 +209,7 @@ applies to:
 
 - Clippy lints (`#[allow(clippy::*)]`)
 - Compiler warnings (`#[allow(dead_code)]`, `#[allow(unused)]`)
-- All linters in all languages (eslint, ruff, etc.)
+- All linters in all languages (eslint, clippy, etc.)
 - Test coverage - should not decrease without permission
 
 Fix the underlying code, don't suppress warnings.
@@ -253,12 +301,34 @@ setModalState("open");
 const openModal = () => setIsOpen(true);
 ```
 
-### ASCII-only code
+### ASCII for code, Unicode for users
 
-All code, comments, identifiers, and documentation must use ASCII characters
-only. Unicode is allowed exclusively in string literals that produce
-user-visible output (UI text, CLI messages). Use ASCII equivalents in comments:
-`*` not `×`, `->` not `→`, `~` not `≈`, `--` not `—`, `beta` not `β`.
+The split is by **audience**, not by file type or language.
+
+**ASCII** (the default): code, comments, identifiers, type names, log messages,
+git commit subjects, PR titles, documentation prose, configuration files, and
+developer-console output (`console.log`, `console.table`, `tracing` calls). Use
+ASCII equivalents: `*` not `×`, `->` not `→`, `~` not `≈`, `--` not em-dash,
+`beta` not `β`.
+
+**Unicode** (whenever the audience is a user): UI text rendered in the app, CLI
+messages presented to a user, error messages surfaced in the product,
+tooltip/aria/accessibility strings, and -- importantly -- **the quoted UI
+strings that appear inside documentation**. Story files routinely cite UI text
+verbatim (e.g. `the tooltip reads "Read-only — cannot trade"`); inside those
+quotes, write the exact character the user will see. The prose around the quote
+stays ASCII.
+
+The placeholder rendered when a number is missing is `—` (em-dash), not `--`,
+because the user reads it. The same dash inside a code comment ("see note above
+-- this is documented elsewhere") stays ASCII because no user ever sees it. When
+in doubt, ask: who is the audience for this exact run of characters?
+
+This is a strict, blast-radius-asymmetric rule. A bulk find/replace that
+substitutes `—` with `--` across the repo is **not** a safe refactor -- it
+mangles UI strings and the documentation that quotes them. Audit before running
+such a sweep, and never apply it to `*.tsx`, `*.ts`, or to quoted strings inside
+`stories/`.
 
 ### Self-documenting code
 
@@ -268,9 +338,15 @@ user-visible output (UI text, CLI messages). Use ASCII equivalents in comments:
 ### Descriptive names
 
 - Avoid generic names like `result`, `data`, `value`, `item` - name what it IS
-- No single-letter variables in closures: `|r|` is unreadable, use `|rate|`
+- No single-letter variable names anywhere - not in closures, locals,
+  parameters, destructuring, or function bindings. `|r|` is unreadable; use
+  `|rate|`. `const c = ...` is unreadable; use `const current = ...`. Single
+  letters are only acceptable when the user has explicitly approved them for a
+  specific case (e.g., conventional loop indices in tight numeric code where a
+  longer name would obscure intent).
 - No abbreviations unless universally understood (`id`, `url`, `http`, `msg`,
-  `tx` are fine)
+  `tx` are fine). This includes namespace import aliases: `import * as Hl` is
+  wrong, use `import * as Hyperliquid`
 
 ### Colocate types
 
@@ -352,6 +428,18 @@ verify against an external source, say "I cannot verify this value" rather than
 guessing. Training data cutoffs make historical knowledge unreliable for current
 market prices.
 
+### Scripts
+
+Any script large enough to be pulled out into its own file MUST NOT be bash. Use
+nushell (`.nu`) instead. Bash is acceptable only for short inline blocks (CI
+workflow `run:` steps, npm `scripts`, Makefile recipes); the moment a script
+grows into a standalone file, it must be nushell. Shebang: `#!/usr/bin/env nu`.
+
+Reasons: nushell has structured data, real error handling, typed pipelines, and
+predictable quoting/word-splitting. Bash files accumulate footguns (unquoted
+expansions, `set -e` corner cases, IFS surprises) that nushell avoids by
+construction.
+
 ---
 
 ## Rust Code Style
@@ -424,25 +512,21 @@ impl ApiKey {
 into proper types immediately at the boundary. Never pass raw strings through
 the system.
 
-**Aggregate IDs must be newtypes.** Never use raw `String` or `&str` for
-aggregate identifiers. cqrs-es uses stringly-typed IDs, but we wrap them:
+**Persistent IDs must be newtypes.** Never use raw `String` or `&str` for domain
+identifiers that are persisted or passed between async boundaries:
 
 ```rust
-// Bad: easy to mix up different aggregate IDs (banned by clippy)
-cqrs.execute("perp:hyperliquid", command).await;
-cqrs.execute("user:123", command).await;  // Oops, wrong ID type
+// Bad: easy to mix up different persistent IDs
+enqueue_ingestion("ingestion-123").await;
+load_portfolio("ingestion-123").await;  // Oops, wrong ID type
 
 // Good: type system prevents mixing IDs
-struct IngestionId;
-impl AggregateId<Ingestion> for IngestionId {
-    type Args = ();
-    fn aggregate_id((): ()) -> String { "perp:hyperliquid".into() }
-}
-// Use typed execute: cqrs.execute::<IngestionId>((), command)
+struct IngestionRunId(String);
+struct PortfolioId(String);
 ```
 
-Use `wire::AggregateId` trait and `wire::Cqrs::execute` for type-safe ID
-construction. The stringly-typed version is banned via clippy.
+If a future framework exposes stringly-typed IDs, wrap it at the boundary and
+keep raw strings out of application call sites.
 
 ### Avoid deep nesting
 
@@ -633,6 +717,14 @@ or integration test.
 - Never test language features - test business logic
 - Only cover happy paths in integration/e2e tests; cover edge cases in unit
   tests
+
+**Hands-off: `src/factors/fixture_tests.rs`.** Do not edit this file unless the
+user gives a direct, explicit instruction to do so. These tests pin expected
+factor values calculated by hand in Google Sheets; they are the source of truth
+for factor semantics. When a fixture test fails, fix the production code (or
+update `data_test/` only when the user supplies corrected spreadsheet values) --
+never relax tolerances, rewrite assertions, or delete cases to make broken code
+pass.
 
 **Bug reproduction must exercise real code paths.** When reproducing a bug:
 

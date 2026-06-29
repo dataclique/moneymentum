@@ -133,19 +133,35 @@ export const AddPositionModal = (props: AddPositionModalProps) => {
     })
   })
 
-  const rawWeight = () =>
-    sizeMode() === "weight"
-      ? (parseFloat(sizeValue()) || 0) / 100
-      : (parseFloat(sizeValue()) || 0) / (props.nav * props.currentLeverage)
+  const portfolioDenominator = () => props.nav * props.currentLeverage
+
+  const rawWeight = () => {
+    if (sizeMode() === "weight") {
+      return (parseFloat(sizeValue()) || 0) / 100
+    }
+
+    const denominator = portfolioDenominator()
+    if (denominator <= 0) {
+      return 0
+    }
+
+    return (parseFloat(sizeValue()) || 0) / denominator
+  }
 
   const computedWeight = () => Math.max(0, Math.min(1, rawWeight()))
 
-  const computedNotional = () =>
-    sizeMode() === "notional"
-      ? parseFloat(sizeValue()) || 0
-      : ((parseFloat(sizeValue()) || 0) / 100) *
-        props.nav *
-        props.currentLeverage
+  const computedNotional = () => {
+    if (sizeMode() === "notional") {
+      return parseFloat(sizeValue()) || 0
+    }
+
+    const denominator = portfolioDenominator()
+    if (denominator <= 0) {
+      return 0
+    }
+
+    return ((parseFloat(sizeValue()) || 0) / 100) * denominator
+  }
 
   return (
     <Dialog

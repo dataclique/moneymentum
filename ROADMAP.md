@@ -117,6 +117,9 @@ See [SPEC.md](./SPEC.md) for the beta methodology and the `POST /beta` contract.
 - [x] [Add Read-Only Bitcoin Addresses](./stories/0x00c.add-read-only-bitcoin-addresses.md)
 - [ ] [Include Read-Only Bitcoin Holdings In Beta](./stories/0x00d.include-read-only-bitcoin-holdings-in-beta.md)
 - [ ] [Target Ending Bitcoin Beta While Hedging](./stories/0x00e.target-ending-bitcoin-beta-while-hedging.md)
+- [x] Compute read-only BTC and USD amounts with exact decimals --
+      [#220](https://github.com/dataclique/moneymentum/issues/220) /
+      [#378](https://github.com/dataclique/moneymentum/pull/378)
 
 ---
 

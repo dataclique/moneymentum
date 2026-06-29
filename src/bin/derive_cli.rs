@@ -1,6 +1,6 @@
 use clap::Parser;
+use derive::derive_rocket;
 use moneymentum::Config;
-use moneymentum::derive::derive_rocket;
 
 #[derive(Parser)]
 struct Env {

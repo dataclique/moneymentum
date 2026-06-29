@@ -1278,6 +1278,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "derive"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "futures",
+ "reqwest 0.13.2",
+ "rocket",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-tungstenite 0.29.0",
+ "tracing",
+ "url",
+]
+
+[[package]]
 name = "derive_more"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3244,6 +3261,7 @@ dependencies = [
  "bitcoin",
  "chrono",
  "clap",
+ "derive",
  "futures",
  "getrandom 0.4.3",
  "hyperliquid_rust_sdk",
@@ -3259,7 +3277,6 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
- "tokio-tungstenite 0.29.0",
  "toml 0.9.11+spec-1.1.0",
  "tracing",
  "tracing-subscriber",

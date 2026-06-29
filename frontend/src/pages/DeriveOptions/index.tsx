@@ -9,9 +9,25 @@ import {
   onMount,
   type Accessor,
 } from "solid-js"
+import * as Effect from "effect/Effect"
 
+import { fetchStreamChecked, NetworkError } from "@/lib/http"
 import { computeRollingVolatility } from "@/pages/Prototype/metrics/computations"
 import type { TimeSeriesPoint } from "@/pages/Prototype/metrics/registry"
+import * as deriveService from "@/services/derive"
+
+/**
+ * Effect wraps an aborted fetch as a `NetworkError` whose `cause` is the
+ * underlying `AbortError`; unwrap it so cancelled requests are not surfaced as
+ * real failures.
+ */
+const isAbortError = (error: unknown): boolean => {
+  const candidate = error instanceof NetworkError ? error.cause : error
+  return (
+    (candidate instanceof DOMException || candidate instanceof Error) &&
+    candidate.name === "AbortError"
+  )
+}
 
 type OptionKind = "C" | "P"
 type Moneyness = "in_the_money" | "at_the_money" | "out_of_the_money"
@@ -69,7 +85,7 @@ type ScenarioPoint = {
   estimated_pnl: number
 }
 
-type OptionsSnapshot = {
+export type OptionsSnapshot = {
   asset: string
   updated_at: string
   active_expiry_unix: ExpiryUnix
@@ -82,7 +98,7 @@ type OptionsSnapshot = {
   scenarios: ScenarioPoint[]
 }
 
-type OptionsBootstrap = {
+export type OptionsBootstrap = {
   asset: string
   default_expiry_unix: ExpiryUnix
   tabs: Array<{ expiry_unix: ExpiryUnix; instruments: string[] }>
@@ -331,25 +347,13 @@ const DeriveOptionsPage = () => {
       day: "2-digit",
     })
 
-  const postActiveExpiry = async (
+  const postActiveExpiry = (
     expiryUnix: ExpiryUnix,
     signal?: AbortSignal,
-  ): Promise<void> => {
-    const response = await fetch(
-      `${deriveBaseUrl}/derive/options/active_expiry`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ expiry_unix: expiryUnix }),
-        signal,
-      },
+  ): Promise<void> =>
+    Effect.runPromise(
+      deriveService.postActiveExpiry(deriveBaseUrl, expiryUnix, signal),
     )
-    if (!response.ok) {
-      throw new Error(
-        `active_expiry request failed with ${String(response.status)}`,
-      )
-    }
-  }
 
   const switchExpiryTab = (expiryUnix: ExpiryUnix): void => {
     const currentSnap = snapshot()
@@ -392,9 +396,7 @@ const DeriveOptionsPage = () => {
         setErrorMessage(null)
       })
       .catch((error: unknown) => {
-        const aborted =
-          (error instanceof DOMException || error instanceof Error) &&
-          error.name === "AbortError"
+        const aborted = isAbortError(error)
         if (aborted) {
           return
         }
@@ -661,17 +663,8 @@ const DeriveOptionsPage = () => {
     }
   })
 
-  const loadSnapshot = async (
-    signal?: AbortSignal,
-  ): Promise<OptionsSnapshot> => {
-    const response = await fetch(`${deriveBaseUrl}/derive/options/snapshot`, {
-      signal,
-    })
-    if (!response.ok) {
-      throw new Error(`Snapshot request failed with ${String(response.status)}`)
-    }
-    return response.json() as Promise<OptionsSnapshot>
-  }
+  const loadSnapshot = (signal?: AbortSignal): Promise<OptionsSnapshot> =>
+    Effect.runPromise(deriveService.fetchSnapshot(deriveBaseUrl, signal))
 
   const startStream = (): void => {
     streamRef?.close()
@@ -719,15 +712,11 @@ const DeriveOptionsPage = () => {
           typeof viteCandles === "string" && viteCandles.length > 0
             ? viteCandles.replace(/\/$/, "")
             : ""
-        const response = await fetch(`${prefix}/candles/1d`, {
-          signal: controller.signal,
-        })
-        if (!response.ok) {
-          if (mountGeneration.value === claim) {
-            setRealizedVolAnnual30d(null)
-          }
-          return
-        }
+        const response = await Effect.runPromise(
+          fetchStreamChecked(`${prefix}/candles/1d`, {
+            signal: controller.signal,
+          }),
+        )
         const text = await response.text()
         if (mountGeneration.value !== claim) {
           return
@@ -747,9 +736,7 @@ const DeriveOptionsPage = () => {
         const last = volSeries[volSeries.length - 1]
         setRealizedVolAnnual30d(last.value)
       } catch (error) {
-        const aborted =
-          (error instanceof DOMException || error instanceof Error) &&
-          error.name === "AbortError"
+        const aborted = isAbortError(error)
         if (!aborted && mountGeneration.value === claim) {
           setRealizedVolAnnual30d(null)
         }
@@ -758,18 +745,9 @@ const DeriveOptionsPage = () => {
 
     const initialize = async () => {
       try {
-        const bootResponse = await fetch(
-          `${deriveBaseUrl}/derive/options/bootstrap`,
-          {
-            signal: controller.signal,
-          },
+        const boot = await Effect.runPromise(
+          deriveService.fetchBootstrap(deriveBaseUrl, controller.signal),
         )
-        if (!bootResponse.ok) {
-          throw new Error(
-            `Bootstrap request failed with ${String(bootResponse.status)}`,
-          )
-        }
-        const boot = (await bootResponse.json()) as OptionsBootstrap
         if (mountGeneration.value !== claim) {
           return
         }

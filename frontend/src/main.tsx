@@ -17,8 +17,6 @@ const DeriveOptionsPage = lazy(() => import("./pages/DeriveOptions"))
 
 const NotFound = () => <div>Page not found</div>
 
-const NotFound = () => <div>Page not found</div>
-
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {

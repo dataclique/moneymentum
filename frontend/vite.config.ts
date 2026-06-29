@@ -46,11 +46,6 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: stripApiPrefix,
       },
-      "/api/portfolio": {
-        target: "http://127.0.0.1:8000",
-        changeOrigin: true,
-        rewrite: (proxyPath: string) => proxyPath.replace(/^\/api/, ""),
-      },
       "/api": {
         target: "http://127.0.0.1:8000",
         changeOrigin: true,

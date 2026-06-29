@@ -117,9 +117,9 @@
     url = "https://registry.npmjs.org/@effect/eslint-plugin/-/eslint-plugin-0.3.2.tgz";
     hash = "sha512-c4Vs9t3r54A4Zpl+wo8+PGzZz3JWYsip41H+UrebRLjQ2Hk/ap63IeCgN/HWcYtxtyhRopjp7gW9nOQ2Snbl+g==";
   };
-  "@effect/language-service@0.79.0" = fetchurl {
-    url = "https://registry.npmjs.org/@effect/language-service/-/language-service-0.79.0.tgz";
-    hash = "sha512-DEmIOsg1GjjP6s9HXH1oJrW+gDmzkhVv9WOZl6to5eNyyCrjz1S2PDqQ7aYrW/HuifhfwI5Bik1pK4pj7Z+lrg==";
+  "@effect/language-service@0.86.2" = fetchurl {
+    url = "https://registry.npmjs.org/@effect/language-service/-/language-service-0.86.2.tgz";
+    hash = "sha512-SaPln+8srOqDJDUwNTDmP5e+IYpEDr9+1epGznnsLqu8xvo6VnxyWARdeLpqvZJlb0Pgy9ca7ppqvvdWbHPXAg==";
   };
   "@emnapi/core@1.8.1" = fetchurl {
     url = "https://registry.npmjs.org/@emnapi/core/-/core-1.8.1.tgz";
@@ -1105,9 +1105,9 @@
     url = "https://registry.npmjs.org/dunder-proto/-/dunder-proto-1.0.1.tgz";
     hash = "sha512-KIN/nDJBQRcXw0MLVhZE9iQHmG68qAVIBg9CqmUYjmQIhgij9U5MFvrqkUL5FbtyyzZuOeOt0zdeRe4UY7ct+A==";
   };
-  "effect@3.19.19" = fetchurl {
-    url = "https://registry.npmjs.org/effect/-/effect-3.19.19.tgz";
-    hash = "sha512-Yc8U/SVXo2dHnaP7zNBlAo83h/nzSJpi7vph6Hzyl4ulgMBIgPmz3UzOjb9sBgpFE00gC0iETR244sfXDNLHRg==";
+  "effect@3.21.4" = fetchurl {
+    url = "https://registry.npmjs.org/effect/-/effect-3.21.4.tgz";
+    hash = "sha512-B89v/xSgPbl1J2Ai2u18jxq3odpFauU1rC6/eSs4FeNHi72kwKdJp12VGigvRV2lK+kRnx+OOz41XV8guZd4gQ==";
   };
   "electron-to-chromium@1.5.307" = fetchurl {
     url = "https://registry.npmjs.org/electron-to-chromium/-/electron-to-chromium-1.5.307.tgz";

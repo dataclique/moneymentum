@@ -79,9 +79,9 @@ impl LogLevel {
 #[derive(Debug, Deserialize)]
 pub struct Config {
     port: u16,
-    data_dir: PathBuf,
+    pub(crate) data_dir: PathBuf,
     database_url: String,
-    hyperliquid_base_url: Option<url::Url>,
+    pub(crate) hyperliquid_base_url: Option<url::Url>,
     log_level: LogLevel,
     max_concurrent_requests: usize,
     max_retries: usize,
@@ -117,20 +117,20 @@ pub enum ConfigError {
 }
 
 pub(crate) struct AppState {
-    config: Config,
-    portfolio_store: Arc<Store<Portfolio>>,
-    portfolio_projection: Arc<Projection<Portfolio>>,
-    ingestion_store: Arc<Store<IngestionRun>>,
-    ingestion_projection: Arc<Projection<IngestionRun>>,
-    market_enablement: Arc<Store<MarketEnablement>>,
-    market_enablement_projection: Arc<Projection<MarketEnablement>>,
-    market_catalog_projection: Arc<Projection<MarketCatalog>>,
-    apalis_pool: apalis_sqlite::SqlitePool,
+    pub(crate) config: Config,
+    pub(crate) portfolio_store: Arc<Store<Portfolio>>,
+    pub(crate) portfolio_projection: Arc<Projection<Portfolio>>,
+    pub(crate) ingestion_store: Arc<Store<IngestionRun>>,
+    pub(crate) ingestion_projection: Arc<Projection<IngestionRun>>,
+    pub(crate) market_enablement: Arc<Store<MarketEnablement>>,
+    pub(crate) market_enablement_projection: Arc<Projection<MarketEnablement>>,
+    pub(crate) market_catalog_projection: Arc<Projection<MarketCatalog>>,
+    pub(crate) apalis_pool: apalis_sqlite::SqlitePool,
 }
 
 /// Renders pre-serialized JSON bytes with the `application/json` content type,
 /// the axum equivalent of Rocket's `RawJson`.
-fn raw_json(bytes: Vec<u8>) -> Response {
+pub(crate) fn raw_json(bytes: Vec<u8>) -> Response {
     ([(header::CONTENT_TYPE, "application/json")], bytes).into_response()
 }
 
@@ -148,22 +148,6 @@ async fn health() -> impl IntoResponse {
             version: env!("CARGO_PKG_VERSION"),
         }),
     )
-}
-
-async fn get_candles(
-    State(state): State<Arc<AppState>>,
-    AxumPath(timeframe): AxumPath<String>,
-) -> Result<Response, StatusCode> {
-    let timeframe =
-        Timeframe::from_interval_string(&timeframe).ok_or(StatusCode::UNPROCESSABLE_ENTITY)?;
-    candle::read_candles_json(&state.config.data_dir, timeframe)
-        .await
-        .map_err(|err| {
-            error!(error = %err, "failed to read candles");
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?
-        .map(raw_json)
-        .ok_or(StatusCode::NOT_FOUND)
 }
 
 async fn get_factors(
@@ -258,13 +242,13 @@ struct BetaResponse {
 }
 
 #[derive(Debug, serde::Serialize)]
-struct ApiErrorResponse {
+pub(crate) struct ApiErrorResponse {
     error: String,
 }
 
-type ApiError = (StatusCode, Json<ApiErrorResponse>);
+pub(crate) type ApiError = (StatusCode, Json<ApiErrorResponse>);
 
-fn api_error(status: StatusCode, message: impl Into<String>) -> ApiError {
+pub(crate) fn api_error(status: StatusCode, message: impl Into<String>) -> ApiError {
     (
         status,
         Json(ApiErrorResponse {
@@ -573,7 +557,7 @@ async fn post_portfolio_archive(
 
 /// Maps a finite `f64` from the wire onto an exact `Decimal`; `None` for NaN,
 /// infinities, or values outside `Decimal`'s range.
-fn finite_decimal(value: f64) -> Option<Decimal> {
+pub(crate) fn finite_decimal(value: f64) -> Option<Decimal> {
     if value.is_finite() {
         Decimal::from_f64(value)
     } else {
@@ -581,7 +565,7 @@ fn finite_decimal(value: f64) -> Option<Decimal> {
     }
 }
 
-fn bad_request(message: &str) -> ApiError {
+pub(crate) fn bad_request(message: &str) -> ApiError {
     api_error(StatusCode::BAD_REQUEST, message)
 }
 
@@ -823,7 +807,7 @@ pub async fn app(config: Config) -> Result<Router, Box<dyn std::error::Error + S
 fn build_router(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/health", get(health))
-        .route("/candles/{timeframe}", get(get_candles))
+        .route("/candles/{timeframe}", get(candle::get_candles))
         .route("/factors/{timeframe}", get(get_factors))
         .route("/screener/{timeframe}", post(post_screener))
         .route("/ingest", post(start_ingestion))

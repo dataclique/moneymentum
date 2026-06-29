@@ -162,39 +162,37 @@ export const PositionsPanel = (props: PositionsPanelProps): JSX.Element => {
                         }
 
                         // 3. If it's neither in target nor archive (but exists in current) — use current
-                        const current = props.currentPortfolio[symbol]
-                        if (!current) {
-                          throw new Error(
-                            `Symbol ${symbol} not found in any portfolio`,
-                          )
-                        }
-                        return current
+                        return props.currentPortfolio[symbol]
                       })
 
                       return (
-                        <PositionsPanelRow
-                          symbol={symbol}
-                          position={displayPosition}
-                          status={status()}
-                          maxLeverage={props.leverageLimitsMap[symbol]}
-                          isPrecise={props.isPrecise}
-                          fundingIsLoading={props.fundingIsLoading}
-                          onRemove={props.onRemove}
-                          onUndoRemove={props.onUndoRemove}
-                          onSideChange={props.onSideChange}
-                          onLeverageChange={props.onLeverageChange}
-                          onNotionalChange={props.onNotionalChange}
-                          onWeightChange={props.onWeightChange}
-                          fundingRatesByBaseSymbol={
-                            props.fundingRatesByBaseSymbol
-                          }
-                          totalNotional={props.targetTotalNotional}
-                          symbolsBelowMinimum={props.symbolsBelowMinimum}
-                          symbolsDeltaBelowMinimum={
-                            props.symbolsDeltaBelowMinimum
-                          }
-                          symbolDelta={delta()}
-                        />
+                        <Show when={displayPosition()}>
+                          {position => (
+                            <PositionsPanelRow
+                              symbol={symbol}
+                              position={position}
+                              status={status()}
+                              maxLeverage={props.leverageLimitsMap[symbol]}
+                              isPrecise={props.isPrecise}
+                              fundingIsLoading={props.fundingIsLoading}
+                              onRemove={props.onRemove}
+                              onUndoRemove={props.onUndoRemove}
+                              onSideChange={props.onSideChange}
+                              onLeverageChange={props.onLeverageChange}
+                              onNotionalChange={props.onNotionalChange}
+                              onWeightChange={props.onWeightChange}
+                              fundingRatesByBaseSymbol={
+                                props.fundingRatesByBaseSymbol
+                              }
+                              totalNotional={props.targetTotalNotional}
+                              symbolsBelowMinimum={props.symbolsBelowMinimum}
+                              symbolsDeltaBelowMinimum={
+                                props.symbolsDeltaBelowMinimum
+                              }
+                              symbolDelta={delta()}
+                            />
+                          )}
+                        </Show>
                       )
                     }}
                   </For>

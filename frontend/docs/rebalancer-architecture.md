@@ -43,7 +43,7 @@ violated.
 
 ## 4) Redistribution of Weights (Exact Behavior)
 
-The logic in `redistributeWeights(...)` (`usePortfolioState`, block `108-156`):
+The logic in `redistributeWeights(...)` (in `usePortfolioState.ts`):
 
 1. Take the changed symbol and its new percentage (clamped to `0..100`).
 2. Compute the total percentage of all other symbols relative to

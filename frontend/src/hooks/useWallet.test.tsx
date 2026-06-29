@@ -130,6 +130,72 @@ describe("useWallet", () => {
     expect(localStorage.getItem("hyperliquid-network")).toBe("mainnet")
   })
 
+  it("handles malformed JSON in wallet localStorage gracefully", () => {
+    // Malformed stored wallet data must never connect a session or throw while
+    // the provider mounts -- the wallet stays disconnected and the user
+    // reconnects through the dialog.
+    localStorage.setItem("hyperliquid-wallet", "not-json")
+
+    const { result } = renderHook(() => useWallet(), { wrapper })
+
+    expect(result.isConnected()).toBe(false)
+    expect(result.credentials()).toBeNull()
+  })
+
+  it("handles invalid network mode in localStorage gracefully", () => {
+    localStorage.setItem("hyperliquid-network", "invalid")
+
+    const { result } = renderHook(() => useWallet(), { wrapper })
+
+    expect(result.networkMode()).toBe("testnet")
+  })
+
+  it("preserves network mode after disconnect", () => {
+    const { result } = renderHook(() => useWallet(), { wrapper })
+
+    result.setNetworkMode("mainnet")
+    result.connect({
+      accountAddress: "0xTestAccountAddress",
+      apiWalletAddress: "0xTestApiWalletAddress",
+      privateKey: "TEST_PRIVATE_KEY_PLACEHOLDER",
+    })
+    expect(result.networkMode()).toBe("mainnet")
+
+    result.disconnect()
+    expect(result.isConnected()).toBe(false)
+    // Disconnecting clears credentials but leaves the chosen network intact.
+    expect(result.networkMode()).toBe("mainnet")
+  })
+
+  it("replaces existing credentials when connecting twice", () => {
+    const { result } = renderHook(() => useWallet(), { wrapper })
+
+    const firstCredentials = {
+      accountAddress: "0xFirstAccountAddress",
+      apiWalletAddress: "0xFirstApiWalletAddress",
+      privateKey: "FIRST_PRIVATE_KEY_PLACEHOLDER",
+    }
+    const secondCredentials = {
+      accountAddress: "0xSecondAccountAddress",
+      apiWalletAddress: "0xSecondApiWalletAddress",
+      privateKey: "SECOND_PRIVATE_KEY_PLACEHOLDER",
+    }
+
+    result.connect(firstCredentials)
+    result.connect(secondCredentials)
+
+    expect(result.isConnected()).toBe(true)
+    expect(result.credentials()).toEqual(secondCredentials)
+    // Public metadata in localStorage reflects the most recent connect only.
+    const stored = JSON.parse(
+      localStorage.getItem("hyperliquid-wallet") ?? "{}",
+    )
+    expect(stored).toEqual({
+      accountAddress: "0xSecondAccountAddress",
+      apiWalletAddress: "0xSecondApiWalletAddress",
+    })
+  })
+
   describe("errors", () => {
     it("throws error when used outside WalletProvider", () => {
       const { result } = renderHook(() => useWallet(), { wrapper })

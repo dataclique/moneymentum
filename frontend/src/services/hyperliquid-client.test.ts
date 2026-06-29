@@ -529,4 +529,201 @@ describe("HyperliquidClient", () => {
       params: expect.objectContaining({ reduceOnly: true }),
     })
   })
+
+  it("isolates a leverage failure so other positions still rebalance", async () => {
+    mockExchange.loadMarkets.mockResolvedValue({})
+    // First leverage call (BTC) rejects; the rest use the default resolving mock.
+    mockExchange.setLeverage.mockRejectedValueOnce(
+      new Error("Leverage too high"),
+    )
+    mockExchange.fetchTickers.mockResolvedValue({
+      "BTC/USDC:USDC": { last: 50_000 },
+      "ETH/USDC:USDC": { last: 4_000 },
+    })
+    mockExchange.fetchPositions.mockResolvedValue([])
+    mockExchange.createOrdersWs.mockResolvedValue([
+      { status: "closed", info: {} },
+    ])
+
+    const actions: RebalanceAction[] = [
+      {
+        kind: "rebalance",
+        symbol: "BTC/USDC:USDC",
+        signedNotionalDelta: 100,
+        leverage: 100,
+        leverageChanged: true,
+      },
+      {
+        kind: "rebalance",
+        symbol: "ETH/USDC:USDC",
+        signedNotionalDelta: 100,
+        leverage: 5,
+        leverageChanged: true,
+      },
+    ]
+
+    const client = new HyperliquidClient(credentials, "mainnet")
+    const result = await client.rebalancePositions(actions)
+
+    const btc = result.find(order => order.symbol === "BTC/USDC:USDC")
+    expect(btc).toMatchObject({
+      status: "failed",
+      message: "Leverage too high",
+    })
+
+    const eth = result.find(order => order.symbol === "ETH/USDC:USDC")
+    expect(eth?.status).toBe("filled")
+
+    // BTC leverage failed, so only ETH is sent to the exchange.
+    expect(mockExchange.createOrdersWs).toHaveBeenCalledTimes(1)
+    const batch = mockExchange.createOrdersWs.mock.calls[0][0]
+    expect(batch).toHaveLength(1)
+    expect(batch[0].symbol).toBe("ETH/USDC:USDC")
+  })
+
+  it("skips the expansion open when the reduction close does not fill", async () => {
+    mockExchange.loadMarkets.mockResolvedValue({})
+    mockExchange.fetchTickers.mockResolvedValue({
+      "BTC/USDC:USDC": { last: 50_000 },
+    })
+    mockExchange.fetchPositions.mockResolvedValue([
+      {
+        symbol: "BTC/USDC:USDC",
+        side: "long",
+        contracts: 0.002,
+        notional: 100,
+      },
+    ])
+    // The reduction close comes back rejected (no fill).
+    mockExchange.createOrdersWs.mockResolvedValueOnce([
+      { status: "rejected", info: { error: "Insufficient margin" } },
+    ])
+
+    const actions: RebalanceAction[] = [
+      {
+        kind: "preciseRebalance",
+        symbol: "BTC/USDC:USDC",
+        side: "buy",
+        leverage: 2,
+        leverageChanged: false,
+        closeNotional: 11,
+        openNotional: 13,
+      },
+    ]
+
+    const client = new HyperliquidClient(credentials, "mainnet")
+    const result = await client.rebalancePositions(actions)
+
+    // Only the reduction batch is submitted; the open leg is never sent.
+    expect(mockExchange.createOrdersWs).toHaveBeenCalledTimes(1)
+    expect(result).toHaveLength(2)
+
+    const closeLeg = result.find(
+      order => order.message === "Insufficient margin",
+    )
+    expect(closeLeg).toMatchObject({ status: "working" })
+
+    const openLeg = result.find(order => order.status === "failed")
+    expect(openLeg?.message).toContain("expansion skipped")
+  })
+
+  it("returns a failed result and submits no order when the ticker price is missing", async () => {
+    mockExchange.loadMarkets.mockResolvedValue({})
+    // fetchTickers omits the acting symbol entirely.
+    mockExchange.fetchTickers.mockResolvedValue({})
+    mockExchange.fetchPositions.mockResolvedValue([])
+
+    const actions: RebalanceAction[] = [
+      {
+        kind: "rebalance",
+        symbol: "BTC/USDC:USDC",
+        signedNotionalDelta: 100,
+        leverage: 2,
+        leverageChanged: false,
+      },
+    ]
+
+    const client = new HyperliquidClient(credentials, "mainnet")
+    const result = await client.rebalancePositions(actions)
+
+    expect(result).toEqual([
+      {
+        symbol: "BTC/USDC:USDC",
+        side: "buy",
+        status: "failed",
+        message: "Price unavailable",
+      },
+    ])
+    expect(mockExchange.createOrdersWs).not.toHaveBeenCalled()
+  })
+
+  it("returns a filled 'Position already closed' result when closing an absent position", async () => {
+    mockExchange.loadMarkets.mockResolvedValue({})
+    mockExchange.fetchTickers.mockResolvedValue({
+      "BTC/USDC:USDC": { last: 50_000 },
+    })
+    // The position has already been liquidated on the exchange.
+    mockExchange.fetchPositions.mockResolvedValue([])
+
+    const actions: RebalanceAction[] = [
+      {
+        kind: "close",
+        symbol: "BTC/USDC:USDC",
+        side: "buy",
+      },
+    ]
+
+    const client = new HyperliquidClient(credentials, "mainnet")
+    const result = await client.rebalancePositions(actions)
+
+    expect(result).toEqual([
+      {
+        symbol: "BTC/USDC:USDC",
+        side: "sell",
+        status: "filled",
+        message: "Position already closed.",
+      },
+    ])
+    expect(mockExchange.createOrdersWs).not.toHaveBeenCalled()
+  })
+
+  it("marks orders failed when the exchange batch reply is missing entries", async () => {
+    mockExchange.loadMarkets.mockResolvedValue({})
+    mockExchange.fetchTickers.mockResolvedValue({
+      "BTC/USDC:USDC": { last: 50_000 },
+      "ETH/USDC:USDC": { last: 4_000 },
+    })
+    mockExchange.fetchPositions.mockResolvedValue([])
+    // Two expansion orders are submitted but the exchange replies with one entry.
+    mockExchange.createOrdersWs.mockResolvedValue([
+      { status: "closed", info: {} },
+    ])
+
+    const actions: RebalanceAction[] = [
+      {
+        kind: "rebalance",
+        symbol: "BTC/USDC:USDC",
+        signedNotionalDelta: 100,
+        leverage: 2,
+        leverageChanged: false,
+      },
+      {
+        kind: "rebalance",
+        symbol: "ETH/USDC:USDC",
+        signedNotionalDelta: 100,
+        leverage: 2,
+        leverageChanged: false,
+      },
+    ]
+
+    const client = new HyperliquidClient(credentials, "mainnet")
+    const result = await client.rebalancePositions(actions)
+
+    expect(result).toHaveLength(2)
+    expect(result[0].status).toBe("filled")
+    expect(result[1]).toMatchObject({
+      status: "failed",
+      message: "order response missing from exchange batch reply",
+    })
+  })
 })

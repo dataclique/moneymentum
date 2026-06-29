@@ -46,9 +46,21 @@ export const PositionsPanelAlerts = (
   }
 
   const deltaDetail = (symbol: string) => {
-    const targetN = props.targetPortfolio[symbol]?.notional ?? 0
-    const currentN = props.currentPortfolio[symbol]?.notional ?? 0
-    const delta = Math.abs(targetN - currentN)
+    const targetPosition = props.targetPortfolio[symbol]
+    const currentPosition = props.currentPortfolio[symbol]
+    const targetSignedNotional =
+      targetPosition === undefined
+        ? 0
+        : targetPosition.side === "sell"
+          ? -targetPosition.notional
+          : targetPosition.notional
+    const currentSignedNotional =
+      currentPosition === undefined
+        ? 0
+        : currentPosition.side === "sell"
+          ? -currentPosition.notional
+          : currentPosition.notional
+    const delta = Math.abs(targetSignedNotional - currentSignedNotional)
     return `${symbol} (delta $${delta.toFixed(2)})`
   }
 

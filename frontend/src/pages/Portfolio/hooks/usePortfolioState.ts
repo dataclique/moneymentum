@@ -538,7 +538,6 @@ export const usePortfolioState = () => {
     const isPortfolioValid =
       Object.keys(targetPortfolio).length + Object.keys(deletedArchive).length >
       0
-    // const allOrdersValid = stagedTrades().every(t => t.notional >= 11);
 
     return (
       isPortfolioValid &&

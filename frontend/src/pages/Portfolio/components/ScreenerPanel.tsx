@@ -63,8 +63,8 @@ export const ScreenerPanel = (props: ScreenerPanelProps) => {
                 const baseSymbol = symbol.split("/")[0] ?? symbol
                 const isSelected = () => props.activeSymbols.has(symbol)
 
-                // Convert fundings outside with one function.
-                //use same function in PositionsPanelRow
+                // fundingRate from the hyperliquid API is a 1 hour rate;
+                // to annualize, multiply by 24 (hours) and 365 (days)
                 const fundingDisplay = createMemo(() => {
                   const rate = props.fundingRatesByBaseSymbol?.[baseSymbol]
                   if (rate === undefined) return "—"

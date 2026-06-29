@@ -16,6 +16,8 @@ import type { TimeSeriesPoint } from "@/pages/Prototype/metrics/registry"
 type OptionKind = "C" | "P"
 type Moneyness = "in_the_money" | "at_the_money" | "out_of_the_money"
 
+type ExpiryUnix = number & { readonly __brand: "ExpiryUnix" }
+
 type OptionGreeks = {
   bid_iv: number | null
   ask_iv: number | null
@@ -35,7 +37,7 @@ type OptionQuote = {
   kind: OptionKind
   strike: number
   expiry: string
-  expiry_unix: number
+  expiry_unix: ExpiryUnix
   bid: number | null
   ask: number | null
   bid_size: number | null
@@ -70,8 +72,8 @@ type ScenarioPoint = {
 type OptionsSnapshot = {
   asset: string
   updated_at: string
-  active_expiry_unix: number
-  expiry_unixes: number[]
+  active_expiry_unix: ExpiryUnix
+  expiry_unixes: ExpiryUnix[]
   spot_price: number
   expiry_dates: string[]
   strikes: number[]
@@ -82,8 +84,8 @@ type OptionsSnapshot = {
 
 type OptionsBootstrap = {
   asset: string
-  default_expiry_unix: number
-  tabs: Array<{ expiry_unix: number; instruments: string[] }>
+  default_expiry_unix: ExpiryUnix
+  tabs: Array<{ expiry_unix: ExpiryUnix; instruments: string[] }>
 }
 
 const formatNumber = (value: number | null, digits = 2): string =>
@@ -273,9 +275,8 @@ const DeriveOptionsPage = () => {
   const [bootstrap, setBootstrap] = createSignal<OptionsBootstrap | null>(null)
   const [errorMessage, setErrorMessage] = createSignal<string | null>(null)
   const [isLoading, setIsLoading] = createSignal(true)
-  const [selectedExpiryUnix, setSelectedExpiryUnix] = createSignal<
-    number | null
-  >(null)
+  const [selectedExpiryUnix, setSelectedExpiryUnix] =
+    createSignal<ExpiryUnix | null>(null)
   const [smileKind, setSmileKind] = createSignal<"C" | "P" | "both">("both")
   const [tableView, setTableView] = createSignal<"chain" | "greeks">("chain")
   const [flashByInstrument, setFlashByInstrument] = createSignal<
@@ -287,7 +288,7 @@ const DeriveOptionsPage = () => {
 
   const quotePriceHistoryRef: {
     map: Map<string, { bid: number | null; ask: number | null }>
-    activeExpiryUnix: number | null
+    activeExpiryUnix: ExpiryUnix | null
   } = { map: new Map(), activeExpiryUnix: null }
 
   const flashClearTimerRef: { id: number | undefined } = { id: undefined }
@@ -301,12 +302,12 @@ const DeriveOptionsPage = () => {
 
   const expirySwitchInFlightRef: {
     postAbort: AbortController | undefined
-    blockStreamUntilExpiryUnix: number | null
+    blockStreamUntilExpiryUnix: ExpiryUnix | null
   } = { postAbort: undefined, blockStreamUntilExpiryUnix: null }
 
   const expiryTabList = createMemo(() => {
     const current = snapshot()
-    let tabs: Array<{ unix: number; iso: string }> = []
+    let tabs: Array<{ unix: ExpiryUnix; iso: string }> = []
     if (current !== null && current.expiry_unixes.length > 0) {
       tabs = current.expiry_unixes.map((unix, index) => ({
         unix,
@@ -331,7 +332,7 @@ const DeriveOptionsPage = () => {
     })
 
   const postActiveExpiry = async (
-    expiryUnix: number,
+    expiryUnix: ExpiryUnix,
     signal?: AbortSignal,
   ): Promise<void> => {
     const response = await fetch(
@@ -350,7 +351,7 @@ const DeriveOptionsPage = () => {
     }
   }
 
-  const switchExpiryTab = (expiryUnix: number): void => {
+  const switchExpiryTab = (expiryUnix: ExpiryUnix): void => {
     const currentSnap = snapshot()
     if (
       selectedExpiryUnix() === expiryUnix &&
@@ -360,6 +361,8 @@ const DeriveOptionsPage = () => {
     ) {
       return
     }
+
+    const previousExpiryUnix = selectedExpiryUnix()
 
     expirySwitchInFlightRef.postAbort?.abort()
     const controller = new AbortController()
@@ -396,6 +399,7 @@ const DeriveOptionsPage = () => {
           return
         }
         expirySwitchInFlightRef.blockStreamUntilExpiryUnix = null
+        setSelectedExpiryUnix(previousExpiryUnix)
         setErrorMessage(
           error instanceof Error ? error.message : "Expiry tab switch failed",
         )
@@ -680,11 +684,13 @@ const DeriveOptionsPage = () => {
         }
         const next = parseJsonUnknown(event.data) as OptionsSnapshot
         const pending = expirySwitchInFlightRef.blockStreamUntilExpiryUnix
-        if (pending !== null && next.active_expiry_unix !== pending) {
-          return
-        }
-        if (pending !== null && next.active_expiry_unix === pending) {
+        if (pending !== null) {
+          if (next.active_expiry_unix !== pending) {
+            return
+          }
           expirySwitchInFlightRef.blockStreamUntilExpiryUnix = null
+        } else if (next.active_expiry_unix !== selectedExpiryUnix()) {
+          return
         }
         setSnapshot(next)
         setErrorMessage(null)
@@ -1293,7 +1299,7 @@ const DeriveOptionsPage = () => {
                           if (Number.isNaN(nextUnix)) {
                             return
                           }
-                          switchExpiryTab(nextUnix)
+                          switchExpiryTab(nextUnix as ExpiryUnix)
                         }}
                       >
                         <For each={expiryTabList()}>
@@ -1361,27 +1367,28 @@ const DeriveOptionsPage = () => {
                         stroke="currentColor"
                         opacity="0.25"
                       />
-                      <Show
-                        when={() => {
-                          const y = smileGeometry().realizedY
-                          return y ?? false
+                      <Show when={smileGeometry().realizedY !== null}>
+                        {() => {
+                          // realizedY is a pixel coordinate that can legitimately
+                          // be 0, so gate on an explicit null check (not falsiness)
+                          // and read the value with a defensive nullish fallback.
+                          const realizedY = smileGeometry().realizedY ?? 0
+                          return (
+                            <g>
+                              <title>{`Realized ${REALIZED_VOL_WINDOW_DAYS}d annualized (daily closes, sqrt(252)): ${formatNumber(realizedVolAnnual30d(), 4)}`}</title>
+                              <line
+                                x1="52"
+                                y1={realizedY}
+                                x2="740"
+                                y2={realizedY}
+                                stroke="#fb923c"
+                                stroke-dasharray="7 5"
+                                stroke-width="1.75"
+                                opacity="0.92"
+                              />
+                            </g>
+                          )
                         }}
-                      >
-                        {(y: number) => (
-                          <g>
-                            <title>{`Realized ${REALIZED_VOL_WINDOW_DAYS}d annualized (daily closes, sqrt(252)): ${formatNumber(realizedVolAnnual30d(), 4)}`}</title>
-                            <line
-                              x1="52"
-                              y1={y}
-                              x2="740"
-                              y2={y}
-                              stroke="#fb923c"
-                              stroke-dasharray="7 5"
-                              stroke-width="1.75"
-                              opacity="0.92"
-                            />
-                          </g>
-                        )}
                       </Show>
                       <path
                         d={smileGeometry().path}

@@ -195,20 +195,8 @@ export const StagedChangesPanel = (props: StagedChangesPanelProps) => {
             }
             props.onRebalance()
           }}
-          disabled={
-            // !props.onRebalance ||
-            isRebalanceButtonDisabled()
-            // ||
-            // isRebalancing() ||
-            // !hasStaged()
-          }
-          aria-disabled={
-            // !props.onRebalance ||
-            isRebalanceButtonDisabled()
-            // ||
-            // isRebalancing() ||
-            // !hasStaged()
-          }
+          disabled={isRebalanceButtonDisabled()}
+          aria-disabled={isRebalanceButtonDisabled()}
         >
           <Send class="h-3 w-3" />
           {isRebalancing() ? "Sending..." : "Rebalance"}

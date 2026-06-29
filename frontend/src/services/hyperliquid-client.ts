@@ -145,7 +145,6 @@ export interface LeverageLimit {
   maxLeverage: number
 }
 
-// Minimum order size on Hyperliquid is $10, but we use $11 to guarantee orders will be opened
 const SLIPPAGE = 0.05
 
 interface HyperliquidExchange {
@@ -457,8 +456,8 @@ export class HyperliquidClient {
         return {
           symbol: request.symbol,
           side: (request.side ?? "buy") as OrderSide,
-          status: "working",
-          message: "order response missing",
+          status: "failed",
+          message: "order response missing from exchange batch reply",
         }
       }
       return {
@@ -569,6 +568,23 @@ export class HyperliquidClient {
     }
   }
 
+  /** The order side an action would submit, used when no order is produced. */
+  private intendedOrderSide(action: RebalanceAction): OrderSide {
+    switch (action.kind) {
+      case "close":
+        return action.side === "buy" ? "sell" : "buy"
+      case "rebalance":
+        return action.signedNotionalDelta > 0 ? "buy" : "sell"
+      case "preciseRebalance":
+        return action.side
+    }
+  }
+
+  private leverageErrorMessage(reason: unknown): string {
+    if (reason instanceof Error) return reason.message
+    return typeof reason === "string" ? reason : "leverage update failed"
+  }
+
   private splitRebalanceActionsIntoPhases(
     actions: RebalanceAction[],
     tickers: Partial<
@@ -583,21 +599,42 @@ export class HyperliquidClient {
       contracts: number | string
       notional?: number | string
     }>,
+    failedLeverageSymbols: Set<string>,
   ): {
     reduction: OrderRequest[]
     expansion: OrderRequest[]
+    skipped: OrderResult[]
   } {
     const reduction: OrderRequest[] = []
     const expansion: OrderRequest[] = []
+    const skipped: OrderResult[] = []
 
     for (const action of actions) {
-      const position = positions.find(p => p.symbol === action.symbol)
+      if (failedLeverageSymbols.has(action.symbol)) continue
+
+      const position = positions.find(pos => pos.symbol === action.symbol)
       const price = tickers[action.symbol]?.last ?? undefined
-      if (price === undefined) continue
+      if (price === undefined) {
+        skipped.push({
+          symbol: action.symbol,
+          side: this.intendedOrderSide(action),
+          status: "failed",
+          message: "Price unavailable",
+        })
+        continue
+      }
 
       switch (action.kind) {
         case "close": {
-          if (position === undefined) continue
+          if (position === undefined) {
+            skipped.push({
+              symbol: action.symbol,
+              side: action.side === "buy" ? "sell" : "buy",
+              status: "filled",
+              message: "Position already closed.",
+            })
+            continue
+          }
           const closingSide: OrderSide = action.side === "buy" ? "sell" : "buy"
           const request = this.buildOrderRequest(
             action.symbol,
@@ -621,17 +658,25 @@ export class HyperliquidClient {
             false,
           )
           if (request) {
-            const isRed = position
+            const isReduction = position
               ? this.rebalanceIsReduction(position, action.signedNotionalDelta)
               : false
 
-            if (isRed) reduction.push(request)
+            if (isReduction) reduction.push(request)
             else expansion.push(request)
           }
           break
         }
         case "preciseRebalance": {
-          if (position === undefined) continue
+          if (position === undefined) {
+            skipped.push({
+              symbol: action.symbol,
+              side: action.side,
+              status: "filled",
+              message: "Position already closed.",
+            })
+            continue
+          }
 
           const { closeRequest, openRequest } =
             this.buildPreciseRebalanceOrderRequests({
@@ -652,45 +697,115 @@ export class HyperliquidClient {
       }
     }
 
-    return { reduction, expansion }
+    return { reduction, expansion, skipped }
+  }
+
+  /**
+   * Sets leverage for every action that requested a change, isolating each call
+   * so one rejection does not abort the others. Returns a failed OrderResult and
+   * the symbol for each position whose leverage could not be set, so the caller
+   * can skip placing orders against an unconfirmed leverage.
+   */
+  private async applyLeverageChanges(actions: RebalanceAction[]): Promise<{
+    leverageFailures: OrderResult[]
+    failedLeverageSymbols: Set<string>
+  }> {
+    const leverageActions = actions.filter(
+      (
+        action,
+      ): action is Extract<RebalanceAction, { leverageChanged: boolean }> =>
+        "leverageChanged" in action && action.leverageChanged,
+    )
+
+    const outcomes = await Promise.allSettled(
+      leverageActions.map(action =>
+        this.setLeverage(action.symbol, action.leverage),
+      ),
+    )
+
+    const leverageFailures: OrderResult[] = []
+    const failedLeverageSymbols = new Set<string>()
+
+    outcomes.forEach((outcome, index) => {
+      if (outcome.status !== "rejected") return
+      const action = leverageActions[index]
+      failedLeverageSymbols.add(action.symbol)
+      leverageFailures.push({
+        symbol: action.symbol,
+        side: this.intendedOrderSide(action),
+        status: "failed",
+        message: this.leverageErrorMessage(outcome.reason),
+      })
+    })
+
+    return { leverageFailures, failedLeverageSymbols }
   }
 
   async rebalancePositions(actions: RebalanceAction[]): Promise<OrderResult[]> {
     await this.exchange.loadMarkets()
     const allSymbols = [...new Set(actions.map(action => action.symbol))]
 
-    for (const action of actions) {
-      if ("leverageChanged" in action && action.leverageChanged) {
-        await this.setLeverage(action.symbol, action.leverage)
-      }
-    }
+    const { leverageFailures, failedLeverageSymbols } =
+      await this.applyLeverageChanges(actions)
 
     const [tickers, positions] = await Promise.all([
       this.exchange.fetchTickers(allSymbols),
       this.exchange.fetchPositions(),
     ])
 
-    const { reduction, expansion } = this.splitRebalanceActionsIntoPhases(
-      actions,
-      tickers,
-      positions,
+    const { reduction, expansion, skipped } =
+      this.splitRebalanceActionsIntoPhases(
+        actions,
+        tickers,
+        positions,
+        failedLeverageSymbols,
+      )
+
+    const results: OrderResult[] = [...leverageFailures]
+
+    const reductionResults =
+      reduction.length > 0
+        ? this.mapOrderResults(
+            reduction,
+            await this.exchange.createOrdersWs(reduction),
+          )
+        : []
+    results.push(...reductionResults)
+
+    const failedReductionSymbols = new Set(
+      reductionResults
+        .filter(orderResult => orderResult.status !== "filled")
+        .map(orderResult => orderResult.symbol),
     )
 
-    const results: OrderResult[] = []
+    const gatedExpansion = expansion.filter(
+      request => !failedReductionSymbols.has(request.symbol),
+    )
 
-    if (reduction.length > 0) {
-      const reductionResponses = await this.exchange.createOrdersWs(reduction)
-      const reductionResults = this.mapOrderResults(
-        reduction,
-        reductionResponses,
+    if (gatedExpansion.length > 0) {
+      results.push(
+        ...this.mapOrderResults(
+          gatedExpansion,
+          await this.exchange.createOrdersWs(gatedExpansion),
+        ),
       )
-      results.push(...reductionResults)
     }
 
-    if (expansion.length > 0) {
-      const expansionResponses = await this.exchange.createOrdersWs(expansion)
-      results.push(...this.mapOrderResults(expansion, expansionResponses))
-    }
+    const blockedExpansion = expansion.filter(request =>
+      failedReductionSymbols.has(request.symbol),
+    )
+    results.push(
+      ...blockedExpansion.map(
+        (request): OrderResult => ({
+          symbol: request.symbol,
+          side: (request.side ?? "buy") as OrderSide,
+          status: "failed",
+          message: "reduction leg did not fill; expansion skipped",
+        }),
+      ),
+    )
+
+    results.push(...skipped)
 
     return results
   }

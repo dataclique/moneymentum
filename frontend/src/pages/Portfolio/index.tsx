@@ -40,6 +40,7 @@ const PortfolioPage = () => {
   const { isNetworkSwitching } = useNetwork()
   const portfolio = usePortfolioState()
 
+  // createEffect: persist the precise toggle to localStorage whenever it changes
   createEffect(() => {
     localStorage.setItem(
       PRECISE_TOGGLE_STORAGE_KEY,
@@ -47,6 +48,7 @@ const PortfolioPage = () => {
     )
   })
 
+  // createEffect: persist the manual-weight-entry toggle to localStorage whenever it changes
   createEffect(() => {
     localStorage.setItem(
       MANUAL_WEIGHT_ENTRY_STORAGE_KEY,
@@ -178,15 +180,6 @@ const PortfolioPage = () => {
                 targetAllocationPercent={portfolio.targetAllocationPercent}
               />
             </div>
-            {/* <Show when={portfolio.blockingReasons.length > 0}>
-              <Card class="shrink-0">
-                <CardContent class="space-y-2 text-sm text-rose-400 py-3">
-                  <For each={portfolio.blockingReasons}>
-                    {reason => <p>{reason}</p>}
-                  </For>
-                </CardContent>
-              </Card>
-            </Show> */}
 
             {/* Footer */}
             <div class="sticky bottom-0 bg-background/80 backdrop-blur mt-auto">

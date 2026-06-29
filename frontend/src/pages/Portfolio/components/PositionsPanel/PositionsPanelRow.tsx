@@ -75,14 +75,6 @@ export const PositionsPanelRow = (props: {
     props.position().symbol.split("/")[0] ?? props.position().symbol
   const fundingRate = () => props.fundingRatesByBaseSymbol?.[baseSymbol()]
 
-  // const targetValue = () =>
-  //   props.token.targetNotional ??
-  //   notional() ??
-  //   parseFloat(notional())
-  // const showDeltaWarning = () =>
-  //   !props.isPrecise &&
-  //   props.token.deltaInsufficient === true
-
   // fundingRate we got from hyperliquid API is 1 hour rate
   // to get annualized rate, we multiply by 24 (hours) and 365 (days)
   const annualizedFundingRate = () => {

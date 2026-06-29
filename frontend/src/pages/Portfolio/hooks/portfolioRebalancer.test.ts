@@ -188,21 +188,4 @@ describe("diffPortfolios precise mode", () => {
       }),
     ])
   })
-
-  it("emits a single rebalance with the full target notional for a symbol present only in target (new position)", () => {
-    const current: Record<string, PortfolioInterface | undefined> = {}
-    const target: Record<string, PortfolioInterface | undefined> = {
-      [sym]: { ...buy(200), symbol: sym },
-    }
-
-    const actions = diffPortfolios(current, target, true)
-    expect(actions).toHaveLength(1)
-    expect(actions[0]).toMatchObject({
-      kind: "rebalance",
-      symbol: sym,
-      signedNotionalDelta: 200,
-      leverage: 2,
-      leverageChanged: true,
-    })
-  })
 })

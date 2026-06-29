@@ -21,7 +21,7 @@ async fn mount_meta_mock(server: &MockServer) {
         .and(path("/info"))
         .and(body_partial_json(json!({"type": "meta"})))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "universe": [{"name": "BTC", "szDecimals": 8}]
+            "universe": [{"name": "BTC", "szDecimals": 8, "maxLeverage": 50}]
         })))
         .mount(server)
         .await;
@@ -62,17 +62,22 @@ async fn mount_funding_mock(server: &MockServer) {
 }
 
 async fn create_test_client(mock_server: &MockServer, data_dir: &TempDir) -> Client {
+    let database_path = data_dir.path().join("moneymentum-test.db");
     let toml_str = format!(
         r#"
         port = 0
         data_dir = "{}"
-        database_url = "sqlite::memory:"
+        database_url = "sqlite://{}?mode=rwc"
         hyperliquid_base_url = "{}"
+        hyperliquid_testnet_base_url = "{}"
         log_level = "debug"
         max_concurrent_requests = 3
         max_retries = 2
+        markets_refresh_token = "test-markets-refresh-token"
         "#,
         data_dir.path().display(),
+        database_path.display(),
+        mock_server.uri(),
         mock_server.uri()
     );
     let config: Config = toml::from_str(&toml_str).unwrap();
@@ -99,7 +104,7 @@ async fn poll_for_status(
 }
 
 // Temporarily skipped: fails due to OneWeek timeframe overflow when using a
-// 5000-entry window; see https://github.com/data-cartel/moneymentum/issues/64.
+// 5000-entry window; see https://github.com/dataclique/moneymentum/issues/64.
 #[ignore = "OneWeek timeframe window overflows when requesting 5000 candles (see issue #64)"]
 #[rocket::async_test]
 async fn ingest_and_query_candles() {
@@ -214,5 +219,63 @@ async fn status_shows_running_after_restart_from_failed() {
     assert!(
         saw_running,
         "status should transition to Running (or Completed) after restart from Failed"
+    );
+}
+
+async fn info_request_count(server: &MockServer) -> usize {
+    server
+        .received_requests()
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|request| request.url.path() == "/info")
+        .count()
+}
+
+#[rocket::async_test]
+async fn get_hyperliquid_markets_serves_universe_with_cache_header() {
+    let mock_server = MockServer::start().await;
+    mount_meta_mock(&mock_server).await;
+
+    let data_dir = TempDir::new().unwrap();
+    let client = create_test_client(&mock_server, &data_dir).await;
+
+    let response = client.get("/hyperliquid/markets").dispatch().await;
+    assert_eq!(response.status(), Status::Ok);
+    let cache_control = response
+        .headers()
+        .get_one("Cache-Control")
+        .unwrap_or_default()
+        .to_owned();
+    let body = response.into_string().await.unwrap();
+    assert!(
+        body.contains("BTC"),
+        "markets response should list the BTC ticker: {body}"
+    );
+    assert!(
+        cache_control.contains("max-age"),
+        "markets response should carry a Cache-Control max-age header, got: {cache_control:?}"
+    );
+}
+
+#[rocket::async_test]
+async fn get_hyperliquid_markets_serves_fresh_ledger_without_refetching() {
+    let mock_server = MockServer::start().await;
+    mount_meta_mock(&mock_server).await;
+
+    let data_dir = TempDir::new().unwrap();
+    let client = create_test_client(&mock_server, &data_dir).await;
+
+    let first = client.get("/hyperliquid/markets").dispatch().await;
+    assert_eq!(first.status(), Status::Ok);
+    let after_first = info_request_count(&mock_server).await;
+
+    let second = client.get("/hyperliquid/markets").dispatch().await;
+    assert_eq!(second.status(), Status::Ok);
+    let after_second = info_request_count(&mock_server).await;
+
+    assert_eq!(
+        after_first, after_second,
+        "a second GET against a fresh ledger must not re-fetch from Hyperliquid"
     );
 }

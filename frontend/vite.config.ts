@@ -5,6 +5,9 @@ import solid from "vite-plugin-solid"
 import { defineConfig } from "vite"
 import nodePolyfills from "vite-plugin-node-stdlib-browser"
 
+const stripApiPrefix = (proxyPath: string): string =>
+  proxyPath.replace(/^\/api/, "")
+
 export default defineConfig({
   base: "/",
   plugins: [solid(), tailwindcss(), nodePolyfills()],
@@ -23,10 +26,25 @@ export default defineConfig({
   server: {
     host: "0.0.0.0",
     proxy: {
+      "/api/hyperliquid": {
+        target: "http://127.0.0.1:8000",
+        changeOrigin: true,
+        rewrite: stripApiPrefix,
+      },
       "/api/beta": {
         target: "http://127.0.0.1:8000",
         changeOrigin: true,
-        rewrite: (proxyPath: string) => proxyPath.replace(/^\/api/, ""),
+        rewrite: stripApiPrefix,
+      },
+      "/api/factors": {
+        target: "http://127.0.0.1:8000",
+        changeOrigin: true,
+        rewrite: stripApiPrefix,
+      },
+      "/api/portfolio": {
+        target: "http://127.0.0.1:8000",
+        changeOrigin: true,
+        rewrite: stripApiPrefix,
       },
       "/api/portfolio": {
         target: "http://127.0.0.1:8000",

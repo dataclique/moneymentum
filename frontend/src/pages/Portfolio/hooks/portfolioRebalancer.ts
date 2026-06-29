@@ -45,16 +45,14 @@ export const preciseRebalanceLegs = (
   deltaSigned: number,
   currentNotional: number,
 ): { closeNotional: number; openNotional: number } => {
-  const m = MIN_USD
-
   const closeWanted =
     positionSide === "buy"
       ? deltaSigned > 0
-        ? m
-        : m + Math.abs(deltaSigned)
+        ? MIN_USD
+        : MIN_USD + Math.abs(deltaSigned)
       : deltaSigned > 0
-        ? m + deltaSigned
-        : m
+        ? MIN_USD + deltaSigned
+        : MIN_USD
 
   const closeNotional = Math.min(currentNotional, closeWanted)
   const openNotional =
@@ -84,29 +82,43 @@ export const diffPortfolios = (
   const allSymbols = new Set([...Object.keys(current), ...Object.keys(target)])
 
   for (const symbol of allSymbols) {
-    const c = current[symbol]
-    const t = target[symbol]
+    const currentPosition = current[symbol]
+    const targetPosition = target[symbol]
 
-    const currentSigned = c ? getSignedNotional(c.side, c.notional) : 0
-    const targetSigned = t ? getSignedNotional(t.side, t.notional) : 0
+    const currentSigned = currentPosition
+      ? getSignedNotional(currentPosition.side, currentPosition.notional)
+      : 0
+    const targetSigned = targetPosition
+      ? getSignedNotional(targetPosition.side, targetPosition.notional)
+      : 0
 
     const delta = targetSigned - currentSigned
     const deltaAbs = Math.abs(delta)
 
-    if (c && !t) {
+    if (currentPosition && !targetPosition) {
       actions.push({
         kind: "close",
         symbol,
-        side: c.side,
+        side: currentPosition.side,
       })
       continue
     }
 
-    if (!t) {
+    if (!targetPosition) {
       continue
     }
 
-    const leverageChanged = c?.leverage !== t.leverage
+    if (currentPosition && targetPosition.notional <= NOTIONAL_EPSILON) {
+      actions.push({
+        kind: "close",
+        symbol,
+        side: currentPosition.side,
+      })
+      continue
+    }
+
+    const leverageChanged =
+      currentPosition?.leverage !== targetPosition.leverage
     const hasSignificantDelta = deltaAbs > NOTIONAL_EPSILON
 
     if (!hasSignificantDelta && !leverageChanged) {
@@ -117,18 +129,18 @@ export const diffPortfolios = (
       precise &&
       hasSignificantDelta &&
       deltaAbs < MIN_USD &&
-      c?.side === t.side
+      currentPosition?.side === targetPosition.side
     ) {
       const { closeNotional, openNotional } = preciseRebalanceLegs(
-        t.side,
+        targetPosition.side,
         delta,
-        c.notional,
+        currentPosition.notional,
       )
       actions.push({
         kind: "preciseRebalance",
         symbol,
-        side: t.side,
-        leverage: t.leverage,
+        side: targetPosition.side,
+        leverage: targetPosition.leverage,
         leverageChanged,
         closeNotional,
         openNotional,
@@ -140,7 +152,7 @@ export const diffPortfolios = (
       kind: "rebalance",
       symbol,
       signedNotionalDelta: delta,
-      leverage: t.leverage,
+      leverage: targetPosition.leverage,
       leverageChanged,
     })
   }

@@ -23,8 +23,19 @@ const ALLOCATION_FULL_MIN_PERCENT = 99.95
 export const PositionsPanelAlerts = (
   props: PositionsPanelAlertsProps,
 ): JSX.Element => {
+  const isClosingAllPositions = createMemo(
+    () =>
+      Object.values(props.currentPortfolio).some(
+        position => position !== undefined,
+      ) &&
+      Object.values(props.targetPortfolio).every(
+        position => position === undefined || position.notional <= 0.01,
+      ),
+  )
+
   const hasUnderAllocation = createMemo(
     () =>
+      !isClosingAllPositions() &&
       !props.hasTotalWeightExceeded &&
       props.targetAllocationPercent < ALLOCATION_FULL_MIN_PERCENT,
   )
@@ -41,26 +52,14 @@ export const PositionsPanelAlerts = (
   )
 
   const belowMinimumDetail = (symbol: string) => {
-    const n = props.targetPortfolio[symbol]?.notional ?? 0
-    return `${symbol} ($${n.toFixed(2)})`
+    const notional = props.targetPortfolio[symbol]?.notional ?? 0
+    return `${symbol} ($${notional.toFixed(2)})`
   }
 
   const deltaDetail = (symbol: string) => {
-    const targetPosition = props.targetPortfolio[symbol]
-    const currentPosition = props.currentPortfolio[symbol]
-    const targetSignedNotional =
-      targetPosition === undefined
-        ? 0
-        : targetPosition.side === "sell"
-          ? -targetPosition.notional
-          : targetPosition.notional
-    const currentSignedNotional =
-      currentPosition === undefined
-        ? 0
-        : currentPosition.side === "sell"
-          ? -currentPosition.notional
-          : currentPosition.notional
-    const delta = Math.abs(targetSignedNotional - currentSignedNotional)
+    const targetN = props.targetPortfolio[symbol]?.notional ?? 0
+    const currentN = props.currentPortfolio[symbol]?.notional ?? 0
+    const delta = Math.abs(targetN - currentN)
     return `${symbol} (delta $${delta.toFixed(2)})`
   }
 

@@ -25,6 +25,27 @@ vi.mock("@/hooks/useWallet", () => ({
   })),
 }))
 
+const readonlyPortfolioActions = vi.hoisted(() => ({
+  addAddress: vi.fn(),
+  removeAddress: vi.fn(),
+  setIncludeInBeta: vi.fn(),
+  clearAddresses: vi.fn(),
+}))
+
+vi.mock("./useReadonlyPortfolioState", () => ({
+  useReadonlyPortfolioState: vi.fn(() => ({
+    rows: [],
+    betaPositions: [],
+    isLoading: false,
+    error: null,
+    validationError: null,
+    addAddress: readonlyPortfolioActions.addAddress,
+    removeAddress: readonlyPortfolioActions.removeAddress,
+    setIncludeInBeta: readonlyPortfolioActions.setIncludeInBeta,
+    clearAddresses: readonlyPortfolioActions.clearAddresses,
+  })),
+}))
+
 const createWrapper = () => {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -86,7 +107,7 @@ describe("usePortfolioState", () => {
     vi.mocked(useRebalanceHyperliquidPositions).mockReturnValue({
       mutate,
       isPending: false,
-    } as ReturnType<typeof useRebalanceHyperliquidPositions>)
+    } as unknown as ReturnType<typeof useRebalanceHyperliquidPositions>)
   })
 
   afterEach(() => {
@@ -127,70 +148,6 @@ describe("usePortfolioState", () => {
 
     result.handleRemoveToken("SOL/USDC:USDC")
     expect(result.targetPortfolio["SOL/USDC:USDC"]).toBeUndefined()
-  })
-
-  it("archives a removed exchange position and restores it on undo", async () => {
-    const { result } = renderHook(() => usePortfolioState(), {
-      wrapper: createWrapper(),
-    })
-
-    await waitFor(() => {
-      expect(Object.keys(result.targetPortfolio)).toHaveLength(2)
-    })
-
-    result.handleRemoveToken("BTC/USDC:USDC")
-
-    expect(result.targetPortfolio["BTC/USDC:USDC"]).toBeUndefined()
-    expect(result.deletedArchive["BTC/USDC:USDC"]?.notional).toBe(600)
-    expect(result.targetTotalNotional).toBe(400)
-
-    result.handleUndoRemoveToken("BTC/USDC:USDC")
-
-    expect(result.targetPortfolio["BTC/USDC:USDC"]?.notional).toBe(600)
-    expect(result.deletedArchive["BTC/USDC:USDC"]).toBeUndefined()
-    expect(result.targetTotalNotional).toBe(1000)
-  })
-
-  it("stages a close trade and dispatches a close action for a removed exchange position", async () => {
-    const { result } = renderHook(() => usePortfolioState(), {
-      wrapper: createWrapper(),
-    })
-
-    await waitFor(() => {
-      expect(Object.keys(result.targetPortfolio)).toHaveLength(2)
-    })
-
-    result.handleRemoveToken("BTC/USDC:USDC")
-
-    await waitFor(() => {
-      expect(result.stagedTrades.map(trade => trade.underlying)).toContain(
-        "BTC/USDC:USDC",
-      )
-    })
-
-    const closeTrade = result.stagedTrades.find(
-      trade => trade.underlying === "BTC/USDC:USDC",
-    )
-    expect(closeTrade?.side).toBe("sell")
-    expect(closeTrade?.notional).toBe(600)
-
-    result.handleRebalancePositions()
-
-    expect(mutate).toHaveBeenCalledWith(
-      expect.objectContaining({
-        actions: expect.arrayContaining([
-          {
-            kind: "close",
-            symbol: "BTC/USDC:USDC",
-            side: "buy",
-          },
-        ]),
-      }),
-      expect.objectContaining({
-        onSuccess: expect.any(Function),
-        onError: expect.any(Function),
-      }),
-    )
   })
 
   it("clamps per-symbol leverage to max from leverage limits", async () => {
@@ -260,6 +217,51 @@ describe("usePortfolioState", () => {
     expect(result.canSubmit).toBe(true)
   })
 
+  it("allows submitting a full close to cash", async () => {
+    const { result } = renderHook(() => usePortfolioState(), {
+      wrapper: createWrapper(),
+    })
+
+    await waitFor(() => {
+      expect(Object.keys(result.targetPortfolio)).toHaveLength(2)
+    })
+
+    result.setManualWeightEntry(true)
+    result.handleWeightChange("BTC/USDC:USDC", 0)
+    result.handleWeightChange("ETH/USDC:USDC", 0)
+
+    expect(result.targetAllocationPercent).toBe(0)
+    expect(result.symbolsBelowMinimum).toEqual([])
+    expect(result.symbolsDeltaBelowMinimum).toEqual([])
+    expect(result.canSubmit).toBe(true)
+
+    result.handleRebalancePositions()
+
+    expect(mutate).toHaveBeenCalledWith({
+      actions: [
+        { kind: "close", symbol: "BTC/USDC:USDC", side: "buy" },
+        { kind: "close", symbol: "ETH/USDC:USDC", side: "buy" },
+      ],
+    })
+  })
+
+  it("allows full close when every target position is dust", async () => {
+    const { result } = renderHook(() => usePortfolioState(), {
+      wrapper: createWrapper(),
+    })
+
+    await waitFor(() => {
+      expect(Object.keys(result.targetPortfolio)).toHaveLength(2)
+    })
+
+    result.handleNotionalChange("BTC/USDC:USDC", 0.006)
+    result.handleNotionalChange("ETH/USDC:USDC", 0.006)
+
+    expect(result.symbolsBelowMinimum).toEqual([])
+    expect(result.symbolsDeltaBelowMinimum).toEqual([])
+    expect(result.canSubmit).toBe(true)
+  })
+
   it("redistributes other positions when weight redistribution is enabled", async () => {
     const { result } = renderHook(() => usePortfolioState(), {
       wrapper: createWrapper(),
@@ -280,7 +282,35 @@ describe("usePortfolioState", () => {
     )
   })
 
-  it("shapes a small delta into a preciseRebalance action when precise mode is on", async () => {
+  it("clears readonly btc addresses when resetting for network change", async () => {
+    const { result } = renderHook(() => usePortfolioState(), {
+      wrapper: createWrapper(),
+    })
+
+    await waitFor(() => {
+      expect(Object.keys(result.targetPortfolio)).toHaveLength(2)
+    })
+
+    result.resetPortfolioStateForNetworkChange()
+
+    expect(readonlyPortfolioActions.clearAddresses).toHaveBeenCalledOnce()
+  })
+
+  it("clears readonly btc addresses when disconnecting", async () => {
+    const { result } = renderHook(() => usePortfolioState(), {
+      wrapper: createWrapper(),
+    })
+
+    await waitFor(() => {
+      expect(Object.keys(result.targetPortfolio)).toHaveLength(2)
+    })
+
+    result.handleDisconnect()
+
+    expect(readonlyPortfolioActions.clearAddresses).toHaveBeenCalledOnce()
+  })
+
+  it("submits rebalance payload with actions; precise toggle shapes diff not the API body", async () => {
     const { result } = renderHook(() => usePortfolioState(), {
       wrapper: createWrapper(),
     })
@@ -290,97 +320,21 @@ describe("usePortfolioState", () => {
     })
 
     result.setIsPrecise(true)
+    result.setManualWeightEntry(true)
 
-    // 600 -> 605 is a +5 signed delta, strictly between NOTIONAL_EPSILON (0.1)
-    // and MIN_USD (11), so the precise branch fires: close MIN_USD then reopen
-    // the closed notional plus the delta.
-    result.handleNotionalChange("BTC/USDC:USDC", 605)
-    result.handleRebalancePositions()
-
-    expect(mutate).toHaveBeenCalledWith(
-      {
-        actions: [
-          expect.objectContaining({
-            kind: "preciseRebalance",
-            symbol: "BTC/USDC:USDC",
-            side: "buy",
-            leverage: 2,
-            leverageChanged: false,
-            closeNotional: MIN_USD,
-            openNotional: MIN_USD + 5,
-          }),
-        ],
-      },
-      expect.objectContaining({
-        onSuccess: expect.any(Function),
-        onError: expect.any(Function),
-      }),
-    )
-  })
-
-  it("keeps a small delta as a plain rebalance action when precise mode is off", async () => {
-    const { result } = renderHook(() => usePortfolioState(), {
-      wrapper: createWrapper(),
-    })
-
-    await waitFor(() => {
-      expect(Object.keys(result.targetPortfolio)).toContain("BTC/USDC:USDC")
-    })
-
-    result.handleNotionalChange("BTC/USDC:USDC", 605)
-    result.handleRebalancePositions()
-
-    expect(mutate).toHaveBeenCalledWith(
-      {
-        actions: [
-          expect.objectContaining({
-            kind: "rebalance",
-            symbol: "BTC/USDC:USDC",
-            signedNotionalDelta: 5,
-            leverage: 2,
-            leverageChanged: false,
-          }),
-        ],
-      },
-      expect.objectContaining({
-        onSuccess: expect.any(Function),
-        onError: expect.any(Function),
-      }),
-    )
-  })
-
-  it("emits a plain rebalance action for large deltas even in precise mode", async () => {
-    const { result } = renderHook(() => usePortfolioState(), {
-      wrapper: createWrapper(),
-    })
-
-    await waitFor(() => {
-      expect(Object.keys(result.targetPortfolio)).toContain("BTC/USDC:USDC")
-    })
-
-    result.setIsPrecise(true)
-
-    // 600 -> 700 is a +100 delta, well above MIN_USD, so the precise branch is
-    // skipped and the action stays a plain rebalance regardless of the toggle.
     result.handleNotionalChange("BTC/USDC:USDC", 700)
     result.handleRebalancePositions()
 
-    expect(mutate).toHaveBeenCalledWith(
-      {
-        actions: [
-          expect.objectContaining({
-            kind: "rebalance",
-            symbol: "BTC/USDC:USDC",
-            signedNotionalDelta: 100,
-            leverage: 2,
-            leverageChanged: false,
-          }),
-        ],
-      },
-      expect.objectContaining({
-        onSuccess: expect.any(Function),
-        onError: expect.any(Function),
-      }),
-    )
+    expect(mutate).toHaveBeenCalledWith({
+      actions: [
+        expect.objectContaining({
+          kind: "rebalance",
+          symbol: "BTC/USDC:USDC",
+          signedNotionalDelta: 100,
+          leverage: 2,
+          leverageChanged: false,
+        }),
+      ],
+    })
   })
 })

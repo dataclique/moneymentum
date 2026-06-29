@@ -3,16 +3,143 @@ import { pro } from "ccxt"
 import type { NetworkMode, WalletCredentials } from "@/contexts/wallet-context"
 import type { RebalanceAction } from "@/pages/Portfolio/hooks/portfolioRebalancer"
 
-const MARKETS_CACHE_KEY = "hyperliquid_markets_cache"
-const MARKETS_CACHE_TTL_MS = 24 * 60 * 60 * 1000
-
 const HYPERLIQUID_MAINNET_INFO_URL = "https://api.hyperliquid.xyz/info"
 const HYPERLIQUID_TESTNET_INFO_URL = "https://api.hyperliquid-testnet.xyz/info"
 
-interface MarketsCache {
-  markets: Record<string, unknown>
-  timestamp: number
-  networkMode: NetworkMode
+const hyperliquidInfoUrl = (network: NetworkMode): string =>
+  network === "testnet"
+    ? HYPERLIQUID_TESTNET_INFO_URL
+    : HYPERLIQUID_MAINNET_INFO_URL
+
+const HYPERLIQUID_REQUEST_TIMEOUT_MS = 10_000
+
+type LeverageChangedAction = Extract<
+  RebalanceAction,
+  { kind: "rebalance" } | { kind: "preciseRebalance" }
+> & { leverageChanged: true }
+
+const isLeverageChangedAction = (
+  action: RebalanceAction,
+): action is LeverageChangedAction =>
+  (action.kind === "rebalance" || action.kind === "preciseRebalance") &&
+  action.leverageChanged
+
+interface PerpMarketContext {
+  szDecimals: number
+  markPx: number
+}
+
+/** Matches `finance::hyperliquid_swap_ccxt_symbol` base normalization. */
+const normalizePerpMarketLookupKey = (base: string): string =>
+  base.toUpperCase().replace(/:/g, "-")
+
+const lookupPerpMarketContext = (
+  contexts: Map<string, PerpMarketContext>,
+  base: string,
+): PerpMarketContext | undefined =>
+  contexts.get(normalizePerpMarketLookupKey(base))
+
+const decimalStep = (fractionDigits: number): number => {
+  if (fractionDigits <= 0) {
+    return 1
+  }
+
+  return Number(`0.${"0".repeat(fractionDigits - 1)}1`)
+}
+
+const amountPrecisionStepFromSzDecimals = (szDecimals: number): number =>
+  szDecimals <= 0 ? 1 : decimalStep(szDecimals)
+
+/** Mirrors CCXT hyperliquid.calculatePricePrecision for perps (maxDecimals = 6). */
+const calculateHyperliquidPricePrecision = (
+  price: number,
+  szDecimals: number,
+  maxDecimals = 6,
+): number => {
+  if (!Number.isFinite(price) || price < 0) return 0
+
+  const priceText = String(price)
+
+  if (price === 0) {
+    return Math.min(maxDecimals - szDecimals, 5)
+  }
+
+  if (price > 0 && price < 1) {
+    const decimalPart = priceText.split(".")[1] ?? ""
+    let leadingZeros = 0
+    while (
+      leadingZeros < decimalPart.length &&
+      decimalPart.charAt(leadingZeros) === "0"
+    ) {
+      leadingZeros += 1
+    }
+    const pricePrecision = leadingZeros + 5
+    return Math.min(maxDecimals - szDecimals, pricePrecision)
+  }
+
+  const integerPart = priceText.split(".")[0] ?? "0"
+  const significantDigits = Math.max(5, integerPart.length)
+  return Math.min(
+    maxDecimals - szDecimals,
+    significantDigits - integerPart.length,
+  )
+}
+
+const pricePrecisionStepFromDecimals = (priceDecimals: number): number =>
+  priceDecimals <= 0 ? 1 : decimalStep(priceDecimals)
+
+const fetchPerpMarketContexts = async (
+  network: NetworkMode,
+): Promise<Map<string, PerpMarketContext>> => {
+  const response = await fetch(hyperliquidInfoUrl(network), {
+    method: "POST",
+    signal: AbortSignal.timeout(HYPERLIQUID_REQUEST_TIMEOUT_MS),
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ type: "metaAndAssetCtxs" }),
+  })
+
+  if (!response.ok) {
+    throw new Error(
+      `Failed to fetch perp market contexts: ${response.statusText}`,
+    )
+  }
+
+  const json = (await response.json()) as unknown
+  if (!Array.isArray(json) || json.length < 2) {
+    throw new Error("Unexpected metaAndAssetCtxs payload shape")
+  }
+
+  const meta = json[0] as { universe?: unknown[] } | null
+  const assetContexts = json[1] as Array<
+    { markPx?: string | number } | null | undefined
+  >
+  if (
+    meta === null ||
+    !Array.isArray(meta.universe) ||
+    meta.universe.some(asset => asset === null || typeof asset !== "object") ||
+    !Array.isArray(assetContexts)
+  ) {
+    throw new Error("Unexpected metaAndAssetCtxs payload shape")
+  }
+  const universe = meta.universe as Array<{
+    name?: string
+    szDecimals?: number
+  }>
+  const contexts = new Map<string, PerpMarketContext>()
+
+  universe.forEach((asset, index) => {
+    const name = asset.name
+    if (!name) return
+    const rawMarkPx = assetContexts[index]?.markPx ?? 0
+    const markPx =
+      typeof rawMarkPx === "number" ? rawMarkPx : Number.parseFloat(rawMarkPx)
+    contexts.set(normalizePerpMarketLookupKey(name), {
+      szDecimals: asset.szDecimals ?? 0,
+      markPx: Number.isFinite(markPx) ? markPx : 0,
+    })
+  })
+
+  return contexts
 }
 
 const isDeployed = (): boolean =>
@@ -25,84 +152,6 @@ const applyApiProxy = (
   if (!isDeployed()) return
   const proxyBase = networkMode === "testnet" ? "/hl-testnet" : "/hl"
   exchange.urls["api"] = { public: proxyBase, private: proxyBase }
-}
-
-const createTempExchange = (networkMode: NetworkMode): HyperliquidExchange => {
-  const HyperliquidClass = pro.hyperliquid as unknown as new (
-    config: Record<string, unknown>,
-  ) => HyperliquidExchange
-
-  const exchange = new HyperliquidClass({
-    enableRateLimit: true,
-  })
-
-  if (networkMode === "testnet") {
-    exchange.setSandboxMode(true)
-  }
-
-  applyApiProxy(exchange, networkMode)
-
-  return exchange
-}
-
-const getCachedMarkets = (
-  networkMode: NetworkMode,
-): Record<string, unknown> | null => {
-  try {
-    const cached = localStorage.getItem(MARKETS_CACHE_KEY)
-    if (!cached) {
-      return null
-    }
-
-    const parsed: MarketsCache = JSON.parse(cached) as MarketsCache
-    const { markets, timestamp, networkMode: cachedMode } = parsed
-
-    if (cachedMode !== networkMode) {
-      return null
-    }
-
-    const ageMs = Date.now() - timestamp
-    if (ageMs >= MARKETS_CACHE_TTL_MS) {
-      return null
-    }
-
-    return markets
-  } catch {
-    return null
-  }
-}
-
-const setCachedMarkets = (
-  markets: Record<string, unknown>,
-  networkMode: NetworkMode,
-): void => {
-  const cacheData: MarketsCache = {
-    markets,
-    timestamp: Date.now(),
-    networkMode,
-  }
-  localStorage.setItem(MARKETS_CACHE_KEY, JSON.stringify(cacheData))
-}
-
-export const preloadMarkets = async (
-  networkMode: NetworkMode,
-): Promise<Record<string, unknown> | null> => {
-  const cached = getCachedMarkets(networkMode)
-  if (cached) {
-    return cached
-  }
-
-  try {
-    const tempExchange = createTempExchange(networkMode)
-    const markets = await tempExchange.loadMarkets()
-
-    setCachedMarkets(markets, networkMode)
-    return markets
-  } catch {
-    // Network errors are expected when offline or API is unreachable
-    // Markets will be loaded on-demand when needed
-    return null
-  }
 }
 
 export type OrderSide = "buy" | "sell"
@@ -143,8 +192,74 @@ export interface OrderResult {
 export interface LeverageLimit {
   symbol: string
   maxLeverage: number
+  assetIndex: number
 }
 
+export interface HyperliquidMarketsResponse {
+  tickers: string[]
+  leverageLimits: LeverageLimit[]
+  refreshedAt: string | null
+  marketsMaxAgeMs?: number
+}
+
+export const MARKETS_MAX_AGE_MS = 24 * 60 * 60 * 1000
+
+const parseCacheMaxAgeMs = (cacheControl: string | null): number | null => {
+  if (!cacheControl) return null
+  const match = cacheControl.match(/max-age=(\d+)/)
+  if (!match) return null
+  const maxAgeSeconds = Number(match[1])
+  return Number.isFinite(maxAgeSeconds) ? maxAgeSeconds * 1000 : null
+}
+
+export const fetchHyperliquidMarkets = async (
+  network: NetworkMode,
+): Promise<HyperliquidMarketsResponse> => {
+  const url = `${import.meta.env.BASE_URL}api/hyperliquid/markets?network=${network}`
+  const response = await fetch(url, {
+    cache: "no-store",
+    signal: AbortSignal.timeout(HYPERLIQUID_REQUEST_TIMEOUT_MS),
+  })
+  if (!response.ok) {
+    throw new Error(
+      `hyperliquid markets request failed: ${String(response.status)}`,
+    )
+  }
+  const markets = (await response.json()) as HyperliquidMarketsResponse
+  const marketsMaxAgeMs =
+    parseCacheMaxAgeMs(response.headers.get("cache-control")) ??
+    MARKETS_MAX_AGE_MS
+  return { ...markets, marketsMaxAgeMs }
+}
+
+interface CcxtMarket {
+  id: string
+  baseId: string
+  quoteId: string
+  settleId: string
+  symbol: string
+  base: string
+  quote: string
+  settle: string
+  type: string
+  spot: boolean
+  margin: boolean
+  swap: boolean
+  future: boolean
+  option: boolean
+  active: boolean
+  contract: boolean
+  linear: boolean
+  precision: { amount: number; price: number }
+  limits: {
+    amount: { min?: number; max?: number }
+    price: { min?: number; max?: number }
+    cost: { min?: number; max?: number }
+  }
+  info: Record<string, unknown>
+}
+
+// Minimum order size on Hyperliquid is $10, but we use $11 to guarantee orders will be opened
 const SLIPPAGE = 0.05
 
 interface HyperliquidExchange {
@@ -152,13 +267,16 @@ interface HyperliquidExchange {
   options: Record<string, unknown>
   urls: Record<string, string | Record<string, string>>
   walletAddress?: string
-  loadMarkets: () => Promise<Record<string, unknown>>
+  markets?: Record<string, CcxtMarket>
+  markets_by_id?: Record<string, CcxtMarket[]>
+  setMarkets: (markets: CcxtMarket[]) => void
   fetchBalance: () => Promise<{
     total: Record<string, unknown>
     info?: Record<string, unknown>
   }>
   fetchTickers: (
     symbols?: string[],
+    params?: { type?: "spot" | "swap" },
   ) => Promise<
     Record<
       string,
@@ -201,11 +319,7 @@ export class HyperliquidClient {
   private networkMode: NetworkMode
   private vaultAddress: string | undefined
 
-  constructor(
-    credentials: WalletCredentials,
-    networkMode: NetworkMode,
-    markets?: Record<string, unknown>,
-  ) {
+  constructor(credentials: WalletCredentials, networkMode: NetworkMode) {
     this.networkMode = networkMode
     this.vaultAddress = credentials.vaultAddress
 
@@ -218,14 +332,10 @@ export class HyperliquidClient {
     const effectiveWalletAddress =
       credentials.vaultAddress ?? credentials.accountAddress
 
-    // Use pre-loaded markets if available, otherwise ccxt will load them on first use
-    const cachedMarkets = markets ?? getCachedMarkets(networkMode)
-
     this.exchange = new HyperliquidClass({
       walletAddress: effectiveWalletAddress,
       privateKey: credentials.privateKey,
       enableRateLimit: true,
-      ...(cachedMarkets && { markets: cachedMarkets }),
     })
 
     if (networkMode === "testnet") {
@@ -250,7 +360,7 @@ export class HyperliquidClient {
     const response = await fetch(infoUrl, {
       method: "POST",
       // Abort if the info endpoint is unresponsive for too long to avoid hanging the UI.
-      signal: AbortSignal.timeout(10_000),
+      signal: AbortSignal.timeout(HYPERLIQUID_REQUEST_TIMEOUT_MS),
       headers: {
         "Content-Type": "application/json",
       },
@@ -360,46 +470,6 @@ export class HyperliquidClient {
     return typeof orderError === "string" ? orderError : null
   }
 
-  async listPerpTickers(): Promise<string[]> {
-    const markets = await this.exchange.loadMarkets()
-
-    // Update cache with fresh markets data
-    setCachedMarkets(markets, this.networkMode)
-
-    const perpSymbols = Object.entries(markets)
-      .filter(
-        ([symbol, data]) =>
-          symbol.includes(":") && (data as { swap?: boolean }).swap,
-      )
-      .map(([symbol]) => symbol)
-      .sort()
-    return perpSymbols
-  }
-
-  async getLeverageLimits(): Promise<LeverageLimit[]> {
-    const tickers = await this.exchange.fetchTickers()
-    const results: LeverageLimit[] = []
-
-    for (const [symbol, ticker] of Object.entries(tickers)) {
-      if (!symbol.includes(":")) continue
-
-      let maxLeverage = 1.0
-      if (ticker.info !== undefined && ticker.info !== null) {
-        const info = ticker.info as Record<string, unknown>
-        const rawMaxLeverage = info["maxLeverage"]
-        if (typeof rawMaxLeverage === "number") {
-          maxLeverage = rawMaxLeverage
-        } else if (typeof rawMaxLeverage === "string") {
-          maxLeverage = parseFloat(rawMaxLeverage)
-        }
-      }
-
-      results.push({ symbol, maxLeverage })
-    }
-
-    return results.sort((a, b) => a.symbol.localeCompare(b.symbol))
-  }
-
   async getCurrentPositions(): Promise<CurrentPosition[]> {
     const positions = await this.exchange.fetchPositions()
     const processed: CurrentPosition[] = []
@@ -445,6 +515,72 @@ export class HyperliquidClient {
     return this.vaultAddress ? { vaultAddress: this.vaultAddress } : undefined
   }
 
+  private parseCcxtPerpSymbolParts(symbol: string): {
+    base: string
+    quote: string
+    settle: string
+  } {
+    const colonIndex = symbol.indexOf(":")
+    const pair = colonIndex === -1 ? symbol : symbol.slice(0, colonIndex)
+    const settle = colonIndex === -1 ? "" : symbol.slice(colonIndex + 1)
+    const slashIndex = pair.indexOf("/")
+    if (slashIndex === -1) {
+      return { base: pair, quote: "USDC", settle: settle || "USDC" }
+    }
+    const base = pair.slice(0, slashIndex)
+    const quote = pair.slice(slashIndex + 1)
+    return { base, quote, settle: settle || quote }
+  }
+
+  private hydrateMarketsFromBackend(
+    leverageLimits: LeverageLimit[],
+    perpContexts: Map<string, PerpMarketContext>,
+  ): void {
+    const markets = leverageLimits.map(entry => {
+      const { base, quote, settle } = this.parseCcxtPerpSymbolParts(
+        entry.symbol,
+      )
+      const baseId = String(entry.assetIndex)
+      const context = lookupPerpMarketContext(perpContexts, base) ?? {
+        szDecimals: 0,
+        markPx: 1,
+      }
+      const amountStep = amountPrecisionStepFromSzDecimals(context.szDecimals)
+      const priceDecimals = calculateHyperliquidPricePrecision(
+        context.markPx,
+        context.szDecimals,
+      )
+      const priceStep = pricePrecisionStepFromDecimals(priceDecimals)
+      return {
+        id: baseId,
+        baseId,
+        quoteId: quote,
+        settleId: settle,
+        symbol: entry.symbol,
+        base,
+        quote,
+        settle,
+        type: "swap",
+        spot: false,
+        margin: false,
+        swap: true,
+        future: false,
+        option: false,
+        active: true,
+        contract: true,
+        linear: true,
+        precision: { amount: amountStep, price: priceStep },
+        limits: {
+          amount: { min: undefined, max: undefined },
+          price: { min: undefined, max: undefined },
+          cost: { min: 10, max: undefined },
+        },
+        info: { szDecimals: context.szDecimals },
+      } satisfies CcxtMarket
+    })
+    this.exchange.setMarkets(markets)
+  }
+
   private mapOrderResults(
     requests: OrderRequest[],
     responses: Order[],
@@ -456,8 +592,8 @@ export class HyperliquidClient {
         return {
           symbol: request.symbol,
           side: (request.side ?? "buy") as OrderSide,
-          status: "failed",
-          message: "order response missing from exchange batch reply",
+          status: "working",
+          message: "order response missing",
         }
       }
       return {
@@ -485,9 +621,9 @@ export class HyperliquidClient {
   ): number {
     const raw = pos.notional
     if (raw !== undefined && raw !== "") {
-      const v = typeof raw === "number" ? raw : parseFloat(raw)
-      if (Number.isFinite(v) && Math.abs(v) > 0) {
-        return Math.abs(v)
+      const parsed = typeof raw === "number" ? raw : parseFloat(raw)
+      if (Number.isFinite(parsed) && Math.abs(parsed) > 0) {
+        return Math.abs(parsed)
       }
     }
     return Math.abs(parseFloat(String(pos.contracts))) * price
@@ -561,28 +697,11 @@ export class HyperliquidClient {
       type: "market",
       side,
       amount,
-      price: side === "buy" ? price * (1 + SLIPPAGE) : price * (1 - SLIPPAGE),
+      price,
       params: reduceOnly
         ? { reduceOnly: true, ...this.vaultParams }
         : { ...this.vaultParams },
     }
-  }
-
-  /** The order side an action would submit, used when no order is produced. */
-  private intendedOrderSide(action: RebalanceAction): OrderSide {
-    switch (action.kind) {
-      case "close":
-        return action.side === "buy" ? "sell" : "buy"
-      case "rebalance":
-        return action.signedNotionalDelta > 0 ? "buy" : "sell"
-      case "preciseRebalance":
-        return action.side
-    }
-  }
-
-  private leverageErrorMessage(reason: unknown): string {
-    if (reason instanceof Error) return reason.message
-    return typeof reason === "string" ? reason : "leverage update failed"
   }
 
   private splitRebalanceActionsIntoPhases(
@@ -599,42 +718,23 @@ export class HyperliquidClient {
       contracts: number | string
       notional?: number | string
     }>,
-    failedLeverageSymbols: Set<string>,
   ): {
     reduction: OrderRequest[]
     expansion: OrderRequest[]
-    skipped: OrderResult[]
   } {
     const reduction: OrderRequest[] = []
     const expansion: OrderRequest[] = []
-    const skipped: OrderResult[] = []
 
     for (const action of actions) {
-      if (failedLeverageSymbols.has(action.symbol)) continue
-
-      const position = positions.find(pos => pos.symbol === action.symbol)
+      const position = positions.find(
+        candidate => candidate.symbol === action.symbol,
+      )
       const price = tickers[action.symbol]?.last ?? undefined
-      if (price === undefined) {
-        skipped.push({
-          symbol: action.symbol,
-          side: this.intendedOrderSide(action),
-          status: "failed",
-          message: "Price unavailable",
-        })
-        continue
-      }
+      if (price === undefined) continue
 
       switch (action.kind) {
         case "close": {
-          if (position === undefined) {
-            skipped.push({
-              symbol: action.symbol,
-              side: action.side === "buy" ? "sell" : "buy",
-              status: "filled",
-              message: "Position already closed.",
-            })
-            continue
-          }
+          if (position === undefined) continue
           const closingSide: OrderSide = action.side === "buy" ? "sell" : "buy"
           const request = this.buildOrderRequest(
             action.symbol,
@@ -658,25 +758,17 @@ export class HyperliquidClient {
             false,
           )
           if (request) {
-            const isReduction = position
+            const isRed = position
               ? this.rebalanceIsReduction(position, action.signedNotionalDelta)
               : false
 
-            if (isReduction) reduction.push(request)
+            if (isRed) reduction.push(request)
             else expansion.push(request)
           }
           break
         }
         case "preciseRebalance": {
-          if (position === undefined) {
-            skipped.push({
-              symbol: action.symbol,
-              side: action.side,
-              status: "filled",
-              message: "Position already closed.",
-            })
-            continue
-          }
+          if (position === undefined) continue
 
           const { closeRequest, openRequest } =
             this.buildPreciseRebalanceOrderRequests({
@@ -697,115 +789,54 @@ export class HyperliquidClient {
       }
     }
 
-    return { reduction, expansion, skipped }
-  }
-
-  /**
-   * Sets leverage for every action that requested a change, isolating each call
-   * so one rejection does not abort the others. Returns a failed OrderResult and
-   * the symbol for each position whose leverage could not be set, so the caller
-   * can skip placing orders against an unconfirmed leverage.
-   */
-  private async applyLeverageChanges(actions: RebalanceAction[]): Promise<{
-    leverageFailures: OrderResult[]
-    failedLeverageSymbols: Set<string>
-  }> {
-    const leverageActions = actions.filter(
-      (
-        action,
-      ): action is Extract<RebalanceAction, { leverageChanged: boolean }> =>
-        "leverageChanged" in action && action.leverageChanged,
-    )
-
-    const outcomes = await Promise.allSettled(
-      leverageActions.map(action =>
-        this.setLeverage(action.symbol, action.leverage),
-      ),
-    )
-
-    const leverageFailures: OrderResult[] = []
-    const failedLeverageSymbols = new Set<string>()
-
-    outcomes.forEach((outcome, index) => {
-      if (outcome.status !== "rejected") return
-      const action = leverageActions[index]
-      failedLeverageSymbols.add(action.symbol)
-      leverageFailures.push({
-        symbol: action.symbol,
-        side: this.intendedOrderSide(action),
-        status: "failed",
-        message: this.leverageErrorMessage(outcome.reason),
-      })
-    })
-
-    return { leverageFailures, failedLeverageSymbols }
+    return { reduction, expansion }
   }
 
   async rebalancePositions(actions: RebalanceAction[]): Promise<OrderResult[]> {
-    await this.exchange.loadMarkets()
     const allSymbols = [...new Set(actions.map(action => action.symbol))]
 
-    const { leverageFailures, failedLeverageSymbols } =
-      await this.applyLeverageChanges(actions)
+    const [backendMarkets, perpContexts] = await Promise.all([
+      fetchHyperliquidMarkets(this.networkMode),
+      fetchPerpMarketContexts(this.networkMode),
+    ])
+
+    this.hydrateMarketsFromBackend(backendMarkets.leverageLimits, perpContexts)
+
+    const leverageActions = actions.filter(isLeverageChangedAction)
+    for (const action of leverageActions) {
+      await this.setLeverage(action.symbol, action.leverage)
+    }
 
     const [tickers, positions] = await Promise.all([
-      this.exchange.fetchTickers(allSymbols),
+      this.exchange.fetchTickers(allSymbols, { type: "swap" }),
       this.exchange.fetchPositions(),
     ])
 
-    const { reduction, expansion, skipped } =
-      this.splitRebalanceActionsIntoPhases(
-        actions,
-        tickers,
-        positions,
-        failedLeverageSymbols,
-      )
-
-    const results: OrderResult[] = [...leverageFailures]
-
-    const reductionResults =
-      reduction.length > 0
-        ? this.mapOrderResults(
-            reduction,
-            await this.exchange.createOrdersWs(reduction),
-          )
-        : []
-    results.push(...reductionResults)
-
-    const failedReductionSymbols = new Set(
-      reductionResults
-        .filter(orderResult => orderResult.status !== "filled")
-        .map(orderResult => orderResult.symbol),
+    const { reduction, expansion } = this.splitRebalanceActionsIntoPhases(
+      actions,
+      tickers,
+      positions,
     )
 
-    const gatedExpansion = expansion.filter(
-      request => !failedReductionSymbols.has(request.symbol),
-    )
+    const results: OrderResult[] = []
 
-    if (gatedExpansion.length > 0) {
-      results.push(
-        ...this.mapOrderResults(
-          gatedExpansion,
-          await this.exchange.createOrdersWs(gatedExpansion),
-        ),
+    if (reduction.length > 0) {
+      const reductionResponses = await this.exchange.createOrdersWs(reduction)
+      const reductionResults = this.mapOrderResults(
+        reduction,
+        reductionResponses,
       )
+      results.push(...reductionResults)
     }
 
-    const blockedExpansion = expansion.filter(request =>
-      failedReductionSymbols.has(request.symbol),
-    )
-    results.push(
-      ...blockedExpansion.map(
-        (request): OrderResult => ({
-          symbol: request.symbol,
-          side: (request.side ?? "buy") as OrderSide,
-          status: "failed",
-          message: "reduction leg did not fill; expansion skipped",
-        }),
-      ),
-    )
-
-    results.push(...skipped)
+    if (expansion.length > 0) {
+      const expansionResponses = await this.exchange.createOrdersWs(expansion)
+      const expansionResults = this.mapOrderResults(
+        expansion,
+        expansionResponses,
+      )
+      results.push(...expansionResults)
+    }
 
     return results
   }

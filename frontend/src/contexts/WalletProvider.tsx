@@ -1,6 +1,5 @@
 import {
   createSignal,
-  createEffect,
   createMemo,
   onMount,
   onCleanup,
@@ -14,10 +13,7 @@ import {
   type NetworkMode,
   type WalletCredentials,
 } from "./wallet-context"
-import {
-  HyperliquidClient,
-  preloadMarkets,
-} from "@/services/hyperliquid-client"
+import { HyperliquidClient } from "@/services/hyperliquid-client"
 
 export const WalletProvider = (props: ParentProps) => {
   const [credentials, setCredentials] = createSignal<WalletCredentials | null>(
@@ -26,11 +22,6 @@ export const WalletProvider = (props: ParentProps) => {
   const [networkMode, setNetworkModeState] = createSignal<NetworkMode>(
     getStoredNetworkMode(),
   )
-
-  // createEffect: eagerly preload market metadata whenever networkMode changes
-  createEffect(() => {
-    void preloadMarkets(networkMode())
-  })
 
   const isConnected = createMemo(() => credentials() !== null)
 

@@ -398,7 +398,7 @@ fn parse_instrument_from_channel(channel: &str) -> Option<String> {
     if parts.len() != 3 || parts.first() != Some(&"ticker_slim") {
         return None;
     }
-    Some(parts[1].to_string())
+    parts.get(1).map(|name| (*name).to_string())
 }
 
 async fn send_subscribe_batch(
@@ -635,7 +635,103 @@ fn aggregate_risk(quotes: &[OptionQuote]) -> PortfolioRiskSummary {
 
 fn scenario_pnl(risk: &PortfolioRiskSummary, spot: f64, pct_move: f64) -> f64 {
     let spot_move = spot * pct_move;
-    risk.aggregate_delta * spot_move + 0.5 * risk.aggregate_gamma * spot_move * spot_move
+    (0.5 * risk.aggregate_gamma * spot_move).mul_add(spot_move, risk.aggregate_delta * spot_move)
+}
+
+async fn apply_tab_switch(
+    writer: &mut DeriveWsWriter,
+    message_id: &mut i64,
+    subscribed_channels: &mut Vec<String>,
+    quote_map: &mut HashMap<String, QuoteState>,
+    catalogue: &OptionsCatalogue,
+    new_expiry_unix: i64,
+) -> Result<(), DeriveError> {
+    if !subscribed_channels.is_empty() {
+        send_unsubscribe_batch(writer, subscribed_channels, message_id).await?;
+        subscribed_channels.clear();
+    }
+    quote_map.clear();
+
+    let names = catalogue
+        .names_by_expiry_unix
+        .get(&new_expiry_unix)
+        .cloned()
+        .unwrap_or_default();
+    let channels = names
+        .iter()
+        .map(|name| channel_name_for_instrument(name))
+        .collect::<Vec<_>>();
+    if !channels.is_empty() {
+        send_subscribe_batch(writer, &channels, message_id).await?;
+    }
+    *subscribed_channels = channels;
+    Ok(())
+}
+
+async fn publish_snapshot(
+    asset: &str,
+    catalogue: &OptionsCatalogue,
+    active_expiry_unix: i64,
+    quote_map: &HashMap<String, QuoteState>,
+    snapshot: &RwLock<OptionsSnapshot>,
+    broadcast_tx: &broadcast::Sender<OptionsSnapshot>,
+) {
+    let next_snapshot = build_tab_snapshot(asset, catalogue, active_expiry_unix, quote_map);
+    *snapshot.write().await = next_snapshot.clone();
+    let _ = broadcast_tx.send(next_snapshot);
+}
+
+async fn process_message(
+    message: Message,
+    catalogue: &OptionsCatalogue,
+    asset: &str,
+    active_expiry_unix: i64,
+    quote_map: &mut HashMap<String, QuoteState>,
+    snapshot: &RwLock<OptionsSnapshot>,
+    broadcast_tx: &broadcast::Sender<OptionsSnapshot>,
+) -> Result<(), DeriveError> {
+    if !message.is_text() {
+        return Ok(());
+    }
+    let text = message.to_text()?;
+    let Ok(notification) = serde_json::from_str::<WsNotification>(text) else {
+        return Ok(());
+    };
+    let Some((channel, data)) = extract_notification_parts(&notification) else {
+        return Ok(());
+    };
+    if !channel.starts_with("ticker_slim.") {
+        return Ok(());
+    }
+    let Some(instrument_name) = parse_instrument_from_channel(&channel) else {
+        return Ok(());
+    };
+    let Some(meta) = catalogue.instrument_by_name.get(&instrument_name) else {
+        return Ok(());
+    };
+    if meta.expiry_unix != active_expiry_unix {
+        return Ok(());
+    }
+    let state = QuoteState {
+        bid: parse_optional_number(&data.instrument_ticker.best_bid_price),
+        ask: parse_optional_number(&data.instrument_ticker.best_ask_price),
+        bid_size: parse_optional_number(&data.instrument_ticker.best_bid_size),
+        ask_size: parse_optional_number(&data.instrument_ticker.best_ask_size),
+        mark: parse_optional_number(&data.instrument_ticker.mark_price),
+        spot: parse_required_number(&data.instrument_ticker.index_price, "spot").unwrap_or(0.0),
+        greeks: build_greeks(&data.instrument_ticker),
+    };
+    quote_map.insert(instrument_name, state);
+    publish_snapshot(
+        asset,
+        catalogue,
+        active_expiry_unix,
+        quote_map,
+        snapshot,
+        broadcast_tx,
+    )
+    .await;
+    Ok(())
 }
 
 async fn run_websocket_hub(
@@ -649,36 +745,6 @@ async fn run_websocket_hub(
 ) -> Result<(), DeriveError> {
     let mut quote_map: HashMap<String, QuoteState> = HashMap::new();
     let mut active_expiry_unix = initial_expiry_unix;
-
-    async fn apply_tab_switch(
-        writer: &mut DeriveWsWriter,
-        message_id: &mut i64,
-        subscribed_channels: &mut Vec<String>,
-        quote_map: &mut HashMap<String, QuoteState>,
-        catalogue: &OptionsCatalogue,
-        new_expiry_unix: i64,
-    ) -> Result<(), DeriveError> {
-        if !subscribed_channels.is_empty() {
-            send_unsubscribe_batch(writer, subscribed_channels, message_id).await?;
-            subscribed_channels.clear();
-        }
-        quote_map.clear();
-
-        let names = catalogue
-            .names_by_expiry_unix
-            .get(&new_expiry_unix)
-            .cloned()
-            .unwrap_or_default();
-        let channels = names
-            .iter()
-            .map(|name| channel_name_for_instrument(name))
-            .collect::<Vec<_>>();
-        if !channels.is_empty() {
-            send_subscribe_batch(writer, &channels, message_id).await?;
-        }
-        *subscribed_channels = channels;
-        Ok(())
-    }
 
     'reconnect: loop {
         let (stream, _) = match connect_async(ws_url.as_str()).await {
@@ -710,17 +776,15 @@ async fn run_websocket_hub(
             continue 'reconnect;
         }
 
-        let initial_snapshot = build_tab_snapshot(
+        publish_snapshot(
             asset.as_str(),
             catalogue.as_ref(),
             active_expiry_unix,
             &quote_map,
-        );
-        {
-            let mut guard = snapshot.write().await;
-            *guard = initial_snapshot.clone();
-        }
-        let _ = broadcast_tx.send(initial_snapshot);
+            snapshot.as_ref(),
+            &broadcast_tx,
+        )
+        .await;
 
         'session: loop {
             tokio::select! {
@@ -744,17 +808,15 @@ async fn run_websocket_hub(
                         error!(error = %error, "derive tab switch failed");
                         break 'session;
                     }
-                    let switched = build_tab_snapshot(
+                    publish_snapshot(
                         asset.as_str(),
                         catalogue.as_ref(),
                         active_expiry_unix,
                         &quote_map,
-                    );
-                    {
-                        let mut guard = snapshot.write().await;
-                        *guard = switched.clone();
-                    }
-                    let _ = broadcast_tx.send(switched);
+                        snapshot.as_ref(),
+                        &broadcast_tx,
+                    )
+                    .await;
                     debug!(expiry_unix = active_expiry_unix, "derive tab switched and subscriptions updated");
                 }
                 maybe_message = reader.next() => {
@@ -768,49 +830,16 @@ async fn run_websocket_hub(
                             break 'session;
                         }
                     };
-                    if !message.is_text() {
-                        continue;
-                    }
-                    let text = message.to_text()?;
-                    let Ok(notification) = serde_json::from_str::<WsNotification>(text) else {
-                        continue;
-                    };
-                    if let Some((channel, data)) = extract_notification_parts(&notification) {
-                        if !channel.starts_with("ticker_slim.") {
-                            continue;
-                        }
-                        let Some(instrument_name) = parse_instrument_from_channel(&channel) else {
-                            continue;
-                        };
-                        let Some(meta) = catalogue.instrument_by_name.get(&instrument_name) else {
-                            continue;
-                        };
-                        if meta.expiry_unix != active_expiry_unix {
-                            continue;
-                        }
-                        let state = QuoteState {
-                            bid: parse_optional_number(&data.instrument_ticker.best_bid_price),
-                            ask: parse_optional_number(&data.instrument_ticker.best_ask_price),
-                            bid_size: parse_optional_number(&data.instrument_ticker.best_bid_size),
-                            ask_size: parse_optional_number(&data.instrument_ticker.best_ask_size),
-                            mark: parse_optional_number(&data.instrument_ticker.mark_price),
-                            spot: parse_required_number(&data.instrument_ticker.index_price, "spot")
-                                .unwrap_or(0.0),
-                            greeks: build_greeks(&data.instrument_ticker),
-                        };
-                        quote_map.insert(instrument_name, state);
-                        let next_snapshot = build_tab_snapshot(
-                            asset.as_str(),
-                            catalogue.as_ref(),
-                            active_expiry_unix,
-                            &quote_map,
-                        );
-                        {
-                            let mut guard = snapshot.write().await;
-                            *guard = next_snapshot.clone();
-                        }
-                        let _ = broadcast_tx.send(next_snapshot);
-                    }
+                    process_message(
+                        message,
+                        catalogue.as_ref(),
+                        asset.as_str(),
+                        active_expiry_unix,
+                        &mut quote_map,
+                        snapshot.as_ref(),
+                        &broadcast_tx,
+                    )
+                    .await?;
                 }
             }
         }
@@ -844,9 +873,7 @@ fn stream_options(state: &State<DeriveState>) -> EventStream![] {
                 Ok(next_snapshot) => {
                     yield Event::json(&next_snapshot);
                 }
-                Err(broadcast::error::RecvError::Lagged(_)) => {
-                    continue;
-                }
+                Err(broadcast::error::RecvError::Lagged(_)) => {}
                 Err(broadcast::error::RecvError::Closed) => {
                     break;
                 }

@@ -14,6 +14,11 @@ import {
   type OrderSide,
 } from "@/hooks/useTrading"
 import { buildApiPayload, diffPortfolios } from "./portfolioRebalancer"
+import {
+  useReadonlyPortfolioState,
+  type ReadonlyBetaPosition,
+  type ReadonlyBtcRow,
+} from "./useReadonlyPortfolioState"
 import { useWallet } from "@/hooks/useWallet"
 import { createStore, produce, reconcile } from "solid-js/store"
 
@@ -34,8 +39,34 @@ const initialManualWeightEntryFromStorage = (): boolean =>
   typeof localStorage.getItem === "function" &&
   localStorage.getItem(MANUAL_WEIGHT_ENTRY_STORAGE_KEY) === "true"
 
+export const writePreciseToggle = (isPrecise: boolean): void => {
+  if (
+    typeof localStorage === "undefined" ||
+    typeof localStorage.setItem !== "function"
+  ) {
+    return
+  }
+
+  localStorage.setItem(PRECISE_TOGGLE_STORAGE_KEY, String(isPrecise))
+}
+
+export const writeManualWeightEntry = (isManualWeightEntry: boolean): void => {
+  if (
+    typeof localStorage === "undefined" ||
+    typeof localStorage.setItem !== "function"
+  ) {
+    return
+  }
+
+  localStorage.setItem(
+    MANUAL_WEIGHT_ENTRY_STORAGE_KEY,
+    String(isManualWeightEntry),
+  )
+}
+
 const MAX_CROSS_ACCOUNT_LEVERAGE = 5
 const DEFAULT_CROSS_ACCOUNT_LEVERAGE = 1
+const POSITION_CLOSE_EPSILON = 0.01
 
 export interface PortfolioInterface {
   symbol: string
@@ -111,6 +142,7 @@ export const usePortfolioState = () => {
       setCurrentPortfolio(reconcile({}))
       setTargetPortfolio(reconcile({}))
       setDeletedArchive(reconcile({}))
+      readonlyPortfolio.clearAddresses()
       setCurrentCrossAccountLeverage(DEFAULT_CROSS_ACCOUNT_LEVERAGE)
       setTargetCrossAccountLeverage(DEFAULT_CROSS_ACCOUNT_LEVERAGE)
       setCurrentTotalNotional(0)
@@ -130,10 +162,10 @@ export const usePortfolioState = () => {
     if (totalNotional <= 0 || !symbols.includes(changedSymbol)) return
 
     const clampedNew = Math.max(0, Math.min(100, newPercentage))
-    const otherSymbols = symbols.filter(s => s !== changedSymbol)
+    const otherSymbols = symbols.filter(symbol => symbol !== changedSymbol)
 
-    const otherTotalPercent = otherSymbols.reduce((sum, s) => {
-      const pos = portfolio[s]
+    const otherTotalPercent = otherSymbols.reduce((sum, symbol) => {
+      const pos = portfolio[symbol]
       const currentNotional = pos?.notional ?? 0
       return sum + (currentNotional / totalNotional) * 100
     }, 0)
@@ -165,8 +197,38 @@ export const usePortfolioState = () => {
     })
   }
 
-  const symbolsBelowMinimum = createMemo(() =>
-    Object.keys(targetPortfolio).filter(symbol => {
+  const effectiveTotalNotional = createMemo(() => {
+    return Object.values(targetPortfolio).reduce(
+      (sum, pos) => sum + (pos?.notional ?? 0),
+      0,
+    )
+  })
+
+  const hasCurrentPositions = createMemo(() =>
+    Object.values(currentPortfolio).some(position => position !== undefined),
+  )
+
+  const isClosingAllPositions = createMemo(() => {
+    if (!hasCurrentPositions()) return false
+
+    const symbols = new Set([
+      ...Object.keys(currentPortfolio),
+      ...Object.keys(targetPortfolio),
+    ])
+
+    return [...symbols].every(symbol => {
+      const targetPosition = targetPortfolio[symbol]
+      return (
+        targetPosition === undefined ||
+        targetPosition.notional <= POSITION_CLOSE_EPSILON
+      )
+    })
+  })
+
+  const symbolsBelowMinimum = createMemo(() => {
+    if (isClosingAllPositions()) return []
+
+    return Object.keys(targetPortfolio).filter(symbol => {
       const targetPosition = targetPortfolio[symbol]
       const currentNotional = currentPortfolio[symbol]?.notional ?? 0
 
@@ -177,11 +239,13 @@ export const usePortfolioState = () => {
         Math.abs(targetPosition.notional - currentNotional) < 0.01
 
       return !unchanged
-    }),
-  )
+    })
+  })
 
-  const symbolsDeltaBelowMinimum = createMemo(() =>
-    Object.keys(targetPortfolio).filter(symbol => {
+  const symbolsDeltaBelowMinimum = createMemo(() => {
+    if (isClosingAllPositions()) return []
+
+    return Object.keys(targetPortfolio).filter(symbol => {
       const target = targetPortfolio[symbol]
       if (!target) return false
 
@@ -197,8 +261,8 @@ export const usePortfolioState = () => {
       const delta = Math.abs(targetSignedNotional - currentSignedNotional)
 
       return delta < MIN_USD && delta !== 0
-    }),
-  )
+    })
+  })
 
   // Keep displayed target leverage in sync with planned target notional.
   createEffect(() => {
@@ -240,19 +304,16 @@ export const usePortfolioState = () => {
       .toNumber(),
   )
 
+  const readonlyPortfolio = useReadonlyPortfolioState()
+
   // Wait for positionsQuery data and positive accountValue, then initialize from exchange positions
   createEffect(() => {
     if (positionsLoadedFromExchange()) {
       return
     }
     const positionsData = positionsQuery.data
-    // Bail while a fetch is in flight (initial load OR a post-rebalance refetch)
-    // so we only ever hydrate from settled exchange data, never stale cache.
-    if (
-      positionsQuery.isLoading ||
-      positionsQuery.isFetching ||
-      !positionsData?.positions
-    ) {
+    const isPositionsLoading = positionsQuery.isLoading
+    if (isPositionsLoading || !positionsData?.positions) {
       return
     }
     // Wait for accountValue to be loaded so we can calculate correct percentages
@@ -309,32 +370,35 @@ export const usePortfolioState = () => {
 
     return actions().map(action => {
       const symbol = action.symbol
-      const c = currentPortfolio[symbol]
-      const t = targetPortfolio[symbol]
+      const currentPosition = currentPortfolio[symbol]
+      const targetPosition = targetPortfolio[symbol]
 
       let delta = 0
 
       switch (action.kind) {
         case "close":
-          if (!c) {
+          if (!currentPosition) {
             throw new Error(
               `Close action for ${symbol} without current position`,
             )
           }
-          delta = -getSignedNotional(c.side, c.notional)
+          delta = -getSignedNotional(
+            currentPosition.side,
+            currentPosition.notional,
+          )
           break
         case "rebalance":
           delta = action.signedNotionalDelta
           break
         case "preciseRebalance":
-          if (!c || !t) {
+          if (!currentPosition || !targetPosition) {
             throw new Error(
               `Precise rebalance for ${symbol} requires current and target`,
             )
           }
           delta =
-            getSignedNotional(t.side, t.notional) -
-            getSignedNotional(c.side, c.notional)
+            getSignedNotional(targetPosition.side, targetPosition.notional) -
+            getSignedNotional(currentPosition.side, currentPosition.notional)
           break
       }
 
@@ -342,8 +406,12 @@ export const usePortfolioState = () => {
         underlying: symbol,
         side: delta > 0 ? "buy" : "sell",
         notional: Math.abs(delta),
-        previousWeight: totalCurrent ? (c?.notional ?? 0) / totalCurrent : 0,
-        newWeight: totalTarget ? (t?.notional ?? 0) / totalTarget : 0,
+        previousWeight: totalCurrent
+          ? (currentPosition?.notional ?? 0) / totalCurrent
+          : 0,
+        newWeight: totalTarget
+          ? (targetPosition?.notional ?? 0) / totalTarget
+          : 0,
       }
     })
   })
@@ -359,13 +427,6 @@ export const usePortfolioState = () => {
   })
 
   const hasPositionsBelowMinimum = () => symbolsBelowMinimum().length > 0
-  const effectiveTotalNotional = createMemo(() => {
-    return Object.values(targetPortfolio).reduce(
-      (sum, pos) => sum + (pos?.notional ?? 0),
-      0,
-    )
-  })
-
   const targetAllocationPercent = createMemo(() => {
     const total = targetTotalNotional()
     if (total <= 0) return 0
@@ -443,8 +504,6 @@ export const usePortfolioState = () => {
   }
 
   const handleNotionalChange = (symbol: string, newNotional: number) => {
-    if (!Number.isFinite(newNotional) || newNotional < 0) return
-
     const oldNotional = targetPortfolio[symbol]?.notional ?? 0
     const diff = newNotional - oldNotional
 
@@ -519,19 +578,9 @@ export const usePortfolioState = () => {
       isPrecise(),
     )
 
+    rebalancePositionsMutation.mutate(apiPayload)
+
     setIsRebalancingUi(true)
-    rebalancePositionsMutation.mutate(apiPayload, {
-      onSuccess: () => {
-        // Re-sync from the exchange. The mutation hook invalidates the positions
-        // query; clearing this flag lets the init effect re-hydrate current and
-        // target from the refetched positions, and unlocks the UI.
-        setPositionsLoadedFromExchange(false)
-        setIsRebalancingUi(false)
-      },
-      onError: () => {
-        setIsRebalancingUi(false)
-      },
-    })
   }
 
   const canSubmit = () => {
@@ -545,6 +594,21 @@ export const usePortfolioState = () => {
       (isPrecise() || !hasSymbolsDeltaBelowMinimum()) &&
       !hasTotalWeightExceeded()
     )
+  }
+
+  const resetPortfolioStateForNetworkChange = () => {
+    batch(() => {
+      setCurrentPortfolio(reconcile({}))
+      setTargetPortfolio(reconcile({}))
+      setDeletedArchive(reconcile({}))
+      readonlyPortfolio.clearAddresses()
+      setCurrentCrossAccountLeverage(DEFAULT_CROSS_ACCOUNT_LEVERAGE)
+      setTargetCrossAccountLeverage(DEFAULT_CROSS_ACCOUNT_LEVERAGE)
+      setCurrentTotalNotional(0)
+      setTargetTotalNotional(0)
+    })
+    setPositionsLoadedFromExchange(false)
+    setIsRebalancingUi(false)
   }
 
   return {
@@ -605,6 +669,26 @@ export const usePortfolioState = () => {
       return canSubmit()
     },
 
+    get readonlyBtcRows(): ReadonlyBtcRow[] {
+      return readonlyPortfolio.rows
+    },
+
+    get readonlyBetaPositions(): ReadonlyBetaPosition[] {
+      return readonlyPortfolio.betaPositions
+    },
+
+    get isReadonlyBtcLoading() {
+      return readonlyPortfolio.isLoading
+    },
+
+    get readonlyBtcError() {
+      return readonlyPortfolio.error
+    },
+
+    get readonlyBtcValidationError() {
+      return readonlyPortfolio.validationError
+    },
+
     get symbolsBelowMinimum() {
       return symbolsBelowMinimum()
     },
@@ -640,6 +724,10 @@ export const usePortfolioState = () => {
     handleCrossAccountLeverageChange,
     handleRebalancePositions,
     handleResetToCurrent,
+    addReadonlyBtcAddress: readonlyPortfolio.addAddress,
+    removeReadonlyBtcAddress: readonlyPortfolio.removeAddress,
+    setReadonlyBtcIncludeInBeta: readonlyPortfolio.setIncludeInBeta,
     handleDisconnect,
+    resetPortfolioStateForNetworkChange,
   }
 }

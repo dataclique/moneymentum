@@ -32,9 +32,9 @@ const formatPublicKey = (key: string): string => {
 interface WalletHeaderProps {
   autoOpen?: boolean
   handleDisconnect?: () => void
+  handleNetworkSwitch?: () => void
 }
 
-//TOOD: make this without page reloading on network switch
 export const WalletHeader = (props: WalletHeaderProps) => {
   const { data: walletSettings, isConnected } = useWalletSettings()
   const switchNetworkMutation = useSwitchNetwork()
@@ -73,6 +73,7 @@ export const WalletHeader = (props: WalletHeaderProps) => {
 
     try {
       await switchNetworkMutation.mutateAsync(checked ? "testnet" : "mainnet")
+      props.handleNetworkSwitch?.()
     } catch (error) {
       console.error("Failed to toggle testnet/mainnet:", error)
       toast.error("Failed to toggle network. Please try again.")

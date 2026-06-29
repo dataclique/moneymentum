@@ -1,37 +1,43 @@
-mod beta;
 mod candle;
 mod dataframe;
 pub mod derive;
+mod factors;
 mod finance;
 mod funding;
 mod hyperliquid;
 mod ingestion;
-mod lifecycle;
+mod market_metadata;
+mod readonly_portfolio;
+mod screener;
 mod timeframe;
-mod wire;
 
+use std::fmt::Write as FmtWrite;
+use std::io::Write;
 use std::net::Ipv4Addr;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 use std::sync::Arc;
 
 use apalis::prelude::{Monitor, Storage, WorkerBuilder, WorkerFactoryFn};
 use apalis_sql::sqlite::SqliteStorage;
-use cqrs_es::persist::GenericQuery;
 use rocket::config::Config as RocketConfig;
 use rocket::http::Status;
-use rocket::request::FromParam;
+use rocket::request::{FromParam, FromRequest, Outcome};
 use rocket::response::content::RawJson;
+use rocket::response::status::Custom;
+use rocket::response::{Responder, Response};
 use rocket::serde::json::Json;
-use rocket::{Rocket, State, get, post, routes};
+use rocket::{Request, Rocket, State, get, post, routes};
 use serde::Deserialize;
 use sqlx::SqlitePool;
+use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode};
 use thiserror::Error;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 use tracing_subscriber::EnvFilter;
 
-use ingestion::{Ingestion, IngestionId, IngestionJob, IngestionServices, IngestionStatus};
+use crate::hyperliquid::HyperliquidClients;
+use ingestion::{IngestionJob, IngestionRunError, IngestionServices, IngestionStatus};
 use timeframe::Timeframe;
-use wire::{Cons, Nil, UnwiredQuery};
 
 impl<'r> FromParam<'r> for Timeframe {
     type Error = &'r str;
@@ -69,22 +75,113 @@ pub struct Config {
     data_dir: PathBuf,
     database_url: String,
     hyperliquid_base_url: Option<url::Url>,
+    hyperliquid_testnet_base_url: Option<url::Url>,
     log_level: LogLevel,
     max_concurrent_requests: usize,
     max_retries: usize,
-    pub derive: derive::DeriveConfig,
+    markets_refresh_token: String,
+    pub derive: Option<derive::DeriveConfig>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ConfigSource {
+    port: u16,
+    data_dir: PathBuf,
+    database_url: String,
+    hyperliquid_base_url: Option<url::Url>,
+    hyperliquid_testnet_base_url: Option<url::Url>,
+    log_level: LogLevel,
+    max_concurrent_requests: usize,
+    max_retries: usize,
+    markets_refresh_token: Option<String>,
+    derive: Option<derive::DeriveConfig>,
+}
+
+impl ConfigSource {
+    fn into_config(self, publish_path: Option<&Path>) -> Result<Config, ConfigError> {
+        let markets_refresh_token = if let Some(token) = self.markets_refresh_token {
+            let trimmed_token = token.trim();
+            if trimmed_token.is_empty() {
+                warn!("rejected blank markets_refresh_token");
+                return Err(ConfigError::BlankMarketsRefreshToken);
+            }
+            trimmed_token.to_owned()
+        } else {
+            let publish_path =
+                publish_path.ok_or(ConfigError::MissingMarketsRefreshTokenPublishPath)?;
+            let token = generate_markets_refresh_token()?;
+            publish_markets_refresh_token(publish_path, &token)?;
+            debug!(path = %publish_path.display(), "markets refresh token published");
+            token
+        };
+
+        Ok(Config {
+            port: self.port,
+            data_dir: self.data_dir,
+            database_url: self.database_url,
+            hyperliquid_base_url: self.hyperliquid_base_url,
+            hyperliquid_testnet_base_url: self.hyperliquid_testnet_base_url,
+            log_level: self.log_level,
+            max_concurrent_requests: self.max_concurrent_requests,
+            max_retries: self.max_retries,
+            markets_refresh_token,
+            derive: self.derive,
+        })
+    }
+}
+
+fn generate_markets_refresh_token() -> Result<String, ConfigError> {
+    let mut bytes = [0_u8; 32];
+    getrandom::fill(&mut bytes).map_err(ConfigError::Getrandom)?;
+
+    Ok(bytes
+        .iter()
+        .fold(String::with_capacity(64), |mut token, byte| {
+            let _ = FmtWrite::write_fmt(&mut token, format_args!("{byte:02x}"));
+            token
+        }))
+}
+
+fn publish_markets_refresh_token(path: &Path, token: &str) -> Result<(), ConfigError> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    let temp_path = path.with_extension("tmp");
+    {
+        #[cfg(unix)]
+        use std::os::unix::fs::OpenOptionsExt;
+
+        let mut file = {
+            let mut open_options = std::fs::OpenOptions::new();
+            open_options.write(true).create(true).truncate(true);
+            #[cfg(unix)]
+            open_options.mode(0o640);
+            open_options.open(&temp_path)?
+        };
+        file.write_all(token.as_bytes())?;
+        file.write_all(b"\n")?;
+    }
+    std::fs::rename(&temp_path, path)?;
+
+    Ok(())
 }
 
 impl Config {
     /// Load configuration from a TOML file on disk.
     ///
+    /// When `markets_refresh_token` is omitted, `publish_path` must be set so a
+    /// fresh token can be generated and written for the local refresh timer.
+    ///
     /// # Errors
     ///
-    /// Returns [`ConfigError::Io`] if the file cannot be read, or
-    /// [`ConfigError::Toml`] if the contents are not valid TOML for [`Config`].
-    pub fn load<P: AsRef<Path>>(path: P) -> Result<Self, ConfigError> {
+    /// Returns [`ConfigError::Io`] if the file cannot be read,
+    /// [`ConfigError::Toml`] if the contents are not valid TOML, or other
+    /// [`ConfigError`] variants when markets refresh token settings are invalid.
+    pub fn load<P: AsRef<Path>>(path: P, publish_path: Option<&Path>) -> Result<Self, ConfigError> {
         let content = std::fs::read_to_string(path.as_ref())?;
-        Ok(toml::from_str(&content)?)
+        let source: ConfigSource = toml::from_str(&content)?;
+        source.into_config(publish_path)
     }
 }
 
@@ -94,16 +191,47 @@ pub enum ConfigError {
     Io(#[from] std::io::Error),
     #[error(transparent)]
     Toml(#[from] toml::de::Error),
+    #[error(transparent)]
+    Getrandom(#[from] getrandom::Error),
+    #[error(
+        "--markets-refresh-token-publish-path is required when markets_refresh_token is omitted"
+    )]
+    MissingMarketsRefreshTokenPublishPath,
+    #[error(
+        "markets_refresh_token must not be blank; omit it to auto-generate or set a non-empty value"
+    )]
+    BlankMarketsRefreshToken,
+    #[error("the [derive] config section is required to run the derive server")]
+    MissingDeriveConfig,
 }
 
-type IngestionCqrs = Arc<wire::Cqrs<Ingestion>>;
-type IngestionView = wire::View<Ingestion>;
 type IngestionJobQueue = SqliteStorage<IngestionJob>;
-type QueryDeps = Cons<Ingestion, Nil>;
 
 #[get("/health")]
-fn health() -> &'static str {
-    "ok"
+fn health() -> HealthJson {
+    HealthJson(Json(HealthResponse {
+        status: "ok",
+        version: env!("CARGO_PKG_VERSION"),
+    }))
+}
+
+#[derive(Debug, serde::Serialize)]
+struct HealthResponse {
+    status: &'static str,
+    version: &'static str,
+}
+
+struct HealthJson(Json<HealthResponse>);
+
+impl<'request> Responder<'request, 'static> for HealthJson {
+    fn respond_to(
+        self,
+        request: &'request rocket::request::Request<'_>,
+    ) -> rocket::response::Result<'static> {
+        Response::build_from(self.0.respond_to(request)?)
+            .raw_header("Cache-Control", "no-store")
+            .ok()
+    }
 }
 
 #[get("/candles/<timeframe>")]
@@ -121,28 +249,208 @@ async fn get_candles(
         .ok_or(Status::NotFound)
 }
 
+#[get("/factors/<timeframe>")]
+async fn get_factors(
+    config: &State<Config>,
+    timeframe: Timeframe,
+) -> Result<RawJson<Vec<u8>>, Status> {
+    match factors::compute_factors_json(&config.data_dir, timeframe).await {
+        Ok(json) => Ok(RawJson(json)),
+        Err(factors::ReturnsError::NoData { .. }) => Err(Status::NotFound),
+        Err(err) => {
+            error!(error = %err, "failed to compute factors");
+            Err(Status::InternalServerError)
+        }
+    }
+}
+
+#[post("/screener/<timeframe>", data = "<body>")]
+async fn post_screener(
+    config: &State<Config>,
+    timeframe: Timeframe,
+    body: Json<screener::ScreenerRequest>,
+) -> Result<RawJson<Vec<u8>>, Status> {
+    match screener::screen(&config.data_dir, timeframe, &body).await {
+        Ok(json) => Ok(RawJson(json)),
+        Err(screener::ScreenerError::Factors(factors::ReturnsError::NoData { .. })) => {
+            Err(Status::NotFound)
+        }
+        Err(err) => {
+            error!(error = %err, "failed to screen perps");
+            Err(Status::InternalServerError)
+        }
+    }
+}
+
+struct MarketsJson(Json<market_metadata::MarketsApiResponse>);
+
+/// Seconds until the next UTC midnight, for `Cache-Control: max-age`.
+///
+/// Markets refresh on a daily midnight schedule; bounding shared-cache TTL to
+/// the next midnight keeps GET responses from outliving the ledger refresh.
+fn markets_cache_max_age_seconds(unix_now: u64) -> u64 {
+    const SECONDS_PER_DAY: u64 = 86_400;
+    let seconds_into_day = unix_now % SECONDS_PER_DAY;
+    (SECONDS_PER_DAY - seconds_into_day).max(1)
+}
+
+impl<'request> Responder<'request, 'static> for MarketsJson {
+    fn respond_to(
+        self,
+        request: &'request rocket::request::Request<'_>,
+    ) -> rocket::response::Result<'static> {
+        let max_age = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(
+                market_metadata::MARKETS_REFRESH_INTERVAL.as_secs(),
+                |duration| markets_cache_max_age_seconds(duration.as_secs()),
+            );
+        Response::build_from(self.0.respond_to(request)?)
+            .raw_header(
+                "Cache-Control",
+                format!("private, max-age={max_age}, must-revalidate"),
+            )
+            .ok()
+    }
+}
+
+fn markets_ledger_from_query(
+    network: Option<&str>,
+) -> Result<market_metadata::MarketsLedger, Status> {
+    network.map_or(Ok(market_metadata::MarketsLedger::Mainnet), |value| {
+        market_metadata::MarketsLedger::parse_query(value).ok_or(Status::BadRequest)
+    })
+}
+
+#[get("/hyperliquid/markets?<network>")]
+async fn get_hyperliquid_markets(
+    network: Option<&str>,
+    config: &State<Config>,
+    hyperliquid_clients: &State<HyperliquidClients>,
+) -> Result<MarketsJson, Status> {
+    let ledger = markets_ledger_from_query(network)?;
+    match market_metadata::refresh_markets_if_stale(
+        hyperliquid_clients.for_ledger(ledger),
+        &config.data_dir,
+        ledger,
+    )
+    .await
+    {
+        Ok(response) => Ok(MarketsJson(Json(response))),
+        Err(err) => {
+            warn!(error = %err, ?ledger, "failed to load hyperliquid markets");
+            Err(Status::InternalServerError)
+        }
+    }
+}
+
+#[post("/hyperliquid/markets/refresh")]
+async fn post_hyperliquid_markets_refresh(
+    _auth: AuthorizedMarketsRefresh,
+    config: &State<Config>,
+    hyperliquid_clients: &State<HyperliquidClients>,
+) -> Result<MarketsJson, Status> {
+    match market_metadata::refresh_all_markets(hyperliquid_clients.inner(), &config.data_dir).await
+    {
+        Ok(()) => match market_metadata::load_markets_api_response(
+            &config.data_dir,
+            market_metadata::MarketsLedger::Mainnet,
+        )
+        .await
+        {
+            Ok(response) => Ok(MarketsJson(Json(response))),
+            Err(err) => {
+                warn!(error = %err, "failed to load hyperliquid markets after refresh");
+                Err(Status::InternalServerError)
+            }
+        },
+        Err(err) => {
+            warn!(error = %err, "failed to refresh hyperliquid markets");
+            Err(Status::InternalServerError)
+        }
+    }
+}
+
+struct AuthorizedMarketsRefresh;
+
+#[rocket::async_trait]
+impl<'request> FromRequest<'request> for AuthorizedMarketsRefresh {
+    type Error = Status;
+
+    async fn from_request(request: &'request Request<'_>) -> Outcome<Self, Self::Error> {
+        let Some(config) = request.rocket().state::<Config>() else {
+            return Outcome::Error((Status::InternalServerError, Status::InternalServerError));
+        };
+
+        match authorize_markets_refresh(request, config) {
+            Ok(()) => Outcome::Success(Self),
+            Err(status) => Outcome::Error((status, status)),
+        }
+    }
+}
+
+const MARKETS_REFRESH_TOKEN_HEADER: &str = "X-Markets-Refresh-Token";
+
+fn authorize_markets_refresh(request: &Request<'_>, config: &Config) -> Result<(), Status> {
+    let provided = request.headers().get_one(MARKETS_REFRESH_TOKEN_HEADER);
+    match provided {
+        None => Err(Status::Unauthorized),
+        Some(token) if markets_refresh_token_matches(token, &config.markets_refresh_token) => {
+            Ok(())
+        }
+        Some(_) => Err(Status::Forbidden),
+    }
+}
+
+fn markets_refresh_token_matches(provided: &str, expected: &str) -> bool {
+    if provided.len() != expected.len() {
+        return false;
+    }
+
+    provided
+        .bytes()
+        .zip(expected.bytes())
+        .fold(0_u8, |mismatch, (left, right)| mismatch | (left ^ right))
+        == 0
+}
+
 #[post("/ingest")]
-async fn start_ingestion(job_queue: &State<IngestionJobQueue>) -> Status {
-    if let Err(err) = job_queue.inner().clone().push(IngestionJob).await {
+async fn start_ingestion(job_queue: &State<IngestionJobQueue>, pool: &State<SqlitePool>) -> Status {
+    let run_id = match ingestion::create_run(pool).await {
+        Ok(run_id) => run_id,
+        Err(IngestionRunError::AlreadyRunning) => return Status::Conflict,
+        Err(err) => {
+            error!(error = %err, "failed to create ingestion run");
+            return Status::InternalServerError;
+        }
+    };
+
+    if let Err(err) = job_queue
+        .inner()
+        .clone()
+        .push(IngestionJob::new(run_id.clone()))
+        .await
+    {
         error!(error = %err, "failed to queue ingestion job");
+        if let Err(record_err) =
+            ingestion::fail_run(pool, &run_id, "failed to queue ingestion job").await
+        {
+            error!(error = %record_err, "failed to record ingestion queue failure");
+        }
         return Status::InternalServerError;
     }
+
     Status::Accepted
 }
 
 #[get("/ingestion/status")]
 async fn get_ingestion_status(
-    view: &State<IngestionView>,
+    pool: &State<SqlitePool>,
 ) -> Result<Json<Option<IngestionStatus>>, Status> {
-    let lifecycle = view.load::<IngestionId>(()).await.map_err(|err| {
-        error!(error = %err, "failed to load ingestion view");
+    let status = ingestion::latest_status(pool).await.map_err(|err| {
+        error!(error = %err, "failed to load ingestion status");
         Status::InternalServerError
     })?;
-
-    let status = lifecycle
-        .as_ref()
-        .and_then(|lifecycle| lifecycle.live().ok())
-        .map(|state| state.status);
 
     Ok(Json(status))
 }
@@ -156,6 +464,117 @@ struct BetaRequest {
 #[derive(Debug, serde::Serialize)]
 struct BetaResponse {
     beta: Option<f64>,
+    excluded_symbols: Vec<String>,
+    effective_weights: std::collections::BTreeMap<String, f64>,
+    data_age_hours: i64,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct ApiErrorResponse {
+    error: String,
+}
+
+#[post("/portfolio/readonly/btc", data = "<body>")]
+async fn post_portfolio_readonly_btc(
+    body: Json<readonly_portfolio::ReadonlyBtcBalancesRequest>,
+) -> Result<Json<readonly_portfolio::ReadonlyBtcBalancesResponse>, Custom<Json<ApiErrorResponse>>> {
+    let http_client = reqwest::Client::new();
+    let btc_base_url = readonly_portfolio::default_btc_base_url().map_err(|err| {
+        error!(error = %err, "failed to resolve btc explorer base url");
+        Custom(
+            Status::InternalServerError,
+            Json(ApiErrorResponse {
+                error: "failed to resolve btc explorer base url".to_string(),
+            }),
+        )
+    })?;
+    let blockchain_info_base_url =
+        readonly_portfolio::default_blockchain_info_base_url().map_err(|err| {
+            error!(error = %err, "failed to resolve blockchain.info base url");
+            Custom(
+                Status::InternalServerError,
+                Json(ApiErrorResponse {
+                    error: "failed to resolve blockchain.info base url".to_string(),
+                }),
+            )
+        })?;
+
+    readonly_portfolio::load_readonly_btc_balances(
+        &http_client,
+        &btc_base_url,
+        &blockchain_info_base_url,
+        &body,
+    )
+    .await
+    .map(Json)
+    .map_err(|err| {
+        error!(error = %err, "failed to load readonly btc balances");
+        let status = match err {
+            readonly_portfolio::ReadonlyPortfolioError::InvalidBtcAddress(_)
+            | readonly_portfolio::ReadonlyPortfolioError::EmptyAddressList => Status::BadRequest,
+            _ => Status::InternalServerError,
+        };
+        Custom(
+            status,
+            Json(ApiErrorResponse {
+                error: err.to_string(),
+            }),
+        )
+    })
+}
+
+#[post("/portfolio/exposure", data = "<body>")]
+async fn post_portfolio_exposure(
+    config: &State<Config>,
+    body: Json<readonly_portfolio::PortfolioExposureRequest>,
+) -> Result<Json<readonly_portfolio::PortfolioExposureResponse>, Custom<Json<ApiErrorResponse>>> {
+    let http_client = reqwest::Client::new();
+    let btc_base_url = readonly_portfolio::default_btc_base_url().map_err(|err| {
+        error!(error = %err, "failed to resolve btc explorer base url");
+        Custom(
+            Status::InternalServerError,
+            Json(ApiErrorResponse {
+                error: "failed to resolve btc explorer base url".to_string(),
+            }),
+        )
+    })?;
+    let blockchain_info_base_url =
+        readonly_portfolio::default_blockchain_info_base_url().map_err(|err| {
+            error!(error = %err, "failed to resolve blockchain.info base url");
+            Custom(
+                Status::InternalServerError,
+                Json(ApiErrorResponse {
+                    error: "failed to resolve blockchain.info base url".to_string(),
+                }),
+            )
+        })?;
+
+    readonly_portfolio::load_portfolio_exposure(
+        &http_client,
+        &btc_base_url,
+        &blockchain_info_base_url,
+        config.hyperliquid_base_url.as_ref(),
+        &body,
+    )
+    .await
+    .map(Json)
+    .map_err(|err| {
+        error!(error = %err, "failed to load portfolio exposure");
+        let status = match err {
+            readonly_portfolio::ReadonlyPortfolioError::InvalidBtcAddress(_)
+            | readonly_portfolio::ReadonlyPortfolioError::EmptyAddressList
+            | readonly_portfolio::ReadonlyPortfolioError::InvalidNotional { .. } => {
+                Status::BadRequest
+            }
+            _ => Status::InternalServerError,
+        };
+        Custom(
+            status,
+            Json(ApiErrorResponse {
+                error: err.to_string(),
+            }),
+        )
+    })
 }
 
 #[post("/beta", data = "<body>")]
@@ -179,12 +598,19 @@ async fn post_beta(
             .iter()
             .map(|(ticker, weight)| (ticker.clone(), *weight))
             .collect();
-        sorted_weights.sort_by(|(left_ticker, _), (right_ticker, _)| left_ticker.cmp(right_ticker));
+        sorted_weights
+            .sort_unstable_by(|(left_ticker, _), (right_ticker, _)| left_ticker.cmp(right_ticker));
         sorted_weights
     };
 
-    match beta::compute_portfolio_beta(&config.data_dir, &weights, &body.benchmark).await {
-        Ok(beta) => Ok(Json(BetaResponse { beta })),
+    match factors::compute_portfolio_beta_report(&config.data_dir, &weights, &body.benchmark).await
+    {
+        Ok(report) => Ok(Json(BetaResponse {
+            beta: report.beta,
+            excluded_symbols: report.excluded_tickers,
+            effective_weights: report.effective_weights,
+            data_age_hours: report.data_age_hours,
+        })),
         Err(err) => {
             error!(error = %err, "beta calculation failed");
             Err(Status::InternalServerError)
@@ -211,7 +637,10 @@ pub async fn rocket(
         ..RocketConfig::default()
     };
 
-    let pool = SqlitePool::connect(&config.database_url).await?;
+    let database_options = SqliteConnectOptions::from_str(&config.database_url)?
+        .journal_mode(SqliteJournalMode::Wal)
+        .busy_timeout(std::time::Duration::from_secs(5));
+    let pool = SqlitePool::connect_with(database_options).await?;
     debug!("database connected");
 
     // IMPORTANT: Migration ordering matters here.
@@ -224,58 +653,48 @@ pub async fn rocket(
     //
     // Solution: Run apalis first (if not already set up), then our migrations
     // with `ignore_missing` so we don't fail on apalis's migrations.
-    let apalis_tables_exist: bool = sqlx::query_scalar!(
-        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='Jobs')"
+    let apalis_tables_exist: i64 = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='Jobs')",
     )
     .fetch_one(&pool)
-    .await?
-        != 0;
+    .await?;
 
-    if !apalis_tables_exist {
+    if apalis_tables_exist == 0 {
         SqliteStorage::setup(&pool).await?;
     }
-    sqlx::migrate!().set_ignore_missing(true).run(&pool).await?;
-    debug!("migrations applied");
+    let mut migrations = sqlx::migrate!("./migrations");
+    migrations.set_ignore_missing(true).run(&pool).await?;
+    debug!(count = migrations.iter().count(), "migrations applied");
 
     let job_queue = SqliteStorage::<IngestionJob>::new(pool.clone());
+    ingestion::recover_abandoned_runs(&pool).await?;
 
-    let view: IngestionView = wire::View::new(pool.clone());
-    let query = GenericQuery::new(view.repo());
-
-    let hyperliquid_client = hyperliquid::HyperliquidClient::new(
+    let hyperliquid_clients = HyperliquidClients::from_config(
         config.hyperliquid_base_url.as_ref(),
+        config.hyperliquid_testnet_base_url.as_ref(),
         config.max_retries,
     )
     .await?;
+    if let Err(err) =
+        market_metadata::refresh_all_markets_if_stale(&hyperliquid_clients, &config.data_dir).await
+    {
+        warn!(error = %err, "failed to refresh markets metadata on startup");
+    }
     let services = Arc::new(IngestionServices {
-        hyperliquid: Arc::new(hyperliquid_client),
+        hyperliquid: Arc::clone(&hyperliquid_clients.mainnet),
         data_dir: config.data_dir.clone(),
         max_concurrent_requests: config.max_concurrent_requests,
     });
 
-    let unwired = UnwiredQuery::<_, QueryDeps>::new(query);
-    let (cqrs, (wired, ())) = wire::CqrsBuilder::<Ingestion>::new(pool)
-        .wire(unwired)
-        .build(IngestionServices {
-            hyperliquid: Arc::clone(&services.hyperliquid),
-            data_dir: services.data_dir.clone(),
-            max_concurrent_requests: services.max_concurrent_requests,
-        });
-
-    // Proves all query dependencies are satisfied at compile time
-    drop(wired.into_inner());
-
-    let cqrs: IngestionCqrs = Arc::new(cqrs);
-
     // Spawn apalis worker
     tokio::spawn({
-        let cqrs = Arc::clone(&cqrs);
+        let pool = pool.clone();
         let services = Arc::clone(&services);
         let job_queue = job_queue.clone();
         async move {
             let monitor = Monitor::new().register(
                 WorkerBuilder::new("ingestion")
-                    .data(cqrs)
+                    .data(pool)
                     .data(services)
                     .backend(job_queue)
                     .build_fn(IngestionJob::run),
@@ -290,17 +709,23 @@ pub async fn rocket(
     info!(port = config.port, "moneymentum ready");
     Ok(rocket::custom(rocket_config)
         .manage(config)
-        .manage(cqrs)
-        .manage(view)
+        .manage(pool)
         .manage(job_queue)
+        .manage(hyperliquid_clients)
         .mount(
             "/",
             routes![
                 health,
                 get_candles,
+                get_factors,
+                post_screener,
                 start_ingestion,
                 get_ingestion_status,
-                post_beta
+                post_beta,
+                post_portfolio_readonly_btc,
+                post_portfolio_exposure,
+                get_hyperliquid_markets,
+                post_hyperliquid_markets_refresh
             ],
         ))
 }
@@ -334,6 +759,7 @@ mod tests {
     use proptest::prelude::*;
     use rocket::local::blocking::Client;
     use tempfile::TempDir;
+    use tracing_test::traced_test;
 
     fn test_rocket(data_dir: &std::path::Path) -> rocket::Rocket<rocket::Build> {
         let config = Config {
@@ -341,18 +767,17 @@ mod tests {
             data_dir: data_dir.to_path_buf(),
             database_url: "sqlite::memory:".to_string(),
             hyperliquid_base_url: None,
+            hyperliquid_testnet_base_url: None,
             log_level: LogLevel::Info,
             max_concurrent_requests: 3,
             max_retries: 5,
-            derive: derive::DeriveConfig {
-                port: 8100,
-                rest_base_url: url::Url::parse("https://api.lyra.finance").expect("valid url"),
-                ws_url: url::Url::parse("wss://api.lyra.finance/ws").expect("valid url"),
-            },
+            markets_refresh_token: "test-markets-refresh-token".to_string(),
+            derive: None,
         };
-        rocket::build()
-            .manage(config)
-            .mount("/", routes![health, get_candles])
+        rocket::build().manage(config).mount(
+            "/",
+            routes![health, get_candles, get_factors, post_screener],
+        )
     }
 
     proptest! {
@@ -365,11 +790,7 @@ mod tests {
                 log_level = "info"
                 max_concurrent_requests = 3
                 max_retries = 5
-
-                [derive]
-                port = 8100
-                rest_base_url = "https://api.lyra.finance"
-                ws_url = "wss://api.lyra.finance/ws"
+                markets_refresh_token = "test-markets-refresh-token"
             "#);
             let config: Config = toml::from_str(&toml).unwrap();
             prop_assert_eq!(config.port, port);
@@ -383,31 +804,205 @@ mod tests {
 
         assert_eq!(config.port, 8000);
         assert_eq!(config.data_dir, PathBuf::from("data"));
-
-        assert_eq!(config.derive.port, 8100);
-        assert_eq!(config.derive.rest_base_url.scheme(), "https");
-        assert_eq!(
-            config.derive.rest_base_url.host_str(),
-            Some("api.lyra.finance")
-        );
-        assert_eq!(config.derive.ws_url.scheme(), "wss");
-        assert_eq!(config.derive.ws_url.host_str(), Some("api.lyra.finance"));
     }
 
     #[test]
     fn config_load_returns_error_for_missing_file() {
-        let result = Config::load("/nonexistent/path.toml");
+        let result = Config::load("/nonexistent/path.toml", None);
         assert!(matches!(result, Err(ConfigError::Io(_))));
     }
 
     #[test]
-    fn health_returns_ok() {
+    fn config_load_generates_and_publishes_markets_refresh_token() {
+        let temp_dir = TempDir::new().unwrap();
+        let token_path = temp_dir.path().join("markets-refresh-token");
+        let config_path = temp_dir.path().join("config.toml");
+        std::fs::write(
+            &config_path,
+            r#"
+            port = 8000
+            data_dir = "data"
+            database_url = "sqlite::memory:"
+            log_level = "info"
+            max_concurrent_requests = 3
+            max_retries = 5
+            "#,
+        )
+        .unwrap();
+
+        let config = Config::load(&config_path, Some(&token_path)).unwrap();
+        let published = std::fs::read_to_string(&token_path).unwrap();
+        let published_token = published.trim();
+
+        assert_eq!(config.markets_refresh_token, published_token);
+        assert_eq!(published_token.len(), 64);
+        assert!(markets_refresh_token_matches(
+            published_token,
+            &config.markets_refresh_token
+        ));
+    }
+
+    #[test]
+    fn config_load_requires_publish_path_without_inline_token() {
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("config.toml");
+        std::fs::write(
+            &config_path,
+            r#"
+            port = 8000
+            data_dir = "data"
+            database_url = "sqlite::memory:"
+            log_level = "info"
+            max_concurrent_requests = 3
+            max_retries = 5
+            "#,
+        )
+        .unwrap();
+
+        let result = Config::load(&config_path, None);
+        assert!(matches!(
+            result,
+            Err(ConfigError::MissingMarketsRefreshTokenPublishPath)
+        ));
+    }
+
+    #[traced_test]
+    #[test]
+    fn config_load_rejects_blank_inline_token() {
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("config.toml");
+        std::fs::write(
+            &config_path,
+            r#"
+            port = 8000
+            data_dir = "data"
+            database_url = "sqlite::memory:"
+            log_level = "info"
+            max_concurrent_requests = 3
+            max_retries = 5
+            markets_refresh_token = ""
+            "#,
+        )
+        .unwrap();
+
+        let result = Config::load(&config_path, None);
+        assert!(matches!(result, Err(ConfigError::BlankMarketsRefreshToken)));
+        assert!(logs_contain_at(
+            tracing::Level::WARN,
+            &["rejected", "markets_refresh_token"]
+        ));
+    }
+
+    #[traced_test]
+    #[test]
+    fn config_load_rejects_whitespace_only_inline_token() {
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("config.toml");
+        std::fs::write(
+            &config_path,
+            r#"
+            port = 8000
+            data_dir = "data"
+            database_url = "sqlite::memory:"
+            log_level = "info"
+            max_concurrent_requests = 3
+            max_retries = 5
+            markets_refresh_token = "  \t  "
+            "#,
+        )
+        .unwrap();
+
+        let result = Config::load(&config_path, None);
+        assert!(matches!(result, Err(ConfigError::BlankMarketsRefreshToken)));
+        assert!(logs_contain_at(
+            tracing::Level::WARN,
+            &["rejected", "markets_refresh_token"]
+        ));
+    }
+
+    #[test]
+    fn markets_refresh_token_matches_expected_value() {
+        assert!(
+            markets_refresh_token_matches(
+                "test-markets-refresh-token",
+                "test-markets-refresh-token"
+            ),
+            "identical refresh tokens should authorize"
+        );
+        assert!(
+            !markets_refresh_token_matches(
+                "wrong-markets-refresh-token",
+                "test-markets-refresh-token"
+            ),
+            "a different refresh token should be rejected"
+        );
+    }
+
+    #[test]
+    fn markets_ledger_from_query_defaults_to_mainnet_when_absent() {
+        assert_eq!(
+            markets_ledger_from_query(None).unwrap(),
+            market_metadata::MarketsLedger::Mainnet
+        );
+    }
+
+    #[test]
+    fn markets_ledger_from_query_parses_known_network_values() {
+        assert_eq!(
+            markets_ledger_from_query(Some("mainnet")).unwrap(),
+            market_metadata::MarketsLedger::Mainnet
+        );
+        assert_eq!(
+            markets_ledger_from_query(Some("testnet")).unwrap(),
+            market_metadata::MarketsLedger::Testnet
+        );
+    }
+
+    #[test]
+    fn markets_ledger_from_query_rejects_unknown_network_values() {
+        assert_eq!(
+            markets_ledger_from_query(Some("banana")),
+            Err(Status::BadRequest)
+        );
+        assert_eq!(markets_ledger_from_query(Some("")), Err(Status::BadRequest));
+    }
+
+    #[test]
+    fn markets_cache_max_age_seconds_reaches_next_utc_midnight() {
+        const SECONDS_PER_DAY: u64 = 86_400;
+        let noon_utc = 12 * 60 * 60;
+        assert_eq!(markets_cache_max_age_seconds(noon_utc), 12 * 60 * 60);
+        assert_eq!(markets_cache_max_age_seconds(SECONDS_PER_DAY - 1), 1);
+        assert_eq!(markets_cache_max_age_seconds(0), SECONDS_PER_DAY);
+    }
+
+    #[test]
+    fn health_returns_json_contract() {
         let rocket = rocket::build().mount("/", routes![health]);
         let client = Client::tracked(rocket).unwrap();
         let response = client.get("/health").dispatch();
 
         assert_eq!(response.status(), Status::Ok);
-        assert_eq!(response.into_string(), Some("ok".to_owned()));
+        assert_eq!(
+            response.content_type(),
+            Some(rocket::http::ContentType::JSON)
+        );
+        assert_eq!(
+            response.headers().get_one("Cache-Control"),
+            Some("no-store")
+        );
+
+        let body = response.into_string().unwrap();
+        let payload: serde_json::Value = serde_json::from_str(&body).unwrap();
+
+        assert_eq!(
+            payload.get("status").and_then(serde_json::Value::as_str),
+            Some("ok")
+        );
+        assert_eq!(
+            payload.get("version").and_then(serde_json::Value::as_str),
+            Some(env!("CARGO_PKG_VERSION"))
+        );
     }
 
     #[test]
@@ -417,6 +1012,220 @@ mod tests {
         let response = client.get("/candles/1h").dispatch();
 
         assert_eq!(response.status(), Status::NotFound);
+    }
+
+    #[test]
+    fn get_factors_returns_404_when_no_data() {
+        let data_dir = TempDir::new().unwrap();
+        let client = Client::tracked(test_rocket(data_dir.path())).unwrap();
+        let response = client.get("/factors/1d").dispatch();
+
+        assert_eq!(response.status(), Status::NotFound);
+    }
+
+    #[traced_test]
+    #[test]
+    fn get_factors_returns_per_ticker_factor_scores_json() {
+        let data_dir = TempDir::new().unwrap();
+        std::fs::copy(
+            std::path::Path::new("fixtures/ohlcv_1d_beta.csv"),
+            data_dir.path().join("ohlcv_1d.csv"),
+        )
+        .unwrap();
+
+        let client = Client::tracked(test_rocket(data_dir.path())).unwrap();
+        let response = client.get("/factors/1d").dispatch();
+
+        assert_eq!(response.status(), Status::Ok);
+        let body = response.into_string().unwrap();
+        let rows: Vec<serde_json::Value> =
+            serde_json::from_str(&body).expect("factors body is a JSON array");
+        assert!(!rows.is_empty(), "expected a row per ticker");
+        assert!(
+            rows.iter()
+                .all(|row| row.get("annualized_volatility").is_some()),
+            "every row carries annualized_volatility"
+        );
+        assert!(
+            rows.iter().all(|row| row.get("cum_return").is_some()),
+            "every row carries cum_return"
+        );
+        assert!(
+            rows.iter().all(|row| row
+                .get("sma")
+                .is_some_and(|value| value.is_null() || value.as_f64().is_some())),
+            "every row carries sma as a number or null"
+        );
+        assert!(
+            rows.iter().all(|row| row
+                .get("mean_return")
+                .is_some_and(|value| value.is_null() || value.as_f64().is_some())),
+            "every row carries mean_return as a number or null"
+        );
+        assert!(
+            rows.iter().all(|row| row
+                .get("price_zscore")
+                .is_some_and(|value| value.is_null() || value.as_f64().is_some())),
+            "every row carries price_zscore as a number or null"
+        );
+        assert!(
+            rows.iter().all(|row| row
+                .get("annualized_return")
+                .and_then(serde_json::Value::as_f64)
+                .is_some()),
+            "every row carries annualized_return as a number (the fixture's closes are clean)"
+        );
+        assert!(
+            rows.iter().all(|row| row
+                .get("sharpe")
+                .and_then(serde_json::Value::as_f64)
+                .is_some()),
+            "every row carries sharpe as a number (the fixture's closes all vary)"
+        );
+        assert!(
+            rows.iter().all(|row| row
+                .get("sortino")
+                .and_then(serde_json::Value::as_f64)
+                .is_some()),
+            "every row carries sortino as a number (every fixture ticker has downside)"
+        );
+        assert!(
+            rows.iter().all(|row| row
+                .get("autocorrelation")
+                .and_then(serde_json::Value::as_f64)
+                .is_some()),
+            "every row carries autocorrelation as a number (the fixture's returns all vary)"
+        );
+        assert!(
+            rows.iter().all(|row| row
+                .get("information_discreteness")
+                .and_then(serde_json::Value::as_f64)
+                .is_some()),
+            "every row carries information_discreteness as a number (the fixture's returns all vary)"
+        );
+        // The fixture ships no funding data, so carry is legitimately null --
+        // but the key itself must stay in the schema for every row.
+        assert!(
+            rows.iter()
+                .all(|row| row.get("carry").is_some_and(serde_json::Value::is_null)),
+            "carry key is present and null for every row without funding data"
+        );
+
+        assert!(
+            rows.iter().all(|row| row
+                .get("beta")
+                .and_then(serde_json::Value::as_f64)
+                .is_some()),
+            "every row carries beta as a number (prices vary and BTC is the benchmark)"
+        );
+        assert!(
+            rows.iter().all(|row| row
+                .get("volume_24h")
+                .and_then(serde_json::Value::as_f64)
+                .is_some()),
+            "every row carries volume_24h as a number (every fixture ticker has current candles)"
+        );
+        assert_btc_factor_values_are_real(&rows);
+
+        assert!(logs_contain_at(
+            tracing::Level::DEBUG,
+            &["factors computed"]
+        ));
+    }
+
+    /// Key presence alone would pass if every factor serialized as null; pin
+    /// BTC's values so a serialization regression fails the factors route test.
+    fn assert_btc_factor_values_are_real(rows: &[serde_json::Value]) {
+        let btc_row = rows
+            .iter()
+            .find(|row| row.get("ticker").and_then(|ticker| ticker.as_str()) == Some("BTC"))
+            .expect("BTC is present in the factor scores");
+
+        let btc_volatility = btc_row["annualized_volatility"]
+            .as_f64()
+            .expect("BTC annualized_volatility is a number");
+        assert!(
+            btc_volatility > 0.0,
+            "BTC annualized_volatility must be positive, got {btc_volatility}"
+        );
+        for factor_key in [
+            "cum_return",
+            "sma",
+            "mean_return",
+            "price_zscore",
+            "annualized_return",
+            "sharpe",
+            "sortino",
+            "autocorrelation",
+            "information_discreteness",
+            "beta",
+            "volume_24h",
+        ] {
+            let value = btc_row[factor_key].as_f64();
+            assert!(
+                value.is_some_and(f64::is_finite),
+                "BTC {factor_key} must be a finite number, got {value:?}"
+            );
+        }
+
+        // Pin the unit conversion: the fixture's latest BTC candle is 1400
+        // base units against a ~$46.7k close, so notional must be tens of
+        // millions -- a raw base-unit sum (~1400) fails this by four orders
+        // of magnitude.
+        let btc_volume = btc_row["volume_24h"]
+            .as_f64()
+            .expect("BTC volume_24h is a number");
+        assert!(
+            btc_volume > 1e6,
+            "volume_24h must be quote notional, not base units, got {btc_volume}"
+        );
+        // No funding fixture is staged, so carry serializes as null - the
+        // documented no-funding-data behavior.
+        assert!(
+            btc_row["carry"].is_null(),
+            "carry must be null without funding data, got {:?}",
+            btc_row["carry"]
+        );
+    }
+
+    #[test]
+    fn post_screener_returns_404_when_no_data() {
+        let data_dir = TempDir::new().unwrap();
+        let client = Client::tracked(test_rocket(data_dir.path())).unwrap();
+        let response = client
+            .post("/screener/1d")
+            .header(rocket::http::ContentType::JSON)
+            .body(r#"{"factor":"sharpe"}"#)
+            .dispatch();
+
+        assert_eq!(response.status(), Status::NotFound);
+    }
+
+    #[test]
+    fn post_screener_returns_ranked_rows_with_missing_flags() {
+        let data_dir = TempDir::new().unwrap();
+        std::fs::copy(
+            std::path::Path::new("fixtures/ohlcv_1d_beta.csv"),
+            data_dir.path().join("ohlcv_1d.csv"),
+        )
+        .unwrap();
+
+        let client = Client::tracked(test_rocket(data_dir.path())).unwrap();
+        let response = client
+            .post("/screener/1d")
+            .header(rocket::http::ContentType::JSON)
+            .body(r#"{"factor":"sharpe"}"#)
+            .dispatch();
+
+        assert_eq!(response.status(), Status::Ok);
+        let body = response.into_string().unwrap();
+        let rows: Vec<serde_json::Value> =
+            serde_json::from_str(&body).expect("screener body is a JSON array");
+        assert!(!rows.is_empty(), "expected ranked rows");
+        assert!(
+            rows.iter().all(|row| row.get("missing").is_some()),
+            "every ranked row carries a missing flag"
+        );
     }
 
     #[test]

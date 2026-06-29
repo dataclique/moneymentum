@@ -987,14 +987,33 @@ pub async fn rocket(
         ))
 }
 
+/// Byte offset into the shared `tracing_test` buffer at the start of a test.
+///
+/// Capture this before exercising code when parallel tests might append unrelated
+/// log lines to the same global buffer.
+#[cfg(test)]
+pub(crate) fn capture_log_offset() -> usize {
+    tracing_test::internal::global_buf().lock().unwrap().len()
+}
+
 /// Asserts that a log line at the given level contains all snippets.
 ///
 /// Use with `tracing_test::traced_test` to verify observability.
 #[cfg(test)]
 pub(crate) fn logs_contain_at(level: tracing::Level, snippets: &[&str]) -> bool {
+    logs_contain_at_since(0, level, snippets)
+}
+
+/// Like [`logs_contain_at`], but only inspects log bytes appended after `since`.
+#[cfg(test)]
+pub(crate) fn logs_contain_at_since(
+    since: usize,
+    level: tracing::Level,
+    snippets: &[&str],
+) -> bool {
     let logs = {
         let buf = tracing_test::internal::global_buf().lock().unwrap();
-        String::from_utf8_lossy(&buf).into_owned()
+        String::from_utf8_lossy(&buf[since..]).into_owned()
     };
 
     let level_str = match level {

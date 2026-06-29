@@ -184,13 +184,13 @@ history (a projection over `Portfolio`'s `TargetRevised` stream) and
 ## Integration mechanics
 
 **Dependency.** event-sorcery's crates carry package version `0.1.0` but are
-released under git tag `0.2.0-rc1`, so a crates.io version dep is impossible --
+released under git tag `0.2.0-rc2`, so a crates.io version dep is impossible --
 git+tag is mandatory. Depend on `event-sorcery` only (it re-exports what it
 needs from `sqlite-es`/`cqrs-es`); keep all event-sourcing surface behind its
 API.
 
 ```toml
-event-sorcery = { git = "https://github.com/ST0X-Technology/event-sorcery", tag = "0.2.0-rc1" }
+event-sorcery = { git = "https://github.com/ST0X-Technology/event-sorcery", tag = "0.2.0-rc2" }
 ```
 
 **Forced upgrades** (event-sorcery pins these; they are semver-incompatible with
@@ -272,8 +272,8 @@ load_all/filter`, never raw SQL on the event/view tables.
   justification is false (`tradable_from_frame` is consumed only inside
   `refresh_markets`).
 - **IngestionRun as the first beachhead.** It is the single highest-risk
-  aggregate (the #339 history) and forces the hardest correctness design at the
-  moment we are least familiar with the framework. It lands after Portfolio on a
+  aggregate (the #339 history) and forces the hardest correctness design when we
+  are currently least familiar with the framework. It lands after Portfolio on a
   proven foundation.
 - **Concurrency guards via reading an eventually-consistent projection.**
   Unsound -- pure handlers cannot read projections and the view lags the stream,

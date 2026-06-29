@@ -390,7 +390,7 @@ impl EventSourced for Portfolio {
     ) -> Result<Vec<PortfolioEvent>, PortfolioError> {
         match command {
             PortfolioCommand::Open { .. } => Err(PortfolioError::AlreadyOpen),
-            _ if matches!(self.status, PortfolioStatus::Archived) => Err(PortfolioError::Archived),
+            _ if self.status == PortfolioStatus::Archived => Err(PortfolioError::Archived),
             PortfolioCommand::ReviseTarget { target } => {
                 Ok(vec![PortfolioEvent::TargetRevised { target }])
             }

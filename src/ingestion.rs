@@ -228,7 +228,7 @@ impl EventSourced for IngestionRun {
             IngestionRunCommand::Complete { .. }
             | IngestionRunCommand::Fail { .. }
             | IngestionRunCommand::Abandon { .. }
-                if !matches!(self.status, IngestionRunStatus::Running) =>
+                if self.status != IngestionRunStatus::Running =>
             {
                 Err(IngestionRunError::AlreadyTerminal)
             }
@@ -275,7 +275,7 @@ impl IngestionJob {
         // A run abandoned by startup recovery must not resurrect: skip the work
         // and leave its terminal state untouched.
         match store.load(&self.run_id).await {
-            Ok(Some(run)) if matches!(run.status, IngestionRunStatus::Running) => {}
+            Ok(Some(run)) if run.status == IngestionRunStatus::Running => {}
             Ok(_) => {
                 warn!(run_id = %self.run_id, "skipping ingestion for a finished run");
                 return Ok(());
@@ -417,7 +417,11 @@ pub(crate) async fn create_run(
     // Running slot. If it is not this one, we lost the race: abandon the orphan
     // stream and report AlreadyRunning, so only the winner proceeds.
     let running = running_runs(projection).await?;
-    let won = matches!(running.as_slice(), [(winner, _)] if *winner == run_id);
+    let won = if let [(winner, _)] = running.as_slice() {
+        *winner == run_id
+    } else {
+        false
+    };
     if !won {
         store
             .send(
@@ -468,6 +472,8 @@ pub(crate) async fn recover_abandoned_runs(
 
     if recovered > 0 {
         warn!(runs = recovered, "abandoned ingestion runs on startup");
+    } else {
+        debug!("no running ingestion runs to recover on startup");
     }
 
     Ok(recovered)
@@ -869,9 +875,9 @@ mod tests {
         let recovered = recover_abandoned_runs(&store, &projection).await.unwrap();
 
         assert_eq!(recovered, 0);
-        assert!(!logs_contain_at(
-            Level::WARN,
-            &["abandoned ingestion runs on startup"]
+        assert!(logs_contain_at(
+            Level::DEBUG,
+            &["no running ingestion runs to recover on startup"]
         ));
     }
 

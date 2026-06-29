@@ -78,10 +78,6 @@ export const usePortfolioState = () => {
   // Mutations
   const rebalancePositionsMutation = useRebalanceHyperliquidPositions()
 
-  ///////////////////////////
-  ///////START HERE//////////
-  ///////////////////////////
-
   const [currentPortfolio, setCurrentPortfolio] = createStore<
     Record<string, PortfolioInterface | undefined>
   >({})
@@ -101,10 +97,6 @@ export const usePortfolioState = () => {
 
   const [currentTotalNotional, setCurrentTotalNotional] = createSignal(0)
   const [targetTotalNotional, setTargetTotalNotional] = createSignal(0)
-
-  ///////////////////////////
-  ///////END HERE//////////
-  ///////////////////////////
 
   const [isRebalancingUi, setIsRebalancingUi] = createSignal(false)
 
@@ -254,8 +246,13 @@ export const usePortfolioState = () => {
       return
     }
     const positionsData = positionsQuery.data
-    const isPositionsLoading = positionsQuery.isLoading
-    if (isPositionsLoading || !positionsData?.positions) {
+    // Bail while a fetch is in flight (initial load OR a post-rebalance refetch)
+    // so we only ever hydrate from settled exchange data, never stale cache.
+    if (
+      positionsQuery.isLoading ||
+      positionsQuery.isFetching ||
+      !positionsData?.positions
+    ) {
       return
     }
     // Wait for accountValue to be loaded so we can calculate correct percentages
@@ -446,6 +443,8 @@ export const usePortfolioState = () => {
   }
 
   const handleNotionalChange = (symbol: string, newNotional: number) => {
+    if (!Number.isFinite(newNotional) || newNotional < 0) return
+
     const oldNotional = targetPortfolio[symbol]?.notional ?? 0
     const diff = newNotional - oldNotional
 
@@ -520,9 +519,19 @@ export const usePortfolioState = () => {
       isPrecise(),
     )
 
-    rebalancePositionsMutation.mutate(apiPayload)
-
     setIsRebalancingUi(true)
+    rebalancePositionsMutation.mutate(apiPayload, {
+      onSuccess: () => {
+        // Re-sync from the exchange. The mutation hook invalidates the positions
+        // query; clearing this flag lets the init effect re-hydrate current and
+        // target from the refetched positions, and unlocks the UI.
+        setPositionsLoadedFromExchange(false)
+        setIsRebalancingUi(false)
+      },
+      onError: () => {
+        setIsRebalancingUi(false)
+      },
+    })
   }
 
   const canSubmit = () => {
@@ -538,13 +547,6 @@ export const usePortfolioState = () => {
       !hasTotalWeightExceeded()
     )
   }
-
-  // // createEffect: clear rebalancing UI state once staged trades are empty
-  // createEffect(() => {
-  //   if (!isRebalancingUi() || !positionsLoadedFromExchange()) {
-  //     return
-  //   }
-  // })
 
   return {
     get accountValue() {

@@ -231,16 +231,22 @@ describe("usePortfolioState", () => {
     result.handleNotionalChange("BTC/USDC:USDC", 700)
     result.handleRebalancePositions()
 
-    expect(mutate).toHaveBeenCalledWith({
-      actions: [
-        expect.objectContaining({
-          kind: "rebalance",
-          symbol: "BTC/USDC:USDC",
-          signedNotionalDelta: 100,
-          leverage: 2,
-          leverageChanged: false,
-        }),
-      ],
-    })
+    expect(mutate).toHaveBeenCalledWith(
+      {
+        actions: [
+          expect.objectContaining({
+            kind: "rebalance",
+            symbol: "BTC/USDC:USDC",
+            signedNotionalDelta: 100,
+            leverage: 2,
+            leverageChanged: false,
+          }),
+        ],
+      },
+      expect.objectContaining({
+        onSuccess: expect.any(Function),
+        onError: expect.any(Function),
+      }),
+    )
   })
 })

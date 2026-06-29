@@ -12,7 +12,11 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
 
-use apalis::prelude::Data;
+use apalis::prelude::{Data, TaskSink};
+use apalis_sqlite::SqliteStorage;
+use axum::Json;
+use axum::extract::State;
+use axum::http::StatusCode;
 use chrono::{DateTime, Utc};
 use event_sorcery::{
     Column, DomainEvent, EventSourced, JobQueue, Nil, Projection, ProjectionError, SendError,
@@ -23,6 +27,7 @@ use thiserror::Error;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
+use crate::AppState;
 use crate::hyperliquid::{CandleIngester, FundingRateIngester, Hyperliquid};
 use crate::market_catalog::MarketCatalog;
 use crate::market_enablement::MarketEnablement;
@@ -581,6 +586,49 @@ pub(crate) async fn fail_run(
 
     debug!(run_id = %run_id, "ingestion run failed");
     Ok(())
+}
+
+/// `POST /ingest` -- opens a run and enqueues its ingestion job.
+pub(crate) async fn start_ingestion(State(state): State<Arc<AppState>>) -> StatusCode {
+    let run_id = match create_run(&state.ingestion_store, &state.ingestion_projection).await {
+        Ok(run_id) => run_id,
+        Err(IngestionError::AlreadyRunning) => return StatusCode::CONFLICT,
+        Err(err) => {
+            error!(error = %err, "failed to create ingestion run");
+            return StatusCode::INTERNAL_SERVER_ERROR;
+        }
+    };
+
+    let mut job_queue = SqliteStorage::<IngestionJob, (), ()>::new(&state.apalis_pool);
+    if let Err(err) = job_queue.push(IngestionJob::new(run_id.clone())).await {
+        error!(error = %err, "failed to queue ingestion job");
+        if let Err(record_err) = fail_run(
+            &state.ingestion_store,
+            &run_id,
+            "failed to queue ingestion job",
+        )
+        .await
+        {
+            error!(error = %record_err, "failed to record ingestion queue failure");
+        }
+        return StatusCode::INTERNAL_SERVER_ERROR;
+    }
+
+    StatusCode::ACCEPTED
+}
+
+/// `GET /ingestion/status` -- the latest run's lifecycle state, if any.
+pub(crate) async fn get_ingestion_status(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Option<IngestionRunStatus>>, StatusCode> {
+    let status = latest_status(&state.ingestion_projection)
+        .await
+        .map_err(|err| {
+            error!(error = %err, "failed to load ingestion status");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+    Ok(Json(status))
 }
 
 #[cfg(test)]

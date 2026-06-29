@@ -9,11 +9,17 @@
 //! careful merge (the bug the old `markets.csv` left-join had to avoid by hand).
 
 use std::collections::BTreeSet;
+use std::str::FromStr;
+use std::sync::Arc;
 
+use axum::Json;
+use axum::extract::{Path as AxumPath, State};
+use axum::http::StatusCode;
 use chrono::Utc;
 use event_sorcery::{Projection, ProjectionError, SendError, Store};
-use tracing::info;
+use tracing::{error, info};
 
+use crate::AppState;
 use crate::finance::{Market, Symbol};
 use crate::hyperliquid::{Hyperliquid, HyperliquidError};
 use crate::market_catalog::{CatalogMarket, MarketCatalog, MarketCatalogCommand};
@@ -105,6 +111,32 @@ pub(crate) async fn tradable_markets(
         .map(|market| Market::new(market.symbol().as_str().to_string()))
         .collect();
     Ok(tradable)
+}
+
+/// `GET /markets/<venue>` -- a venue's tradable markets: catalog listings minus
+/// operator disables.
+pub(crate) async fn get_markets(
+    State(state): State<Arc<AppState>>,
+    AxumPath(venue): AxumPath<String>,
+) -> Result<Json<Vec<String>>, StatusCode> {
+    let venue = VenueRef::from_str(&venue).map_err(|_| StatusCode::NOT_FOUND)?;
+    let tradable = tradable_markets(
+        venue,
+        &state.market_catalog_projection,
+        &state.market_enablement_projection,
+    )
+    .await
+    .map_err(|err| {
+        error!(error = %err, "failed to list tradable markets");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+
+    Ok(Json(
+        tradable
+            .iter()
+            .map(|market| market.as_str().to_string())
+            .collect(),
+    ))
 }
 
 #[cfg(test)]

@@ -21,9 +21,9 @@ use std::str::FromStr;
 
 use crate::candle::{Candle, CandleError, candles_to_dataframe};
 use crate::dataframe::{self, DataFrameError};
-use crate::finance::{Market, Symbol};
+use crate::finance::{self, Market, Symbol};
 use crate::funding::{self, FundingError, FundingRate};
-use crate::market_metadata::MarketMetadata;
+use crate::market_metadata::{MarketMetadata, MarketsLedger};
 use crate::timeframe::Timeframe;
 
 /// Maximum number of data points returned by Hyperliquid's historical data endpoints.
@@ -48,6 +48,8 @@ pub(crate) enum HyperliquidError {
     #[error(transparent)]
     Http(#[from] reqwest::Error),
     #[error(transparent)]
+    Url(#[from] url::ParseError),
+    #[error(transparent)]
     Polars(#[from] polars::prelude::PolarsError),
 }
 
@@ -70,6 +72,39 @@ pub(crate) trait Hyperliquid: Send + Sync {
         market: &Market,
         start: DateTime<Utc>,
     ) -> Result<Vec<FundingRate>, HyperliquidError>;
+}
+
+pub(crate) const HYPERLIQUID_TESTNET_BASE_URL: &str = "https://api.hyperliquid-testnet.xyz";
+
+/// Mainnet and testnet Hyperliquid info clients for markets refresh and ingestion.
+pub(crate) struct HyperliquidClients {
+    pub(crate) mainnet: Arc<dyn Hyperliquid>,
+    pub(crate) testnet: Arc<dyn Hyperliquid>,
+}
+
+impl HyperliquidClients {
+    pub(crate) async fn from_config(
+        mainnet_base_url: Option<&Url>,
+        testnet_base_url: Option<&Url>,
+        max_retries: usize,
+    ) -> Result<Self, HyperliquidError> {
+        let mainnet = Arc::new(HyperliquidClient::new(mainnet_base_url, max_retries).await?)
+            as Arc<dyn Hyperliquid>;
+        let testnet_url = match testnet_base_url {
+            Some(url) => url.clone(),
+            None => Url::parse(HYPERLIQUID_TESTNET_BASE_URL)?,
+        };
+        let testnet = Arc::new(HyperliquidClient::new(Some(&testnet_url), max_retries).await?)
+            as Arc<dyn Hyperliquid>;
+        Ok(Self { mainnet, testnet })
+    }
+
+    pub(crate) fn for_ledger(&self, ledger: MarketsLedger) -> &dyn Hyperliquid {
+        match ledger {
+            MarketsLedger::Mainnet => self.mainnet.as_ref(),
+            MarketsLedger::Testnet => self.testnet.as_ref(),
+        }
+    }
 }
 
 pub(crate) struct HyperliquidClient {
@@ -117,12 +152,17 @@ impl Hyperliquid for HyperliquidClient {
         struct RawAsset {
             name: String,
             max_leverage: u32,
+            is_delisted: Option<bool>,
         }
 
         let url = format!("{}/info", self.info.http_client.base_url);
+        // Bound each attempt so a hung upstream cannot stall startup or the
+        // markets endpoint indefinitely (matches the frontend's 10s guard).
+        let http = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .build()?;
         let raw = (|| async {
-            reqwest::Client::new()
-                .post(&url)
+            http.post(&url)
                 .json(&MetaRequest {
                     request_type: "meta",
                 })
@@ -145,11 +185,19 @@ impl Hyperliquid for HyperliquidClient {
         let metadata: Vec<MarketMetadata> = raw
             .universe
             .into_iter()
-            .map(|asset| MarketMetadata {
-                symbol: Market::new(asset.name),
-                max_leverage: asset.max_leverage,
-            })
-            .collect();
+            .enumerate()
+            .filter(|(_, asset)| asset.is_delisted != Some(true))
+            .map(
+                |(asset_index, asset)| -> Result<MarketMetadata, HyperliquidError> {
+                    Ok(MarketMetadata {
+                        symbol: Market::new(asset.name),
+                        max_leverage: asset.max_leverage,
+                        asset_index: u32::try_from(asset_index)
+                            .map_err(HyperliquidError::IntConversion)?,
+                    })
+                },
+            )
+            .collect::<Result<Vec<_>, _>>()?;
         debug!(count = metadata.len(), "fetched market metadata");
         Ok(metadata)
     }
@@ -204,7 +252,7 @@ impl Hyperliquid for HyperliquidClient {
                     close,
                     volume,
                     // CCXT perpetual format: BASE/USDC:USDC
-                    symbol: format!("{}/USDC:USDC", market.as_str()),
+                    symbol: finance::hyperliquid_swap_ccxt_symbol(market.as_str()).into_string(),
                     ticker: Symbol::from_raw(market.as_str()),
                 })
             })
@@ -465,6 +513,7 @@ mod tests {
                 market_metadata: vec![MarketMetadata {
                     symbol: Market::new("BTC".to_string()),
                     max_leverage: 50,
+                    asset_index: 0,
                 }],
                 candles: vec![Candle {
                     timestamp: Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),

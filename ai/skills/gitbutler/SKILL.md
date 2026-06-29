@@ -212,10 +212,11 @@ GitButler snapshots everything, including uncommitted changes:
 ## This Repository
 
 - **Pre-commit hooks (prek):** `prek` is the repo's pre-commit hook runner;
-  `but commit` runs the hooks (nixfmt-classic, nil, eslint, prettier, taplo,
-  denofmt, rustfmt). If you must `but amend`/`but rub` (which skip hooks), run
-  `prek run --all-files` afterward and fold in any formatting fixes before
-  pushing. Markdown is formatted by `deno fmt`.
+  `but commit` runs the enabled hooks (nixfmt, nil, eslint, prettier, taplo,
+  denofmt, rustfmt; the local clippy hook is disabled). If you must
+  `but amend`/`but rub` (which skip hooks), run `prek run --all-files` afterward
+  and fold in any formatting fixes before pushing. Markdown is formatted by
+  `deno fmt`.
 - **Commit messages:** conventional, lowercase -- `feat:`, `fix:`, `docs:`,
   `chore:`, `refactor:`, `test:`. Explain _why_ in the body. Never add
   "Generated with ..." or co-author trailers.

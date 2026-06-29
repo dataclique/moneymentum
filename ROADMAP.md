@@ -79,7 +79,7 @@ of them.
 - [x] Factor: 24h volume (screener tie-break) --
       [#271](https://github.com/dataclique/moneymentum/issues/271) /
       [#272](https://github.com/dataclique/moneymentum/pull/272)
-- [x] Markets metadata + persisted disable flag --
+- [x] Markets metadata ledger --
       [#275](https://github.com/dataclique/moneymentum/issues/275) /
       [#276](https://github.com/dataclique/moneymentum/pull/276)
 - [x] Tradable filter wired into ingestion --
@@ -96,6 +96,10 @@ the next user-facing priority; it runs in parallel to the Dev track above.
 - [ ] [Keep The App Deployed And Reachable](./stories/0x008.keep-app-deployed-and-reachable.md)
 - [ ] [Verify Deployed Hyperliquid Long-Short Rebalancing](./stories/0x00a.verify-deployed-hyperliquid-long-short-rebalancing.md)
 - [ ] [Serve The App From A Domain](./stories/0x009.serve-app-from-domain.md)
+- [x] [Clear stale switch-to-configuration lock blocking deploys](https://github.com/dataclique/moneymentum/issues/394)
+      ([#395](https://github.com/dataclique/moneymentum/pull/395))
+- [x] [Address #377 review follow-ups](https://github.com/dataclique/moneymentum/issues/392)
+      ([#393](https://github.com/dataclique/moneymentum/pull/393))
 
 ---
 

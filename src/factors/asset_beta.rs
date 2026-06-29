@@ -92,9 +92,11 @@ mod tests {
             .chain(0..count)
             .map(|index| format!("{index:04}"))
             .collect();
+
         let tickers: Vec<&str> = std::iter::repeat_n("BTC", count)
             .chain(std::iter::repeat_n("ETH", count))
             .collect();
+
         let log_returns: Vec<f64> = btc.iter().chain(eth.iter()).copied().collect();
         df! {
             "timestamp" => timestamps,
@@ -119,6 +121,7 @@ mod tests {
             (beta.get(0).unwrap() - 1.0).abs() < 1e-12,
             "the benchmark's beta to itself must be 1"
         );
+
         assert_eq!(tickers.get(1), Some("ETH"));
         assert!(
             (beta.get(1).unwrap() - 2.0).abs() < 1e-12,

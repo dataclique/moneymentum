@@ -1,5 +1,7 @@
+import * as Effect from "effect/Effect"
 import { useQuery } from "@tanstack/solid-query"
 import { createMemo } from "solid-js"
+import { postJson } from "@/lib/http"
 import type { PortfolioInterface } from "./usePortfolioState"
 import type { ReadonlyBetaPosition } from "./useReadonlyPortfolioState"
 
@@ -72,22 +74,20 @@ interface BetaResponse {
   data_age_hours: number
 }
 
-const fetchBeta = async (
+const fetchBeta = (
   weights: Record<string, number>,
   benchmark: string,
   signal?: AbortSignal,
-): Promise<BetaResponse> => {
-  const res = await fetch(`${import.meta.env.BASE_URL}api/beta`, {
-    method: "POST",
-    signal: signal
-      ? AbortSignal.any([signal, AbortSignal.timeout(10_000)])
-      : AbortSignal.timeout(10_000),
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ weights, benchmark }),
-  })
-  if (!res.ok) throw new Error(`beta request failed: ${res.status}`)
-  return res.json() as Promise<BetaResponse>
-}
+) =>
+  postJson<BetaResponse>(
+    `${import.meta.env.BASE_URL}api/beta`,
+    { weights, benchmark },
+    {
+      signal: signal
+        ? AbortSignal.any([signal, AbortSignal.timeout(10_000)])
+        : AbortSignal.timeout(10_000),
+    },
+  )
 
 export const useBeta = (
   portfolio: () => Record<string, PortfolioInterface | undefined>,
@@ -123,7 +123,9 @@ export const useBeta = (
     return {
       queryKey: ["beta", currentBenchmark.symbol, currentWeightsKey] as const,
       queryFn: (ctx: { signal: AbortSignal }) =>
-        fetchBeta(currentWeights, currentBenchmark.symbol, ctx.signal),
+        Effect.runPromise(
+          fetchBeta(currentWeights, currentBenchmark.symbol, ctx.signal),
+        ),
       enabled: hasData,
       retry: 2,
     }

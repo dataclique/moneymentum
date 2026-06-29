@@ -14,6 +14,7 @@ use thiserror::Error;
 use tracing::{debug, error, info, warn};
 
 use crate::hyperliquid::{CandleIngester, FundingRateIngester, Hyperliquid, HyperliquidError};
+use crate::market_metadata::{MarketsLedger, refresh_markets};
 use crate::timeframe::Timeframe;
 
 const TIMEFRAMES: &[Timeframe] = &[
@@ -34,6 +35,12 @@ impl IngestionRunId {
 
     fn as_str(&self) -> &str {
         &self.0
+    }
+}
+
+impl std::fmt::Display for IngestionRunId {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "{}", self.0)
     }
 }
 
@@ -97,7 +104,7 @@ async fn ingest_all(
     funding_ingester: &FundingRateIngester<dyn Hyperliquid>,
     data_dir: &Path,
 ) -> Result<DateTime<Utc>, HyperliquidError> {
-    let markets = crate::market_metadata::refresh_markets(client, data_dir).await?;
+    let markets = refresh_markets(client, data_dir, MarketsLedger::Mainnet).await?;
 
     funding_ingester
         .ingest_with_markets(data_dir, &markets)
@@ -146,7 +153,7 @@ pub(crate) enum IngestionRunError {
     #[error("ingestion already running")]
     AlreadyRunning,
     #[error("ingestion run is not running: {run_id}")]
-    RunNotRunning { run_id: String },
+    RunNotRunning { run_id: IngestionRunId },
     #[error("unknown ingestion status: {status}")]
     UnknownStatus { status: String },
     #[error(transparent)]
@@ -251,7 +258,7 @@ async fn touch_run(pool: &SqlitePool, run_id: &IngestionRunId) -> Result<(), Ing
 
     if affected_rows == 0 {
         return Err(IngestionRunError::RunNotRunning {
-            run_id: run_id.as_str().to_string(),
+            run_id: run_id.clone(),
         });
     }
 
@@ -327,22 +334,22 @@ mod tests {
 
     use super::*;
     use crate::candle::Candle;
-    use crate::finance::{Market, Symbol};
+    use crate::finance::{Market, Symbol, hyperliquid_swap_ccxt_symbol};
     use crate::funding::FundingRate;
     use crate::hyperliquid::HyperliquidError;
     use crate::logs_contain_at;
+    use crate::market_metadata::MarketMetadata;
     use crate::timeframe::Timeframe;
 
     struct MockHyperliquid;
 
     #[async_trait]
     impl Hyperliquid for MockHyperliquid {
-        async fn fetch_market_metadata(
-            &self,
-        ) -> Result<Vec<crate::market_metadata::MarketMetadata>, HyperliquidError> {
-            Ok(vec![crate::market_metadata::MarketMetadata {
+        async fn fetch_market_metadata(&self) -> Result<Vec<MarketMetadata>, HyperliquidError> {
+            Ok(vec![MarketMetadata {
                 symbol: Market::new("BTC".into()),
                 max_leverage: 50,
+                asset_index: 0,
             }])
         }
 
@@ -359,7 +366,7 @@ mod tests {
                 low: 95.0,
                 close: 102.0,
                 volume: 1000.0,
-                symbol: format!("{}/USDC:USDC", market.as_str()),
+                symbol: hyperliquid_swap_ccxt_symbol(market.as_str()).into_string(),
                 ticker: Symbol::from_raw(market.as_str()),
             }])
         }
@@ -392,7 +399,9 @@ mod tests {
             CREATE TABLE ingestion_runs
             (
                 id text NOT NULL,
-                status text NOT NULL CHECK (status IN ('running', 'completed', 'failed', 'cancelled')),
+                status text NOT NULL CHECK (
+                    status IN ('running', 'completed', 'failed', 'cancelled')
+                ),
                 started_at text NOT NULL,
                 finished_at text,
                 heartbeat_at text NOT NULL,

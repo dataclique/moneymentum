@@ -8,13 +8,10 @@ vi.mock("@/services/hyperliquid-client", () => ({
   HyperliquidClient: class MockHyperliquidClient {
     getBalance = vi.fn()
     getCurrentPositions = vi.fn()
-    listPerpTickers = vi.fn()
-    getLeverageLimits = vi.fn()
     rebalancePositions = vi.fn()
     getNetworkMode = vi.fn()
     getWalletAddress = vi.fn()
   },
-  preloadMarkets: vi.fn().mockResolvedValue(undefined),
 }))
 
 const wrapper = (props: ParentProps) => (

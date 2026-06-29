@@ -7,6 +7,10 @@ database_url = "sqlite:./moneymentum.db?mode=rwc"
 
 log_level = "debug"
 
+# Optional for local dev. On NixOS the server generates a token at startup and
+# publishes it for the midnight refresh timer.
+markets_refresh_token = "local-markets-refresh-token"
+
 # Ingestion tuning - balance speed vs rate limiting
 max_concurrent_requests = 3
 max_retries = 5

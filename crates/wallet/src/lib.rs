@@ -17,11 +17,6 @@ pub trait Wallet: Send + Sync {
     /// `solana_pubkey::Pubkey` for Solana).
     type Address: Clone + Send + Sync;
 
-    /// Raw bytes to be signed. Implementations extract bytes via `AsRef<[u8]>`.
-    /// Callers are responsible for chain-specific encoding (EIP-712, Solana
-    /// serialized tx, etc.) before passing the payload.
-    type Payload: AsRef<[u8]> + Send + Sync;
-
     /// Chain-specific signature type (e.g., `alloy_primitives::Signature`
     /// for EVM, `solana_signature::Signature` for Solana).
     type Signature: Send + Sync;
@@ -32,6 +27,36 @@ pub trait Wallet: Send + Sync {
     /// Returns the on-chain address managed by this wallet instance.
     async fn address(&self) -> Result<Self::Address, Self::Error>;
 
-    /// Signs the given payload and returns a chain-valid signature.
-    async fn sign(&self, payload: &Self::Payload) -> Result<Self::Signature, Self::Error>;
+    /// Signs the given already-encoded payload bytes and returns a chain-valid
+    /// signature. Callers are responsible for chain-specific encoding (EIP-712,
+    /// Solana serialized tx, etc.) before passing the bytes.
+    async fn sign(&self, payload: &[u8]) -> Result<Self::Signature, Self::Error>;
+}
+
+/// Asserts that a single log line at `level` contains all `snippets`.
+///
+/// Mirrors `moneymentum::logs_contain_at`; the wallet crate needs its own copy
+/// because that helper is `pub(crate)` in the main crate. Used with
+/// `tracing_test::traced_test` to verify observability at a specific level.
+#[cfg(all(test, feature = "mock"))]
+pub(crate) fn logs_contain_at(level: tracing::Level, snippets: &[&str]) -> bool {
+    let logs = {
+        let buffer = match tracing_test::internal::global_buf().lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        String::from_utf8_lossy(&buffer).into_owned()
+    };
+
+    let level_str = match level {
+        tracing::Level::TRACE => "TRACE",
+        tracing::Level::DEBUG => "DEBUG",
+        tracing::Level::INFO => "INFO",
+        tracing::Level::WARN => "WARN",
+        tracing::Level::ERROR => "ERROR",
+    };
+
+    logs.lines().any(|line| {
+        line.contains(level_str) && snippets.iter().all(|snippet| line.contains(snippet))
+    })
 }

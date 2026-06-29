@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::marker::PhantomData;
 
 use polars::prelude::{DataFrame, DataType, IntoLazy, PolarsError, SortMultipleOptions};
@@ -15,9 +16,10 @@ use tracing::debug;
 pub trait Observation: Send + Sync + 'static {
     /// Human-readable label for diagnostics and logging.
     ///
-    /// Returns `String` to support composition of nested markers
-    /// (e.g., `Vol<Return<Simple>>` -> `"simple return vol"`).
-    fn label() -> String;
+    /// Returns `Cow<'static, str>`: leaf markers borrow a static string with no
+    /// allocation, composed markers own the formatted result (e.g.,
+    /// `Vol<Return<Simple>>` -> `"simple return vol"`).
+    fn label() -> Cow<'static, str>;
 }
 
 /// A time-indexed series of observations with semantic type `M`.
@@ -70,6 +72,15 @@ impl<M: Observation> TimeSeries<M> {
             });
         }
 
+        let value_floats = value_col.as_materialized_series().f64()?;
+        if value_floats.null_count() > 0 || !value_floats.into_no_null_iter().all(f64::is_finite) {
+            return Err(SeriesError::NonFiniteValue);
+        }
+
+        if df.width() != 2 {
+            return Err(SeriesError::UnexpectedColumns { width: df.width() });
+        }
+
         let sorted = df
             .lazy()
             .sort(
@@ -79,7 +90,7 @@ impl<M: Observation> TimeSeries<M> {
             .collect()?;
 
         debug!(
-            observation = M::label(),
+            observation = M::label().as_ref(),
             rows = sorted.height(),
             "time series constructed"
         );
@@ -123,6 +134,12 @@ pub enum SeriesError {
         actual: String,
     },
 
+    #[error("value column contains a null, NaN, or infinite entry")]
+    NonFiniteValue,
+
+    #[error("expected exactly 2 columns (timestamp, value), got {width}")]
+    UnexpectedColumns { width: usize },
+
     #[error(transparent)]
     Polars(#[from] PolarsError),
 }
@@ -130,9 +147,11 @@ pub enum SeriesError {
 #[cfg(test)]
 mod tests {
     use polars::prelude::{Column, DataFrame, DataType, NamedFrom, Series, TimeUnit};
+    use tracing::Level;
     use tracing_test::traced_test;
 
     use super::*;
+    use crate::logs_contain_at;
     use crate::marker::Price;
 
     const DAY_MS: i64 = 86_400_000;
@@ -163,8 +182,10 @@ mod tests {
         assert_eq!(series.len(), 3);
         assert!(!series.is_empty());
 
-        assert!(logs_contain("time series constructed"));
-        assert!(logs_contain("price"));
+        assert!(logs_contain_at(
+            Level::DEBUG,
+            &["time series constructed", "price"]
+        ));
     }
 
     #[test]
@@ -195,12 +216,39 @@ mod tests {
     }
 
     #[test]
-    fn into_dataframe_round_trips() {
-        let df = sample_price_df(&[50.0, 51.0]);
-        let original_height = df.height();
-        let series = TimeSeries::<Price>::new(df).unwrap();
-        let recovered = series.into_dataframe();
-        assert_eq!(recovered.height(), original_height);
+    fn rejects_extra_columns() {
+        let timestamps = make_timestamps(2);
+        let values = Series::new("value".into(), &[1.0, 2.0]);
+        let extra = Series::new("ticker".into(), &["BTC", "ETH"]);
+        let df = DataFrame::new(vec![
+            Column::from(timestamps),
+            Column::from(values),
+            Column::from(extra),
+        ])
+        .unwrap();
+        let result = TimeSeries::<Price>::new(df);
+        assert!(matches!(
+            result,
+            Err(SeriesError::UnexpectedColumns { width: 3 })
+        ));
+    }
+
+    #[test]
+    fn rejects_nan_value() {
+        let timestamps = make_timestamps(3);
+        let values = Series::new("value".into(), &[1.0, f64::NAN, 3.0]);
+        let df = DataFrame::new(vec![Column::from(timestamps), Column::from(values)]).unwrap();
+        let result = TimeSeries::<Price>::new(df);
+        assert!(matches!(result, Err(SeriesError::NonFiniteValue)));
+    }
+
+    #[test]
+    fn rejects_infinite_value() {
+        let timestamps = make_timestamps(2);
+        let values = Series::new("value".into(), &[1.0, f64::INFINITY]);
+        let df = DataFrame::new(vec![Column::from(timestamps), Column::from(values)]).unwrap();
+        let result = TimeSeries::<Price>::new(df);
+        assert!(matches!(result, Err(SeriesError::NonFiniteValue)));
     }
 
     #[test]

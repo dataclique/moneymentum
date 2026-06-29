@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::marker::PhantomData;
 
 use crate::series::Observation;
@@ -9,8 +10,8 @@ use crate::series::Observation;
 pub struct Price;
 
 impl Observation for Price {
-    fn label() -> String {
-        "price".into()
+    fn label() -> Cow<'static, str> {
+        Cow::Borrowed("price")
     }
 }
 
@@ -19,8 +20,8 @@ impl Observation for Price {
 pub struct Simple;
 
 impl Observation for Simple {
-    fn label() -> String {
-        "simple".into()
+    fn label() -> Cow<'static, str> {
+        Cow::Borrowed("simple")
     }
 }
 
@@ -29,8 +30,8 @@ impl Observation for Simple {
 pub struct Log;
 
 impl Observation for Log {
-    fn label() -> String {
-        "log".into()
+    fn label() -> Cow<'static, str> {
+        Cow::Borrowed("log")
     }
 }
 
@@ -44,8 +45,8 @@ impl Observation for Log {
 pub struct Return<Kind>(PhantomData<Kind>);
 
 impl<K: Observation> Observation for Return<K> {
-    fn label() -> String {
-        format!("{} return", K::label())
+    fn label() -> Cow<'static, str> {
+        Cow::Owned(format!("{} return", K::label()))
     }
 }
 
@@ -57,8 +58,8 @@ impl<K: Observation> Observation for Return<K> {
 pub struct Vol<Source>(PhantomData<Source>);
 
 impl<S: Observation> Observation for Vol<S> {
-    fn label() -> String {
-        format!("{} vol", S::label())
+    fn label() -> Cow<'static, str> {
+        Cow::Owned(format!("{} vol", S::label()))
     }
 }
 
@@ -69,8 +70,8 @@ impl<S: Observation> Observation for Vol<S> {
 pub struct Drawdown<Source>(PhantomData<Source>);
 
 impl<S: Observation> Observation for Drawdown<S> {
-    fn label() -> String {
-        format!("{} drawdown", S::label())
+    fn label() -> Cow<'static, str> {
+        Cow::Owned(format!("{} drawdown", S::label()))
     }
 }
 
@@ -81,7 +82,7 @@ impl<S: Observation> Observation for Drawdown<S> {
 pub struct Normalized<Source>(PhantomData<Source>);
 
 impl<S: Observation> Observation for Normalized<S> {
-    fn label() -> String {
-        format!("normalized {}", S::label())
+    fn label() -> Cow<'static, str> {
+        Cow::Owned(format!("normalized {}", S::label()))
     }
 }

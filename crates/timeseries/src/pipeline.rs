@@ -16,6 +16,7 @@ use tower::Service;
 /// ```text
 /// TimeSeries<Price> --[SimpleReturns]--> TimeSeries<Return<Simple>> --[RollingVolatility]--> TimeSeries<Vol<Return<Simple>>>
 /// ```
+#[derive(Clone)]
 pub struct Pipeline<A, B> {
     first: A,
     second: B,
@@ -34,6 +35,7 @@ where
     A: Service<Req>,
     B: Service<A::Response, Error = A::Error> + Clone + Unpin,
     A::Future: Unpin,
+    A::Response: Unpin,
     B::Future: Unpin,
 {
     type Response = B::Response;
@@ -53,33 +55,37 @@ where
     }
 }
 
-impl<A: Clone, B: Clone> Clone for Pipeline<A, B> {
-    fn clone(&self) -> Self {
-        Self {
-            first: self.first.clone(),
-            second: self.second.clone(),
-        }
-    }
-}
-
 /// Future for a two-stage pipeline execution.
 ///
-/// The second service is polled for readiness immediately before
-/// calling it, inside the future -- not in `Pipeline::poll_ready`.
+/// The second service is polled for readiness immediately before calling it,
+/// inside the future -- not in `Pipeline::poll_ready`. Once the first stage
+/// completes, its output is held in `Buffered` while the second stage's
+/// readiness is awaited, so a not-yet-ready second stage never causes the
+/// already-completed first future to be polled again.
 pub enum PipelineFuture<A, B, Req>
 where
     A: Service<Req>,
     B: Service<A::Response>,
 {
-    First { future: A::Future, second: B },
-    Second { future: B::Future },
+    First {
+        future: A::Future,
+        second: B,
+    },
+    Buffered {
+        intermediate: Option<A::Response>,
+        second: B,
+    },
+    Second {
+        future: B::Future,
+    },
 }
 
 impl<A, B, Req> Future for PipelineFuture<A, B, Req>
 where
     A: Service<Req>,
-    B: Service<A::Response, Error = A::Error> + Unpin,
+    B: Service<A::Response, Error = A::Error> + Clone + Unpin,
     A::Future: Unpin,
+    A::Response: Unpin,
     B::Future: Unpin,
 {
     type Output = Result<B::Response, A::Error>;
@@ -96,20 +102,33 @@ where
                         Poll::Pending => return Poll::Pending,
                     };
 
-                    // Poll second for readiness right before calling it,
-                    // not relying on a stale poll from Pipeline::poll_ready.
+                    // The first stage is done. Hold its output in `Buffered` so
+                    // that a not-yet-ready second stage cannot make us re-poll the
+                    // already-completed first future on the next wake.
+                    *this = Self::Buffered {
+                        intermediate: Some(intermediate),
+                        second: second.clone(),
+                    };
+                }
+                Self::Buffered {
+                    intermediate,
+                    second,
+                } => {
+                    // Poll second for readiness right before calling it, not
+                    // relying on a stale poll from Pipeline::poll_ready.
                     match second.poll_ready(cx) {
                         Poll::Ready(Ok(())) => {}
                         Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
-                        // If second is not ready, we lose `intermediate` --
-                        // this is acceptable because tower services that
-                        // return Pending from poll_ready are backpressure-aware
-                        // and the caller should retry the entire pipeline.
-                        // In practice, all timeseries transforms are always-ready.
                         Poll::Pending => return Poll::Pending,
                     }
 
-                    let second_future = second.call(intermediate);
+                    // `Buffered` always carries `Some` until it transitions to
+                    // `Second`, so this take never observes `None`.
+                    let Some(value) = intermediate.take() else {
+                        return Poll::Pending;
+                    };
+
+                    let second_future = second.call(value);
                     *this = Self::Second {
                         future: second_future,
                     };
@@ -125,11 +144,13 @@ where
 #[cfg(test)]
 mod tests {
     use polars::prelude::{Column, DataFrame, DataType, NamedFrom, Series, TimeUnit};
+    use tracing::Level;
     use tracing_test::traced_test;
 
     use super::*;
+    use crate::logs_contain_at;
     use crate::marker::Price;
-    use crate::series::TimeSeries;
+    use crate::series::{Observation, TimeSeries};
     use crate::transform::{RollingVolatility, SimpleReturns};
 
     const DAY_MS: i64 = 86_400_000;
@@ -150,20 +171,8 @@ mod tests {
         TimeSeries::new(df).unwrap()
     }
 
-    #[traced_test]
-    #[tokio::test]
-    async fn pipeline_chains_price_to_volatility() {
-        // 10 prices -> 9 returns, window=3 -> 7 vol observations
-        let prices = sample_price_series(&[
-            100.0, 102.0, 101.0, 105.0, 103.0, 108.0, 107.0, 110.0, 109.0, 112.0,
-        ]);
-
-        let mut pipeline = chain(SimpleReturns, RollingVolatility::new(3).unwrap());
-        let result = pipeline.call(prices).await.unwrap();
-
-        assert_eq!(result.len(), 7);
-
-        let values: Vec<f64> = result
+    fn extract_values(series: &TimeSeries<impl Observation>) -> Vec<f64> {
+        series
             .as_dataframe()
             .column("value")
             .unwrap()
@@ -171,14 +180,46 @@ mod tests {
             .f64()
             .unwrap()
             .into_no_null_iter()
-            .collect();
+            .collect()
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn pipeline_chains_price_to_volatility() {
+        // 10 prices -> 9 returns, window=3 -> 7 vol observations
+        let prices = [
+            100.0, 102.0, 101.0, 105.0, 103.0, 108.0, 107.0, 110.0, 109.0, 112.0,
+        ];
+
+        let mut pipeline = chain(SimpleReturns, RollingVolatility::new(3).unwrap());
+        let result = pipeline.call(sample_price_series(&prices)).await.unwrap();
+
+        assert_eq!(result.len(), 7);
+
+        let values = extract_values(&result);
+
+        // The pipeline must equal applying the two stages by hand, in order --
+        // a stronger guard than checking only count and sign.
+        let mut returns_service = SimpleReturns;
+        let returns = returns_service
+            .call(sample_price_series(&prices))
+            .into_inner()
+            .unwrap();
+        let mut vol_service = RollingVolatility::new(3).unwrap();
+        let expected = vol_service.call(returns).into_inner().unwrap();
+        assert_eq!(values, extract_values(&expected));
 
         for value in &values {
             assert!(*value > 0.0, "vol should be positive, got {value}");
         }
 
-        // Verify both stages logged
-        assert!(logs_contain("computed simple returns"));
-        assert!(logs_contain("computed rolling volatility"));
+        assert!(logs_contain_at(
+            Level::DEBUG,
+            &["computed simple returns from prices"]
+        ));
+        assert!(logs_contain_at(
+            Level::DEBUG,
+            &["computed rolling volatility"]
+        ));
     }
 }

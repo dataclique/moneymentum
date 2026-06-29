@@ -26,6 +26,8 @@ makes hedging guesswork.
 
 Portfolio risk assessment beyond beta.
 
+- [x] Type-safe time-series transforms crate: returns, log-returns, rolling
+      volatility, drawdown, normalization -- #303 (PR #145)
 - [ ] Monte Carlo simulation of portfolio returns
 - [ ] VaR/CVaR at configurable confidence levels
 - [ ] Historical drawdown analysis

@@ -24,8 +24,39 @@ pub enum TransformError {
     #[error("zero window size")]
     ZeroWindow,
 
+    #[error("rolling window must cover at least 2 observations, got {window}")]
+    WindowTooSmall { window: usize },
+
+    #[error("non-positive price: minimum value {min} must be strictly positive")]
+    NonPositivePrice { min: f64 },
+
     #[error("zero variance: cannot standardize a constant series")]
     ZeroVariance,
+
+    #[error(transparent)]
+    TryFromInt(#[from] std::num::TryFromIntError),
+}
+
+/// Rejects price series whose minimum value is not strictly positive.
+///
+/// Returns and drawdown are undefined for zero or negative prices (division
+/// by zero, `ln` of a non-positive number), so the price-consuming transforms
+/// reject such input rather than silently emit `NaN`/`Inf`. `TimeSeries::new`
+/// already guarantees finite values, so the minimum is always a real number.
+fn ensure_positive_prices(input: &TimeSeries<Price>) -> Result<(), TransformError> {
+    let min = input
+        .as_dataframe()
+        .column("value")?
+        .as_materialized_series()
+        .f64()?
+        .into_no_null_iter()
+        .fold(f64::INFINITY, f64::min);
+
+    if min > 0.0 {
+        Ok(())
+    } else {
+        Err(TransformError::NonPositivePrice { min })
+    }
 }
 
 /// Computes arithmetic (simple) returns from a price series.
@@ -61,11 +92,16 @@ fn compute_simple_returns(
         });
     }
 
+    ensure_positive_prices(&input)?;
+
     let df = input.into_dataframe();
 
     let result = df
         .lazy()
-        .with_column((col("value") - col("value").shift(lit(1))) / col("value").shift(lit(1)))
+        .with_column(
+            ((col("value") - col("value").shift(lit(1))) / col("value").shift(lit(1)))
+                .alias("value"),
+        )
         .collect()?
         .slice(1, row_count - 1);
 
@@ -110,11 +146,17 @@ fn compute_log_returns(
         });
     }
 
+    ensure_positive_prices(&input)?;
+
     let df = input.into_dataframe();
 
     let result = df
         .lazy()
-        .with_column((col("value") / col("value").shift(lit(1))).log(lit(std::f64::consts::E)))
+        .with_column(
+            (col("value") / col("value").shift(lit(1)))
+                .log(lit(std::f64::consts::E))
+                .alias("value"),
+        )
         .collect()?
         .slice(1, row_count - 1);
 
@@ -140,9 +182,16 @@ pub struct RollingVolatility {
 impl RollingVolatility {
     /// Creates a new `RollingVolatility` with the given lookback window.
     ///
-    /// Rejects zero -- a rolling window must cover at least one observation.
+    /// Rejects windows below 2: a single observation has no dispersion, and
+    /// sample standard deviation (Bessel's correction, ddof=1) over one point
+    /// is `0 / 0 = NaN`, which would silently poison every output row.
     pub fn new(window: usize) -> Result<Self, TransformError> {
         let window = NonZeroUsize::new(window).ok_or(TransformError::ZeroWindow)?;
+        if window.get() < 2 {
+            return Err(TransformError::WindowTooSmall {
+                window: window.get(),
+            });
+        }
         Ok(Self { window })
     }
 }
@@ -187,11 +236,7 @@ fn compute_rolling_vol<M: Observation>(
     // Drop rows where the rolling window has not yet filled (leading nulls).
     // window is guaranteed non-zero by the smart constructor, so window - 1 is safe.
     let leading_nulls = window - 1;
-    let offset = i64::try_from(leading_nulls).map_err(|err| {
-        TransformError::Polars(PolarsError::ComputeError(
-            format!("offset conversion: {err}").into(),
-        ))
-    })?;
+    let offset = i64::try_from(leading_nulls)?;
     let result = with_rolling.slice(offset, row_count - leading_nulls);
 
     debug!(
@@ -234,6 +279,8 @@ fn compute_drawdown(
             actual: 0,
         });
     }
+
+    ensure_positive_prices(&input)?;
 
     let df = input.into_dataframe();
 
@@ -308,9 +355,12 @@ fn compute_zscore<M: Observation>(
 #[cfg(test)]
 mod tests {
     use polars::prelude::{Column, DataFrame, DataType, NamedFrom, Series, TimeUnit};
+    use proptest::prelude::*;
+    use tracing::Level;
     use tracing_test::traced_test;
 
     use super::*;
+    use crate::logs_contain_at;
 
     const DAY_MS: i64 = 86_400_000;
 
@@ -357,7 +407,10 @@ mod tests {
         assert!((values[1] - (-0.1)).abs() < tolerance); // (99-110)/110
         assert!((values[2] - (16.0 / 99.0)).abs() < tolerance); // (115-99)/99
 
-        assert!(logs_contain("computed simple returns from prices"));
+        assert!(logs_contain_at(
+            Level::DEBUG,
+            &["computed simple returns from prices"]
+        ));
     }
 
     #[traced_test]
@@ -390,7 +443,10 @@ mod tests {
         assert!((values[0] - (110.0_f64 / 100.0).ln()).abs() < tolerance);
         assert!((values[1] - (99.0_f64 / 110.0).ln()).abs() < tolerance);
 
-        assert!(logs_contain("computed log returns from prices"));
+        assert!(logs_contain_at(
+            Level::DEBUG,
+            &["computed log returns from prices"]
+        ));
     }
 
     #[traced_test]
@@ -414,7 +470,10 @@ mod tests {
             assert!(*value > 0.0, "vol should be positive, got {value}");
         }
 
-        assert!(logs_contain("computed rolling volatility"));
+        assert!(logs_contain_at(
+            Level::DEBUG,
+            &["computed rolling volatility"]
+        ));
     }
 
     #[traced_test]
@@ -437,7 +496,10 @@ mod tests {
             assert!(*value > 0.0, "vol should be positive, got {value}");
         }
 
-        assert!(logs_contain("computed rolling volatility"));
+        assert!(logs_contain_at(
+            Level::DEBUG,
+            &["computed rolling volatility"]
+        ));
     }
 
     #[traced_test]
@@ -482,7 +544,7 @@ mod tests {
         assert!((values[2] - (-0.25)).abs() < tolerance); // (90-120)/120 = -0.25
         assert!((values[3] - (-1.0 / 12.0)).abs() < tolerance); // (110-120)/120
 
-        assert!(logs_contain("computed peak drawdown"));
+        assert!(logs_contain_at(Level::DEBUG, &["computed peak drawdown"]));
     }
 
     #[traced_test]
@@ -496,12 +558,47 @@ mod tests {
         assert_eq!(result.len(), 3);
         let values = extract_values(&result);
 
-        // Mean = 200, z-scores should be symmetric around 0
+        // Mean = 200, sample std (ddof=1) = 100, so z-scores are exactly [-1, 0, 1].
         let tolerance = 1e-10;
-        assert!((values[0] + values[2]).abs() < tolerance); // symmetric
-        assert!((values[1] - 0.0).abs() < tolerance); // mean is zero
+        assert!((values[0] - (-1.0)).abs() < tolerance);
+        assert!(values[1].abs() < tolerance);
+        assert!((values[2] - 1.0).abs() < tolerance);
 
-        assert!(logs_contain("computed z-scores"));
+        assert!(logs_contain_at(Level::DEBUG, &["computed z-scores"]));
+    }
+
+    #[traced_test]
+    #[test]
+    fn normalize_output_has_zero_mean_and_unit_std() {
+        // Asymmetric input: the z-scores are not hand-pretty, but by construction
+        // every standardized series has sample mean 0 and sample std 1.
+        let prices = sample_price_series(&[10.0, 20.0, 40.0, 35.0, 5.0]);
+
+        let mut service = Normalize;
+        let result: TimeSeries<Normalized<Price>> = service.call(prices).into_inner().unwrap();
+        let values = extract_values(&result);
+
+        assert_eq!(values.len(), 5);
+        let count = 5.0;
+        let mean = values.iter().sum::<f64>() / count;
+        let variance = values
+            .iter()
+            .map(|value| (value - mean).powi(2))
+            .sum::<f64>()
+            / (count - 1.0);
+        let std = variance.sqrt();
+
+        let tolerance = 1e-10;
+        assert!(
+            mean.abs() < tolerance,
+            "z-score mean should be 0, got {mean}"
+        );
+        assert!(
+            (std - 1.0).abs() < tolerance,
+            "z-score std should be 1, got {std}"
+        );
+
+        assert!(logs_contain_at(Level::DEBUG, &["computed z-scores"]));
     }
 
     #[test]
@@ -518,16 +615,143 @@ mod tests {
     #[traced_test]
     #[test]
     fn composable_labels_reflect_nesting() {
-        assert_eq!(Price::label(), "price");
-        assert_eq!(<Return<Simple>>::label(), "simple return");
-        assert_eq!(<Return<Log>>::label(), "log return");
-        assert_eq!(<Vol<Return<Simple>>>::label(), "simple return vol");
-        assert_eq!(<Vol<Return<Log>>>::label(), "log return vol");
-        assert_eq!(<Normalized<Price>>::label(), "normalized price");
+        assert_eq!(Price::label().as_ref(), "price");
+        assert_eq!(<Return<Simple>>::label().as_ref(), "simple return");
+        assert_eq!(<Return<Log>>::label().as_ref(), "log return");
+        assert_eq!(<Vol<Return<Simple>>>::label().as_ref(), "simple return vol");
+        assert_eq!(<Vol<Return<Log>>>::label().as_ref(), "log return vol");
+        assert_eq!(<Normalized<Price>>::label().as_ref(), "normalized price");
         assert_eq!(
-            <Normalized<Return<Simple>>>::label(),
+            <Normalized<Return<Simple>>>::label().as_ref(),
             "normalized simple return"
         );
-        assert_eq!(<Drawdown<Price>>::label(), "price drawdown");
+        assert_eq!(<Drawdown<Price>>::label().as_ref(), "price drawdown");
+    }
+
+    #[traced_test]
+    #[test]
+    fn peak_drawdown_single_price_is_zero() {
+        let prices = sample_price_series(&[100.0]);
+
+        let mut service = PeakDrawdown;
+        let result = service.call(prices).into_inner().unwrap();
+
+        assert_eq!(result.len(), 1);
+        let values = extract_values(&result);
+        assert!(values[0].abs() < 1e-10); // a lone price is its own peak
+
+        assert!(logs_contain_at(Level::DEBUG, &["computed peak drawdown"]));
+    }
+
+    #[test]
+    fn peak_drawdown_rejects_empty_series() {
+        let prices = sample_price_series(&[]);
+        let mut service = PeakDrawdown;
+        let result = service.call(prices).into_inner();
+        assert!(matches!(
+            result,
+            Err(TransformError::InsufficientData {
+                needed: 1,
+                actual: 0
+            })
+        ));
+    }
+
+    #[test]
+    fn log_returns_rejects_single_observation() {
+        let prices = sample_price_series(&[100.0]);
+        let mut service = LogReturns;
+        let result = service.call(prices).into_inner();
+        assert!(matches!(
+            result,
+            Err(TransformError::InsufficientData {
+                needed: 2,
+                actual: 1
+            })
+        ));
+    }
+
+    #[test]
+    fn simple_returns_rejects_zero_price() {
+        let prices = sample_price_series(&[100.0, 0.0, 50.0]);
+        let mut service = SimpleReturns;
+        let result = service.call(prices).into_inner();
+        assert!(matches!(
+            result,
+            Err(TransformError::NonPositivePrice { min }) if min <= 0.0
+        ));
+    }
+
+    #[test]
+    fn log_returns_rejects_negative_price() {
+        let prices = sample_price_series(&[100.0, -5.0, 50.0]);
+        let mut service = LogReturns;
+        let result = service.call(prices).into_inner();
+        assert!(matches!(
+            result,
+            Err(TransformError::NonPositivePrice { min }) if min < 0.0
+        ));
+    }
+
+    #[test]
+    fn drawdown_rejects_zero_price() {
+        let prices = sample_price_series(&[100.0, 0.0, 50.0]);
+        let mut service = PeakDrawdown;
+        let result = service.call(prices).into_inner();
+        assert!(matches!(
+            result,
+            Err(TransformError::NonPositivePrice { .. })
+        ));
+    }
+
+    #[test]
+    fn rolling_volatility_rejects_window_below_two() {
+        let result = RollingVolatility::new(1);
+        assert!(matches!(
+            result,
+            Err(TransformError::WindowTooSmall { window: 1 })
+        ));
+    }
+
+    #[traced_test]
+    #[test]
+    fn rolling_volatility_matches_sample_std() {
+        // Evenly spaced values have constant sample std: each window [n, n+1, n+2]
+        // has sample std (ddof=1) sqrt((1 + 0 + 1) / 2) = 1.0 exactly.
+        let prices = sample_price_series(&[10.0, 11.0, 12.0, 13.0, 14.0]);
+
+        let mut service = RollingVolatility::new(3).unwrap();
+        let vol = service.call(prices).into_inner().unwrap();
+
+        assert_eq!(vol.len(), 3);
+        let values = extract_values(&vol);
+
+        let tolerance = 1e-10;
+        for value in &values {
+            assert!(
+                (value - 1.0).abs() < tolerance,
+                "expected sample std 1.0, got {value}"
+            );
+        }
+
+        assert!(logs_contain_at(
+            Level::DEBUG,
+            &["computed rolling volatility"]
+        ));
+    }
+
+    proptest! {
+        #[test]
+        fn simple_returns_stay_above_negative_one(
+            prices in proptest::collection::vec(0.01f64..1_000_000.0, 2..64)
+        ) {
+            let series = sample_price_series(&prices);
+            let mut service = SimpleReturns;
+            let returns = service.call(series).into_inner().unwrap();
+            for value in extract_values(&returns) {
+                prop_assert!(value.is_finite());
+                prop_assert!(value > -1.0);
+            }
+        }
     }
 }

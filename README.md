@@ -31,6 +31,11 @@ beta-aware hedging coming soon.
 The frontend holds credentials and executes trades directly to venues. The
 backend provides analytics and execution plans but never touches credentials.
 
+The Rust backend's analytics are organized as focused crates: the `timeseries`
+crate provides typed, composable time-series transforms (returns, log-returns,
+rolling volatility, drawdown, normalization) as the foundation for the risk
+engine.
+
 ---
 
 ## Getting Started

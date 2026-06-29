@@ -321,7 +321,8 @@ describe("useTrading hooks", () => {
         expect(result.isError).toBe(true)
       })
 
-      expect(result.error?.message).toBe("Wallet not connected")
+      expect(result.error).toBeInstanceOf(Error)
+      expect(String(result.error)).toContain("WalletNotConnected")
     })
 
     it("calls rebalancePositions with correct parameters", async () => {

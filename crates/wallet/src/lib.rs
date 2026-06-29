@@ -19,7 +19,7 @@ pub trait Wallet: Send + Sync {
 
     /// Chain-specific signature type (e.g., `alloy_primitives::Signature`
     /// for EVM, `solana_signature::Signature` for Solana).
-    type Signature: Send + Sync;
+    type Signature: Clone + Send + Sync;
 
     /// Implementation-specific error (e.g., `TurnkeyWalletError`).
     type Error: std::error::Error + Send + Sync;
@@ -28,8 +28,10 @@ pub trait Wallet: Send + Sync {
     async fn address(&self) -> Result<Self::Address, Self::Error>;
 
     /// Signs the given already-encoded payload bytes and returns a chain-valid
-    /// signature. Callers are responsible for chain-specific encoding (EIP-712,
-    /// Solana serialized tx, etc.) before passing the bytes.
+    /// signature. The signer signs these bytes as-is and applies no hashing of
+    /// its own: callers are responsible for any chain-specific encoding and
+    /// digest (the EIP-712 hash, the serialized Solana message, etc.) before
+    /// passing the bytes.
     async fn sign(&self, payload: &[u8]) -> Result<Self::Signature, Self::Error>;
 }
 

@@ -317,23 +317,16 @@ interface HyperliquidExchange {
 export class HyperliquidClient {
   private exchange: HyperliquidExchange
   private networkMode: NetworkMode
-  private vaultAddress: string | undefined
 
   constructor(credentials: WalletCredentials, networkMode: NetworkMode) {
     this.networkMode = networkMode
-    this.vaultAddress = credentials.vaultAddress
 
     const HyperliquidClass = pro.hyperliquid as unknown as new (
       config: Record<string, unknown>,
     ) => HyperliquidExchange
 
-    // walletAddress is used for info requests (fetching positions/balance)
-    // When trading on behalf of a vault, use vault address; otherwise use account address
-    const effectiveWalletAddress =
-      credentials.vaultAddress ?? credentials.accountAddress
-
     this.exchange = new HyperliquidClass({
-      walletAddress: effectiveWalletAddress,
+      walletAddress: credentials.accountAddress,
       privateKey: credentials.privateKey,
       enableRateLimit: true,
     })
@@ -508,11 +501,7 @@ export class HyperliquidClient {
   }
 
   private async setLeverage(symbol: string, leverage: number): Promise<void> {
-    await this.exchange.setLeverage(leverage, symbol, this.vaultParams)
-  }
-
-  private get vaultParams(): Record<string, unknown> | undefined {
-    return this.vaultAddress ? { vaultAddress: this.vaultAddress } : undefined
+    await this.exchange.setLeverage(leverage, symbol)
   }
 
   private parseCcxtPerpSymbolParts(symbol: string): {
@@ -698,9 +687,7 @@ export class HyperliquidClient {
       side,
       amount,
       price,
-      params: reduceOnly
-        ? { reduceOnly: true, ...this.vaultParams }
-        : { ...this.vaultParams },
+      params: reduceOnly ? { reduceOnly: true } : {},
     }
   }
 

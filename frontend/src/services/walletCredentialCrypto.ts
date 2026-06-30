@@ -1,0 +1,143 @@
+export const WALLET_PIN_LENGTH = 6
+export const PBKDF2_ITERATIONS = 100_000
+
+export interface EncryptedWalletPrivateKey {
+  encryptedPrivateKey: string
+  salt: string
+  iv: string
+}
+
+export class WalletCredentialCryptoError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = "WalletCredentialCryptoError"
+  }
+}
+
+export class WalletCredentialDecryptError extends WalletCredentialCryptoError {
+  constructor() {
+    super("incorrect pin")
+    this.name = "WalletCredentialDecryptError"
+  }
+}
+
+export const validateWalletPin = (pin: string): boolean =>
+  pin.length === WALLET_PIN_LENGTH
+
+export const normalizeWalletPinInput = (value: string): string =>
+  value.slice(0, WALLET_PIN_LENGTH)
+
+const assertWebCrypto = (): Crypto => {
+  const cryptoApi = (globalThis as { crypto?: Crypto }).crypto
+  if (cryptoApi?.subtle === undefined) {
+    throw new WalletCredentialCryptoError("web crypto is unavailable")
+  }
+  return cryptoApi
+}
+
+const bytesToHex = (bytes: Uint8Array): string =>
+  Array.from(bytes)
+    .map(byte => byte.toString(16).padStart(2, "0"))
+    .join("")
+
+const hexToBytes = (hex: string): Uint8Array => {
+  if (hex.length % 2 !== 0) {
+    throw new WalletCredentialCryptoError("invalid hex encoding")
+  }
+
+  const bytes = new Uint8Array(hex.length / 2)
+  for (let index = 0; index < bytes.length; index += 1) {
+    const byte = Number.parseInt(hex.slice(index * 2, index * 2 + 2), 16)
+    if (Number.isNaN(byte)) {
+      throw new WalletCredentialCryptoError("invalid hex encoding")
+    }
+    bytes[index] = byte
+  }
+
+  return bytes
+}
+
+const deriveKey = async (pin: string, salt: Uint8Array): Promise<CryptoKey> => {
+  const cryptoApi = assertWebCrypto()
+  const encoder = new TextEncoder()
+  const baseKey = await cryptoApi.subtle.importKey(
+    "raw",
+    encoder.encode(pin),
+    "PBKDF2",
+    false,
+    ["deriveKey"],
+  )
+
+  return cryptoApi.subtle.deriveKey(
+    {
+      name: "PBKDF2",
+      salt: salt,
+      iterations: PBKDF2_ITERATIONS,
+      hash: "SHA-256",
+    },
+    baseKey,
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["encrypt", "decrypt"],
+  )
+}
+
+export const encryptWalletPrivateKey = async (
+  privateKeyText: string,
+  pin: string,
+): Promise<EncryptedWalletPrivateKey> => {
+  if (!validateWalletPin(pin)) {
+    throw new WalletCredentialCryptoError(
+      `pin must be exactly ${String(WALLET_PIN_LENGTH)} characters`,
+    )
+  }
+
+  const cryptoApi = assertWebCrypto()
+  const encoder = new TextEncoder()
+  const salt = cryptoApi.getRandomValues(new Uint8Array(16))
+  const iv = cryptoApi.getRandomValues(new Uint8Array(12))
+  const cryptoKey = await deriveKey(pin, salt)
+
+  const encrypted = await cryptoApi.subtle.encrypt(
+    { name: "AES-GCM", iv: iv }, // Без лишних оберток
+    cryptoKey,
+    encoder.encode(privateKeyText),
+  )
+
+  return {
+    encryptedPrivateKey: bytesToHex(new Uint8Array(encrypted)),
+    salt: bytesToHex(salt),
+    iv: bytesToHex(iv),
+  }
+}
+
+export const decryptWalletPrivateKey = async (
+  encryptedHex: string,
+  pin: string,
+  saltHex: string,
+  ivHex: string,
+): Promise<string> => {
+  if (!validateWalletPin(pin)) {
+    throw new WalletCredentialCryptoError(
+      `pin must be exactly ${String(WALLET_PIN_LENGTH)} characters`,
+    )
+  }
+
+  const cryptoApi = assertWebCrypto()
+  const decoder = new TextDecoder()
+
+  try {
+    const cryptoKey = await deriveKey(pin, hexToBytes(saltHex))
+    const decrypted = await cryptoApi.subtle.decrypt(
+      { name: "AES-GCM", iv: hexToBytes(ivHex) },
+      cryptoKey,
+      hexToBytes(encryptedHex),
+    )
+    return decoder.decode(decrypted)
+  } catch (error) {
+    if (error instanceof WalletCredentialCryptoError) {
+      throw error
+    }
+    throw new WalletCredentialDecryptError()
+  }
+}

@@ -9,11 +9,43 @@ import {
   WalletContext,
   WALLET_STORAGE_KEY,
   NETWORK_STORAGE_KEY,
+  getStoredEncryptedSession,
   getStoredNetworkMode,
+  type EncryptedWalletSession,
   type NetworkMode,
   type WalletCredentials,
 } from "./wallet-context"
 import { HyperliquidClient } from "@/services/hyperliquid-client"
+import {
+  decryptWalletPrivateKey,
+  encryptWalletPrivateKey,
+} from "@/services/walletCredentialCrypto"
+
+const credentialsFromSession = (
+  session: EncryptedWalletSession,
+  privateKey: string,
+): WalletCredentials => ({
+  accountAddress: session.accountAddress,
+  apiWalletAddress: session.apiWalletAddress,
+  privateKey,
+})
+
+const persistEncryptedSession = (
+  credentials: WalletCredentials,
+  encrypted: Pick<
+    EncryptedWalletSession,
+    "encryptedPrivateKey" | "salt" | "iv"
+  >,
+) => {
+  const session: EncryptedWalletSession = {
+    accountAddress: credentials.accountAddress,
+    apiWalletAddress: credentials.apiWalletAddress,
+    encryptedPrivateKey: encrypted.encryptedPrivateKey,
+    salt: encrypted.salt,
+    iv: encrypted.iv,
+  }
+  localStorage.setItem(WALLET_STORAGE_KEY, JSON.stringify(session))
+}
 
 export const WalletProvider = (props: ParentProps) => {
   const [credentials, setCredentials] = createSignal<WalletCredentials | null>(
@@ -22,8 +54,18 @@ export const WalletProvider = (props: ParentProps) => {
   const [networkMode, setNetworkModeState] = createSignal<NetworkMode>(
     getStoredNetworkMode(),
   )
+  const [hasStoredSession, setHasStoredSession] = createSignal(
+    getStoredEncryptedSession() !== null,
+  )
+
+  const syncStoredSessionState = () => {
+    setHasStoredSession(getStoredEncryptedSession() !== null)
+  }
 
   const isConnected = createMemo(() => credentials() !== null)
+  const isLocked = createMemo(
+    () => hasStoredSession() && credentials() === null,
+  )
 
   const client = createMemo(() => {
     const creds = credentials()
@@ -31,21 +73,38 @@ export const WalletProvider = (props: ParentProps) => {
     return new HyperliquidClient(creds, networkMode())
   })
 
-  const connect = (newCredentials: WalletCredentials) => {
-    setCredentials(newCredentials)
-    const { accountAddress, apiWalletAddress, vaultAddress } = newCredentials
-    // SECURITY: never persist the private key. Only public address metadata is
-    // stored, so the reconnect dialog can pre-fill it; the user re-enters the
-    // private key on reload. Credentials never leave the browser to disk.
-    localStorage.setItem(
-      WALLET_STORAGE_KEY,
-      JSON.stringify({ accountAddress, apiWalletAddress, vaultAddress }),
+  const connect = async (
+    newCredentials: WalletCredentials,
+    pin: string,
+  ): Promise<void> => {
+    const encrypted = await encryptWalletPrivateKey(
+      newCredentials.privateKey,
+      pin,
     )
+    persistEncryptedSession(newCredentials, encrypted)
+    setCredentials(newCredentials)
+    syncStoredSessionState()
+  }
+
+  const unlock = async (pin: string): Promise<void> => {
+    const session = getStoredEncryptedSession()
+    if (!session) {
+      throw new Error("no encrypted wallet session in storage")
+    }
+
+    const privateKey = await decryptWalletPrivateKey(
+      session.encryptedPrivateKey,
+      pin,
+      session.salt,
+      session.iv,
+    )
+    setCredentials(credentialsFromSession(session, privateKey))
   }
 
   const disconnect = () => {
     setCredentials(null)
     localStorage.removeItem(WALLET_STORAGE_KEY)
+    syncStoredSessionState()
   }
 
   const setNetworkMode = (mode: NetworkMode) => {
@@ -56,6 +115,7 @@ export const WalletProvider = (props: ParentProps) => {
   const handleStorageChange = (event: StorageEvent) => {
     if (event.key === WALLET_STORAGE_KEY) {
       setCredentials(null)
+      syncStoredSessionState()
     }
     if (event.key === NETWORK_STORAGE_KEY) {
       setNetworkModeState(getStoredNetworkMode())
@@ -63,9 +123,6 @@ export const WalletProvider = (props: ParentProps) => {
   }
 
   onMount(() => {
-    // The private key is never persisted, so a full session cannot be restored
-    // on mount; the reconnect dialog pre-fills the stored public metadata and
-    // the user re-enters the key. Only wire the cross-tab storage listener.
     window.addEventListener("storage", handleStorageChange)
   })
   onCleanup(() => {
@@ -78,8 +135,11 @@ export const WalletProvider = (props: ParentProps) => {
         credentials,
         networkMode,
         isConnected,
+        isLocked,
+        hasStoredSession,
         client,
         connect,
+        unlock,
         disconnect,
         setNetworkMode,
       }}

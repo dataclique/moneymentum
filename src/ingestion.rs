@@ -54,10 +54,27 @@ impl IngestionJob {
         Self { run_id }
     }
 
-    pub(crate) async fn run(self, pool: Data<SqlitePool>, services: Data<Arc<IngestionServices>>) {
-        if let Err(err) = touch_run(&pool, &self.run_id).await {
-            error!(error = %err, run_id = self.run_id.as_str(), "failed to touch ingestion run");
-            return;
+    pub(crate) async fn run(
+        self,
+        pool: Data<SqlitePool>,
+        services: Data<Arc<IngestionServices>>,
+    ) -> Result<(), IngestionRunError> {
+        match touch_run(&pool, &self.run_id).await {
+            Ok(()) => {}
+            // A stale delivery: the run already left `running` (recovered on
+            // restart, completed, or cancelled), so there is nothing to do. Ack
+            // the job instead of retrying a guaranteed no-op forever.
+            Err(IngestionRunError::RunNotRunning { run_id }) => {
+                debug!(run_id = run_id.as_str(), "skipped stale ingestion job");
+                return Ok(());
+            }
+            // A transient failure (e.g. the database is momentarily
+            // unavailable). Propagate so the worker retries rather than acking a
+            // run whose heartbeat never landed.
+            Err(err) => {
+                error!(error = %err, run_id = self.run_id.as_str(), "failed to touch ingestion run");
+                return Err(err);
+            }
         }
 
         let candle_ingester = CandleIngester::new(
@@ -78,23 +95,16 @@ impl IngestionJob {
         .await
         {
             Ok(last_record) => {
-                if let Err(err) = complete_run(&pool, &self.run_id, last_record).await {
-                    error!(error = %err, run_id = self.run_id.as_str(), "failed to record ingestion completion");
-                    return;
-                }
+                complete_run(&pool, &self.run_id, last_record).await?;
                 info!(run_id = self.run_id.as_str(), "ingestion complete");
             }
             Err(err) => {
                 error!(error = %err, run_id = self.run_id.as_str(), "ingestion failed");
-                if let Err(record_err) = fail_run(&pool, &self.run_id, &err.to_string()).await {
-                    error!(
-                        error = %record_err,
-                        run_id = self.run_id.as_str(),
-                        "failed to record ingestion failure"
-                    );
-                }
+                fail_run(&pool, &self.run_id, &err.to_string()).await?;
             }
         }
+
+        Ok(())
     }
 }
 
@@ -483,21 +493,48 @@ mod tests {
 
     #[traced_test]
     #[tokio::test]
-    async fn stale_job_for_recovered_run_does_not_execute() {
+    async fn stale_job_for_recovered_run_acks_without_executing() {
         let pool = setup_pool().await;
         let run_id = create_run(&pool).await.unwrap();
         recover_abandoned_runs(&pool).await.unwrap();
         let job = IngestionJob::new(run_id.clone());
 
-        job.run(
-            Data::new(pool.clone()),
-            Data::new(Arc::new(test_services())),
-        )
-        .await;
+        let outcome = job
+            .run(
+                Data::new(pool.clone()),
+                Data::new(Arc::new(test_services())),
+            )
+            .await;
 
         let status = latest_status(&pool).await.unwrap();
 
+        assert!(outcome.is_ok());
         assert_eq!(status, Some(IngestionStatus::Failed));
+        assert!(logs_contain_at(
+            Level::DEBUG,
+            &["skipped stale ingestion job", run_id.as_str()]
+        ));
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn transient_touch_failure_propagates_for_retry() {
+        let pool = setup_pool().await;
+        let run_id = create_run(&pool).await.unwrap();
+        // A transient database outage: the pool is gone by the time the job
+        // tries to record its heartbeat. The worker must see the error and
+        // retry, not silently ack a run that never ran.
+        pool.close().await;
+        let job = IngestionJob::new(run_id.clone());
+
+        let outcome = job
+            .run(
+                Data::new(pool.clone()),
+                Data::new(Arc::new(test_services())),
+            )
+            .await;
+
+        assert!(matches!(outcome, Err(IngestionRunError::Sqlx(_))));
         assert!(logs_contain_at(
             Level::ERROR,
             &["failed to touch ingestion run", run_id.as_str()]
@@ -515,7 +552,8 @@ mod tests {
             Data::new(pool.clone()),
             Data::new(Arc::new(test_services())),
         )
-        .await;
+        .await
+        .unwrap();
 
         let status = latest_status(&pool).await.unwrap();
 

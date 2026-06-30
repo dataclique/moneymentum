@@ -159,6 +159,15 @@ mod tests {
     }
 
     #[test]
+    fn serialize_round_trips_canonical_symbol() {
+        let symbol = Symbol::from_raw("btc/usdc:usdc");
+        let json = serde_json::to_string(&symbol).unwrap();
+        let decoded: Symbol = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.as_str(), "BTC");
+        assert_eq!(json, "\"BTC\"");
+    }
+
+    #[test]
     fn hyperliquid_swap_ccxt_symbol_matches_ccxt_parse_market() {
         assert_eq!(
             hyperliquid_swap_ccxt_symbol("BTC").as_str(),

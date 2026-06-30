@@ -15,13 +15,12 @@
 //! aggregate keys or bare strings, so adding a venue or instrument class is one
 //! enum variant plus an adapter with no change to this aggregate.
 
-use std::collections::BTreeMap;
-use std::fmt::{self, Display};
-use std::str::FromStr;
-
 use event_sorcery::{Column, DomainEvent, EventSourced, JobQueue, Nil, Table};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+use std::fmt::{self, Display};
+use std::str::FromStr;
 use uuid::Uuid;
 
 use crate::finance::Symbol;

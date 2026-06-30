@@ -52,7 +52,7 @@ impl FromStr for MarketId {
             .split_once(':')
             .ok_or(ParseMarketIdError::MissingSeparator)?;
         Ok(Self {
-            venue: venue.parse().map_err(ParseMarketIdError::Venue)?,
+            venue: venue.parse()?,
             symbol: Symbol::from_raw(symbol),
         })
     }
@@ -64,7 +64,7 @@ pub(crate) enum ParseMarketIdError {
     #[error("market id must be 'venue:symbol'")]
     MissingSeparator,
     #[error(transparent)]
-    Venue(#[from] UnknownVenue),
+    UnknownVenue(#[from] UnknownVenue),
 }
 
 /// Whether a market is tradable or has been retired by the operator.

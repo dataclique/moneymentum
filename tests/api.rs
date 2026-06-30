@@ -232,6 +232,18 @@ async fn info_request_count(server: &MockServer) -> usize {
         .count()
 }
 
+async fn poll_for_terminal_ingestion(client: &Client, max_polls: usize, interval_ms: u64) -> bool {
+    for _ in 0..max_polls {
+        let response = client.get("/ingestion/status").dispatch().await;
+        let body = response.into_string().await.unwrap();
+        if body.contains("Completed") || body.contains("Failed") || body.contains("Abandoned") {
+            return true;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(interval_ms)).await;
+    }
+    false
+}
+
 async fn poll_for_tradable_btc(client: &Client, max_polls: usize, interval_ms: u64) -> bool {
     for _ in 0..max_polls {
         let response = client.get("/markets/hyperliquid").dispatch().await;
@@ -276,7 +288,10 @@ async fn get_markets_does_not_refetch_hyperliquid_after_catalog_is_seeded() {
     let ingest_response = client.post("/ingest").dispatch().await;
     assert_eq!(ingest_response.status(), Status::Accepted);
 
-    let listed = poll_for_tradable_btc(&client, 100, 50).await;
+    let terminal = poll_for_terminal_ingestion(&client, 200, 100).await;
+    assert!(terminal, "ingestion worker should reach a terminal state");
+
+    let listed = poll_for_tradable_btc(&client, 10, 10).await;
     assert!(listed, "ingestion should seed the market catalog");
 
     let after_ingest = info_request_count(&mock_server).await;

@@ -436,6 +436,7 @@ impl Portfolio {
         PortfolioView {
             id: *id,
             name: self.name.clone(),
+            base_currency: self.base_currency,
             status: self.status,
             target: self.target.as_ref().map(TargetView::from),
         }
@@ -449,6 +450,7 @@ impl Portfolio {
 pub(crate) struct PortfolioView {
     id: PortfolioId,
     name: PortfolioName,
+    base_currency: BaseCurrency,
     status: PortfolioStatus,
     target: Option<TargetView>,
 }
@@ -525,6 +527,28 @@ mod tests {
                 absolute_sum: dec!(1.2)
             }
         );
+    }
+
+    #[test]
+    fn target_accepts_weights_within_normalization_tolerance() {
+        let target = TargetRevision::new(
+            vec![perp("BTC", dec!(0.6)), perp("ETH", dec!(0.400001))],
+            Leverage::new(dec!(1)).unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(target.legs.len(), 2);
+    }
+
+    #[test]
+    fn target_rejects_weights_just_over_normalization_tolerance() {
+        let error = TargetRevision::new(
+            vec![perp("BTC", dec!(0.6)), perp("ETH", dec!(0.400002))],
+            Leverage::new(dec!(1)).unwrap(),
+        )
+        .unwrap_err();
+
+        assert!(matches!(error, TargetError::WeightsNotNormalized { .. }));
     }
 
     #[test]

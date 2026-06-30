@@ -8,6 +8,8 @@
 //! snapshot read regardless. The operator's disable decisions live in a separate
 //! stream (`market_enablement`); the tradable set joins the two.
 
+use std::collections::BTreeSet;
+
 use chrono::{DateTime, Utc};
 use event_sorcery::{DomainEvent, EventSourced, JobQueue, Nil, Table};
 use serde::{Deserialize, Serialize};
@@ -78,6 +80,31 @@ pub(crate) enum MarketCatalogCommand {
 pub(crate) enum MarketCatalogError {
     #[error("observed market universe is empty")]
     EmptyObservation,
+    #[error("observed market universe lists {symbol} more than once")]
+    DuplicateSymbol { symbol: String },
+}
+
+fn duplicate_symbol(markets: &[CatalogMarket]) -> Option<String> {
+    let mut seen = BTreeSet::new();
+    for market in markets {
+        let symbol = market.symbol().as_str().to_string();
+        if !seen.insert(symbol.clone()) {
+            return Some(symbol);
+        }
+    }
+    None
+}
+
+fn validate_observed_universe(markets: &[CatalogMarket]) -> Result<(), MarketCatalogError> {
+    if markets.is_empty() {
+        return Err(MarketCatalogError::EmptyObservation);
+    }
+
+    if let Some(symbol) = duplicate_symbol(markets) {
+        return Err(MarketCatalogError::DuplicateSymbol { symbol });
+    }
+
+    Ok(())
 }
 
 impl EventSourced for MarketCatalog {
@@ -118,9 +145,7 @@ impl EventSourced for MarketCatalog {
             markets,
             observed_at,
         } = command;
-        if markets.is_empty() {
-            return Err(MarketCatalogError::EmptyObservation);
-        }
+        validate_observed_universe(&markets)?;
 
         Ok(vec![MarketCatalogEvent::VenueUniverseObserved {
             markets,
@@ -137,9 +162,7 @@ impl EventSourced for MarketCatalog {
             markets,
             observed_at,
         } = command;
-        if markets.is_empty() {
-            return Err(MarketCatalogError::EmptyObservation);
-        }
+        validate_observed_universe(&markets)?;
 
         Ok(vec![MarketCatalogEvent::VenueUniverseObserved {
             markets,
@@ -232,6 +255,26 @@ mod tests {
         assert!(matches!(
             error,
             LifecycleError::Apply(MarketCatalogError::EmptyObservation)
+        ));
+    }
+
+    #[tokio::test]
+    async fn recording_a_duplicate_symbol_is_refused() {
+        let error = TestHarness::<MarketCatalog>::with()
+            .given(vec![])
+            .when(MarketCatalogCommand::RecordUniverse {
+                markets: vec![
+                    CatalogMarket::new(Symbol::from_raw("BTC"), 50),
+                    CatalogMarket::new(Symbol::from_raw("BTC"), 25),
+                ],
+                observed_at: observed_at(1),
+            })
+            .await
+            .then_expect_error();
+
+        assert!(matches!(
+            error,
+            LifecycleError::Apply(MarketCatalogError::DuplicateSymbol { .. })
         ));
     }
 }

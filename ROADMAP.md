@@ -33,8 +33,8 @@ portfolios, the ingestion lifecycle, and the tradable market universe. Design:
       [#364](https://github.com/data-cartel/moneymentum/issues/364) /
       [#362](https://github.com/data-cartel/moneymentum/pull/362)
 - [ ] Serve per-market max leverage limits from the catalog --
-      [#379](https://github.com/dataclique/moneymentum/issues/379) /
-      [#380](https://github.com/dataclique/moneymentum/pull/380)
+      [#379](https://github.com/data-cartel/moneymentum/issues/379) /
+      [#380](https://github.com/data-cartel/moneymentum/pull/380)
 
 ---
 

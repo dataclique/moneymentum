@@ -44,3 +44,19 @@ impl FromStr for VenueRef {
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("unknown venue: {0}")]
 pub(crate) struct UnknownVenue(String);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hyperliquid_slug_round_trips_through_display_fromstr_and_serde() {
+        let venue = VenueRef::Hyperliquid;
+        assert_eq!(venue.to_string(), "hyperliquid");
+        assert_eq!("hyperliquid".parse::<VenueRef>().unwrap(), venue);
+
+        let decoded: VenueRef = serde_json::from_str("\"hyperliquid\"").unwrap();
+        assert_eq!(decoded, venue);
+        assert_eq!(serde_json::to_string(&venue).unwrap(), "\"hyperliquid\"");
+    }
+}

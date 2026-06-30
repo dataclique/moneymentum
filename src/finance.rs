@@ -153,6 +153,12 @@ mod tests {
     }
 
     #[test]
+    fn deserialize_normalizes_wire_symbol() {
+        let symbol: Symbol = serde_json::from_str("\"btc/usdc:usdc\"").unwrap();
+        assert_eq!(symbol.as_str(), "BTC");
+    }
+
+    #[test]
     fn hyperliquid_swap_ccxt_symbol_matches_ccxt_parse_market() {
         assert_eq!(
             hyperliquid_swap_ccxt_symbol("BTC").as_str(),

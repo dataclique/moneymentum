@@ -48,7 +48,7 @@ const LOST_RACE_REASON: &str = "lost the one-running race to a concurrent ingest
 /// the source of truth. The start time is held at microsecond precision -- the
 /// resolution the wire form preserves -- so an id always equals the value parsed
 /// back from its own [`Display`] output.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub(crate) struct IngestionRunId {
     started_at_micros: i64,
     nonce: Uuid,
@@ -543,7 +543,7 @@ pub(crate) async fn latest_status(
     let runs = projection.load_all().await?;
     Ok(runs
         .into_iter()
-        .max_by_key(|(_, run)| run.started_at)
+        .max_by(|(left_id, _), (right_id, _)| left_id.cmp(right_id))
         .map(|(_, run)| run.status))
 }
 
@@ -805,6 +805,53 @@ mod tests {
                 .parse::<IngestionRunId>()
                 .is_err()
         );
+    }
+
+    #[tokio::test]
+    async fn latest_status_prefers_the_latest_run_id_when_microseconds_match() {
+        let (store, projection) = ingestion_store().await;
+        let shared_start = Utc.with_ymd_and_hms(2026, 1, 2, 3, 4, 5).unwrap();
+        let first_id: IngestionRunId =
+            "ingestion-1735787045000000-00000000000000000000000000000001"
+                .parse()
+                .unwrap();
+        let second_id: IngestionRunId =
+            "ingestion-1735787045000000-00000000000000000000000000000002"
+                .parse()
+                .unwrap();
+
+        store
+            .send(
+                &first_id,
+                IngestionRunCommand::Start {
+                    started_at: shared_start,
+                },
+            )
+            .await
+            .unwrap();
+        store
+            .send(
+                &first_id,
+                IngestionRunCommand::Complete {
+                    last_record_at: shared_start,
+                    completed_at: shared_start,
+                },
+            )
+            .await
+            .unwrap();
+        store
+            .send(
+                &second_id,
+                IngestionRunCommand::Start {
+                    started_at: shared_start,
+                },
+            )
+            .await
+            .unwrap();
+
+        let status = latest_status(&projection).await.unwrap();
+
+        assert_eq!(status, Some(IngestionRunStatus::Running));
     }
 
     #[traced_test]

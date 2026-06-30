@@ -15,5 +15,6 @@ CREATE TABLE IF NOT EXISTS portfolio_view (
 );
 
 CREATE INDEX IF NOT EXISTS idx_portfolio_view_status
-    ON portfolio_view(status) WHERE status IS NOT NULL;
+    ON portfolio_view(status)
+    WHERE status IS NOT NULL;
 

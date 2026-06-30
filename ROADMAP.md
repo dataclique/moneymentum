@@ -6,13 +6,14 @@
 Each `##` section is a theme -- a goal-oriented group of related stories. Themes
 are ordered by priority (highest first).
 
-Stories link to their per-feature acceptance criteria in
-[stories/](./stories/README.md). Engineering work (refactors, migrations,
-internal foundations) lives in the same folder under a "Dev" sub-heading when a
-written contract is warranted, otherwise as a standalone GitHub issue -- see
+Stories live as GitHub issues labeled
+[`user-story`](https://github.com/data-cartel/moneymentum/issues?q=label%3Auser-story);
+each issue holds the story's acceptance criteria. Engineering work (refactors,
+migrations, internal foundations) shares the same hex-indexed sequence when a
+written contract is warranted, otherwise it is a standalone GitHub issue -- see
 [contributions.md](./contributions.md) for the split.
 
-Numeric story IDs (`001`, `018`, etc.) reflect creation order, not
+Hex story IDs (`0x001`, `0x018`, etc.) reflect creation order, not
 implementation priority. Priority is defined by this roadmap's theme order and
 the order within each theme.
 
@@ -21,12 +22,9 @@ the order within each theme.
 ## Dev: event-sourced persistence foundation
 
 Give the toolkit durable, auditable state via
-[event-sorcery](https://github.com/ST0X-Technology/event-sorcery): portfolios
-(target streams that enable auto-rebalancing), the ingestion lifecycle, and the
-tradable market universe. Each domain is an event-sourced aggregate so history
-is a first-class artifact for later performance attribution and prediction, and
-the design stays forward-compatible with multiple instruments and venues.
-Design: [adrs/0001](./adrs/0001-event-sorcery-persistence-foundation.md).
+[event-sorcery](https://github.com/ST0X-Technology/event-sorcery) for
+portfolios, the ingestion lifecycle, and the tradable market universe. Design:
+[adrs/0001](./adrs/0001-event-sorcery-persistence-foundation.md).
 
 - [ ] Adopt the event-sorcery event-store stack (sqlx 0.9, apalis 1.0-rc) --
       [#363](https://github.com/data-cartel/moneymentum/issues/363) /
@@ -34,6 +32,9 @@ Design: [adrs/0001](./adrs/0001-event-sorcery-persistence-foundation.md).
 - [ ] Event-source portfolios, ingestion runs, and the market universe --
       [#364](https://github.com/data-cartel/moneymentum/issues/364) /
       [#362](https://github.com/data-cartel/moneymentum/pull/362)
+- [ ] Serve per-market max leverage limits from the catalog --
+      [#379](https://github.com/dataclique/moneymentum/issues/379) /
+      [#380](https://github.com/dataclique/moneymentum/pull/380)
 
 ---
 
@@ -104,6 +105,21 @@ of them.
 - [x] Tradable filter wired into ingestion --
       [#277](https://github.com/dataclique/moneymentum/issues/277) /
       [#278](https://github.com/dataclique/moneymentum/pull/278)
+- [x] Move user stories from repo files to GitHub issues --
+      [#341](https://github.com/dataclique/moneymentum/issues/341) /
+      [#342](https://github.com/dataclique/moneymentum/pull/342)
+- [x] Risk metrics: historical VaR/CVaR --
+      [#343](https://github.com/dataclique/moneymentum/issues/343) /
+      [#344](https://github.com/dataclique/moneymentum/pull/344)
+- [x] Risk metrics: historical max drawdown --
+      [#345](https://github.com/dataclique/moneymentum/issues/345) /
+      [#346](https://github.com/dataclique/moneymentum/pull/346)
+- [x] Risk metrics: Ledoit-Wolf shrunk correlation matrix --
+      [#347](https://github.com/dataclique/moneymentum/issues/347) /
+      [#348](https://github.com/dataclique/moneymentum/pull/348)
+- [x] Risk metrics: effective number of bets (Meucci + stressed + 1/HHI) --
+      [#349](https://github.com/dataclique/moneymentum/issues/349) /
+      [#350](https://github.com/dataclique/moneymentum/pull/350)
 - [x] Type-safe time-series transforms crate (returns, log-returns, rolling
       volatility, drawdown, normalization) --
       [#303](https://github.com/dataclique/moneymentum/issues/303) /
@@ -116,9 +132,9 @@ of them.
 Users need to reach the app before any portfolio feature matters. Deployment is
 the next user-facing priority; it runs in parallel to the Dev track above.
 
-- [ ] [Keep The App Deployed And Reachable](./stories/0x008.keep-app-deployed-and-reachable.md)
-- [ ] [Verify Deployed Hyperliquid Long-Short Rebalancing](./stories/0x00a.verify-deployed-hyperliquid-long-short-rebalancing.md)
-- [ ] [Serve The App From A Domain](./stories/0x009.serve-app-from-domain.md)
+- [ ] [Keep The App Deployed And Reachable](https://github.com/data-cartel/moneymentum/issues/312)
+- [ ] [Verify Deployed Hyperliquid Long-Short Rebalancing](https://github.com/data-cartel/moneymentum/issues/314)
+- [ ] [Serve The App From A Domain](https://github.com/data-cartel/moneymentum/issues/313)
 - [x] [Clear stale switch-to-configuration lock blocking deploys](https://github.com/dataclique/moneymentum/issues/394)
       ([#395](https://github.com/dataclique/moneymentum/pull/395))
 - [x] [Address #377 review follow-ups](https://github.com/dataclique/moneymentum/issues/392)
@@ -132,10 +148,10 @@ Display portfolio-weighted Bitcoin beta for the active portfolio and surface
 read-only Bitcoin holdings so the risk view reflects the user's actual exposure.
 See [SPEC.md](./SPEC.md) for the beta methodology and the `POST /beta` contract.
 
-- [x] [Show Bitcoin Beta For The Active Portfolio](./stories/0x00b.show-bitcoin-beta-for-active-portfolio.md)
-- [x] [Add Read-Only Bitcoin Addresses](./stories/0x00c.add-read-only-bitcoin-addresses.md)
-- [ ] [Include Read-Only Bitcoin Holdings In Beta](./stories/0x00d.include-read-only-bitcoin-holdings-in-beta.md)
-- [ ] [Target Ending Bitcoin Beta While Hedging](./stories/0x00e.target-ending-bitcoin-beta-while-hedging.md)
+- [x] [Show Bitcoin Beta For The Active Portfolio](https://github.com/data-cartel/moneymentum/issues/315)
+- [x] [Add Read-Only Bitcoin Addresses](https://github.com/data-cartel/moneymentum/issues/316)
+- [ ] [Include Read-Only Bitcoin Holdings In Beta](https://github.com/data-cartel/moneymentum/issues/317)
+- [ ] [Target Ending Bitcoin Beta While Hedging](https://github.com/data-cartel/moneymentum/issues/318)
 - [x] Compute read-only BTC and USD amounts with exact decimals --
       [#220](https://github.com/dataclique/moneymentum/issues/220) /
       [#378](https://github.com/dataclique/moneymentum/pull/378)
@@ -147,9 +163,9 @@ See [SPEC.md](./SPEC.md) for the beta methodology and the `POST /beta` contract.
 Read-only portfolios need stable identity. Solana public keys are the natural
 identifier because the north star already assumes Solana deposits.
 
-- [ ] [Authenticate Portfolio Ownership By Solana Pubkey](./stories/0x00f.authenticate-portfolio-ownership-by-solana-pubkey.md)
-- [ ] [View Portfolios By Public Key URL](./stories/0x010.view-portfolios-by-public-key-url.md)
-- [ ] [Hide Portfolio Details For A Fee](./stories/0x011.hide-portfolio-details-for-fee.md)
+- [ ] [Authenticate Portfolio Ownership By Solana Pubkey](https://github.com/data-cartel/moneymentum/issues/319)
+- [ ] [View Portfolios By Public Key URL](https://github.com/data-cartel/moneymentum/issues/320)
+- [ ] [Hide Portfolio Details For A Fee](https://github.com/data-cartel/moneymentum/issues/321)
 
 ---
 
@@ -159,8 +175,8 @@ Non-custodial managed vault on Solana for users who prefer strategy allocation
 over hands-on rebalancing. Anchor program with two-phase withdrawal and a
 share-based accounting model.
 
-- [ ] [Deposit Into Vault](./stories/0x017.deposit-into-vault.md)
-- [ ] [Withdraw From Vault](./stories/0x018.withdraw-from-vault.md)
+- [ ] [Deposit Into Vault](https://github.com/data-cartel/moneymentum/issues/327)
+- [ ] [Withdraw From Vault](https://github.com/data-cartel/moneymentum/issues/328)
 
 ---
 
@@ -170,11 +186,11 @@ Users who are long-term bullish Bitcoin still need protection against short- and
 mid-term crashes. Start with manually entered protective puts and simple
 historical crash simulations, then add stressed correlations and rolling.
 
-- [ ] [Enter Protective Put Positions](./stories/0x013.enter-protective-put-positions.md)
-- [ ] [Use Derive Options For Protective Puts](./stories/0x019.use-derive-options-for-protective-puts.md)
-- [ ] [Simulate Historical Bitcoin Crashes](./stories/0x014.simulate-historical-bitcoin-crashes.md)
-- [ ] [Simulate Stressed Crash Correlations](./stories/0x015.simulate-stressed-crash-correlations.md)
-- [ ] [Roll Protective Puts Before Final Month](./stories/0x016.roll-protective-puts-before-final-month.md)
+- [ ] [Enter Protective Put Positions](https://github.com/data-cartel/moneymentum/issues/323)
+- [ ] [Use Derive Options For Protective Puts](https://github.com/data-cartel/moneymentum/issues/329)
+- [ ] [Simulate Historical Bitcoin Crashes](https://github.com/data-cartel/moneymentum/issues/324)
+- [ ] [Simulate Stressed Crash Correlations](https://github.com/data-cartel/moneymentum/issues/325)
+- [ ] [Roll Protective Puts Before Final Month](https://github.com/data-cartel/moneymentum/issues/326)
 
 ---
 
@@ -185,13 +201,21 @@ historical crash simulations, then add stressed correlations and rolling.
 Find assets by factor characteristics, stage portfolio changes, and simulate the
 result before sending trades.
 
-- [ ] [Compare Target vs Current Portfolio](./stories/0x01a.compare-target-vs-current-portfolio.md)
-- [ ] [Screen Perps By Factor](./stories/0x01c.screen-perps-by-factor.md) --
-      backend rank API shipped
-      ([#273](https://github.com/dataclique/moneymentum/issues/273) /
-      [#274](https://github.com/dataclique/moneymentum/pull/274)); frontend
+- [ ] [Compare Target vs Current Portfolio](https://github.com/data-cartel/moneymentum/issues/330)
+      -- backend compare API shipped
+      ([#279](https://github.com/data-cartel/moneymentum/issues/279) /
+      [#280](https://github.com/data-cartel/moneymentum/pull/280)); frontend
+      portfolio surface pending
+- [ ] [Screen Perps By Factor](https://github.com/data-cartel/moneymentum/issues/332)
+      -- backend rank API shipped
+      ([#273](https://github.com/data-cartel/moneymentum/issues/273) /
+      [#274](https://github.com/data-cartel/moneymentum/pull/274)); frontend
       filter integration pending
-- [ ] [Simulate Staged Portfolio Metrics](./stories/0x01d.simulate-staged-portfolio-metrics.md)
+- [ ] [Simulate Staged Portfolio Metrics](https://github.com/data-cartel/moneymentum/issues/333)
+      -- backend simulate API shipped
+      ([#281](https://github.com/data-cartel/moneymentum/issues/281) /
+      [#282](https://github.com/data-cartel/moneymentum/pull/282)); frontend
+      staging view pending
 
 ---
 
@@ -201,7 +225,26 @@ result before sending trades.
 
 Portfolio risk assessment beyond beta and crash-specific simulations.
 
-- [ ] [Show Risk Analytics For Active Portfolio](./stories/0x01b.show-risk-analytics-for-active-portfolio.md)
+- [ ] [Show Risk Analytics For Active Portfolio](https://github.com/data-cartel/moneymentum/issues/331)
+      -- measurement contract shipped
+      ([#283](https://github.com/data-cartel/moneymentum/issues/283) /
+      [#284](https://github.com/data-cartel/moneymentum/pull/284)); historical
+      VaR/CVaR shipped
+      ([#343](https://github.com/data-cartel/moneymentum/issues/343) /
+      [#344](https://github.com/data-cartel/moneymentum/pull/344)); historical
+      max drawdown shipped
+      ([#345](https://github.com/data-cartel/moneymentum/issues/345) /
+      [#346](https://github.com/data-cartel/moneymentum/pull/346)); shrunk
+      correlation matrix shipped
+      ([#347](https://github.com/data-cartel/moneymentum/issues/347) /
+      [#348](https://github.com/data-cartel/moneymentum/pull/348)); effective
+      number of bets shipped
+      ([#349](https://github.com/data-cartel/moneymentum/issues/349) /
+      [#350](https://github.com/data-cartel/moneymentum/pull/350)); Monte Carlo
+      metrics and stress tests pending
+- [x] Portfolio risk panel wired to `POST /risk` --
+      [#351](https://github.com/data-cartel/moneymentum/issues/351) /
+      [#352](https://github.com/data-cartel/moneymentum/pull/352)
 
 ---
 
@@ -211,8 +254,8 @@ Portfolio risk assessment beyond beta and crash-specific simulations.
 
 Unified perp + spot portfolio management.
 
-- [ ] [Trade Hyperliquid Spot Positions](./stories/0x01e.trade-hyperliquid-spot-positions.md)
-- [ ] [Add Read-Only Wallets On Other Chains](./stories/0x012.add-read-only-wallets-on-other-chains.md)
+- [ ] [Trade Hyperliquid Spot Positions](https://github.com/data-cartel/moneymentum/issues/334)
+- [ ] [Add Read-Only Wallets On Other Chains](https://github.com/data-cartel/moneymentum/issues/322)
 
 ---
 

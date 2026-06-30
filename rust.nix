@@ -64,10 +64,13 @@ in {
   });
 
   # CI check derivations -- lighter than buildPackage (no final link step)
-  test = craneLib.cargoTest (commonArgs // { inherit cargoArtifacts; });
+  test = craneLib.cargoTest (commonArgs // {
+    inherit cargoArtifacts;
+    cargoTestExtraArgs = "--workspace";
+  });
 
   clippy = craneLib.cargoClippy (commonArgs // {
     inherit cargoArtifacts;
-    cargoClippyExtraArgs = "--all-targets -- -D clippy::all";
+    cargoClippyExtraArgs = "--workspace --all-targets -- -D clippy::all";
   });
 }

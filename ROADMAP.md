@@ -120,6 +120,9 @@ of them.
 - [x] Risk metrics: Ledoit-Wolf shrunk correlation matrix --
       [#347](https://github.com/dataclique/moneymentum/issues/347) /
       [#348](https://github.com/dataclique/moneymentum/pull/348)
+- [x] Risk metrics: effective number of bets (Meucci + stressed + 1/HHI) --
+      [#349](https://github.com/dataclique/moneymentum/issues/349) /
+      [#350](https://github.com/dataclique/moneymentum/pull/350)
 
 ---
 
@@ -226,8 +229,11 @@ Portfolio risk assessment beyond beta and crash-specific simulations.
       [#346](https://github.com/data-cartel/moneymentum/pull/346)); shrunk
       correlation matrix shipped
       ([#347](https://github.com/data-cartel/moneymentum/issues/347) /
-      [#348](https://github.com/data-cartel/moneymentum/pull/348)); ENB, Monte
-      Carlo metrics and the frontend pending
+      [#348](https://github.com/data-cartel/moneymentum/pull/348)); effective
+      number of bets shipped
+      ([#349](https://github.com/data-cartel/moneymentum/issues/349) /
+      [#350](https://github.com/data-cartel/moneymentum/pull/350)); Monte Carlo
+      metrics and the frontend pending
 
 ---
 

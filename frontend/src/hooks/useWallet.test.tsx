@@ -3,6 +3,7 @@ import { renderHook } from "@solidjs/testing-library"
 import { useWallet } from "./useWallet"
 import { WalletProvider } from "@/contexts/WalletProvider"
 import type { ParentProps } from "solid-js"
+import { WalletCredentialDecryptError } from "@/services/walletCredentialCrypto"
 
 vi.mock("@/services/hyperliquid-client", () => ({
   HyperliquidClient: class MockHyperliquidClient {
@@ -17,6 +18,8 @@ vi.mock("@/services/hyperliquid-client", () => ({
 const wrapper = (props: ParentProps) => (
   <WalletProvider>{props.children}</WalletProvider>
 )
+
+const TEST_PIN = "123456"
 
 describe("useWallet", () => {
   const ensureLocalStorage = () => {
@@ -60,12 +63,11 @@ describe("useWallet", () => {
 
     expect(result.credentials()).toBeNull()
     expect(result.isConnected()).toBe(false)
+    expect(result.isLocked()).toBe(false)
     expect(result.networkMode()).toBe("testnet")
   })
 
-  it("does not auto-restore credentials on mount (private key is never persisted)", () => {
-    // Even a legacy or tampered entry that contains a private key must not be
-    // trusted: credentials are never restored from localStorage on mount.
+  it("does not auto-restore plaintext private keys from legacy storage", () => {
     localStorage.setItem(
       "hyperliquid-wallet",
       JSON.stringify({
@@ -79,6 +81,26 @@ describe("useWallet", () => {
 
     expect(result.credentials()).toBeNull()
     expect(result.isConnected()).toBe(false)
+    expect(result.isLocked()).toBe(false)
+  })
+
+  it("reports a locked session when encrypted credentials exist on disk", () => {
+    localStorage.setItem(
+      "hyperliquid-wallet",
+      JSON.stringify({
+        accountAddress: "0xStoredAccountAddress",
+        apiWalletAddress: "0xStoredApiWalletAddress",
+        encryptedPrivateKey: "abc",
+        salt: "def",
+        iv: "ghi",
+      }),
+    )
+
+    const { result } = renderHook(() => useWallet(), { wrapper })
+
+    expect(result.isLocked()).toBe(true)
+    expect(result.hasStoredSession()).toBe(true)
+    expect(result.isConnected()).toBe(false)
   })
 
   it("reads network mode from localStorage", () => {
@@ -88,35 +110,73 @@ describe("useWallet", () => {
     expect(result.networkMode()).toBe("mainnet")
   })
 
-  it("keeps the private key in memory but never in localStorage; disconnect clears both", () => {
+  it("encrypts the private key in localStorage and keeps plaintext in memory only", async () => {
     const { result } = renderHook(() => useWallet(), { wrapper })
     const credentials = {
       accountAddress: "0xTestAccountAddress",
       apiWalletAddress: "0xTestApiWalletAddress",
       privateKey: "TEST_PRIVATE_KEY_PLACEHOLDER",
-      vaultAddress: "0xVault",
     }
 
-    result.connect(credentials)
+    await result.connect(credentials, TEST_PIN)
 
     expect(result.isConnected()).toBe(true)
-    // Full credentials (including the private key) live in memory only.
     expect(result.credentials()).toEqual(credentials)
-    // localStorage holds public address metadata only -- never the private key.
     const stored = JSON.parse(
       localStorage.getItem("hyperliquid-wallet") ?? "{}",
     )
-    expect(stored).toEqual({
-      accountAddress: "0xTestAccountAddress",
-      apiWalletAddress: "0xTestApiWalletAddress",
-      vaultAddress: "0xVault",
-    })
+    expect(stored.accountAddress).toBe("0xTestAccountAddress")
+    expect(stored.apiWalletAddress).toBe("0xTestApiWalletAddress")
+    expect(stored.encryptedPrivateKey).toBeTypeOf("string")
+    expect(stored.salt).toBeTypeOf("string")
+    expect(stored.iv).toBeTypeOf("string")
     expect(stored.privateKey).toBeUndefined()
+    expect(stored.encryptedPrivateKey).not.toBe(credentials.privateKey)
 
     result.disconnect()
     expect(result.isConnected()).toBe(false)
-    expect(result.credentials()).toBeNull()
+    expect(result.isLocked()).toBe(false)
+    expect(result.hasStoredSession()).toBe(false)
     expect(localStorage.getItem("hyperliquid-wallet")).toBeNull()
+  })
+
+  it("unlocks an encrypted session with the correct pin", async () => {
+    const credentials = {
+      accountAddress: "0xTestAccountAddress",
+      apiWalletAddress: "0xTestApiWalletAddress",
+      privateKey: "TEST_PRIVATE_KEY_PLACEHOLDER",
+    }
+
+    const { result: initial } = renderHook(() => useWallet(), { wrapper })
+    await initial.connect(credentials, TEST_PIN)
+    expect(localStorage.getItem("hyperliquid-wallet")).not.toBeNull()
+
+    const { result: reloaded } = renderHook(() => useWallet(), { wrapper })
+    expect(reloaded.isLocked()).toBe(true)
+
+    await reloaded.unlock(TEST_PIN)
+
+    expect(reloaded.isConnected()).toBe(true)
+    expect(reloaded.credentials()?.privateKey).toBe(credentials.privateKey)
+  })
+
+  it("rejects unlock with the wrong pin", async () => {
+    const { result } = renderHook(() => useWallet(), { wrapper })
+    await result.connect(
+      {
+        accountAddress: "0xTestAccountAddress",
+        apiWalletAddress: "0xTestApiWalletAddress",
+        privateKey: "TEST_PRIVATE_KEY_PLACEHOLDER",
+      },
+      TEST_PIN,
+    )
+
+    const { result: reloaded } = renderHook(() => useWallet(), { wrapper })
+
+    await expect(reloaded.unlock("999999")).rejects.toBeInstanceOf(
+      WalletCredentialDecryptError,
+    )
+    expect(reloaded.isConnected()).toBe(false)
   })
 
   it("setNetworkMode updates signal and localStorage", () => {

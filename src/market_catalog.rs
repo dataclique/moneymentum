@@ -85,14 +85,13 @@ pub(crate) enum MarketCatalogError {
 }
 
 fn duplicate_symbol(markets: &[CatalogMarket]) -> Option<String> {
-    let mut seen = BTreeSet::new();
-    for market in markets {
-        let symbol = market.symbol().as_str().to_string();
-        if !seen.insert(symbol.clone()) {
-            return Some(symbol);
-        }
-    }
-    None
+    markets
+        .iter()
+        .map(|market| market.symbol().as_str().to_string())
+        .try_fold(BTreeSet::new(), |mut seen, symbol| {
+            seen.insert(symbol.clone()).then(|| seen).ok_or(symbol)
+        })
+        .err()
 }
 
 fn validate_observed_universe(markets: &[CatalogMarket]) -> Result<(), MarketCatalogError> {

@@ -20,8 +20,8 @@ const BENCHMARK_TICKER: &str = "BTC";
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SimulationRequest {
-    current: HashMap<String, f64>,
-    staged: HashMap<String, f64>,
+    current: HashMap<Symbol, f64>,
+    staged: HashMap<Symbol, f64>,
 }
 
 /// Projected metrics for one portfolio. Extended as the risk engine lands.
@@ -59,11 +59,11 @@ pub(crate) async fn simulate(
 /// Projects metrics for a single set of weights.
 async fn project_metrics(
     data_dir: &Path,
-    weights: &HashMap<String, f64>,
+    weights: &HashMap<Symbol, f64>,
 ) -> Result<ProjectedMetrics, ReturnsError> {
     let weights: Vec<(Symbol, f64)> = weights
         .iter()
-        .map(|(symbol, weight)| (Symbol::from_raw(symbol), *weight))
+        .map(|(symbol, weight)| (symbol.clone(), *weight))
         .collect();
     let beta =
         compute_portfolio_beta_report(data_dir, &weights, &Symbol::from_raw(BENCHMARK_TICKER))
@@ -83,10 +83,10 @@ mod tests {
 
     use crate::logs_contain_at;
 
-    fn weights(entries: &[(&str, f64)]) -> HashMap<String, f64> {
+    fn weights(entries: &[(&str, f64)]) -> HashMap<Symbol, f64> {
         entries
             .iter()
-            .map(|(symbol, weight)| ((*symbol).to_string(), *weight))
+            .map(|(symbol, weight)| (Symbol::from_raw(symbol), *weight))
             .collect()
     }
 

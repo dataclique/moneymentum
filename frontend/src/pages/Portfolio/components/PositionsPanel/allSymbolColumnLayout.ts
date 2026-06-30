@@ -1,14 +1,8 @@
 import { cn } from "@/lib/cn"
 
-export type AllSymbolColumnId =
-  | "asset"
-  | "rate"
-  | "beta"
-  | "vol"
-  | "sharpe"
-  | "sortino"
-  | "momentum"
-  | "carry"
+import type { PortfolioMetricColumnId } from "./portfolioMetricVisibility"
+
+export type AllSymbolColumnId = "asset" | PortfolioMetricColumnId
 
 const bodyBase = "px-2 py-1 align-middle"
 
@@ -33,6 +27,10 @@ export const ALL_SYMBOL_TABLE_COLUMN_IDS: AllSymbolColumnId[] = [
   "momentum",
   "carry",
 ]
+
+export const allSymbolTableColumnIds = (
+  visibleMetricColumns: PortfolioMetricColumnId[],
+): AllSymbolColumnId[] => ["asset", ...visibleMetricColumns]
 
 export const allSymbolColumnWidthClass = (
   columnId: AllSymbolColumnId,

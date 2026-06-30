@@ -31,7 +31,7 @@ import {
   buildAllSymbolRows,
   resolveAllSymbolClick,
 } from "./allSymbolRowModel"
-import { allSymbolsColumns } from "./allSymbolsColumns"
+import { buildAllSymbolsColumns } from "./allSymbolsColumns"
 import { PositionsPanelAlerts } from "./PositionsPanelAlerts"
 import {
   displayPosition,
@@ -116,6 +116,10 @@ export const PositionsPanel = (props: PositionsPanelProps): JSX.Element => {
 
   const portfolioColumns = createMemo(() =>
     buildPositionsColumns(visibleMetricColumns()),
+  )
+
+  const allColumns = createMemo(() =>
+    buildAllSymbolsColumns(visibleMetricColumns()),
   )
 
   const factorScoresByTicker = createMemo(
@@ -406,8 +410,9 @@ export const PositionsPanel = (props: PositionsPanelProps): JSX.Element => {
         >
           <div class="flex-1 min-h-0">
             <AllSymbolsDataTable
-              columns={allSymbolsColumns}
+              columns={allColumns()}
               data={allSymbolRows}
+              visibleMetricColumns={visibleMetricColumns()}
               targetPortfolio={props.targetPortfolio}
               deletedArchive={props.deletedArchive}
               fundingIsLoading={props.fundingIsLoading}

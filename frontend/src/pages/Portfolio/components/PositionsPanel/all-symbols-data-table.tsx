@@ -30,12 +30,13 @@ import {
   filterAllSymbolRows,
 } from "./allSymbolRowModel"
 import {
-  ALL_SYMBOL_TABLE_COLUMN_IDS,
   allSymbolColumnWidthClass,
   allSymbolHeaderClass,
+  allSymbolTableColumnIds,
   isAllSymbolColumnId,
 } from "./allSymbolColumnLayout"
 import { DEFAULT_ALL_SYMBOLS_SORTING } from "./allSymbolsColumns"
+import type { PortfolioMetricColumnId } from "./portfolioMetricVisibility"
 
 const ESTIMATED_ALL_SYMBOL_ROW_HEIGHT_PX = 34
 const ALL_SYMBOLS_OVERSCAN_ROW_COUNT = 10
@@ -46,6 +47,7 @@ interface AllSymbolsVirtualRowProps {
   searchQuery: Accessor<string>
   targetPortfolio: Record<string, PortfolioInterface | undefined>
   deletedArchive: Record<string, PortfolioInterface | undefined>
+  visibleMetricColumns: PortfolioMetricColumnId[]
   fundingIsLoading: boolean
   factorsIsLoading: boolean
   onSymbolClick: (symbol: string) => void
@@ -69,6 +71,7 @@ const AllSymbolsVirtualRow = (
             props.targetPortfolio,
             props.deletedArchive,
           )}
+          visibleMetricColumns={props.visibleMetricColumns}
           fundingIsLoading={props.fundingIsLoading}
           factorsIsLoading={props.factorsIsLoading}
           onSymbolClick={props.onSymbolClick}
@@ -81,6 +84,7 @@ const AllSymbolsVirtualRow = (
 interface AllSymbolsDataTableProps {
   columns: ColumnDef<AllSymbolRowData>[]
   data: Accessor<AllSymbolRowData[]>
+  visibleMetricColumns: PortfolioMetricColumnId[]
   targetPortfolio: Record<string, PortfolioInterface | undefined>
   deletedArchive: Record<string, PortfolioInterface | undefined>
   fundingIsLoading: boolean
@@ -95,6 +99,7 @@ export const AllSymbolsDataTable = (
   const [local] = splitProps(props, [
     "columns",
     "data",
+    "visibleMetricColumns",
     "targetPortfolio",
     "deletedArchive",
     "fundingIsLoading",
@@ -196,6 +201,9 @@ export const AllSymbolsDataTable = (
       : 0
   }
 
+  const tableColumnIds = () =>
+    allSymbolTableColumnIds(local.visibleMetricColumns)
+
   return (
     <div class={cn("flex h-full min-h-0 flex-col", local.class)}>
       <div class="shrink-0 border-b border-border px-2 py-1.5">
@@ -219,7 +227,7 @@ export const AllSymbolsDataTable = (
       >
         <table class="min-w-full w-max table-fixed">
           <colgroup>
-            <For each={ALL_SYMBOL_TABLE_COLUMN_IDS}>
+            <For each={tableColumnIds()}>
               {columnId => <col class={allSymbolColumnWidthClass(columnId)} />}
             </For>
           </colgroup>
@@ -284,6 +292,7 @@ export const AllSymbolsDataTable = (
                     searchQuery={searchQuery}
                     targetPortfolio={local.targetPortfolio}
                     deletedArchive={local.deletedArchive}
+                    visibleMetricColumns={local.visibleMetricColumns}
                     fundingIsLoading={local.fundingIsLoading}
                     factorsIsLoading={local.factorsIsLoading}
                     onSymbolClick={local.onSymbolClick}

@@ -232,50 +232,64 @@ async fn info_request_count(server: &MockServer) -> usize {
         .count()
 }
 
+async fn poll_for_tradable_btc(client: &Client, max_polls: usize, interval_ms: u64) -> bool {
+    for _ in 0..max_polls {
+        let response = client.get("/markets/hyperliquid").dispatch().await;
+        if response.status() == Status::Ok {
+            let markets: Vec<String> =
+                serde_json::from_str(&response.into_string().await.unwrap()).unwrap_or_default();
+            if markets.iter().any(|symbol| symbol == "BTC") {
+                return true;
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(interval_ms)).await;
+    }
+    false
+}
+
 #[rocket::async_test]
-async fn get_hyperliquid_markets_serves_universe_with_cache_header() {
+async fn get_markets_lists_tradable_universe_after_ingest() {
     let mock_server = MockServer::start().await;
     mount_meta_mock(&mock_server).await;
 
     let data_dir = TempDir::new().unwrap();
     let client = create_test_client(&mock_server, &data_dir).await;
 
-    let response = client.get("/hyperliquid/markets").dispatch().await;
-    assert_eq!(response.status(), Status::Ok);
-    let cache_control = response
-        .headers()
-        .get_one("Cache-Control")
-        .unwrap_or_default()
-        .to_owned();
-    let body = response.into_string().await.unwrap();
+    let ingest_response = client.post("/ingest").dispatch().await;
+    assert_eq!(ingest_response.status(), Status::Accepted);
+
+    let listed = poll_for_tradable_btc(&client, 100, 50).await;
     assert!(
-        body.contains("BTC"),
-        "markets response should list the BTC ticker: {body}"
-    );
-    assert!(
-        cache_control.contains("max-age"),
-        "markets response should carry a Cache-Control max-age header, got: {cache_control:?}"
+        listed,
+        "ingestion should refresh the market catalog before later stages can fail"
     );
 }
 
 #[rocket::async_test]
-async fn get_hyperliquid_markets_serves_fresh_ledger_without_refetching() {
+async fn get_markets_does_not_refetch_hyperliquid_after_catalog_is_seeded() {
     let mock_server = MockServer::start().await;
     mount_meta_mock(&mock_server).await;
 
     let data_dir = TempDir::new().unwrap();
     let client = create_test_client(&mock_server, &data_dir).await;
 
-    let first = client.get("/hyperliquid/markets").dispatch().await;
+    let ingest_response = client.post("/ingest").dispatch().await;
+    assert_eq!(ingest_response.status(), Status::Accepted);
+
+    let listed = poll_for_tradable_btc(&client, 100, 50).await;
+    assert!(listed, "ingestion should seed the market catalog");
+
+    let after_ingest = info_request_count(&mock_server).await;
+
+    let first = client.get("/markets/hyperliquid").dispatch().await;
     assert_eq!(first.status(), Status::Ok);
-    let after_first = info_request_count(&mock_server).await;
 
-    let second = client.get("/hyperliquid/markets").dispatch().await;
+    let second = client.get("/markets/hyperliquid").dispatch().await;
     assert_eq!(second.status(), Status::Ok);
-    let after_second = info_request_count(&mock_server).await;
 
+    let after_reads = info_request_count(&mock_server).await;
     assert_eq!(
-        after_first, after_second,
-        "a second GET against a fresh ledger must not re-fetch from Hyperliquid"
+        after_ingest, after_reads,
+        "listing tradable markets must read the event-sourced catalog without re-fetching Hyperliquid"
     );
 }

@@ -276,6 +276,6 @@ async fn get_hyperliquid_markets_serves_fresh_ledger_without_refetching() {
 
     assert_eq!(
         after_first, after_second,
-        "a second GET against a fresh ledger must not re-fetch from Hyperliquid"
+        "GET must only read the on-disk ledger and never re-fetch from Hyperliquid"
     );
 }

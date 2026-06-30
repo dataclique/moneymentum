@@ -324,17 +324,11 @@ fn markets_ledger_from_query(
 async fn get_hyperliquid_markets(
     network: Option<&str>,
     config: &State<Config>,
-    hyperliquid_clients: &State<HyperliquidClients>,
 ) -> Result<MarketsJson, Status> {
     let ledger = markets_ledger_from_query(network)?;
-    match market_metadata::refresh_markets_if_stale(
-        hyperliquid_clients.for_ledger(ledger),
-        &config.data_dir,
-        ledger,
-    )
-    .await
-    {
+    match market_metadata::load_markets_api_response(&config.data_dir, ledger).await {
         Ok(response) => Ok(MarketsJson(Json(response))),
+        Err(market_metadata::MarketsMetadataError::MissingFile) => Err(Status::NotFound),
         Err(err) => {
             warn!(error = %err, ?ledger, "failed to load hyperliquid markets");
             Err(Status::InternalServerError)

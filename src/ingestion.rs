@@ -14,7 +14,7 @@ use thiserror::Error;
 use tracing::{debug, error, info, warn};
 
 use crate::hyperliquid::{CandleIngester, FundingRateIngester, Hyperliquid, HyperliquidError};
-use crate::market_metadata::{MarketsLedger, refresh_markets};
+use crate::market_metadata::{MarketsLedger, load_markets};
 use crate::timeframe::Timeframe;
 
 const TIMEFRAMES: &[Timeframe] = &[
@@ -86,14 +86,7 @@ impl IngestionJob {
             services.max_concurrent_requests,
         );
 
-        match ingest_all(
-            services.hyperliquid.as_ref(),
-            &candle_ingester,
-            &funding_ingester,
-            &services.data_dir,
-        )
-        .await
-        {
+        match ingest_all(&candle_ingester, &funding_ingester, &services.data_dir).await {
             Ok(last_record) => {
                 complete_run(&pool, &self.run_id, last_record).await?;
                 info!(run_id = self.run_id.as_str(), "ingestion complete");
@@ -108,13 +101,20 @@ impl IngestionJob {
     }
 }
 
+#[derive(Debug, Error)]
+enum IngestionPipelineError {
+    #[error(transparent)]
+    Markets(#[from] crate::market_metadata::MarketsMetadataError),
+    #[error(transparent)]
+    Hyperliquid(#[from] HyperliquidError),
+}
+
 async fn ingest_all(
-    client: &dyn Hyperliquid,
     candle_ingester: &CandleIngester<dyn Hyperliquid>,
     funding_ingester: &FundingRateIngester<dyn Hyperliquid>,
     data_dir: &Path,
-) -> Result<DateTime<Utc>, HyperliquidError> {
-    let markets = refresh_markets(client, data_dir, MarketsLedger::Mainnet).await?;
+) -> Result<DateTime<Utc>, IngestionPipelineError> {
+    let markets = load_markets(data_dir, MarketsLedger::Mainnet).await?;
 
     funding_ingester
         .ingest_with_markets(data_dir, &markets)
@@ -337,8 +337,10 @@ pub(crate) async fn fail_run(
 mod tests {
     use async_trait::async_trait;
     use chrono::{DateTime, TimeZone, Utc};
+    use polars::prelude::df;
     use rust_decimal_macros::dec;
     use sqlx::SqlitePool;
+    use tempfile::TempDir;
     use tracing::Level;
     use tracing_test::traced_test;
 
@@ -350,6 +352,18 @@ mod tests {
     use crate::logs_contain_at;
     use crate::market_metadata::MarketMetadata;
     use crate::timeframe::Timeframe;
+
+    async fn write_test_markets_csv(data_dir: &std::path::Path) {
+        let frame = df! {
+            "symbol" => &["BTC"],
+            "max_leverage" => &[50_u32],
+            "asset_index" => &[0_u32],
+        }
+        .unwrap();
+        crate::dataframe::write_csv(data_dir.join(MarketsLedger::Mainnet.file_name()), frame)
+            .await
+            .unwrap();
+    }
 
     struct MockHyperliquid;
 
@@ -544,16 +558,20 @@ mod tests {
     #[traced_test]
     #[tokio::test]
     async fn job_records_completed_run_and_logs() {
+        let data_dir = TempDir::new().unwrap();
+        write_test_markets_csv(data_dir.path()).await;
         let pool = setup_pool().await;
         let run_id = create_run(&pool).await.unwrap();
         let job = IngestionJob::new(run_id.clone());
+        let services = IngestionServices {
+            hyperliquid: Arc::new(MockHyperliquid),
+            data_dir: data_dir.path().to_path_buf(),
+            max_concurrent_requests: 10,
+        };
 
-        job.run(
-            Data::new(pool.clone()),
-            Data::new(Arc::new(test_services())),
-        )
-        .await
-        .unwrap();
+        job.run(Data::new(pool.clone()), Data::new(Arc::new(services)))
+            .await
+            .unwrap();
 
         let status = latest_status(&pool).await.unwrap();
 

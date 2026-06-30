@@ -1,5 +1,6 @@
 //! Markets metadata: the perp universe with each market's max leverage,
-//! stored in `markets.csv` and refreshed from Hyperliquid.
+//! stored in `markets.csv`. Refreshes run on server startup (when stale) and
+//! via the Nix-triggered `POST /hyperliquid/markets/refresh` endpoint.
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
@@ -144,6 +145,19 @@ pub(crate) async fn markets_need_refresh(data_dir: &Path, ledger: MarketsLedger)
     age >= MARKETS_REFRESH_INTERVAL
 }
 
+/// Loads the perp universe from the on-disk ledger. Ingestion consumes this
+/// list directly; it does not refresh markets from Hyperliquid.
+pub(crate) async fn load_markets(
+    data_dir: &Path,
+    ledger: MarketsLedger,
+) -> Result<Vec<Market>, MarketsMetadataError> {
+    let path = markets_file_path(data_dir, ledger);
+    let frame = crate::dataframe::read_csv(path)
+        .await?
+        .ok_or(MarketsMetadataError::MissingFile)?;
+    markets_from_frame(&frame).map_err(MarketsMetadataError::Polars)
+}
+
 pub(crate) async fn load_markets_api_response(
     data_dir: &Path,
     ledger: MarketsLedger,
@@ -260,31 +274,6 @@ async fn file_modified_at_rfc3339(path: &Path) -> Result<Option<String>, Markets
     let modified_at = metadata.modified()?;
     let timestamp = chrono::DateTime::<chrono::Utc>::from(modified_at);
     Ok(Some(timestamp.to_rfc3339()))
-}
-
-/// Refreshes markets from Hyperliquid when stale, then returns the API payload.
-pub(crate) async fn refresh_markets_if_stale(
-    client: &dyn Hyperliquid,
-    data_dir: &Path,
-    ledger: MarketsLedger,
-) -> Result<MarketsApiResponse, MarketsMetadataError> {
-    if markets_need_refresh(data_dir, ledger).await {
-        let _guard = refresh_lock(ledger).lock().await;
-        // Re-check under the lock: a concurrent request may have refreshed this
-        // ledger while we waited, so we skip the redundant upstream fetch.
-        if markets_need_refresh(data_dir, ledger).await
-            && let Err(error) = refresh_markets(client, data_dir, ledger).await
-        {
-            // A stale-but-valid ledger on disk is strictly more useful than a
-            // 500 in a trading-critical path, so fall back to it when the
-            // upstream refresh fails. Only propagate if no ledger exists.
-            if !markets_file_path(data_dir, ledger).exists() {
-                return Err(error.into());
-            }
-            warn!(%error, ?ledger, "markets refresh failed; serving stale ledger");
-        }
-    }
-    load_markets_api_response(data_dir, ledger).await
 }
 
 pub(crate) async fn refresh_all_markets_if_stale(

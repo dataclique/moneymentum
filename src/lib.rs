@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
 
-use apalis::prelude::{Monitor, TaskSink, WorkerBuilder};
+use apalis::prelude::{Data, Monitor, WorkerBuilder};
 use apalis_sqlite::SqliteStorage;
 use axum::Json;
 use axum::Router;
@@ -85,6 +85,7 @@ pub struct Config {
     log_level: LogLevel,
     max_concurrent_requests: usize,
     max_retries: usize,
+    ingestion_schedule: String,
     pub derive: Option<derive::DeriveConfig>,
 }
 
@@ -201,32 +202,20 @@ async fn post_screener(
 }
 
 async fn start_ingestion(State(state): State<Arc<AppState>>) -> StatusCode {
-    let run_id =
-        match ingestion::create_run(&state.ingestion_store, &state.ingestion_projection).await {
-            Ok(run_id) => run_id,
-            Err(IngestionError::AlreadyRunning) => return StatusCode::CONFLICT,
-            Err(err) => {
-                error!(error = %err, "failed to create ingestion run");
-                return StatusCode::INTERNAL_SERVER_ERROR;
-            }
-        };
-
-    let mut job_queue = SqliteStorage::<IngestionJob, (), ()>::new(&state.apalis_pool);
-    if let Err(err) = job_queue.push(IngestionJob::new(run_id.clone())).await {
-        error!(error = %err, "failed to queue ingestion job");
-        if let Err(record_err) = ingestion::fail_run(
-            &state.ingestion_store,
-            &run_id,
-            "failed to queue ingestion job",
-        )
-        .await
-        {
-            error!(error = %record_err, "failed to record ingestion queue failure");
+    match ingestion::enqueue_run(
+        &state.ingestion_store,
+        &state.ingestion_projection,
+        &state.apalis_pool,
+    )
+    .await
+    {
+        Ok(_) => StatusCode::ACCEPTED,
+        Err(IngestionError::AlreadyRunning) => StatusCode::CONFLICT,
+        Err(err) => {
+            error!(error = %err, "failed to start ingestion run");
+            StatusCode::INTERNAL_SERVER_ERROR
         }
-        return StatusCode::INTERNAL_SERVER_ERROR;
     }
-
-    StatusCode::ACCEPTED
 }
 
 async fn get_ingestion_status(
@@ -724,6 +713,50 @@ fn spawn_ingestion_worker(
     });
 }
 
+/// apalis-cron handler: enqueues an ingestion run on each schedule tick.
+async fn run_scheduled_ingestion(
+    _tick: apalis_cron::Tick<chrono::Utc>,
+    ingestion_store: Data<Arc<Store<IngestionRun>>>,
+    ingestion_projection: Data<Arc<Projection<IngestionRun>>>,
+    apalis_pool: Data<apalis_sqlite::SqlitePool>,
+    consecutive_failures: Data<Arc<std::sync::atomic::AtomicU32>>,
+) -> Result<(), std::convert::Infallible> {
+    ingestion::trigger_scheduled_ingestion(
+        &ingestion_store,
+        &ingestion_projection,
+        &apalis_pool,
+        &consecutive_failures,
+    )
+    .await;
+    Ok(())
+}
+
+/// Spawns the supervised apalis-cron worker that enqueues an ingestion run on a
+/// fixed schedule, so deployed data stays current without an operator poking
+/// `/ingest`.
+fn spawn_ingestion_scheduler(
+    schedule: cron::Schedule,
+    apalis_pool: apalis_sqlite::SqlitePool,
+    ingestion_store: Arc<Store<IngestionRun>>,
+    ingestion_projection: Arc<Projection<IngestionRun>>,
+) {
+    let consecutive_failures = Arc::new(std::sync::atomic::AtomicU32::new(0));
+    tokio::spawn(async move {
+        let monitor = Monitor::new().register(move |_worker_index| {
+            WorkerBuilder::new("ingestion-scheduler")
+                .backend(apalis_cron::CronStream::new(schedule.clone()))
+                .data(apalis_pool.clone())
+                .data(Arc::clone(&ingestion_store))
+                .data(Arc::clone(&ingestion_projection))
+                .data(Arc::clone(&consecutive_failures))
+                .build(run_scheduled_ingestion)
+        });
+        if let Err(err) = monitor.run().await {
+            error!(error = %err, "ingestion scheduler monitor crashed");
+        }
+    });
+}
+
 /// Build the moneymentum HTTP router.
 ///
 /// # Errors
@@ -736,6 +769,11 @@ pub async fn app(config: Config) -> Result<Router, Box<dyn std::error::Error + S
     let _ = tracing_subscriber::fmt().with_env_filter(filter).try_init();
 
     ensure_shared_database(&config.database_url)?;
+
+    // Parse the schedule before any setup or background task: an invalid cron
+    // expression must fail startup outright, never after a worker has already
+    // been detached.
+    let ingestion_schedule = cron::Schedule::from_str(&config.ingestion_schedule)?;
 
     let database_options = SqliteConnectOptions::from_str(&config.database_url)?
         .journal_mode(SqliteJournalMode::Wal)
@@ -802,6 +840,14 @@ pub async fn app(config: Config) -> Result<Router, Box<dyn std::error::Error + S
         Arc::clone(&services),
     );
     debug!("ingestion worker started");
+
+    spawn_ingestion_scheduler(
+        ingestion_schedule,
+        apalis_pool.clone(),
+        Arc::clone(&ingestion_store),
+        Arc::clone(&ingestion_projection),
+    );
+    debug!("ingestion scheduler started");
 
     let state = Arc::new(AppState {
         config,
@@ -911,6 +957,7 @@ mod tests {
             log_level: LogLevel::Info,
             max_concurrent_requests: 3,
             max_retries: 5,
+            ingestion_schedule: "0 0 * * * *".to_string(),
             derive: None,
         };
 
@@ -1183,6 +1230,7 @@ mod tests {
                 log_level = "info"
                 max_concurrent_requests = 3
                 max_retries = 5
+                ingestion_schedule = "0 0 * * * *"
             "#);
             let config: Config = toml::from_str(&toml).unwrap();
             prop_assert_eq!(config.port, port);

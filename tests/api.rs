@@ -266,16 +266,17 @@ async fn get_hyperliquid_markets_serves_fresh_ledger_without_refetching() {
     let data_dir = TempDir::new().unwrap();
     let client = create_test_client(&mock_server, &data_dir).await;
 
+    let baseline = info_request_count(&mock_server).await;
+
     let first = client.get("/hyperliquid/markets").dispatch().await;
     assert_eq!(first.status(), Status::Ok);
-    let after_first = info_request_count(&mock_server).await;
 
     let second = client.get("/hyperliquid/markets").dispatch().await;
     assert_eq!(second.status(), Status::Ok);
-    let after_second = info_request_count(&mock_server).await;
 
     assert_eq!(
-        after_first, after_second,
+        info_request_count(&mock_server).await,
+        baseline,
         "GET must only read the on-disk ledger and never re-fetch from Hyperliquid"
     );
 }

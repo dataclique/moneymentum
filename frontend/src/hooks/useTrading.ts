@@ -41,12 +41,16 @@ export const useHyperliquidMarkets = () => {
   const { networkMode } = useHyperliquidClient()
   const network = createMemo(() => networkMode())
 
-  return useQuery(() => ({
-    queryKey: [...QUERY_KEYS.markets, network()],
-    queryFn: () => fetchHyperliquidMarkets(network()),
-    staleTime: millisecondsUntilNextUtcMidnight(),
-    gcTime: millisecondsUntilNextUtcMidnight(),
-  }))
+  return useQuery(() => {
+    const marketsCacheDurationMs = millisecondsUntilNextUtcMidnight()
+
+    return {
+      queryKey: [...QUERY_KEYS.markets, network()],
+      queryFn: () => fetchHyperliquidMarkets(network()),
+      staleTime: marketsCacheDurationMs,
+      gcTime: marketsCacheDurationMs,
+    }
+  })
 }
 
 export const useHyperliquidBalance = () => {

@@ -1,0 +1,144 @@
+use std::sync::Arc;
+
+use async_trait::async_trait;
+use chrono::{DateTime, TimeZone, Utc};
+use rust_decimal_macros::dec;
+use sqlx::SqlitePool;
+
+use event_sorcery::{Projection, Store, StoreBuilder};
+
+use crate::candle::Candle;
+use crate::finance::{Market, Symbol, hyperliquid_swap_ccxt_symbol};
+use crate::funding::FundingRate;
+use crate::hyperliquid::{Hyperliquid, HyperliquidError};
+use crate::market_catalog::MarketCatalog;
+use crate::market_enablement::MarketEnablement;
+use crate::market_metadata::MarketMetadata;
+use crate::timeframe::Timeframe;
+
+use super::job::IngestionJobContext;
+use super::run::IngestionRun;
+use super::services::IngestionServices;
+
+pub(crate) struct MockHyperliquid {
+    pub(crate) fetch_market_metadata_calls: Option<Arc<std::sync::atomic::AtomicU32>>,
+}
+
+impl MockHyperliquid {
+    pub(crate) fn without_call_counter() -> Self {
+        Self {
+            fetch_market_metadata_calls: None,
+        }
+    }
+
+    pub(crate) fn with_call_counter(
+        fetch_market_metadata_calls: Arc<std::sync::atomic::AtomicU32>,
+    ) -> Self {
+        Self {
+            fetch_market_metadata_calls: Some(fetch_market_metadata_calls),
+        }
+    }
+}
+
+#[async_trait]
+impl Hyperliquid for MockHyperliquid {
+    async fn fetch_market_metadata(&self) -> Result<Vec<MarketMetadata>, HyperliquidError> {
+        if let Some(fetch_market_metadata_calls) = &self.fetch_market_metadata_calls {
+            fetch_market_metadata_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+        Ok(vec![MarketMetadata {
+            symbol: Market::new("BTC".into()),
+            max_leverage: 50,
+            asset_index: 0,
+        }])
+    }
+
+    async fn fetch_candles(
+        &self,
+        market: &Market,
+        _timeframe: Timeframe,
+        _start: DateTime<Utc>,
+    ) -> Result<Vec<Candle>, HyperliquidError> {
+        Ok(vec![Candle {
+            timestamp: Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+            open: 100.0,
+            high: 105.0,
+            low: 95.0,
+            close: 102.0,
+            volume: 1000.0,
+            symbol: hyperliquid_swap_ccxt_symbol(market.as_str()).into_string(),
+            ticker: Symbol::from_raw(market.as_str()),
+        }])
+    }
+
+    async fn fetch_funding_rates(
+        &self,
+        market: &Market,
+        _start: DateTime<Utc>,
+    ) -> Result<Vec<FundingRate>, HyperliquidError> {
+        Ok(vec![FundingRate {
+            timestamp: Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+            rate: dec!(0.0001),
+            symbol: Symbol::from_raw(market.as_str()),
+        }])
+    }
+}
+
+pub(crate) async fn test_services() -> IngestionServices {
+    test_services_with_hyperliquid(Arc::new(MockHyperliquid::without_call_counter())).await
+}
+
+pub(crate) async fn test_services_with_hyperliquid(
+    hyperliquid: Arc<dyn Hyperliquid>,
+) -> IngestionServices {
+    let pool = SqlitePool::connect(":memory:").await.unwrap();
+    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+    let (market_catalog, market_catalog_projection) =
+        StoreBuilder::<MarketCatalog>::new(pool.clone())
+            .build()
+            .await
+            .unwrap();
+    let (_enablement, market_enablement_projection) = StoreBuilder::<MarketEnablement>::new(pool)
+        .build()
+        .await
+        .unwrap();
+
+    IngestionServices {
+        hyperliquid,
+        data_dir: std::env::temp_dir(),
+        max_concurrent_requests: 10,
+        market_catalog,
+        market_catalog_projection,
+        market_enablement_projection,
+    }
+}
+
+pub(crate) fn job_context(
+    store: &Arc<Store<IngestionRun>>,
+    projection: &Arc<Projection<IngestionRun>>,
+    services: IngestionServices,
+) -> IngestionJobContext {
+    IngestionJobContext {
+        run_store: Arc::clone(store),
+        run_projection: Arc::clone(projection),
+        services,
+    }
+}
+
+pub(crate) async fn ingestion_store() -> (
+    Arc<Store<IngestionRun>>,
+    Arc<Projection<IngestionRun>>,
+    SqlitePool,
+) {
+    let pool = SqlitePool::connect(":memory:").await.unwrap();
+    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+    let (store, projection) = StoreBuilder::<IngestionRun>::new(pool.clone())
+        .build()
+        .await
+        .unwrap();
+    (store, projection, pool)
+}
+
+pub(crate) fn instant() -> DateTime<Utc> {
+    Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap()
+}

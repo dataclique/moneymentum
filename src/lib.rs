@@ -813,6 +813,7 @@ pub async fn app(config: Config) -> Result<Router, Box<dyn std::error::Error + S
     };
     let ingestion_context = Arc::new(IngestionJobContext {
         run_store: Arc::clone(&ingestion_store),
+        run_projection: Arc::clone(&ingestion_projection),
         services,
     });
 

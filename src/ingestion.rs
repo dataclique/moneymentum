@@ -332,6 +332,7 @@ impl IngestionJob {
 /// startup and shared as the worker's [`Job::Input`].
 pub(crate) struct IngestionJobContext {
     pub(crate) run_store: Arc<Store<IngestionRun>>,
+    pub(crate) run_projection: Arc<Projection<IngestionRun>>,
     pub(crate) services: IngestionServices,
 }
 
@@ -365,6 +366,51 @@ impl Job for IngestionJob {
                 error!(error = %err, run_id = %self.run_id, "failed to load ingestion run");
                 return Err(err);
             }
+        }
+
+        // Both concurrent `create_run` losers and winners enqueue a job atomically
+        // with `Start`. The aggregate can still read Running for a loser until its
+        // `Abandon` commits, so verify this run_id is the projection's sole winner
+        // before any ingestion I/O.
+        let holds_slot = match holds_one_running_slot(&context.run_projection, &self.run_id).await {
+            Ok(holds_slot) => holds_slot,
+            Err(err) => {
+                error!(
+                    error = %err,
+                    run_id = %self.run_id,
+                    "failed to verify the one-running slot"
+                );
+                return retry_ingestion_job(store, &self.run_id).await;
+            }
+        };
+        if !holds_slot {
+            match store.load(&self.run_id).await {
+                Ok(Some(run)) if run.status == IngestionRunStatus::Running => {
+                    store
+                        .send(
+                            &self.run_id,
+                            IngestionRunCommand::Abandon {
+                                reason: LOST_RACE_REASON.to_string(),
+                                reconciled_at: Utc::now(),
+                            },
+                        )
+                        .await?;
+                }
+                Ok(_) => {}
+                Err(err) => {
+                    error!(
+                        error = %err,
+                        run_id = %self.run_id,
+                        "failed to load ingestion run before abandoning race loser"
+                    );
+                    return Err(err);
+                }
+            }
+            warn!(
+                run_id = %self.run_id,
+                "skipping ingestion for a run that lost the one-running race"
+            );
+            return Ok(());
         }
 
         let candle_ingester = CandleIngester::new(
@@ -634,6 +680,37 @@ async fn running_runs(
         .await
 }
 
+async fn holds_one_running_slot(
+    projection: &Projection<IngestionRun>,
+    run_id: &IngestionRunId,
+) -> Result<bool, ProjectionError<IngestionRun>> {
+    Ok(matches!(
+        running_runs(projection).await?.as_slice(),
+        [(winner, _)] if winner == run_id
+    ))
+}
+
+async fn retry_ingestion_job(
+    store: &Store<IngestionRun>,
+    run_id: &IngestionRunId,
+) -> Result<(), SendError<IngestionRun>> {
+    let Some(run) = store.load(run_id).await? else {
+        return Ok(());
+    };
+    if run.status != IngestionRunStatus::Running {
+        return Ok(());
+    }
+    store
+        .send(
+            run_id,
+            IngestionRunCommand::Start {
+                run_id: run_id.clone(),
+                started_at: run.started_at,
+            },
+        )
+        .await
+}
+
 async fn complete_run(
     store: &Store<IngestionRun>,
     run_id: &IngestionRunId,
@@ -678,6 +755,7 @@ mod tests {
     use chrono::{DateTime, TimeZone, Utc};
     use rust_decimal_macros::dec;
     use sqlx::SqlitePool;
+    use std::sync::atomic::{AtomicU32, Ordering};
     use tracing::Level;
     use tracing_test::traced_test;
 
@@ -692,11 +770,30 @@ mod tests {
     use crate::market_metadata::MarketMetadata;
     use crate::timeframe::Timeframe;
 
-    struct MockHyperliquid;
+    struct MockHyperliquid {
+        fetch_market_metadata_calls: Option<Arc<AtomicU32>>,
+    }
+
+    impl MockHyperliquid {
+        fn without_call_counter() -> Self {
+            Self {
+                fetch_market_metadata_calls: None,
+            }
+        }
+
+        fn with_call_counter(fetch_market_metadata_calls: Arc<AtomicU32>) -> Self {
+            Self {
+                fetch_market_metadata_calls: Some(fetch_market_metadata_calls),
+            }
+        }
+    }
 
     #[async_trait]
     impl Hyperliquid for MockHyperliquid {
         async fn fetch_market_metadata(&self) -> Result<Vec<MarketMetadata>, HyperliquidError> {
+            if let Some(fetch_market_metadata_calls) = &self.fetch_market_metadata_calls {
+                fetch_market_metadata_calls.fetch_add(1, Ordering::SeqCst);
+            }
             Ok(vec![MarketMetadata {
                 symbol: Market::new("BTC".into()),
                 max_leverage: 50,
@@ -736,6 +833,12 @@ mod tests {
     }
 
     async fn test_services() -> IngestionServices {
+        test_services_with_hyperliquid(Arc::new(MockHyperliquid::without_call_counter())).await
+    }
+
+    async fn test_services_with_hyperliquid(
+        hyperliquid: Arc<dyn Hyperliquid>,
+    ) -> IngestionServices {
         let pool = SqlitePool::connect(":memory:").await.unwrap();
         sqlx::migrate!("./migrations").run(&pool).await.unwrap();
         let (market_catalog, market_catalog_projection) =
@@ -750,12 +853,24 @@ mod tests {
                 .unwrap();
 
         IngestionServices {
-            hyperliquid: Arc::new(MockHyperliquid),
+            hyperliquid,
             data_dir: std::env::temp_dir(),
             max_concurrent_requests: 10,
             market_catalog,
             market_catalog_projection,
             market_enablement_projection,
+        }
+    }
+
+    fn job_context(
+        store: &Arc<Store<IngestionRun>>,
+        projection: &Arc<Projection<IngestionRun>>,
+        services: IngestionServices,
+    ) -> IngestionJobContext {
+        IngestionJobContext {
+            run_store: Arc::clone(store),
+            run_projection: Arc::clone(projection),
+            services,
         }
     }
 
@@ -979,10 +1094,7 @@ mod tests {
         let run_id = create_run(&store, &projection).await.unwrap();
         recover_abandoned_runs(&store, &projection).await.unwrap();
         let job = IngestionJob::new(run_id.clone());
-        let context = IngestionJobContext {
-            run_store: Arc::clone(&store),
-            services: test_services().await,
-        };
+        let context = job_context(&store, &projection, test_services().await);
 
         job.perform(&context).await.unwrap();
 
@@ -1002,10 +1114,7 @@ mod tests {
         let (store, projection, pool) = ingestion_store().await;
         let run_id = create_run(&store, &projection).await.unwrap();
         let job = IngestionJob::new(run_id.clone());
-        let context = IngestionJobContext {
-            run_store: Arc::clone(&store),
-            services: test_services().await,
-        };
+        let context = job_context(&store, &projection, test_services().await);
 
         job.perform(&context).await.unwrap();
 
@@ -1131,5 +1240,96 @@ mod tests {
             1,
             "exactly one run remains in the Running slot"
         );
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn race_loser_job_skips_ingestion_before_winner_runs() {
+        let fetch_market_metadata_calls = Arc::new(AtomicU32::new(0));
+        let (store, projection, _pool) = ingestion_store().await;
+        let services = test_services_with_hyperliquid(Arc::new(
+            MockHyperliquid::with_call_counter(Arc::clone(&fetch_market_metadata_calls)),
+        ))
+        .await;
+        let context = job_context(&store, &projection, services);
+
+        // Simulate the post-Start race window: both streams committed `Start`
+        // (and enqueued jobs) but the partial unique index left only one winner
+        // in the projection.
+        let shared_start = instant();
+        let shared_micros = shared_start.timestamp_micros();
+        let first_id: IngestionRunId =
+            format!("ingestion-{shared_micros}-00000000000000000000000000000001")
+                .parse()
+                .unwrap();
+        let second_id: IngestionRunId =
+            format!("ingestion-{shared_micros}-00000000000000000000000000000002")
+                .parse()
+                .unwrap();
+
+        store
+            .send(
+                &first_id,
+                IngestionRunCommand::Start {
+                    run_id: first_id.clone(),
+                    started_at: shared_start,
+                },
+            )
+            .await
+            .unwrap();
+        store
+            .send(
+                &second_id,
+                IngestionRunCommand::Start {
+                    run_id: second_id.clone(),
+                    started_at: shared_start,
+                },
+            )
+            .await
+            .unwrap();
+
+        let running = running_runs(&projection).await.unwrap();
+        assert_eq!(running.len(), 1, "projection must admit exactly one winner");
+        let winner_id = running[0].0.clone();
+        let loser_id = if winner_id == first_id {
+            second_id
+        } else {
+            first_id
+        };
+
+        // Run the loser's job first -- the ordering that previously duplicated work.
+        IngestionJob::new(loser_id.clone())
+            .perform(&context)
+            .await
+            .unwrap();
+        IngestionJob::new(winner_id.clone())
+            .perform(&context)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            fetch_market_metadata_calls.load(Ordering::SeqCst),
+            1,
+            "only the projection winner may execute ingestion"
+        );
+
+        let loser = store.load(&loser_id).await.unwrap().unwrap();
+        let winner = store.load(&winner_id).await.unwrap().unwrap();
+        assert_eq!(loser.status, IngestionRunStatus::Abandoned);
+        assert_eq!(winner.status, IngestionRunStatus::Completed);
+
+        let loser_id = loser_id.to_string();
+        assert!(logs_contain_at(
+            Level::WARN,
+            &[
+                "skipping ingestion for a run that lost the one-running race",
+                loser_id.as_str()
+            ]
+        ));
+        let winner_id = winner_id.to_string();
+        assert!(logs_contain_at(
+            Level::INFO,
+            &["ingestion complete", winner_id.as_str()]
+        ));
     }
 }

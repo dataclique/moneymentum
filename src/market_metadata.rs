@@ -412,7 +412,7 @@ mod tests {
 
     use super::*;
     use crate::candle::Candle;
-    use crate::finance::Market;
+    use crate::finance::{self, Market};
     use crate::funding::FundingRate;
     use crate::hyperliquid::{Hyperliquid, HyperliquidClients, HyperliquidError};
     use crate::logs_contain_at;
@@ -475,6 +475,38 @@ mod tests {
             .unwrap();
     }
 
+    fn assert_ledger_markets_match(
+        ledger: MarketsLedger,
+        expected_symbol: &str,
+        disk_markets: &[Market],
+        api_response: &MarketsApiResponse,
+    ) {
+        let expected_ccxt = finance::hyperliquid_swap_ccxt_symbol(expected_symbol);
+
+        assert_eq!(
+            disk_markets.len(),
+            1,
+            "{ledger:?} disk cache should contain one market"
+        );
+        assert_eq!(
+            disk_markets[0].as_str(),
+            expected_symbol,
+            "{ledger:?} disk cache should keep the ledger-specific symbol"
+        );
+        assert_eq!(
+            api_response.leverage_limits.len(),
+            1,
+            "{ledger:?} api response should contain one leverage limit"
+        );
+        assert_eq!(
+            api_response.leverage_limits[0].symbol, expected_ccxt,
+            "{ledger:?} api response symbol should match the ledger-specific market"
+        );
+        assert_eq!(api_response.leverage_limits[0].max_leverage, 50);
+        assert_eq!(api_response.leverage_limits[0].asset_index, 0);
+        assert_eq!(api_response.tickers, vec![expected_ccxt]);
+    }
+
     #[traced_test]
     #[tokio::test]
     async fn startup_markets_refresh_missing_ledgers_before_ready() {
@@ -504,13 +536,33 @@ mod tests {
             "testnet_markets.csv should exist after startup refresh"
         );
 
-        let mainnet_markets = load_markets_from_disk(data_dir.path(), MarketsLedger::Mainnet).await;
-        let testnet_markets = load_markets_from_disk(data_dir.path(), MarketsLedger::Testnet).await;
-        assert_eq!(mainnet_markets.unwrap().len(), 1);
-        assert_eq!(testnet_markets.unwrap().len(), 1);
+        let mainnet_markets = load_markets_from_disk(data_dir.path(), MarketsLedger::Mainnet)
+            .await
+            .unwrap();
+        let testnet_markets = load_markets_from_disk(data_dir.path(), MarketsLedger::Testnet)
+            .await
+            .unwrap();
+        let mainnet_api = store
+            .api_response(MarketsLedger::Mainnet)
+            .await
+            .expect("mainnet api response should be loaded");
+        let testnet_api = store
+            .api_response(MarketsLedger::Testnet)
+            .await
+            .expect("testnet api response should be loaded");
 
-        assert!(store.api_response(MarketsLedger::Mainnet).await.is_some());
-        assert!(store.api_response(MarketsLedger::Testnet).await.is_some());
+        assert_ledger_markets_match(
+            MarketsLedger::Mainnet,
+            "BTC",
+            &mainnet_markets,
+            &mainnet_api,
+        );
+        assert_ledger_markets_match(
+            MarketsLedger::Testnet,
+            "ETH",
+            &testnet_markets,
+            &testnet_api,
+        );
 
         assert!(logs_contain_at(
             Level::INFO,
@@ -549,8 +601,34 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(store.api_response(MarketsLedger::Mainnet).await.is_some());
-        assert!(store.api_response(MarketsLedger::Testnet).await.is_some());
+        let mainnet_markets = load_markets_from_disk(data_dir.path(), MarketsLedger::Mainnet)
+            .await
+            .unwrap();
+        let testnet_markets = load_markets_from_disk(data_dir.path(), MarketsLedger::Testnet)
+            .await
+            .unwrap();
+        let mainnet_api = store
+            .api_response(MarketsLedger::Mainnet)
+            .await
+            .expect("mainnet api response should be loaded from disk cache");
+        let testnet_api = store
+            .api_response(MarketsLedger::Testnet)
+            .await
+            .expect("testnet api response should be loaded from disk cache");
+
+        assert_ledger_markets_match(
+            MarketsLedger::Mainnet,
+            "BTC",
+            &mainnet_markets,
+            &mainnet_api,
+        );
+        assert_ledger_markets_match(
+            MarketsLedger::Testnet,
+            "ETH",
+            &testnet_markets,
+            &testnet_api,
+        );
+
         assert!(logs_contain_at(
             Level::INFO,
             &["markets ledger loaded from disk cache", "Mainnet"]

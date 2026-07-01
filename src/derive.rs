@@ -1,17 +1,20 @@
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap};
+use std::convert::Infallible;
 use std::sync::Arc;
 use std::time::Duration;
 
+use axum::Json;
+use axum::Router;
+use axum::body::Body;
+use axum::extract::State;
+use axum::http::{HeaderValue, Method, Request, StatusCode, header};
+use axum::middleware::{self, Next};
+use axum::response::{IntoResponse, Response, sse::Event, sse::Sse};
+use axum::routing::{get, post};
 use chrono::{DateTime, TimeZone, Utc};
-use futures::{SinkExt, StreamExt};
+use futures::{SinkExt, Stream, StreamExt};
 use reqwest::Client;
-use rocket::fairing::{Fairing, Info, Kind};
-use rocket::http::Header;
-use rocket::http::Status;
-use rocket::response::stream::{Event, EventStream};
-use rocket::serde::json::Json;
-use rocket::{Build, Request, Response, Rocket, State, get, options, post, routes};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use thiserror::Error;
@@ -275,28 +278,31 @@ struct DeriveState {
     tab_command_tx: mpsc::Sender<i64>,
 }
 
-struct CorsFairing;
+fn apply_cors_headers(response: &mut Response) {
+    let headers = response.headers_mut();
+    headers.insert(
+        header::ACCESS_CONTROL_ALLOW_ORIGIN,
+        HeaderValue::from_static("*"),
+    );
+    headers.insert(
+        header::ACCESS_CONTROL_ALLOW_METHODS,
+        HeaderValue::from_static("GET, POST, OPTIONS"),
+    );
+    headers.insert(
+        header::ACCESS_CONTROL_ALLOW_HEADERS,
+        HeaderValue::from_static("Content-Type, Authorization"),
+    );
+}
 
-#[rocket::async_trait]
-impl Fairing for CorsFairing {
-    fn info(&self) -> Info {
-        Info {
-            name: "derive-cors",
-            kind: Kind::Response,
-        }
+async fn cors_middleware(request: Request<Body>, next: Next) -> Response {
+    if request.method() == Method::OPTIONS {
+        let mut response = StatusCode::NO_CONTENT.into_response();
+        apply_cors_headers(&mut response);
+        return response;
     }
-
-    async fn on_response<'r>(&self, _request: &'r Request<'_>, response: &mut Response<'r>) {
-        response.set_header(Header::new("Access-Control-Allow-Origin", "*"));
-        response.set_header(Header::new(
-            "Access-Control-Allow-Methods",
-            "GET, POST, OPTIONS",
-        ));
-        response.set_header(Header::new(
-            "Access-Control-Allow-Headers",
-            "Content-Type, Authorization",
-        ));
-    }
+    let mut response = next.run(request).await;
+    apply_cors_headers(&mut response);
+    response
 }
 
 async fn fetch_options_catalogue(
@@ -849,42 +855,41 @@ async fn run_websocket_hub(
     }
 }
 
-#[get("/health")]
-fn health() -> &'static str {
+async fn health() -> &'static str {
     "ok"
 }
 
-#[get("/derive/options/bootstrap")]
-fn get_bootstrap(state: &State<DeriveState>) -> Json<OptionsBootstrap> {
+async fn get_bootstrap(State(state): State<Arc<DeriveState>>) -> Json<OptionsBootstrap> {
     Json(build_bootstrap(state.catalogue.as_ref(), BTC_ASSET))
 }
 
-#[get("/derive/options/snapshot")]
-async fn get_snapshot(state: &State<DeriveState>) -> Json<OptionsSnapshot> {
+async fn get_snapshot(State(state): State<Arc<DeriveState>>) -> Json<OptionsSnapshot> {
     Json(state.snapshot.read().await.clone())
 }
 
-#[get("/derive/options/stream")]
-fn stream_options(state: &State<DeriveState>) -> EventStream![] {
-    let mut rx = state.tx.subscribe();
-    EventStream! {
+async fn stream_options(
+    State(state): State<Arc<DeriveState>>,
+) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    let receiver = state.tx.subscribe();
+    let stream = futures::stream::unfold(receiver, |mut receiver| async move {
         loop {
-            match rx.recv().await {
+            match receiver.recv().await {
                 Ok(next_snapshot) => {
-                    yield Event::json(&next_snapshot);
+                    let event = match Event::default().json_data(next_snapshot) {
+                        Ok(event) => event,
+                        Err(error) => {
+                            warn!(error = %error, "derive options stream serialization failed");
+                            continue;
+                        }
+                    };
+                    return Some((Ok(event), receiver));
                 }
                 Err(broadcast::error::RecvError::Lagged(_)) => {}
-                Err(broadcast::error::RecvError::Closed) => {
-                    break;
-                }
+                Err(broadcast::error::RecvError::Closed) => return None,
             }
         }
-    }
-}
-
-#[options("/derive/options/active_expiry")]
-fn options_active_expiry() -> Status {
-    Status::NoContent
+    });
+    Sse::new(stream)
 }
 
 /// Switch the active expiry that the server streams.
@@ -893,27 +898,26 @@ fn options_active_expiry() -> Status {
 /// every SSE subscriber, so it is intended for single-client use: if two
 /// clients select different expiries, the most recent request wins and both
 /// clients see that expiry's data.
-#[post("/derive/options/active_expiry", format = "json", data = "<body>")]
 async fn post_active_expiry(
-    state: &State<DeriveState>,
-    body: Json<ActiveExpiryBody>,
-) -> Result<Status, Status> {
+    State(state): State<Arc<DeriveState>>,
+    Json(body): Json<ActiveExpiryBody>,
+) -> Result<StatusCode, StatusCode> {
     if !state
         .catalogue
         .expiry_unix_sorted_asc
         .contains(&body.expiry_unix)
     {
-        return Err(Status::BadRequest);
+        return Err(StatusCode::BAD_REQUEST);
     }
     state
         .tab_command_tx
         .send(body.expiry_unix)
         .await
-        .map_err(|_| Status::InternalServerError)?;
-    Ok(Status::NoContent)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
-pub async fn derive_rocket(config: DeriveConfig) -> Result<Rocket<Build>, DeriveError> {
+pub async fn derive_app(config: DeriveConfig) -> Result<Router, DeriveError> {
     let http = Client::new();
     let catalogue =
         Arc::new(fetch_options_catalogue(&http, &config.rest_base_url, BTC_ASSET).await?);
@@ -937,12 +941,12 @@ pub async fn derive_rocket(config: DeriveConfig) -> Result<Rocket<Build>, Derive
     let (broadcast_tx, _) = broadcast::channel(2048);
     let (tab_command_tx, tab_command_rx) = mpsc::channel::<i64>(32);
 
-    let state = DeriveState {
+    let state = Arc::new(DeriveState {
         catalogue: Arc::clone(&catalogue),
         snapshot: Arc::clone(&snapshot),
         tx: broadcast_tx.clone(),
         tab_command_tx,
-    };
+    });
 
     let ws_url = config.ws_url.clone();
     let snapshot_for_task = Arc::clone(&snapshot);
@@ -964,24 +968,15 @@ pub async fn derive_rocket(config: DeriveConfig) -> Result<Rocket<Build>, Derive
     });
 
     info!(port = config.port, "derive options server ready");
-    Ok(rocket::build()
-        .configure(rocket::Config {
-            port: config.port,
-            ..rocket::Config::default()
-        })
-        .attach(CorsFairing)
-        .manage(state)
-        .mount(
-            "/",
-            routes![
-                health,
-                get_bootstrap,
-                get_snapshot,
-                stream_options,
-                post_active_expiry,
-                options_active_expiry
-            ],
-        ))
+    let router = Router::new()
+        .route("/health", get(health))
+        .route("/derive/options/bootstrap", get(get_bootstrap))
+        .route("/derive/options/snapshot", get(get_snapshot))
+        .route("/derive/options/stream", get(stream_options))
+        .route("/derive/options/active_expiry", post(post_active_expiry))
+        .layer(middleware::from_fn(cors_middleware))
+        .with_state(state);
+    Ok(router)
 }
 
 #[cfg(test)]

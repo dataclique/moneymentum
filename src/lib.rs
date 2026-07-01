@@ -666,6 +666,23 @@ async fn get_markets(
     ))
 }
 
+/// Serves a venue's per-market max-leverage limits from the cached catalog so
+/// clients size leverage controls without each running a heavy all-market fetch.
+async fn get_markets_leverage(
+    State(state): State<Arc<AppState>>,
+    AxumPath(venue): AxumPath<String>,
+) -> Result<Json<market_metadata::LeverageLimits>, StatusCode> {
+    let venue = VenueRef::from_str(&venue).map_err(|_| StatusCode::NOT_FOUND)?;
+    match market_metadata::leverage_limits(venue, &state.market_catalog_projection).await {
+        Ok(Some(limits)) => Ok(Json(limits)),
+        Ok(None) => Err(StatusCode::NOT_FOUND),
+        Err(err) => {
+            error!(error = %err, "failed to read leverage limits");
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
+}
+
 fn parse_market_id(venue: &str, symbol: &str) -> Result<MarketId, ApiError> {
     let venue = VenueRef::from_str(venue).map_err(|_| bad_request("unknown venue"))?;
     Ok(MarketId::new(venue, Symbol::from_raw(symbol)))
@@ -907,6 +924,7 @@ fn build_router(state: Arc<AppState>) -> Router {
         .route("/portfolio/{id}/rename", post(post_portfolio_rename))
         .route("/portfolio/{id}/archive", post(post_portfolio_archive))
         .route("/markets/{venue}", get(get_markets))
+        .route("/markets/{venue}/leverage", get(get_markets_leverage))
         .route(
             "/markets/{venue}/{symbol}/disable",
             post(post_market_disable),
@@ -960,13 +978,18 @@ pub(crate) fn logs_contain_at(level: tracing::Level, snippets: &[&str]) -> bool 
 
 #[cfg(test)]
 mod tests {
+    use std::str::FromStr;
+
     use super::*;
     use axum::body::Body;
     use axum::http::Request;
+    use chrono::Utc;
     use proptest::prelude::*;
     use tempfile::TempDir;
     use tower::ServiceExt;
     use tracing_test::traced_test;
+
+    use market_catalog::{CatalogMarket, MarketCatalogCommand};
 
     /// Builds the full production router backed by a temp-dir SQLite database, so
     /// tests exercise the real route wiring and shared state, not a hand-rolled
@@ -1133,6 +1156,102 @@ mod tests {
         assert_eq!(bad_disable.status(), StatusCode::BAD_REQUEST);
         let bad_list = router.oneshot(get_request("/markets/bogus")).await.unwrap();
         assert_eq!(bad_list.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn markets_leverage_serves_catalog_limits_and_rejects_unknown_venue() {
+        let data_dir = TempDir::new().unwrap();
+        let config = Config {
+            port: 0,
+            data_dir: data_dir.path().to_path_buf(),
+            database_url: format!(
+                "sqlite://{}?mode=rwc",
+                data_dir.path().join("leverage-test.db").display()
+            ),
+            hyperliquid_base_url: None,
+            log_level: LogLevel::Info,
+            max_concurrent_requests: 3,
+            max_retries: 5,
+            ingestion_schedule: "0 0 * * * *".to_string(),
+            derive: None,
+        };
+        let database_options = SqliteConnectOptions::from_str(&config.database_url)
+            .unwrap()
+            .journal_mode(SqliteJournalMode::Wal)
+            .busy_timeout(std::time::Duration::from_secs(5));
+        let pool = SqlitePool::connect_with(database_options).await.unwrap();
+        sqlx::migrate!("./migrations")
+            .set_ignore_missing(true)
+            .run(&pool)
+            .await
+            .unwrap();
+
+        let (portfolio_store, portfolio_projection) = StoreBuilder::<Portfolio>::new(pool.clone())
+            .build()
+            .await
+            .unwrap();
+        let (ingestion_store, ingestion_projection) =
+            StoreBuilder::<IngestionRun>::new(pool.clone())
+                .build()
+                .await
+                .unwrap();
+        let (market_catalog, market_catalog_projection) =
+            StoreBuilder::<MarketCatalog>::new(pool.clone())
+                .build()
+                .await
+                .unwrap();
+        let (market_enablement, market_enablement_projection) =
+            StoreBuilder::<MarketEnablement>::new(pool.clone())
+                .build()
+                .await
+                .unwrap();
+
+        market_catalog
+            .send(
+                &VenueRef::Hyperliquid,
+                MarketCatalogCommand::RecordUniverse {
+                    markets: vec![
+                        CatalogMarket::new(Symbol::from_raw("BTC"), 50),
+                        CatalogMarket::new(Symbol::from_raw("ETH"), 25),
+                    ],
+                    observed_at: Utc::now(),
+                },
+            )
+            .await
+            .unwrap();
+
+        let router = build_router(Arc::new(AppState {
+            config,
+            database_pool: pool,
+            portfolio_store,
+            portfolio_projection,
+            ingestion_store,
+            ingestion_projection,
+            market_enablement,
+            market_enablement_projection,
+            market_catalog_projection,
+        }));
+
+        let listed = router
+            .clone()
+            .oneshot(get_request("/markets/hyperliquid/leverage"))
+            .await
+            .unwrap();
+        assert_eq!(listed.status(), StatusCode::OK);
+        let body: market_metadata::LeverageLimits =
+            serde_json::from_str(&body_text(listed).await).unwrap();
+        assert_eq!(body.limits.len(), 2);
+        assert!(logs_contain_at(
+            tracing::Level::DEBUG,
+            &["leverage limits read", "markets=2"]
+        ));
+
+        let unknown = router
+            .oneshot(get_request("/markets/bogus/leverage"))
+            .await
+            .unwrap();
+        assert_eq!(unknown.status(), StatusCode::NOT_FOUND);
     }
 
     #[traced_test]

@@ -1,9 +1,9 @@
 //! Markets metadata: the perp universe with each market's max leverage, stored
-//! in `markets.csv` as a restart cache. A background task loads the on-disk
-//! cache at startup, keeps each ledger in memory alongside its last-refresh
-//! timestamp, refreshes from Hyperliquid at startup and every UTC midnight, and
-//! serves HTTP from the in-memory store. The CSV is best-effort: a successful
-//! fetch updates memory even when the disk write fails.
+//! in `markets.csv` as a restart cache. At startup the on-disk cache is loaded
+//! into memory, any missing ledgers are fetched from Hyperliquid before the
+//! service accepts traffic, and a background task refreshes both ledgers every
+//! UTC midnight. HTTP serves from the in-memory store. The CSV is best-effort:
+//! a successful fetch updates memory even when the disk write fails.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -31,6 +31,8 @@ pub(crate) enum MarketsMetadataError {
     Polars(#[from] PolarsError),
     #[error("markets metadata file is missing")]
     MissingFile,
+    #[error("markets ledger not ready: {0:?}")]
+    LedgerNotReady(MarketsLedger),
     #[error(transparent)]
     Io(#[from] std::io::Error),
 }
@@ -152,21 +154,43 @@ async fn sleep_until_next_utc_midnight() {
     tokio::time::sleep(sleep_for).await;
 }
 
-/// Spawns the markets refresh loop. The first iteration runs immediately at
-/// startup; afterwards the task sleeps until the next UTC midnight and refreshes
-/// again. A failed refresh is logged and retried at the next midnight; the
-/// in-memory store keeps serving whatever it already holds.
-pub(crate) fn spawn_background_refresh(
+/// Fetches any ledger missing from `store` from the live exchange and writes
+/// the on-disk cache. Startup blocks until both mainnet and testnet are loaded.
+pub(crate) async fn refresh_startup_markets(
+    clients: &crate::hyperliquid::HyperliquidClients,
+    data_dir: &Path,
+    store: &MarketsStore,
+) -> Result<(), MarketsMetadataError> {
+    for ledger in [MarketsLedger::Mainnet, MarketsLedger::Testnet] {
+        if store.api_response(ledger).await.is_none() {
+            refresh_ledger_into_store(clients.for_ledger(ledger), data_dir, ledger, store).await?;
+        }
+    }
+
+    for ledger in [MarketsLedger::Mainnet, MarketsLedger::Testnet] {
+        if store.api_response(ledger).await.is_none() {
+            return Err(MarketsMetadataError::LedgerNotReady(ledger));
+        }
+    }
+
+    info!("markets startup load complete");
+    Ok(())
+}
+
+/// Spawns the nightly markets refresh loop. The task sleeps until the next UTC
+/// midnight before each refresh. A failed refresh is logged and retried at the
+/// next midnight; the in-memory store keeps serving whatever it already holds.
+pub(crate) fn spawn_nightly_refresh(
     clients: crate::hyperliquid::HyperliquidClients,
     data_dir: PathBuf,
     store: Arc<MarketsStore>,
 ) {
     tokio::spawn(async move {
         loop {
+            sleep_until_next_utc_midnight().await;
             if let Err(error) = refresh_all_markets_into_store(&clients, &data_dir, &store).await {
                 warn!(%error, "markets metadata refresh failed");
             }
-            sleep_until_next_utc_midnight().await;
         }
     });
 }
@@ -373,5 +397,172 @@ fn build_markets_frame(fetched: &[MarketMetadata]) -> Result<DataFrame, PolarsEr
         "symbol" => symbols,
         "max_leverage" => max_leverages,
         "asset_index" => asset_indices,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use async_trait::async_trait;
+    use chrono::{DateTime, Utc};
+    use polars::prelude::df;
+    use tempfile::TempDir;
+    use tracing::Level;
+    use tracing_test::traced_test;
+
+    use super::*;
+    use crate::candle::Candle;
+    use crate::finance::Market;
+    use crate::funding::FundingRate;
+    use crate::hyperliquid::{Hyperliquid, HyperliquidClients, HyperliquidError};
+    use crate::logs_contain_at;
+    use crate::timeframe::Timeframe;
+
+    struct MarketsOnlyMock {
+        ledger: MarketsLedger,
+        fail_fetch: bool,
+    }
+
+    #[async_trait]
+    impl Hyperliquid for MarketsOnlyMock {
+        async fn fetch_market_metadata(&self) -> Result<Vec<MarketMetadata>, HyperliquidError> {
+            if self.fail_fetch {
+                return Err(HyperliquidError::Sdk(
+                    hyperliquid_rust_sdk::Error::GenericRequest(
+                        "markets fetch should not run".into(),
+                    ),
+                ));
+            }
+
+            let symbol = match self.ledger {
+                MarketsLedger::Mainnet => "BTC",
+                MarketsLedger::Testnet => "ETH",
+            };
+            Ok(vec![MarketMetadata {
+                symbol: Market::new(symbol.into()),
+                max_leverage: 50,
+                asset_index: 0,
+            }])
+        }
+
+        async fn fetch_candles(
+            &self,
+            _market: &Market,
+            _timeframe: Timeframe,
+            _start: DateTime<Utc>,
+        ) -> Result<Vec<Candle>, HyperliquidError> {
+            Ok(vec![])
+        }
+
+        async fn fetch_funding_rates(
+            &self,
+            _market: &Market,
+            _start: DateTime<Utc>,
+        ) -> Result<Vec<FundingRate>, HyperliquidError> {
+            Ok(vec![])
+        }
+    }
+
+    async fn write_ledger_csv(data_dir: &Path, ledger: MarketsLedger, symbol: &str) {
+        let frame = df! {
+            "symbol" => &[symbol],
+            "max_leverage" => &[50_u32],
+            "asset_index" => &[0_u32],
+        }
+        .unwrap();
+        crate::dataframe::write_csv(markets_file_path(data_dir, ledger), frame)
+            .await
+            .unwrap();
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn startup_markets_refresh_missing_ledgers_before_ready() {
+        let data_dir = TempDir::new().unwrap();
+        let clients = HyperliquidClients::from_clients(
+            Arc::new(MarketsOnlyMock {
+                ledger: MarketsLedger::Mainnet,
+                fail_fetch: false,
+            }),
+            Arc::new(MarketsOnlyMock {
+                ledger: MarketsLedger::Testnet,
+                fail_fetch: false,
+            }),
+        );
+        let store = MarketsStore::load_from_disk(data_dir.path()).await;
+
+        refresh_startup_markets(&clients, data_dir.path(), &store)
+            .await
+            .unwrap();
+
+        assert!(
+            markets_file_path(data_dir.path(), MarketsLedger::Mainnet).exists(),
+            "mainnet markets.csv should exist after startup refresh"
+        );
+        assert!(
+            markets_file_path(data_dir.path(), MarketsLedger::Testnet).exists(),
+            "testnet_markets.csv should exist after startup refresh"
+        );
+
+        let mainnet_markets = load_markets_from_disk(data_dir.path(), MarketsLedger::Mainnet).await;
+        let testnet_markets = load_markets_from_disk(data_dir.path(), MarketsLedger::Testnet).await;
+        assert_eq!(mainnet_markets.unwrap().len(), 1);
+        assert_eq!(testnet_markets.unwrap().len(), 1);
+
+        assert!(store.api_response(MarketsLedger::Mainnet).await.is_some());
+        assert!(store.api_response(MarketsLedger::Testnet).await.is_some());
+
+        assert!(logs_contain_at(
+            Level::INFO,
+            &["markets metadata refreshed", "Mainnet"]
+        ));
+        assert!(logs_contain_at(
+            Level::INFO,
+            &["markets metadata refreshed", "Testnet"]
+        ));
+        assert!(logs_contain_at(
+            Level::INFO,
+            &["markets startup load complete"]
+        ));
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn startup_markets_uses_disk_cache_without_exchange_fetch() {
+        let data_dir = TempDir::new().unwrap();
+        write_ledger_csv(data_dir.path(), MarketsLedger::Mainnet, "BTC").await;
+        write_ledger_csv(data_dir.path(), MarketsLedger::Testnet, "ETH").await;
+
+        let clients = HyperliquidClients::from_clients(
+            Arc::new(MarketsOnlyMock {
+                ledger: MarketsLedger::Mainnet,
+                fail_fetch: true,
+            }),
+            Arc::new(MarketsOnlyMock {
+                ledger: MarketsLedger::Testnet,
+                fail_fetch: true,
+            }),
+        );
+        let store = MarketsStore::load_from_disk(data_dir.path()).await;
+
+        refresh_startup_markets(&clients, data_dir.path(), &store)
+            .await
+            .unwrap();
+
+        assert!(store.api_response(MarketsLedger::Mainnet).await.is_some());
+        assert!(store.api_response(MarketsLedger::Testnet).await.is_some());
+        assert!(logs_contain_at(
+            Level::INFO,
+            &["markets ledger loaded from disk cache", "Mainnet"]
+        ));
+        assert!(logs_contain_at(
+            Level::INFO,
+            &["markets ledger loaded from disk cache", "Testnet"]
+        ));
+        assert!(logs_contain_at(
+            Level::INFO,
+            &["markets startup load complete"]
+        ));
     }
 }

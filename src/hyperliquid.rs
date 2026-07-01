@@ -106,6 +106,14 @@ impl HyperliquidClients {
             MarketsLedger::Testnet => self.testnet.as_ref(),
         }
     }
+
+    #[cfg(test)]
+    pub(crate) fn from_clients(
+        mainnet: Arc<dyn Hyperliquid>,
+        testnet: Arc<dyn Hyperliquid>,
+    ) -> Self {
+        Self { mainnet, testnet }
+    }
 }
 
 pub(crate) struct HyperliquidClient {

@@ -489,7 +489,13 @@ pub async fn rocket(
     )
     .await?;
     let markets_store = market_metadata::MarketsStore::load_from_disk(&config.data_dir).await;
-    market_metadata::spawn_background_refresh(
+    market_metadata::refresh_startup_markets(
+        &hyperliquid_clients,
+        &config.data_dir,
+        &markets_store,
+    )
+    .await?;
+    market_metadata::spawn_nightly_refresh(
         hyperliquid_clients.clone(),
         config.data_dir.clone(),
         Arc::clone(&markets_store),

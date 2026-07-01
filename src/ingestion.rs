@@ -17,6 +17,7 @@ use event_sorcery::{
     Column, DomainEvent, EventSourced, Job, JobQueue, Label, Projection, ProjectionError,
     SendError, Store, Table,
 };
+use futures::stream::{self, StreamExt};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tracing::{debug, error, info, warn};
@@ -533,27 +534,35 @@ pub(crate) async fn recover_abandoned_runs(
     let running = running_runs(projection).await?;
     let reconciled_at = Utc::now();
 
-    let mut recovered = 0u64;
-    let mut first_error = None;
-    for (run_id, _) in &running {
-        // Abandon each run independently: one failed write must not block
-        // recovery of the rest, since this completes before /ingest is served.
-        if let Err(err) = store
-            .send(
-                run_id,
-                IngestionRunCommand::Abandon {
-                    reason: ABANDONED_RUN_REASON.to_string(),
-                    reconciled_at,
-                },
-            )
-            .await
-        {
-            error!(error = %err, run_id = %run_id, "failed to abandon a running ingestion run");
-            first_error.get_or_insert(err);
-            continue;
-        }
-        recovered += 1;
-    }
+    // Abandon each run independently: one failed write must not block recovery
+    // of the rest, since this completes before /ingest is served.
+    let (recovered, first_error) = stream::iter(running.iter())
+        .fold((0u64, None::<SendError<IngestionRun>>), |(recovered, first_error), (run_id, _)| {
+            let run_id = run_id.clone();
+            async move {
+                match store
+                    .send(
+                        &run_id,
+                        IngestionRunCommand::Abandon {
+                            reason: ABANDONED_RUN_REASON.to_string(),
+                            reconciled_at,
+                        },
+                    )
+                    .await
+                {
+                    Ok(()) => (recovered + 1, first_error),
+                    Err(err) => {
+                        error!(
+                            error = %err,
+                            run_id = %run_id,
+                            "failed to abandon a running ingestion run"
+                        );
+                        (recovered, first_error.or(Some(err)))
+                    }
+                }
+            }
+        })
+        .await;
 
     if let Some(err) = first_error {
         return Err(IngestionError::Send(err));

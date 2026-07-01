@@ -1,6 +1,9 @@
 import { cn } from "@/lib/cn"
 
-import type { PortfolioMetricColumnId } from "./portfolioMetricVisibility"
+import {
+  isPortfolioMetricColumnId,
+  type PortfolioMetricColumnId,
+} from "./portfolioMetricVisibility"
 
 export type AllSymbolColumnId = "asset" | PortfolioMetricColumnId
 
@@ -16,17 +19,6 @@ const columnWidthClass: Record<AllSymbolColumnId, string> = {
   momentum: "w-[4.5rem]",
   carry: "w-[4.25rem]",
 }
-
-export const ALL_SYMBOL_TABLE_COLUMN_IDS: AllSymbolColumnId[] = [
-  "asset",
-  "rate",
-  "beta",
-  "vol",
-  "sharpe",
-  "sortino",
-  "momentum",
-  "carry",
-]
 
 export const allSymbolTableColumnIds = (
   visibleMetricColumns: PortfolioMetricColumnId[],
@@ -62,4 +54,4 @@ export const allSymbolBodyCellClass = (columnId: AllSymbolColumnId): string => {
 export const isAllSymbolColumnId = (
   value: string,
 ): value is AllSymbolColumnId =>
-  ALL_SYMBOL_TABLE_COLUMN_IDS.includes(value as AllSymbolColumnId)
+  value === "asset" || isPortfolioMetricColumnId(value)

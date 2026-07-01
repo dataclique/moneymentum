@@ -811,12 +811,13 @@ mod tests {
     async fn latest_status_prefers_the_latest_run_id_when_microseconds_match() {
         let (store, projection) = ingestion_store().await;
         let shared_start = Utc.with_ymd_and_hms(2026, 1, 2, 3, 4, 5).unwrap();
+        let shared_micros = shared_start.timestamp_micros();
         let first_id: IngestionRunId =
-            "ingestion-1735787045000000-00000000000000000000000000000001"
+            format!("ingestion-{shared_micros}-00000000000000000000000000000001")
                 .parse()
                 .unwrap();
         let second_id: IngestionRunId =
-            "ingestion-1735787045000000-00000000000000000000000000000002"
+            format!("ingestion-{shared_micros}-00000000000000000000000000000002")
                 .parse()
                 .unwrap();
 

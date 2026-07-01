@@ -538,31 +538,34 @@ pub(crate) async fn recover_abandoned_runs(
     // Abandon each run independently: one failed write must not block recovery
     // of the rest, since this completes before /ingest is served.
     let (recovered, first_error) = stream::iter(running.iter())
-        .fold((0u64, None::<SendError<IngestionRun>>), |(recovered, first_error), (run_id, _)| {
-            let run_id = run_id.clone();
-            async move {
-                match store
-                    .send(
-                        &run_id,
-                        IngestionRunCommand::Abandon {
-                            reason: ABANDONED_RUN_REASON.to_string(),
-                            reconciled_at,
-                        },
-                    )
-                    .await
-                {
-                    Ok(()) => (recovered + 1, first_error),
-                    Err(err) => {
-                        error!(
-                            error = %err,
-                            run_id = %run_id,
-                            "failed to abandon a running ingestion run"
-                        );
-                        (recovered, first_error.or(Some(err)))
+        .fold(
+            (0u64, None::<SendError<IngestionRun>>),
+            |(recovered, first_error), (run_id, _)| {
+                let run_id = run_id.clone();
+                async move {
+                    match store
+                        .send(
+                            &run_id,
+                            IngestionRunCommand::Abandon {
+                                reason: ABANDONED_RUN_REASON.to_string(),
+                                reconciled_at,
+                            },
+                        )
+                        .await
+                    {
+                        Ok(()) => (recovered + 1, first_error),
+                        Err(err) => {
+                            error!(
+                                error = %err,
+                                run_id = %run_id,
+                                "failed to abandon a running ingestion run"
+                            );
+                            (recovered, first_error.or(Some(err)))
+                        }
                     }
                 }
-            }
-        })
+            },
+        )
         .await;
 
     if let Some(err) = first_error {
@@ -756,7 +759,11 @@ mod tests {
         }
     }
 
-    async fn ingestion_store() -> (Arc<Store<IngestionRun>>, Arc<Projection<IngestionRun>>, SqlitePool) {
+    async fn ingestion_store() -> (
+        Arc<Store<IngestionRun>>,
+        Arc<Projection<IngestionRun>>,
+        SqlitePool,
+    ) {
         let pool = SqlitePool::connect(":memory:").await.unwrap();
         sqlx::migrate!("./migrations").run(&pool).await.unwrap();
         let (store, projection) = StoreBuilder::<IngestionRun>::new(pool.clone())
@@ -886,7 +893,7 @@ mod tests {
 
     #[tokio::test]
     async fn latest_status_prefers_the_latest_run_id_when_microseconds_match() {
-        let (store, projection, pool) = ingestion_store().await;
+        let (store, _projection, pool) = ingestion_store().await;
         let shared_start = Utc.with_ymd_and_hms(2026, 1, 2, 3, 4, 5).unwrap();
         let shared_micros = shared_start.timestamp_micros();
         let first_id: IngestionRunId =
@@ -940,7 +947,7 @@ mod tests {
         // The sequential case: the projection already reflects the first run, so
         // the pre-send guard rejects. The concurrent race is covered by
         // `concurrent_create_run_admits_exactly_one`.
-        let (store, projection, pool) = ingestion_store().await;
+        let (store, projection, _pool) = ingestion_store().await;
 
         create_run(&store, &projection).await.unwrap();
         let duplicate = create_run(&store, &projection).await;
@@ -1083,7 +1090,7 @@ mod tests {
     #[traced_test]
     #[tokio::test]
     async fn recover_with_no_running_runs_is_a_noop() {
-        let (store, projection, pool) = ingestion_store().await;
+        let (store, projection, _pool) = ingestion_store().await;
 
         let recovered = recover_abandoned_runs(&store, &projection).await.unwrap();
 
@@ -1097,7 +1104,7 @@ mod tests {
     #[traced_test]
     #[tokio::test]
     async fn concurrent_create_run_admits_exactly_one() {
-        let (store, projection, pool) = ingestion_store().await;
+        let (store, projection, _pool) = ingestion_store().await;
 
         // Two callers race create_run on the same store. The one-running
         // invariant must admit exactly one and reject the loser with

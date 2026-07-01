@@ -7,12 +7,16 @@
 //! [`Symbol`] normalizes these representations for consistent storage and lookup.
 //! [`Market`] preserves the exchange's native identifier for API calls.
 
-use serde::Serialize;
+use serde::{Deserialize, Deserializer, Serialize};
 
 /// Normalized trading symbol (e.g., "BTC", "ETH").
 ///
 /// Normalizes input like "BTC/USDC:USDC" to just "BTC".
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// Serialization is transparent (the inner ticker string). Deserialization
+/// normalizes through [`Symbol::from_raw`], so a `Symbol` decoded at any boundary
+/// -- a wire request or a persisted event -- is canonical.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 pub(crate) struct Symbol(String);
 
 impl Symbol {
@@ -23,6 +27,16 @@ impl Symbol {
 
     pub(crate) fn as_str(&self) -> &str {
         &self.0
+    }
+}
+
+impl<'de> Deserialize<'de> for Symbol {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let raw = String::deserialize(deserializer)?;
+        Ok(Self::from_raw(&raw))
     }
 }
 
@@ -136,6 +150,21 @@ mod tests {
     fn uppercases() {
         assert_eq!(Symbol::from_raw("btc/usdc:usdc").as_str(), "BTC");
         assert_eq!(Symbol::from_raw("kdogs").as_str(), "KDOGS");
+    }
+
+    #[test]
+    fn deserialize_normalizes_wire_symbol() {
+        let symbol: Symbol = serde_json::from_str("\"btc/usdc:usdc\"").unwrap();
+        assert_eq!(symbol.as_str(), "BTC");
+    }
+
+    #[test]
+    fn serialize_round_trips_canonical_symbol() {
+        let symbol = Symbol::from_raw("btc/usdc:usdc");
+        let json = serde_json::to_string(&symbol).unwrap();
+        let decoded: Symbol = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.as_str(), "BTC");
+        assert_eq!(json, "\"BTC\"");
     }
 
     #[test]

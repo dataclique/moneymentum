@@ -89,7 +89,7 @@ fn duplicate_symbol(markets: &[CatalogMarket]) -> Option<String> {
         .iter()
         .map(|market| market.symbol().as_str().to_string())
         .try_fold(BTreeSet::new(), |mut seen, symbol| {
-            seen.insert(symbol.clone()).then(|| seen).ok_or(symbol)
+            seen.insert(symbol.clone()).then_some(seen).ok_or(symbol)
         })
         .err()
 }

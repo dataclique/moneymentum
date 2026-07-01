@@ -121,6 +121,7 @@ pub enum ConfigError {
 
 pub(crate) struct AppState {
     config: Config,
+    database_pool: SqlitePool,
     portfolio_store: Arc<Store<Portfolio>>,
     portfolio_projection: Arc<Projection<Portfolio>>,
     ingestion_store: Arc<Store<IngestionRun>>,
@@ -219,7 +220,7 @@ async fn start_ingestion(State(state): State<Arc<AppState>>) -> StatusCode {
 async fn get_ingestion_status(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<Option<IngestionRunStatus>>, StatusCode> {
-    let status = ingestion::latest_status(&state.ingestion_projection)
+    let status = ingestion::latest_status(&state.database_pool)
         .await
         .map_err(|err| {
             error!(error = %err, "failed to load ingestion status");
@@ -820,6 +821,7 @@ pub async fn app(config: Config) -> Result<Router, Box<dyn std::error::Error + S
 
     let state = Arc::new(AppState {
         config,
+        database_pool: pool,
         portfolio_store,
         portfolio_projection,
         ingestion_store,
@@ -961,6 +963,7 @@ mod tests {
 
         build_router(Arc::new(AppState {
             config,
+            database_pool: pool,
             portfolio_store,
             portfolio_projection,
             ingestion_store,

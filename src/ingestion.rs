@@ -19,6 +19,7 @@ use event_sorcery::{
 };
 use futures::stream::{self, StreamExt};
 use serde::{Deserialize, Serialize};
+use sqlx::{AssertSqlSafe, SqlitePool};
 use thiserror::Error;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
@@ -577,15 +578,49 @@ pub(crate) async fn recover_abandoned_runs(
     Ok(recovered)
 }
 
+/// Materialized-view payload shape for a live [`IngestionRun`].
+#[derive(Deserialize)]
+struct LiveIngestionRunView {
+    #[serde(rename = "Live")]
+    live: IngestionRun,
+}
+
 /// The status of the most recently started run, or `None` if none exist.
+///
+/// Reads a single view row ordered by [`IngestionRunId`] (microsecond start,
+/// then nonce), matching the old `ORDER BY started_at DESC LIMIT 1` ledger
+/// query without loading every run into memory.
 pub(crate) async fn latest_status(
-    projection: &Projection<IngestionRun>,
+    pool: &SqlitePool,
 ) -> Result<Option<IngestionRunStatus>, IngestionError> {
-    let runs = projection.load_all().await?;
-    Ok(runs
-        .into_iter()
-        .max_by(|(left_id, _), (right_id, _)| left_id.cmp(right_id))
-        .map(|(_, run)| run.status))
+    let Table(table) = IngestionRun::PROJECTION;
+    let micros_substr_start = INGESTION_RUN_ID_PREFIX.len() + 1;
+    let query = format!(
+        "SELECT view_id, payload FROM {table}
+         ORDER BY
+           CAST(substr(view_id, {micros_substr_start},
+             instr(substr(view_id, {micros_substr_start}), '-') - 1) AS INTEGER) DESC,
+           view_id DESC
+         LIMIT 1"
+    );
+
+    let row: Option<(String, String)> = sqlx::query_as(AssertSqlSafe(query))
+        .fetch_optional(pool)
+        .await
+        .map_err(|err| IngestionError::Projection(ProjectionError::from(err)))?;
+
+    let Some((view_id, payload)) = row else {
+        return Ok(None);
+    };
+
+    let view: LiveIngestionRunView = serde_json::from_str(&payload).map_err(|source| {
+        IngestionError::Projection(ProjectionError::Serde {
+            aggregate_id: view_id.clone(),
+            source,
+        })
+    })?;
+
+    Ok(Some(view.live.status))
 }
 
 async fn running_runs(
@@ -721,13 +756,14 @@ mod tests {
         }
     }
 
-    async fn ingestion_store() -> (Arc<Store<IngestionRun>>, Arc<Projection<IngestionRun>>) {
+    async fn ingestion_store() -> (Arc<Store<IngestionRun>>, Arc<Projection<IngestionRun>>, SqlitePool) {
         let pool = SqlitePool::connect(":memory:").await.unwrap();
         sqlx::migrate!("./migrations").run(&pool).await.unwrap();
-        StoreBuilder::<IngestionRun>::new(pool)
+        let (store, projection) = StoreBuilder::<IngestionRun>::new(pool.clone())
             .build()
             .await
-            .unwrap()
+            .unwrap();
+        (store, projection, pool)
     }
 
     fn instant() -> DateTime<Utc> {
@@ -806,10 +842,10 @@ mod tests {
     #[traced_test]
     #[tokio::test]
     async fn create_run_starts_a_running_run_and_logs() {
-        let (store, projection) = ingestion_store().await;
+        let (store, projection, pool) = ingestion_store().await;
 
         let run_id = create_run(&store, &projection).await.unwrap();
-        let status = latest_status(&projection).await.unwrap();
+        let status = latest_status(&pool).await.unwrap();
 
         assert_eq!(status, Some(IngestionRunStatus::Running));
         let run_id = run_id.to_string();
@@ -850,7 +886,7 @@ mod tests {
 
     #[tokio::test]
     async fn latest_status_prefers_the_latest_run_id_when_microseconds_match() {
-        let (store, projection) = ingestion_store().await;
+        let (store, projection, pool) = ingestion_store().await;
         let shared_start = Utc.with_ymd_and_hms(2026, 1, 2, 3, 4, 5).unwrap();
         let shared_micros = shared_start.timestamp_micros();
         let first_id: IngestionRunId =
@@ -893,7 +929,7 @@ mod tests {
             .await
             .unwrap();
 
-        let status = latest_status(&projection).await.unwrap();
+        let status = latest_status(&pool).await.unwrap();
 
         assert_eq!(status, Some(IngestionRunStatus::Running));
     }
@@ -904,7 +940,7 @@ mod tests {
         // The sequential case: the projection already reflects the first run, so
         // the pre-send guard rejects. The concurrent race is covered by
         // `concurrent_create_run_admits_exactly_one`.
-        let (store, projection) = ingestion_store().await;
+        let (store, projection, pool) = ingestion_store().await;
 
         create_run(&store, &projection).await.unwrap();
         let duplicate = create_run(&store, &projection).await;
@@ -915,11 +951,11 @@ mod tests {
     #[traced_test]
     #[tokio::test]
     async fn recover_abandons_running_runs_and_logs() {
-        let (store, projection) = ingestion_store().await;
+        let (store, projection, pool) = ingestion_store().await;
 
         create_run(&store, &projection).await.unwrap();
         let recovered = recover_abandoned_runs(&store, &projection).await.unwrap();
-        let status = latest_status(&projection).await.unwrap();
+        let status = latest_status(&pool).await.unwrap();
 
         assert_eq!(recovered, 1);
         assert_eq!(status, Some(IngestionRunStatus::Abandoned));
@@ -932,7 +968,7 @@ mod tests {
     #[traced_test]
     #[tokio::test]
     async fn stale_job_for_recovered_run_does_not_execute() {
-        let (store, projection) = ingestion_store().await;
+        let (store, projection, pool) = ingestion_store().await;
         let run_id = create_run(&store, &projection).await.unwrap();
         recover_abandoned_runs(&store, &projection).await.unwrap();
         let job = IngestionJob::new(run_id.clone());
@@ -943,7 +979,7 @@ mod tests {
 
         job.perform(&context).await.unwrap();
 
-        let status = latest_status(&projection).await.unwrap();
+        let status = latest_status(&pool).await.unwrap();
 
         assert_eq!(status, Some(IngestionRunStatus::Abandoned));
         let run_id = run_id.to_string();
@@ -956,7 +992,7 @@ mod tests {
     #[traced_test]
     #[tokio::test]
     async fn job_completes_a_running_run_and_logs() {
-        let (store, projection) = ingestion_store().await;
+        let (store, projection, pool) = ingestion_store().await;
         let run_id = create_run(&store, &projection).await.unwrap();
         let job = IngestionJob::new(run_id.clone());
         let context = IngestionJobContext {
@@ -966,7 +1002,7 @@ mod tests {
 
         job.perform(&context).await.unwrap();
 
-        let status = latest_status(&projection).await.unwrap();
+        let status = latest_status(&pool).await.unwrap();
 
         assert_eq!(status, Some(IngestionRunStatus::Completed));
         let run_id = run_id.to_string();
@@ -1047,7 +1083,7 @@ mod tests {
     #[traced_test]
     #[tokio::test]
     async fn recover_with_no_running_runs_is_a_noop() {
-        let (store, projection) = ingestion_store().await;
+        let (store, projection, pool) = ingestion_store().await;
 
         let recovered = recover_abandoned_runs(&store, &projection).await.unwrap();
 
@@ -1061,7 +1097,7 @@ mod tests {
     #[traced_test]
     #[tokio::test]
     async fn concurrent_create_run_admits_exactly_one() {
-        let (store, projection) = ingestion_store().await;
+        let (store, projection, pool) = ingestion_store().await;
 
         // Two callers race create_run on the same store. The one-running
         // invariant must admit exactly one and reject the loser with

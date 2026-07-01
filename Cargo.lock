@@ -187,6 +187,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "apalis-cron"
+version = "1.0.0-rc.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e1536e0af43d92eda2b6df260879861e59e913ea60e0b0388ae48ac43138a5ad"
+dependencies = [
+ "apalis-core",
+ "chrono",
+ "cron",
+ "futures-util",
+ "serde",
+ "ulid",
+]
+
+[[package]]
 name = "apalis-sql"
 version = "1.0.0-rc.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1202,6 +1216,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9481c1c90cbf2ac953f07c8d4a58aa3945c425b7185c9154d67a65e4230da511"
 dependencies = [
  "cfg-if",
+]
+
+[[package]]
+name = "cron"
+version = "0.16.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "089df96cf6a25253b4b6b6744d86f91150a3d4df546f31a95def47976b8cba97"
+dependencies = [
+ "chrono",
+ "once_cell",
+ "phf 0.11.3",
+ "winnow 0.7.15",
 ]
 
 [[package]]
@@ -3394,6 +3420,7 @@ name = "moneymentum"
 version = "0.1.0"
 dependencies = [
  "apalis",
+ "apalis-cron",
  "apalis-sqlite",
  "async-trait",
  "axum",
@@ -3401,6 +3428,7 @@ dependencies = [
  "bitcoin",
  "chrono",
  "clap",
+ "cron",
  "event-sorcery",
  "futures",
  "getrandom 0.4.3",

@@ -337,3 +337,38 @@ GitHub issue and a ROADMAP.md checkbox.
 5. **One house portfolio vs multi-account now.** `PortfolioId(Uuid)` supports
    many portfolios; the beachhead ships a single "house" portfolio. Confirm that
    is the right initial surface (vs binding identity to a Solana pubkey now).
+
+## Amendment (2026-07-01): ingestion job enqueue is atomic with the Started event
+
+- Issue: [#404](https://github.com/dataclique/moneymentum/issues/404) (ingestion
+  run creation and job enqueue are not atomic, orphaning Running runs)
+
+The ingestion re-event-sourcing (epic 3) shipped `IngestionRun` with
+`type Jobs =
+Nil` and enqueued the ingestion job from the `/ingest` handler with
+a separate `SqliteStorage::push`, run _after_ `create_run` committed the
+`Started` event. That is not atomic: a crash or a push failure in the window
+between the committed `Started` event and the enqueue leaves a run stuck
+`Running` with no job behind it. Because the recovery reconciler only sweeps at
+startup, the "one running" slot then stays wedged until the next restart --
+exactly the class of failure the #339 history warned against. It also
+contradicted this ADR's own principle that "side effects go through durable
+apalis `Job`s enqueued in the same transaction as the events."
+
+The correction aligns the implementation with that principle: `IngestionRun`
+declares `type Jobs = jobs![IngestionJob]` and enqueues the job from
+`initialize` through the `JobQueue` handle. event-sorcery flushes that buffer on
+the event store's own connection _inside_ the event-commit transaction, so the
+job is queued if and only if the `Started` event commits -- there is no orphan
+window, and the handler no longer has a push to compensate for. The `Start`
+command carries the `IngestionRunId` (the handler does not receive the aggregate
+id) so `initialize` can address the job. The worker moves off the raw
+`SqliteStorage`/`WorkerBuilder` wiring onto event-sorcery's `JobBackend` +
+`build_supervised_worker!`, which polls the `IngestionJob::KIND` queue the
+enqueue side writes and applies the shared retry/backoff/circuit-breaker policy.
+
+Consequence for tests: event-sorcery's `test-support` gates a 4-argument `work`
+handler that pulls a `FailureInjector` from worker data, so the crate gains a
+forwarded `test-support` feature (enabled for the whole `cargo test` graph via a
+self dev-dependency) and the worker registers an idle `FailureInjector` under
+that feature. Production builds omit it entirely.

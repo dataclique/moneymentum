@@ -12,11 +12,10 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
 
-use apalis::prelude::Data;
 use chrono::{DateTime, Utc};
 use event_sorcery::{
-    Column, DomainEvent, EventSourced, JobQueue, Nil, Projection, ProjectionError, SendError,
-    Store, Table,
+    Column, DomainEvent, EventSourced, Job, JobQueue, Label, Projection, ProjectionError,
+    SendError, Store, Table,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -184,6 +183,7 @@ impl DomainEvent for IngestionRunEvent {
 #[derive(Debug, Clone)]
 pub(crate) enum IngestionRunCommand {
     Start {
+        run_id: IngestionRunId,
         started_at: DateTime<Utc>,
     },
     Complete {
@@ -216,7 +216,7 @@ impl EventSourced for IngestionRun {
     type Event = IngestionRunEvent;
     type Command = IngestionRunCommand;
     type Error = IngestionRunError;
-    type Jobs = Nil;
+    type Jobs = event_sorcery::jobs![IngestionJob];
     type Materialized = Table;
 
     const AGGREGATE_TYPE: &'static str = "IngestionRun";
@@ -257,10 +257,15 @@ impl EventSourced for IngestionRun {
 
     fn initialize(
         command: IngestionRunCommand,
-        _jobs: &mut JobQueue<Self::Jobs>,
+        jobs: &mut JobQueue<Self::Jobs>,
     ) -> Result<Vec<IngestionRunEvent>, IngestionRunError> {
         match command {
-            IngestionRunCommand::Start { started_at } => {
+            IngestionRunCommand::Start { run_id, started_at } => {
+                // Enqueue the ingestion job on the same handle the framework
+                // flushes inside the event-commit transaction, so the job is
+                // queued iff the `Started` event commits -- there is no window
+                // where a run is Running with no job behind it (issue #404).
+                jobs.push(IngestionJob::new(run_id));
                 Ok(vec![IngestionRunEvent::Started { started_at }])
             }
             IngestionRunCommand::Complete { .. }
@@ -317,12 +322,33 @@ impl IngestionJob {
     pub(crate) fn new(run_id: IngestionRunId) -> Self {
         Self { run_id }
     }
+}
 
-    pub(crate) async fn run(
-        self,
-        store: Data<Arc<Store<IngestionRun>>>,
-        services: Data<Arc<IngestionServices>>,
-    ) -> Result<(), SendError<IngestionRun>> {
+/// Everything the ingestion worker needs to drive a run to a terminal state:
+/// the run's own event store (to load state and record completion or failure)
+/// and the fetch/catalog services that do the ingestion work. Built once at
+/// startup and shared as the worker's [`Job::Input`].
+pub(crate) struct IngestionJobContext {
+    pub(crate) run_store: Arc<Store<IngestionRun>>,
+    pub(crate) services: IngestionServices,
+}
+
+impl Job for IngestionJob {
+    type Input = IngestionJobContext;
+    type Output = ();
+    type Error = SendError<IngestionRun>;
+
+    const WORKER_NAME: &'static str = "ingestion";
+    const KIND: &'static str = "ingestion";
+
+    fn label(&self) -> Label {
+        Label::new(format!("ingestion:{}", self.run_id))
+    }
+
+    async fn perform(&self, context: &IngestionJobContext) -> Result<(), SendError<IngestionRun>> {
+        let store = &context.run_store;
+        let services = &context.services;
+
         // A run abandoned by startup recovery must not resurrect: skip the work
         // and leave its terminal state untouched.
         match store.load(&self.run_id).await {
@@ -363,7 +389,7 @@ impl IngestionJob {
                 // The run stays Running until this commits; surface a
                 // terminalization failure so the worker retries instead of
                 // leaving the slot wedged until the next startup reconcile.
-                if let Err(err) = complete_run(&store, &self.run_id, last_record).await {
+                if let Err(err) = complete_run(store, &self.run_id, last_record).await {
                     error!(error = %err, run_id = %self.run_id, "failed to record ingestion completion");
                     return Err(err);
                 }
@@ -373,7 +399,7 @@ impl IngestionJob {
                 error!(error = %err, run_id = %self.run_id, "ingestion failed");
                 // If we cannot even record the failure the run stays Running;
                 // surface it so the worker retries rather than wedging the slot.
-                if let Err(record_err) = fail_run(&store, &self.run_id, &err.to_string()).await {
+                if let Err(record_err) = fail_run(store, &self.run_id, &err.to_string()).await {
                     error!(
                         error = %record_err,
                         run_id = %self.run_id,
@@ -456,7 +482,13 @@ pub(crate) async fn create_run(
     let started_at = Utc::now();
     let run_id = IngestionRunId::new(started_at);
     store
-        .send(&run_id, IngestionRunCommand::Start { started_at })
+        .send(
+            &run_id,
+            IngestionRunCommand::Start {
+                run_id: run_id.clone(),
+                started_at,
+            },
+        )
         .await?;
 
     // The pre-send projection read is not atomic with the Start, so two callers
@@ -602,7 +634,7 @@ mod tests {
     use tracing::Level;
     use tracing_test::traced_test;
 
-    use event_sorcery::{LifecycleError, StoreBuilder, TestHarness, replay};
+    use event_sorcery::{Job, LifecycleError, StoreBuilder, TestHarness, replay};
 
     use super::*;
     use crate::candle::Candle;
@@ -825,6 +857,7 @@ mod tests {
             .send(
                 &first_id,
                 IngestionRunCommand::Start {
+                    run_id: first_id.clone(),
                     started_at: shared_start,
                 },
             )
@@ -844,6 +877,7 @@ mod tests {
             .send(
                 &second_id,
                 IngestionRunCommand::Start {
+                    run_id: second_id.clone(),
                     started_at: shared_start,
                 },
             )
@@ -893,13 +927,12 @@ mod tests {
         let run_id = create_run(&store, &projection).await.unwrap();
         recover_abandoned_runs(&store, &projection).await.unwrap();
         let job = IngestionJob::new(run_id.clone());
+        let context = IngestionJobContext {
+            run_store: Arc::clone(&store),
+            services: test_services().await,
+        };
 
-        job.run(
-            Data::new(Arc::clone(&store)),
-            Data::new(Arc::new(test_services().await)),
-        )
-        .await
-        .unwrap();
+        job.perform(&context).await.unwrap();
 
         let status = latest_status(&projection).await.unwrap();
 
@@ -917,13 +950,12 @@ mod tests {
         let (store, projection) = ingestion_store().await;
         let run_id = create_run(&store, &projection).await.unwrap();
         let job = IngestionJob::new(run_id.clone());
+        let context = IngestionJobContext {
+            run_store: Arc::clone(&store),
+            services: test_services().await,
+        };
 
-        job.run(
-            Data::new(Arc::clone(&store)),
-            Data::new(Arc::new(test_services().await)),
-        )
-        .await
-        .unwrap();
+        job.perform(&context).await.unwrap();
 
         let status = latest_status(&projection).await.unwrap();
 

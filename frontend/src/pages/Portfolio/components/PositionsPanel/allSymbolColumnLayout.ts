@@ -1,14 +1,11 @@
 import { cn } from "@/lib/cn"
 
-export type AllSymbolColumnId =
-  | "asset"
-  | "rate"
-  | "beta"
-  | "vol"
-  | "sharpe"
-  | "sortino"
-  | "momentum"
-  | "carry"
+import {
+  isPortfolioMetricColumnId,
+  type PortfolioMetricColumnId,
+} from "./portfolioMetricVisibility"
+
+export type AllSymbolColumnId = "asset" | PortfolioMetricColumnId
 
 const bodyBase = "px-2 py-1 align-middle"
 
@@ -23,16 +20,9 @@ const columnWidthClass: Record<AllSymbolColumnId, string> = {
   carry: "w-[4.25rem]",
 }
 
-export const ALL_SYMBOL_TABLE_COLUMN_IDS: AllSymbolColumnId[] = [
-  "asset",
-  "rate",
-  "beta",
-  "vol",
-  "sharpe",
-  "sortino",
-  "momentum",
-  "carry",
-]
+export const allSymbolTableColumnIds = (
+  visibleMetricColumns: PortfolioMetricColumnId[],
+): AllSymbolColumnId[] => ["asset", ...visibleMetricColumns]
 
 export const allSymbolColumnWidthClass = (
   columnId: AllSymbolColumnId,
@@ -64,4 +54,4 @@ export const allSymbolBodyCellClass = (columnId: AllSymbolColumnId): string => {
 export const isAllSymbolColumnId = (
   value: string,
 ): value is AllSymbolColumnId =>
-  ALL_SYMBOL_TABLE_COLUMN_IDS.includes(value as AllSymbolColumnId)
+  value === "asset" || isPortfolioMetricColumnId(value)

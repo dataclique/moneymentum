@@ -1,4 +1,4 @@
-import { Show } from "solid-js"
+import { Show, For } from "solid-js"
 import type { JSX } from "solid-js"
 
 import { Skeleton } from "@/components/ui/skeleton"
@@ -9,6 +9,7 @@ import type {
   AllSymbolRowData,
 } from "./allSymbolRowModel"
 import { allSymbolBodyCellClass } from "./allSymbolColumnLayout"
+import type { PortfolioMetricColumnId } from "./portfolioMetricVisibility"
 import {
   betaClassName,
   formatDecimal,
@@ -22,11 +23,115 @@ import {
 export const AllSymbolsRow = (props: {
   row: AllSymbolRowData
   portfolioState: AllSymbolPortfolioState
+  visibleMetricColumns: PortfolioMetricColumnId[]
   fundingIsLoading: boolean
   factorsIsLoading: boolean
   onSymbolClick: (symbol: string) => void
 }): JSX.Element => {
-  const fundingDisplay = () => formatPercent(props.row.fundingRateAnnualized)
+  const metricSkeleton = () => (
+    <Skeleton class="inline-block h-3 w-10 align-middle" />
+  )
+
+  const renderMetricCell = (columnId: PortfolioMetricColumnId) => {
+    switch (columnId) {
+      case "rate":
+        return (
+          <td
+            class={cn(
+              allSymbolBodyCellClass("rate"),
+              fundingRateClassName(props.row.fundingRateAnnualized),
+            )}
+          >
+            <Show
+              when={!props.fundingIsLoading}
+              fallback={
+                <Skeleton class="inline-block h-3 w-[64px] align-middle" />
+              }
+            >
+              {formatPercent(props.row.fundingRateAnnualized)}
+            </Show>
+          </td>
+        )
+      case "beta":
+        return (
+          <td
+            class={cn(
+              allSymbolBodyCellClass("beta"),
+              betaClassName(props.row.beta),
+            )}
+          >
+            <Show when={!props.factorsIsLoading} fallback={metricSkeleton()}>
+              {formatDecimal(props.row.beta)}
+            </Show>
+          </td>
+        )
+      case "vol":
+        return (
+          <td
+            class={cn(
+              allSymbolBodyCellClass("vol"),
+              volatilityClassName(props.row.volatility),
+            )}
+          >
+            <Show when={!props.factorsIsLoading} fallback={metricSkeleton()}>
+              {formatPercent(props.row.volatility)}
+            </Show>
+          </td>
+        )
+      case "sharpe":
+        return (
+          <td
+            class={cn(
+              allSymbolBodyCellClass("sharpe"),
+              riskAdjustedReturnClassName(props.row.sharpe),
+            )}
+          >
+            <Show when={!props.factorsIsLoading} fallback={metricSkeleton()}>
+              {formatDecimal(props.row.sharpe)}
+            </Show>
+          </td>
+        )
+      case "sortino":
+        return (
+          <td
+            class={cn(
+              allSymbolBodyCellClass("sortino"),
+              riskAdjustedReturnClassName(props.row.sortino),
+            )}
+          >
+            <Show when={!props.factorsIsLoading} fallback={metricSkeleton()}>
+              {formatDecimal(props.row.sortino)}
+            </Show>
+          </td>
+        )
+      case "momentum":
+        return (
+          <td
+            class={cn(
+              allSymbolBodyCellClass("momentum"),
+              signedMetricClassName(props.row.momentum),
+            )}
+          >
+            <Show when={!props.factorsIsLoading} fallback={metricSkeleton()}>
+              {formatPercent(props.row.momentum)}
+            </Show>
+          </td>
+        )
+      case "carry":
+        return (
+          <td
+            class={cn(
+              allSymbolBodyCellClass("carry"),
+              signedMetricClassName(props.row.carry),
+            )}
+          >
+            <Show when={!props.factorsIsLoading} fallback={metricSkeleton()}>
+              {formatPercent(props.row.carry)}
+            </Show>
+          </td>
+        )
+    }
+  }
 
   const handleActivate = () => {
     props.onSymbolClick(props.row.symbol)
@@ -75,97 +180,9 @@ export const AllSymbolsRow = (props: {
           {props.row.baseSymbol}
         </button>
       </td>
-      <td
-        class={cn(
-          allSymbolBodyCellClass("rate"),
-          fundingRateClassName(props.row.fundingRateAnnualized),
-        )}
-      >
-        <Show
-          when={!props.fundingIsLoading}
-          fallback={<Skeleton class="inline-block h-3 w-[64px] align-middle" />}
-        >
-          {fundingDisplay()}
-        </Show>
-      </td>
-      <td
-        class={cn(
-          allSymbolBodyCellClass("beta"),
-          betaClassName(props.row.beta),
-        )}
-      >
-        <Show
-          when={!props.factorsIsLoading}
-          fallback={<Skeleton class="inline-block h-3 w-10 align-middle" />}
-        >
-          {formatDecimal(props.row.beta)}
-        </Show>
-      </td>
-      <td
-        class={cn(
-          allSymbolBodyCellClass("vol"),
-          volatilityClassName(props.row.volatility),
-        )}
-      >
-        <Show
-          when={!props.factorsIsLoading}
-          fallback={<Skeleton class="inline-block h-3 w-10 align-middle" />}
-        >
-          {formatPercent(props.row.volatility)}
-        </Show>
-      </td>
-      <td
-        class={cn(
-          allSymbolBodyCellClass("sharpe"),
-          riskAdjustedReturnClassName(props.row.sharpe),
-        )}
-      >
-        <Show
-          when={!props.factorsIsLoading}
-          fallback={<Skeleton class="inline-block h-3 w-10 align-middle" />}
-        >
-          {formatDecimal(props.row.sharpe)}
-        </Show>
-      </td>
-      <td
-        class={cn(
-          allSymbolBodyCellClass("sortino"),
-          riskAdjustedReturnClassName(props.row.sortino),
-        )}
-      >
-        <Show
-          when={!props.factorsIsLoading}
-          fallback={<Skeleton class="inline-block h-3 w-10 align-middle" />}
-        >
-          {formatDecimal(props.row.sortino)}
-        </Show>
-      </td>
-      <td
-        class={cn(
-          allSymbolBodyCellClass("momentum"),
-          signedMetricClassName(props.row.momentum),
-        )}
-      >
-        <Show
-          when={!props.factorsIsLoading}
-          fallback={<Skeleton class="inline-block h-3 w-10 align-middle" />}
-        >
-          {formatPercent(props.row.momentum)}
-        </Show>
-      </td>
-      <td
-        class={cn(
-          allSymbolBodyCellClass("carry"),
-          signedMetricClassName(props.row.carry),
-        )}
-      >
-        <Show
-          when={!props.factorsIsLoading}
-          fallback={<Skeleton class="inline-block h-3 w-10 align-middle" />}
-        >
-          {formatPercent(props.row.carry)}
-        </Show>
-      </td>
+      <For each={props.visibleMetricColumns}>
+        {columnId => renderMetricCell(columnId)}
+      </For>
     </tr>
   )
 }

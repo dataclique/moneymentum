@@ -1,4 +1,4 @@
-import type { ColumnDef, Row, SortingState } from "@tanstack/solid-table"
+import type { Row, SortingState } from "@tanstack/solid-table"
 import {
   createSolidTable,
   flexRender,
@@ -30,12 +30,16 @@ import {
   filterAllSymbolRows,
 } from "./allSymbolRowModel"
 import {
-  ALL_SYMBOL_TABLE_COLUMN_IDS,
   allSymbolColumnWidthClass,
   allSymbolHeaderClass,
+  allSymbolTableColumnIds,
   isAllSymbolColumnId,
 } from "./allSymbolColumnLayout"
-import { DEFAULT_ALL_SYMBOLS_SORTING } from "./allSymbolsColumns"
+import {
+  buildAllSymbolsColumns,
+  DEFAULT_ALL_SYMBOLS_SORTING,
+} from "./allSymbolsColumns"
+import type { PortfolioMetricColumnId } from "./portfolioMetricVisibility"
 
 const ESTIMATED_ALL_SYMBOL_ROW_HEIGHT_PX = 34
 const ALL_SYMBOLS_OVERSCAN_ROW_COUNT = 10
@@ -46,6 +50,7 @@ interface AllSymbolsVirtualRowProps {
   searchQuery: Accessor<string>
   targetPortfolio: Record<string, PortfolioInterface | undefined>
   deletedArchive: Record<string, PortfolioInterface | undefined>
+  visibleMetricColumns: PortfolioMetricColumnId[]
   fundingIsLoading: boolean
   factorsIsLoading: boolean
   onSymbolClick: (symbol: string) => void
@@ -69,6 +74,7 @@ const AllSymbolsVirtualRow = (
             props.targetPortfolio,
             props.deletedArchive,
           )}
+          visibleMetricColumns={props.visibleMetricColumns}
           fundingIsLoading={props.fundingIsLoading}
           factorsIsLoading={props.factorsIsLoading}
           onSymbolClick={props.onSymbolClick}
@@ -79,8 +85,8 @@ const AllSymbolsVirtualRow = (
 }
 
 interface AllSymbolsDataTableProps {
-  columns: ColumnDef<AllSymbolRowData>[]
   data: Accessor<AllSymbolRowData[]>
+  visibleMetricColumns: PortfolioMetricColumnId[]
   targetPortfolio: Record<string, PortfolioInterface | undefined>
   deletedArchive: Record<string, PortfolioInterface | undefined>
   fundingIsLoading: boolean
@@ -93,8 +99,8 @@ export const AllSymbolsDataTable = (
   props: AllSymbolsDataTableProps,
 ): JSX.Element => {
   const [local] = splitProps(props, [
-    "columns",
     "data",
+    "visibleMetricColumns",
     "targetPortfolio",
     "deletedArchive",
     "fundingIsLoading",
@@ -112,12 +118,20 @@ export const AllSymbolsDataTable = (
     filterAllSymbolRows(local.data(), searchQuery()),
   )
 
+  const columns = createMemo(() =>
+    buildAllSymbolsColumns(local.visibleMetricColumns),
+  )
+
+  const tableColumnIds = createMemo(() =>
+    allSymbolTableColumnIds(local.visibleMetricColumns),
+  )
+
   const table = createSolidTable({
     get data() {
       return filteredData()
     },
     get columns() {
-      return local.columns
+      return columns()
     },
     getRowId: row => row.symbol,
     getCoreRowModel: getCoreRowModel(),
@@ -219,7 +233,7 @@ export const AllSymbolsDataTable = (
       >
         <table class="min-w-full w-max table-fixed">
           <colgroup>
-            <For each={ALL_SYMBOL_TABLE_COLUMN_IDS}>
+            <For each={tableColumnIds()}>
               {columnId => <col class={allSymbolColumnWidthClass(columnId)} />}
             </For>
           </colgroup>
@@ -258,7 +272,7 @@ export const AllSymbolsDataTable = (
               fallback={
                 <tr>
                   <td
-                    colSpan={local.columns.length}
+                    colSpan={tableColumnIds().length}
                     class="h-24 text-center text-muted-foreground text-[11px]"
                   >
                     {searchQuery().trim() === ""
@@ -271,7 +285,7 @@ export const AllSymbolsDataTable = (
               <Show when={paddingTop() > 0}>
                 <tr>
                   <td
-                    colSpan={local.columns.length}
+                    colSpan={tableColumnIds().length}
                     style={{ height: `${String(paddingTop())}px` }}
                   />
                 </tr>
@@ -284,6 +298,7 @@ export const AllSymbolsDataTable = (
                     searchQuery={searchQuery}
                     targetPortfolio={local.targetPortfolio}
                     deletedArchive={local.deletedArchive}
+                    visibleMetricColumns={local.visibleMetricColumns}
                     fundingIsLoading={local.fundingIsLoading}
                     factorsIsLoading={local.factorsIsLoading}
                     onSymbolClick={local.onSymbolClick}
@@ -293,7 +308,7 @@ export const AllSymbolsDataTable = (
               <Show when={paddingBottom() > 0}>
                 <tr>
                   <td
-                    colSpan={local.columns.length}
+                    colSpan={tableColumnIds().length}
                     style={{ height: `${String(paddingBottom())}px` }}
                   />
                 </tr>

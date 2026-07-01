@@ -98,6 +98,7 @@ async fn spawn_test_app(mock_server: &MockServer, data_dir: &TempDir) -> TestApp
         log_level = "debug"
         max_concurrent_requests = 3
         max_retries = 2
+        ingestion_schedule = "0 0 * * * *"
         "#,
         data_dir.path().display(),
         database_path.display(),

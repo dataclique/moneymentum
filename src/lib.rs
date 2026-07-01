@@ -664,7 +664,7 @@ pub async fn rocket(
     )
     .await?;
     if let Err(err) =
-        market_metadata::refresh_all_markets_if_stale(&hyperliquid_clients, &config.data_dir).await
+        market_metadata::refresh_all_markets(&hyperliquid_clients, &config.data_dir).await
     {
         warn!(error = %err, "failed to refresh markets metadata on startup");
     }

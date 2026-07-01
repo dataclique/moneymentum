@@ -1,9 +1,9 @@
 //! Markets metadata: the perp universe with each market's max leverage,
-//! stored in `markets.csv`. Refreshes run on server startup (when stale) and
-//! via the Nix-triggered `POST /hyperliquid/markets/refresh` endpoint.
+//! stored in `markets.csv`. Refreshes run on server startup and via the
+//! Nix-triggered `POST /hyperliquid/markets/refresh` endpoint.
 
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 
 use polars::prelude::{
     ChunkedArray, DataFrame, DataType, Int64Type, PolarsError, StringChunked, df,
@@ -16,7 +16,7 @@ use tracing::{info, warn};
 use crate::finance::{self, CcxtSymbol, Market};
 use crate::hyperliquid::{Hyperliquid, HyperliquidError};
 
-/// Markets metadata is refreshed at most once per day on the server.
+/// Daily cadence for HTTP cache headers on `GET /hyperliquid/markets`.
 pub(crate) const MARKETS_REFRESH_INTERVAL: Duration = Duration::from_hours(24);
 
 /// Serializes refreshes per ledger so concurrent requests cannot both pass the
@@ -116,33 +116,6 @@ pub(crate) async fn refresh_markets(
 
 pub(crate) fn markets_file_path(data_dir: &Path, ledger: MarketsLedger) -> PathBuf {
     data_dir.join(ledger.file_name())
-}
-
-pub(crate) async fn markets_need_refresh(data_dir: &Path, ledger: MarketsLedger) -> bool {
-    let path = markets_file_path(data_dir, ledger);
-    let Ok(metadata) = tokio::fs::metadata(&path).await else {
-        return true;
-    };
-    let Ok(frame) = crate::dataframe::read_csv(path.clone()).await else {
-        return true;
-    };
-    let Some(frame) = frame else {
-        return true;
-    };
-    if !frame
-        .get_column_names()
-        .iter()
-        .any(|column| column.as_str() == "asset_index")
-    {
-        return true;
-    }
-    let Ok(modified_at) = metadata.modified() else {
-        return true;
-    };
-    let age = SystemTime::now()
-        .duration_since(modified_at)
-        .unwrap_or(MARKETS_REFRESH_INTERVAL);
-    age >= MARKETS_REFRESH_INTERVAL
 }
 
 /// Loads the perp universe from the on-disk ledger. Ingestion consumes this
@@ -274,28 +247,6 @@ async fn file_modified_at_rfc3339(path: &Path) -> Result<Option<String>, Markets
     let modified_at = metadata.modified()?;
     let timestamp = chrono::DateTime::<chrono::Utc>::from(modified_at);
     Ok(Some(timestamp.to_rfc3339()))
-}
-
-pub(crate) async fn refresh_all_markets_if_stale(
-    clients: &crate::hyperliquid::HyperliquidClients,
-    data_dir: &Path,
-) -> Result<(), MarketsMetadataError> {
-    let mut last_error = None;
-    for ledger in [MarketsLedger::Mainnet, MarketsLedger::Testnet] {
-        if markets_need_refresh(data_dir, ledger).await {
-            let _guard = refresh_lock(ledger).lock().await;
-            if markets_need_refresh(data_dir, ledger).await
-                && let Err(error) =
-                    refresh_markets(clients.for_ledger(ledger), data_dir, ledger).await
-            {
-                warn!(%error, ?ledger, "markets refresh failed for ledger");
-                last_error = Some(error);
-            }
-        }
-    }
-    // Refresh each stale ledger independently so one ledger's outage does not
-    // skip refreshing the others.
-    last_error.map_or_else(|| Ok(()), |error| Err(error.into()))
 }
 
 pub(crate) async fn refresh_all_markets(
@@ -528,30 +479,6 @@ mod tests {
             Level::INFO,
             &["markets metadata refreshed"]
         ));
-    }
-
-    #[tokio::test]
-    async fn markets_need_refresh_when_ledger_lacks_asset_index_column() {
-        let data_dir = TempDir::new().unwrap();
-        // Pre-asset_index ledger schema: a refresh must rebuild it so the
-        // asset_index column the API response depends on gets populated.
-        let legacy_ledger = df! {
-            "symbol" => &["BTC"],
-            "max_leverage" => &[50_u32],
-            "disable" => &[false],
-        }
-        .unwrap();
-        crate::dataframe::write_csv(
-            data_dir.path().join(MarketsLedger::Mainnet.file_name()),
-            legacy_ledger,
-        )
-        .await
-        .unwrap();
-
-        assert!(
-            markets_need_refresh(data_dir.path(), MarketsLedger::Mainnet).await,
-            "a ledger missing the asset_index column must be treated as stale"
-        );
     }
 
     #[tokio::test]

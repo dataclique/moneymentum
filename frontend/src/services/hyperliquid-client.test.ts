@@ -71,7 +71,10 @@ vi.mock("ccxt", () => ({
   },
 }))
 
-import { HyperliquidClient } from "./hyperliquid-client"
+import {
+  HyperliquidClient,
+  millisecondsUntilNextUtcMidnight,
+} from "./hyperliquid-client"
 
 const stubBackendMarketsFetch = (
   network: "mainnet" | "testnet",
@@ -879,5 +882,43 @@ describe("HyperliquidClient", () => {
       amount: 0.002,
       params: expect.objectContaining({ reduceOnly: true }),
     })
+  })
+})
+
+describe("millisecondsUntilNextUtcMidnight", () => {
+  it("reaches the next utc midnight from noon", () => {
+    const noonUtc = new Date("2026-07-01T12:00:00.000Z")
+    expect(millisecondsUntilNextUtcMidnight(noonUtc)).toBe(12 * 60 * 60 * 1000)
+  })
+
+  it("returns at least one millisecond before midnight", () => {
+    const lastMillisecond = new Date("2026-07-01T23:59:59.999Z")
+    expect(millisecondsUntilNextUtcMidnight(lastMillisecond)).toBe(1)
+  })
+
+  it("returns a full day at utc midnight", () => {
+    const midnightUtc = new Date("2026-07-01T00:00:00.000Z")
+    expect(millisecondsUntilNextUtcMidnight(midnightUtc)).toBe(
+      24 * 60 * 60 * 1000,
+    )
+  })
+})
+
+describe("millisecondsUntilNextUtcMidnight", () => {
+  it("reaches the next utc midnight from noon", () => {
+    const noonUtc = new Date("2026-07-01T12:00:00.000Z")
+    expect(millisecondsUntilNextUtcMidnight(noonUtc)).toBe(12 * 60 * 60 * 1000)
+  })
+
+  it("returns at least one millisecond before midnight", () => {
+    const lastMillisecond = new Date("2026-07-01T23:59:59.999Z")
+    expect(millisecondsUntilNextUtcMidnight(lastMillisecond)).toBe(1)
+  })
+
+  it("returns a full day at utc midnight", () => {
+    const midnightUtc = new Date("2026-07-01T00:00:00.000Z")
+    expect(millisecondsUntilNextUtcMidnight(midnightUtc)).toBe(
+      24 * 60 * 60 * 1000,
+    )
   })
 })

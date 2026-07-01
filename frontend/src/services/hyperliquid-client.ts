@@ -202,7 +202,14 @@ export interface HyperliquidMarketsResponse {
   marketsMaxAgeMs?: number
 }
 
-export const MARKETS_MAX_AGE_MS = 24 * 60 * 60 * 1000
+const MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1000
+
+export const millisecondsUntilNextUtcMidnight = (
+  now: Date = new Date(),
+): number => {
+  const millisecondsIntoDay = now.getTime() % MILLISECONDS_PER_DAY
+  return Math.max(MILLISECONDS_PER_DAY - millisecondsIntoDay, 1)
+}
 
 const parseCacheMaxAgeMs = (cacheControl: string | null): number | null => {
   if (!cacheControl) return null
@@ -228,7 +235,7 @@ export const fetchHyperliquidMarkets = async (
   const markets = (await response.json()) as HyperliquidMarketsResponse
   const marketsMaxAgeMs =
     parseCacheMaxAgeMs(response.headers.get("cache-control")) ??
-    MARKETS_MAX_AGE_MS
+    millisecondsUntilNextUtcMidnight()
   return { ...markets, marketsMaxAgeMs }
 }
 

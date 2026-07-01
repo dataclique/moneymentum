@@ -1,66 +1,25 @@
-//! Markets metadata: the perp universe with each market's max leverage,
-//! stored in `markets.csv`. Refreshes run on server startup (with exponential
-//! backoff until success) and via the Nix-triggered `POST /hyperliquid/markets/refresh`
-//! endpoint. Ingestion loads the ledger with the same backoff when the file is
-//! not present yet.
+//! Markets metadata: the perp universe with each market's max leverage, stored
+//! in `markets.csv` as a restart cache. A background task loads the on-disk
+//! cache at startup, keeps each ledger in memory alongside its last-refresh
+//! timestamp, refreshes from Hyperliquid at startup and every UTC midnight, and
+//! serves HTTP from the in-memory store. The CSV is best-effort: a successful
+//! fetch updates memory even when the disk write fails.
 
-use std::future::Future;
-use std::ops::ControlFlow;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
+use chrono::{DateTime, Utc};
 use polars::prelude::{ChunkedArray, DataFrame, DataType, Int64Type, PolarsError, df};
 use serde::Serialize;
 use thiserror::Error;
-use tokio::sync::Mutex;
-use tracing::{info, warn};
+use tokio::sync::RwLock;
+use tracing::{debug, error, info, warn};
 
 use crate::finance::{self, CcxtSymbol, Market};
 use crate::hyperliquid::{Hyperliquid, HyperliquidError};
 
-/// Daily cadence for HTTP cache headers on `GET /hyperliquid/markets`.
-pub(crate) const MARKETS_REFRESH_INTERVAL: Duration = Duration::from_hours(24);
-
-#[cfg(test)]
-const MARKETS_RETRY_INITIAL_DELAY: Duration = Duration::from_millis(10);
-#[cfg(not(test))]
-const MARKETS_RETRY_INITIAL_DELAY: Duration = Duration::from_secs(10);
-
-/// Serializes refreshes per ledger so concurrent requests cannot both pass the
-/// staleness check and double-fetch from Hyperliquid or race writes to the same
-/// CSV ledger.
-static MAINNET_REFRESH_LOCK: Mutex<()> = Mutex::const_new(());
-static TESTNET_REFRESH_LOCK: Mutex<()> = Mutex::const_new(());
-
-fn refresh_lock(ledger: MarketsLedger) -> &'static Mutex<()> {
-    match ledger {
-        MarketsLedger::Mainnet => &MAINNET_REFRESH_LOCK,
-        MarketsLedger::Testnet => &TESTNET_REFRESH_LOCK,
-    }
-}
-
-/// Runs `attempt` repeatedly with exponential backoff (starting at
-/// `MARKETS_RETRY_INITIAL_DELAY`, doubling each time) until it returns
-/// `ControlFlow::Break`. `ControlFlow::Continue(reason)` schedules a retry and
-/// logs `reason` so callers control both the stop condition and the message.
-async fn with_backoff<Attempt, Fut, T>(mut attempt: Attempt) -> T
-where
-    Attempt: FnMut() -> Fut,
-    Fut: Future<Output = ControlFlow<T, String>>,
-{
-    let mut delay = MARKETS_RETRY_INITIAL_DELAY;
-
-    loop {
-        match attempt().await {
-            ControlFlow::Break(value) => return value,
-            ControlFlow::Continue(reason) => {
-                warn!(reason, retry_in_ms = delay.as_millis(), "retry scheduled");
-                tokio::time::sleep(delay).await;
-                delay = delay.saturating_mul(2);
-            }
-        }
-    }
-}
+const SECONDS_PER_DAY: u64 = 86_400;
 
 #[derive(Debug, Error)]
 pub(crate) enum MarketsMetadataError {
@@ -124,33 +83,149 @@ impl MarketsLedger {
     }
 }
 
-/// Refreshes `markets.csv` from the live exchange and returns the current
-/// perp universe. Ingestion consumes the returned list directly.
-pub(crate) async fn refresh_markets(
+/// In-memory markets ledgers served by HTTP routes.
+pub(crate) struct MarketsStore {
+    mainnet: RwLock<Option<MarketsApiResponse>>,
+    testnet: RwLock<Option<MarketsApiResponse>>,
+}
+
+impl MarketsStore {
+    pub(crate) fn empty() -> Self {
+        Self {
+            mainnet: RwLock::new(None),
+            testnet: RwLock::new(None),
+        }
+    }
+
+    /// Reads any cached ledgers from disk into memory. Missing caches are fine:
+    /// the background refresh repopulates them from the live exchange.
+    pub(crate) async fn load_from_disk(data_dir: &Path) -> Arc<Self> {
+        let store = Arc::new(Self::empty());
+        for ledger in [MarketsLedger::Mainnet, MarketsLedger::Testnet] {
+            match load_ledger_from_disk(data_dir, ledger).await {
+                Ok(response) => {
+                    info!(
+                        ?ledger,
+                        markets = response.leverage_limits.len(),
+                        "markets ledger loaded from disk cache"
+                    );
+                    store.set_ledger(ledger, response).await;
+                }
+                Err(MarketsMetadataError::MissingFile) => {
+                    debug!(?ledger, "markets ledger disk cache missing");
+                }
+                Err(error) => {
+                    warn!(%error, ?ledger, "markets ledger disk cache load failed");
+                }
+            }
+        }
+        store
+    }
+
+    pub(crate) async fn set_ledger(&self, ledger: MarketsLedger, response: MarketsApiResponse) {
+        ledger_lock(self, ledger).write().await.replace(response);
+    }
+
+    pub(crate) async fn api_response(&self, ledger: MarketsLedger) -> Option<MarketsApiResponse> {
+        ledger_lock(self, ledger).read().await.as_ref().cloned()
+    }
+}
+
+fn ledger_lock(store: &MarketsStore, ledger: MarketsLedger) -> &RwLock<Option<MarketsApiResponse>> {
+    match ledger {
+        MarketsLedger::Mainnet => &store.mainnet,
+        MarketsLedger::Testnet => &store.testnet,
+    }
+}
+
+fn seconds_until_next_utc_midnight(unix_now: u64) -> u64 {
+    const SECONDS_PER_DAY: u64 = 86_400;
+    let seconds_into_day = unix_now % SECONDS_PER_DAY;
+    (SECONDS_PER_DAY - seconds_into_day).max(1)
+}
+
+async fn sleep_until_next_utc_midnight() {
+    let sleep_for = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| Duration::from_secs(seconds_until_next_utc_midnight(duration.as_secs())))
+        .unwrap_or(Duration::from_secs(SECONDS_PER_DAY));
+    tokio::time::sleep(sleep_for).await;
+}
+
+/// Spawns the markets refresh loop. The first iteration runs immediately at
+/// startup; afterwards the task sleeps until the next UTC midnight and refreshes
+/// again. A failed refresh is logged and retried at the next midnight; the
+/// in-memory store keeps serving whatever it already holds.
+pub(crate) fn spawn_background_refresh(
+    clients: crate::hyperliquid::HyperliquidClients,
+    data_dir: PathBuf,
+    store: Arc<MarketsStore>,
+) {
+    tokio::spawn(async move {
+        loop {
+            if let Err(error) = refresh_all_markets_into_store(&clients, &data_dir, &store).await {
+                warn!(%error, "markets metadata refresh failed");
+            }
+            sleep_until_next_utc_midnight().await;
+        }
+    });
+}
+
+/// Refreshes both ledgers from the live exchange into `store`, best-effort
+/// writing each on-disk cache. Returns an error only when every ledger failed.
+async fn refresh_all_markets_into_store(
+    clients: &crate::hyperliquid::HyperliquidClients,
+    data_dir: &Path,
+    store: &MarketsStore,
+) -> Result<(), MarketsMetadataError> {
+    let mut any_succeeded = false;
+    let mut last_error = None;
+    for ledger in [MarketsLedger::Mainnet, MarketsLedger::Testnet] {
+        match refresh_ledger_into_store(clients.for_ledger(ledger), data_dir, ledger, store).await {
+            Ok(()) => any_succeeded = true,
+            Err(error) => {
+                warn!(%error, ?ledger, "markets refresh failed for ledger");
+                last_error = Some(error);
+            }
+        }
+    }
+    match last_error {
+        Some(error) if !any_succeeded => Err(error.into()),
+        _ => Ok(()),
+    }
+}
+
+/// Refreshes one ledger from the live exchange, updates the in-memory store,
+/// and best-effort writes the on-disk cache. A disk write failure is logged but
+/// does not fail the refresh, since the CSV is only a restart cache.
+async fn refresh_ledger_into_store(
     client: &dyn Hyperliquid,
     data_dir: &Path,
     ledger: MarketsLedger,
-) -> Result<Vec<Market>, HyperliquidError> {
+    store: &MarketsStore,
+) -> Result<(), HyperliquidError> {
     let fetched = client.fetch_market_metadata().await?;
-    let path = data_dir.join(ledger.file_name());
     let frame = build_markets_frame(&fetched)?;
-    let markets = markets_from_frame(&frame)?;
-    crate::dataframe::write_csv(path, frame).await?;
+    let refreshed_at = Utc::now().to_rfc3339();
+    let response = markets_api_response_from_frame(&frame, Some(refreshed_at))?;
+    let market_count = response.leverage_limits.len();
+    store.set_ledger(ledger, response).await;
+
+    let path = markets_file_path(data_dir, ledger);
+    if let Err(error) = crate::dataframe::write_csv(path, frame).await {
+        error!(%error, ?ledger, "failed to write markets ledger disk cache");
+    }
+
     info!(
-        markets = markets.len(),
-        ledger = ?ledger,
+        markets = market_count,
+        ?ledger,
         "markets metadata refreshed"
     );
-    Ok(markets)
+    Ok(())
 }
 
-pub(crate) fn markets_file_path(data_dir: &Path, ledger: MarketsLedger) -> PathBuf {
-    data_dir.join(ledger.file_name())
-}
-
-/// Loads the perp universe from the on-disk ledger. Ingestion consumes this
-/// list directly; it does not refresh markets from Hyperliquid.
-pub(crate) async fn load_markets(
+/// Loads the perp universe from the on-disk ledger for ingestion.
+pub(crate) async fn load_markets_from_disk(
     data_dir: &Path,
     ledger: MarketsLedger,
 ) -> Result<Vec<Market>, MarketsMetadataError> {
@@ -161,28 +236,13 @@ pub(crate) async fn load_markets(
     markets_from_frame(&frame).map_err(MarketsMetadataError::Polars)
 }
 
-/// Loads the on-disk ledger, retrying with exponential backoff when the CSV is
-/// not present yet (for example before startup refresh or the midnight job).
-pub(crate) async fn load_markets_with_backoff(
-    data_dir: &Path,
-    ledger: MarketsLedger,
-) -> Result<Vec<Market>, MarketsMetadataError> {
-    with_backoff(move || async move {
-        match load_markets(data_dir, ledger).await {
-            Ok(markets) => {
-                info!(?ledger, markets = markets.len(), "markets ledger loaded");
-                ControlFlow::Break(Ok(markets))
-            }
-            Err(MarketsMetadataError::MissingFile) => {
-                ControlFlow::Continue(format!("{ledger:?} markets ledger file missing"))
-            }
-            Err(error) => ControlFlow::Break(Err(error)),
-        }
-    })
-    .await
+fn markets_file_path(data_dir: &Path, ledger: MarketsLedger) -> PathBuf {
+    data_dir.join(ledger.file_name())
 }
 
-pub(crate) async fn load_markets_api_response(
+/// Loads one ledger from the on-disk cache into a [`MarketsApiResponse`],
+/// tagging it with the CSV's last-modified time as the refresh timestamp.
+async fn load_ledger_from_disk(
     data_dir: &Path,
     ledger: MarketsLedger,
 ) -> Result<MarketsApiResponse, MarketsMetadataError> {
@@ -191,7 +251,12 @@ pub(crate) async fn load_markets_api_response(
         .await?
         .ok_or(MarketsMetadataError::MissingFile)?;
     let refreshed_at = file_modified_at_rfc3339(&path).await?;
-    markets_api_response_from_frame(&frame, refreshed_at)
+    markets_api_response_from_frame(&frame, refreshed_at).map_err(MarketsMetadataError::Polars)
+}
+
+async fn file_modified_at_rfc3339(path: &Path) -> Result<Option<String>, std::io::Error> {
+    let modified = tokio::fs::metadata(path).await?.modified()?;
+    Ok(Some(DateTime::<Utc>::from(modified).to_rfc3339()))
 }
 
 /// A single validated ledger row: the raw Hyperliquid symbol plus its numeric
@@ -256,7 +321,7 @@ fn parse_ledger_rows(frame: &DataFrame) -> Result<Vec<LedgerRow>, PolarsError> {
 fn markets_api_response_from_frame(
     frame: &DataFrame,
     refreshed_at: Option<String>,
-) -> Result<MarketsApiResponse, MarketsMetadataError> {
+) -> Result<MarketsApiResponse, PolarsError> {
     let mut leverage_limits: Vec<LeverageLimitEntry> = parse_ledger_rows(frame)?
         .into_iter()
         .map(|row| LeverageLimitEntry {
@@ -278,55 +343,6 @@ fn markets_api_response_from_frame(
         leverage_limits,
         refreshed_at,
     })
-}
-
-async fn file_modified_at_rfc3339(path: &Path) -> Result<Option<String>, MarketsMetadataError> {
-    let metadata = tokio::fs::metadata(path).await?;
-    let modified_at = metadata.modified()?;
-    let timestamp = chrono::DateTime::<chrono::Utc>::from(modified_at);
-    Ok(Some(timestamp.to_rfc3339()))
-}
-
-pub(crate) async fn refresh_all_markets(
-    clients: &crate::hyperliquid::HyperliquidClients,
-    data_dir: &Path,
-) -> Result<(), MarketsMetadataError> {
-    let mut any_succeeded = false;
-    let mut last_error = None;
-    for ledger in [MarketsLedger::Mainnet, MarketsLedger::Testnet] {
-        let _guard = refresh_lock(ledger).lock().await;
-        match refresh_markets(clients.for_ledger(ledger), data_dir, ledger).await {
-            Ok(_markets) => any_succeeded = true,
-            Err(error) => {
-                warn!(%error, ?ledger, "markets refresh failed for ledger");
-                last_error = Some(error);
-            }
-        }
-    }
-    // Refresh each ledger independently so one ledger's outage does not abort
-    // the others; only fail when every ledger failed.
-    match last_error {
-        Some(error) if !any_succeeded => Err(error.into()),
-        _ => Ok(()),
-    }
-}
-
-/// Refreshes both ledgers, retrying with exponential backoff until at least one
-/// ledger succeeds.
-pub(crate) async fn refresh_all_markets_until_success(
-    clients: &crate::hyperliquid::HyperliquidClients,
-    data_dir: &Path,
-) {
-    with_backoff(move || async move {
-        match refresh_all_markets(clients, data_dir).await {
-            Ok(()) => ControlFlow::Break(()),
-            Err(error) => {
-                ControlFlow::Continue(format!("markets metadata refresh failed: {error}"))
-            }
-        }
-    })
-    .await;
-    info!("markets metadata refresh succeeded");
 }
 
 fn markets_from_frame(frame: &DataFrame) -> Result<Vec<Market>, PolarsError> {
@@ -357,323 +373,5 @@ fn build_markets_frame(fetched: &[MarketMetadata]) -> Result<DataFrame, PolarsEr
         "symbol" => symbols,
         "max_leverage" => max_leverages,
         "asset_index" => asset_indices,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use async_trait::async_trait;
-    use chrono::{DateTime, Utc};
-    use tempfile::TempDir;
-    use tracing::Level;
-    use tracing_test::traced_test;
-
-    use crate::candle::Candle;
-    use crate::funding::FundingRate;
-    use crate::timeframe::Timeframe;
-
-    fn metadata(symbol: &str, max_leverage: u32, asset_index: u32) -> MarketMetadata {
-        MarketMetadata {
-            symbol: Market::new(symbol.to_string()),
-            max_leverage,
-            asset_index,
-        }
-    }
-
-    struct StubClient {
-        metadata: Vec<MarketMetadata>,
-    }
-
-    #[async_trait]
-    impl Hyperliquid for StubClient {
-        async fn fetch_market_metadata(&self) -> Result<Vec<MarketMetadata>, HyperliquidError> {
-            Ok(self.metadata.clone())
-        }
-
-        async fn fetch_candles(
-            &self,
-            _market: &Market,
-            _timeframe: Timeframe,
-            _start: DateTime<Utc>,
-        ) -> Result<Vec<Candle>, HyperliquidError> {
-            Ok(vec![])
-        }
-
-        async fn fetch_funding_rates(
-            &self,
-            _market: &Market,
-            _start: DateTime<Utc>,
-        ) -> Result<Vec<FundingRate>, HyperliquidError> {
-            Ok(vec![])
-        }
-    }
-
-    #[test]
-    fn build_markets_frame_writes_symbol_and_max_leverage() {
-        let fetched = [metadata("BTC", 50, 0), metadata("ETH", 25, 1)];
-
-        let frame = build_markets_frame(&fetched).unwrap();
-
-        assert_eq!(frame.height(), 2);
-        assert_eq!(
-            frame.get_column_names(),
-            ["symbol", "max_leverage", "asset_index"]
-        );
-        let symbols = frame.column("symbol").unwrap().str().unwrap();
-        let leverage = frame.column("max_leverage").unwrap().u32().unwrap();
-        assert_eq!(symbols.get(0), Some("BTC"));
-        assert_eq!(symbols.get(1), Some("ETH"));
-        assert_eq!(leverage.get(0), Some(50));
-        assert_eq!(leverage.get(1), Some(25));
-    }
-
-    #[test]
-    fn build_markets_frame_rejects_duplicate_symbols() {
-        let fetched = [metadata("BTC", 50, 0), metadata("BTC", 25, 1)];
-
-        let error = build_markets_frame(&fetched).unwrap_err();
-
-        assert!(
-            error
-                .to_string()
-                .contains("duplicate market symbol in fetched metadata: BTC")
-        );
-    }
-
-    #[test]
-    fn markets_from_frame_maps_all_rows() {
-        let frame = df! {
-            "symbol" => &["BTC", "ETH"],
-            "max_leverage" => &[50_u32, 25],
-            "asset_index" => &[0_u32, 1],
-        }
-        .unwrap();
-
-        let markets = markets_from_frame(&frame).unwrap();
-
-        assert_eq!(
-            markets.iter().map(Market::as_str).collect::<Vec<_>>(),
-            vec!["BTC", "ETH"]
-        );
-    }
-
-    #[traced_test]
-    #[tokio::test]
-    async fn refresh_writes_markets_csv_from_exchange() {
-        let data_dir = TempDir::new().unwrap();
-        let client = StubClient {
-            metadata: vec![metadata("BTC", 50, 0), metadata("ETH", 25, 1)],
-        };
-
-        let markets = refresh_markets(&client, data_dir.path(), MarketsLedger::Mainnet)
-            .await
-            .unwrap();
-        assert_eq!(
-            markets.iter().map(Market::as_str).collect::<Vec<_>>(),
-            vec!["BTC", "ETH"]
-        );
-        assert!(data_dir.path().join("markets.csv").exists());
-        assert!(crate::logs_contain_at(
-            Level::INFO,
-            &["markets metadata refreshed"]
-        ));
-
-        let reloaded =
-            crate::dataframe::read_csv(data_dir.path().join(MarketsLedger::Mainnet.file_name()))
-                .await
-                .unwrap()
-                .unwrap();
-        assert_eq!(
-            reloaded.get_column_names(),
-            ["symbol", "max_leverage", "asset_index"]
-        );
-    }
-
-    #[traced_test]
-    #[tokio::test]
-    async fn refresh_discovers_markets_from_the_exchange_not_the_ledger() {
-        let data_dir = TempDir::new().unwrap();
-        let stale_ledger = df! {
-            "symbol" => &["SOL"],
-            "max_leverage" => &[20_u32],
-            "asset_index" => &[0_u32],
-        }
-        .unwrap();
-        crate::dataframe::write_csv(
-            data_dir.path().join(MarketsLedger::Mainnet.file_name()),
-            stale_ledger,
-        )
-        .await
-        .unwrap();
-
-        let client = StubClient {
-            metadata: vec![
-                metadata("BTC", 50, 0),
-                metadata("ETH", 25, 1),
-                metadata("SOL", 20, 2),
-            ],
-        };
-
-        let markets = refresh_markets(&client, data_dir.path(), MarketsLedger::Mainnet)
-            .await
-            .unwrap();
-        let symbols: Vec<&str> = markets.iter().map(Market::as_str).collect();
-
-        assert_eq!(markets.len(), 3);
-        assert!(symbols.contains(&"BTC"));
-        assert!(symbols.contains(&"ETH"));
-        assert!(symbols.contains(&"SOL"));
-        assert!(crate::logs_contain_at(
-            Level::INFO,
-            &["markets metadata refreshed"]
-        ));
-    }
-
-    #[tokio::test]
-    async fn load_markets_api_response_returns_ccxt_symbols_and_leverage_limits() {
-        let data_dir = TempDir::new().unwrap();
-        let frame = df! {
-            "symbol" => &["ETH", "BTC"],
-            "max_leverage" => &[25_u32, 50],
-            "asset_index" => &[1_u32, 0],
-        }
-        .unwrap();
-        crate::dataframe::write_csv(
-            data_dir.path().join(MarketsLedger::Mainnet.file_name()),
-            frame,
-        )
-        .await
-        .unwrap();
-
-        let response = load_markets_api_response(data_dir.path(), MarketsLedger::Mainnet)
-            .await
-            .unwrap();
-
-        assert_eq!(
-            response
-                .tickers
-                .iter()
-                .map(CcxtSymbol::as_str)
-                .collect::<Vec<_>>(),
-            vec!["BTC/USDC:USDC", "ETH/USDC:USDC"]
-        );
-        assert_eq!(response.leverage_limits.len(), 2);
-        assert_eq!(response.leverage_limits[0].symbol.as_str(), "BTC/USDC:USDC");
-        assert_eq!(response.leverage_limits[0].max_leverage, 50);
-        assert_eq!(response.leverage_limits[0].asset_index, 0);
-        assert!(response.refreshed_at.is_some());
-    }
-
-    #[tokio::test]
-    async fn load_markets_api_response_uppercases_mixed_case_hyperliquid_names() {
-        let data_dir = TempDir::new().unwrap();
-        let frame = df! {
-            "symbol" => &["kPEPE"],
-            "max_leverage" => &[10_u32],
-            "asset_index" => &[0_u32],
-        }
-        .unwrap();
-        crate::dataframe::write_csv(
-            data_dir.path().join(MarketsLedger::Mainnet.file_name()),
-            frame,
-        )
-        .await
-        .unwrap();
-
-        let response = load_markets_api_response(data_dir.path(), MarketsLedger::Mainnet)
-            .await
-            .unwrap();
-
-        assert_eq!(
-            response
-                .tickers
-                .iter()
-                .map(CcxtSymbol::as_str)
-                .collect::<Vec<_>>(),
-            vec!["KPEPE/USDC:USDC"]
-        );
-        assert_eq!(
-            response.leverage_limits[0].symbol.as_str(),
-            "KPEPE/USDC:USDC"
-        );
-    }
-
-    #[tokio::test]
-    async fn load_markets_api_response_rejects_null_symbol_rows() {
-        let data_dir = TempDir::new().unwrap();
-        let frame = df! {
-            "symbol" => &[Some("BTC"), None],
-            "max_leverage" => &[50_i64, 25],
-            "asset_index" => &[0_i64, 1],
-        }
-        .unwrap();
-        crate::dataframe::write_csv(
-            data_dir.path().join(MarketsLedger::Mainnet.file_name()),
-            frame,
-        )
-        .await
-        .unwrap();
-
-        let error = load_markets_api_response(data_dir.path(), MarketsLedger::Mainnet)
-            .await
-            .unwrap_err();
-
-        assert!(matches!(error, MarketsMetadataError::Polars(_)));
-        assert!(error.to_string().contains("null symbol"));
-    }
-
-    #[tokio::test]
-    async fn load_markets_api_response_rejects_null_max_leverage_rows() {
-        let data_dir = TempDir::new().unwrap();
-        let frame = df! {
-            "symbol" => &["BTC", "ETH"],
-            "max_leverage" => &[Some(50_i64), None],
-            "asset_index" => &[0_i64, 1],
-        }
-        .unwrap();
-        crate::dataframe::write_csv(
-            data_dir.path().join(MarketsLedger::Mainnet.file_name()),
-            frame,
-        )
-        .await
-        .unwrap();
-
-        let error = load_markets_api_response(data_dir.path(), MarketsLedger::Mainnet)
-            .await
-            .unwrap_err();
-
-        assert!(matches!(error, MarketsMetadataError::Polars(_)));
-        assert!(error.to_string().contains("null max_leverage"));
-    }
-
-    #[tokio::test]
-    async fn load_markets_api_response_formats_colon_names_like_ccxt() {
-        let data_dir = TempDir::new().unwrap();
-        let frame = df! {
-            "symbol" => &["flx:crcl"],
-            "max_leverage" => &[5_u32],
-            "asset_index" => &[0_u32],
-        }
-        .unwrap();
-        crate::dataframe::write_csv(
-            data_dir.path().join(MarketsLedger::Mainnet.file_name()),
-            frame,
-        )
-        .await
-        .unwrap();
-
-        let response = load_markets_api_response(data_dir.path(), MarketsLedger::Mainnet)
-            .await
-            .unwrap();
-
-        assert_eq!(
-            response
-                .tickers
-                .iter()
-                .map(CcxtSymbol::as_str)
-                .collect::<Vec<_>>(),
-            vec!["FLX-CRCL/USDC:USDC"]
-        );
     }
 }

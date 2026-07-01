@@ -11,7 +11,7 @@ struct Env {
 #[rocket::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let env = Env::parse();
-    let config = Config::load(&env.config_path, None)?;
+    let config = Config::load(&env.config_path)?;
     let derive_config = config
         .derive
         .ok_or(moneymentum::ConfigError::MissingDeriveConfig)?;

@@ -1,13 +1,15 @@
 //! Markets metadata: the perp universe with each market's max leverage,
-//! stored in `markets.csv`. Refreshes run on server startup and via the
-//! Nix-triggered `POST /hyperliquid/markets/refresh` endpoint.
+//! stored in `markets.csv`. Refreshes run on server startup (with exponential
+//! backoff until success) and via the Nix-triggered `POST /hyperliquid/markets/refresh`
+//! endpoint. Ingestion loads the ledger with the same backoff when the file is
+//! not present yet.
 
+use std::future::Future;
+use std::ops::ControlFlow;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use polars::prelude::{
-    ChunkedArray, DataFrame, DataType, Int64Type, PolarsError, StringChunked, df,
-};
+use polars::prelude::{ChunkedArray, DataFrame, DataType, Int64Type, PolarsError, df};
 use serde::Serialize;
 use thiserror::Error;
 use tokio::sync::Mutex;
@@ -19,6 +21,11 @@ use crate::hyperliquid::{Hyperliquid, HyperliquidError};
 /// Daily cadence for HTTP cache headers on `GET /hyperliquid/markets`.
 pub(crate) const MARKETS_REFRESH_INTERVAL: Duration = Duration::from_hours(24);
 
+#[cfg(test)]
+const MARKETS_RETRY_INITIAL_DELAY: Duration = Duration::from_millis(10);
+#[cfg(not(test))]
+const MARKETS_RETRY_INITIAL_DELAY: Duration = Duration::from_secs(10);
+
 /// Serializes refreshes per ledger so concurrent requests cannot both pass the
 /// staleness check and double-fetch from Hyperliquid or race writes to the same
 /// CSV ledger.
@@ -29,6 +36,29 @@ fn refresh_lock(ledger: MarketsLedger) -> &'static Mutex<()> {
     match ledger {
         MarketsLedger::Mainnet => &MAINNET_REFRESH_LOCK,
         MarketsLedger::Testnet => &TESTNET_REFRESH_LOCK,
+    }
+}
+
+/// Runs `attempt` repeatedly with exponential backoff (starting at
+/// `MARKETS_RETRY_INITIAL_DELAY`, doubling each time) until it returns
+/// `ControlFlow::Break`. `ControlFlow::Continue(reason)` schedules a retry and
+/// logs `reason` so callers control both the stop condition and the message.
+async fn with_backoff<Attempt, Fut, T>(mut attempt: Attempt) -> T
+where
+    Attempt: FnMut() -> Fut,
+    Fut: Future<Output = ControlFlow<T, String>>,
+{
+    let mut delay = MARKETS_RETRY_INITIAL_DELAY;
+
+    loop {
+        match attempt().await {
+            ControlFlow::Break(value) => return value,
+            ControlFlow::Continue(reason) => {
+                warn!(reason, retry_in_ms = delay.as_millis(), "retry scheduled");
+                tokio::time::sleep(delay).await;
+                delay = delay.saturating_mul(2);
+            }
+        }
     }
 }
 
@@ -131,6 +161,27 @@ pub(crate) async fn load_markets(
     markets_from_frame(&frame).map_err(MarketsMetadataError::Polars)
 }
 
+/// Loads the on-disk ledger, retrying with exponential backoff when the CSV is
+/// not present yet (for example before startup refresh or the midnight job).
+pub(crate) async fn load_markets_with_backoff(
+    data_dir: &Path,
+    ledger: MarketsLedger,
+) -> Result<Vec<Market>, MarketsMetadataError> {
+    with_backoff(move || async move {
+        match load_markets(data_dir, ledger).await {
+            Ok(markets) => {
+                info!(?ledger, markets = markets.len(), "markets ledger loaded");
+                ControlFlow::Break(Ok(markets))
+            }
+            Err(MarketsMetadataError::MissingFile) => {
+                ControlFlow::Continue(format!("{ledger:?} markets ledger file missing"))
+            }
+            Err(error) => ControlFlow::Break(Err(error)),
+        }
+    })
+    .await
+}
+
 pub(crate) async fn load_markets_api_response(
     data_dir: &Path,
     ledger: MarketsLedger,
@@ -143,103 +194,90 @@ pub(crate) async fn load_markets_api_response(
     markets_api_response_from_frame(&frame, refreshed_at)
 }
 
-fn max_leverage_column(frame: &DataFrame) -> Result<ChunkedArray<Int64Type>, PolarsError> {
-    frame
-        .column("max_leverage")?
-        .cast(&DataType::Int64)?
-        .i64()
-        .cloned()
+/// A single validated ledger row: the raw Hyperliquid symbol plus its numeric
+/// columns, with nulls and out-of-range values already rejected.
+struct LedgerRow {
+    symbol: String,
+    max_leverage: u32,
+    asset_index: u32,
+}
+
+fn extract_i64_column(
+    frame: &DataFrame,
+    name: &str,
+) -> Result<ChunkedArray<Int64Type>, PolarsError> {
+    frame.column(name)?.cast(&DataType::Int64)?.i64().cloned()
+}
+
+fn parse_u32_cell(value: Option<i64>, index: usize, column: &str) -> Result<u32, PolarsError> {
+    let raw = value.ok_or_else(|| {
+        PolarsError::ComputeError(format!("markets ledger row {index} has null {column}").into())
+    })?;
+    u32::try_from(raw).map_err(|_| {
+        PolarsError::ComputeError(
+            format!("markets ledger row {index} {column} out of range").into(),
+        )
+    })
+}
+
+/// Parses the ledger frame into validated rows. Zipping the columns together
+/// means mismatched lengths simply produce fewer rows instead of panicking, so
+/// no separate length check is needed.
+fn parse_ledger_rows(frame: &DataFrame) -> Result<Vec<LedgerRow>, PolarsError> {
+    let symbols = frame.column("symbol")?.str()?;
+    let max_leverages = extract_i64_column(frame, "max_leverage")?;
+    let asset_indices = extract_i64_column(frame, "asset_index")?;
+
+    symbols
+        .iter()
+        .zip(max_leverages.iter())
+        .zip(asset_indices.iter())
+        .enumerate()
+        .map(|(index, ((symbol, max_leverage), asset_index))| {
+            let symbol = symbol.ok_or_else(|| {
+                PolarsError::ComputeError(
+                    format!("markets ledger row {index} has null symbol").into(),
+                )
+            })?;
+            if symbol.is_empty() {
+                return Err(PolarsError::ComputeError(
+                    format!("markets ledger row {index} has empty symbol").into(),
+                ));
+            }
+            Ok(LedgerRow {
+                symbol: symbol.to_string(),
+                max_leverage: parse_u32_cell(max_leverage, index, "max_leverage")?,
+                asset_index: parse_u32_cell(asset_index, index, "asset_index")?,
+            })
+        })
+        .collect()
 }
 
 fn markets_api_response_from_frame(
     frame: &DataFrame,
     refreshed_at: Option<String>,
 ) -> Result<MarketsApiResponse, MarketsMetadataError> {
-    let symbols = frame.column("symbol")?.str()?;
-    let max_leverages = max_leverage_column(frame)?;
-    let asset_indices = asset_index_column(frame)?;
-    validate_ledger_columns(symbols, &max_leverages, &asset_indices)?;
+    let mut leverage_limits: Vec<LeverageLimitEntry> = parse_ledger_rows(frame)?
+        .into_iter()
+        .map(|row| LeverageLimitEntry {
+            symbol: finance::hyperliquid_swap_ccxt_symbol(&row.symbol),
+            max_leverage: row.max_leverage,
+            asset_index: row.asset_index,
+        })
+        .collect();
 
-    let mut tickers = Vec::with_capacity(symbols.len());
-    let mut leverage_limits = Vec::with_capacity(symbols.len());
-
-    for index in 0..symbols.len() {
-        let (symbol, raw_max_leverage) =
-            ledger_symbol_and_max_leverage(index, symbols, &max_leverages)?;
-        let raw_asset_index = asset_indices.get(index).ok_or_else(|| {
-            MarketsMetadataError::Polars(PolarsError::ComputeError(
-                format!("markets ledger row {index} has null asset_index").into(),
-            ))
-        })?;
-        let ccxt_symbol = finance::hyperliquid_swap_ccxt_symbol(symbol);
-        let max_leverage = u32::try_from(raw_max_leverage).map_err(|_| {
-            MarketsMetadataError::Polars(PolarsError::ComputeError(
-                format!("markets ledger row {index} max_leverage out of range").into(),
-            ))
-        })?;
-        let asset_index = u32::try_from(raw_asset_index).map_err(|_| {
-            MarketsMetadataError::Polars(PolarsError::ComputeError(
-                format!("markets ledger row {index} asset_index out of range").into(),
-            ))
-        })?;
-        tickers.push(ccxt_symbol.clone());
-        leverage_limits.push(LeverageLimitEntry {
-            symbol: ccxt_symbol,
-            max_leverage,
-            asset_index,
-        });
-    }
-
-    tickers.sort_unstable();
     leverage_limits.sort_unstable_by(|left, right| left.symbol.cmp(&right.symbol));
+
+    let tickers = leverage_limits
+        .iter()
+        .map(|entry| entry.symbol.clone())
+        .collect();
 
     Ok(MarketsApiResponse {
         tickers,
         leverage_limits,
         refreshed_at,
     })
-}
-
-fn asset_index_column(frame: &DataFrame) -> Result<ChunkedArray<Int64Type>, PolarsError> {
-    frame
-        .column("asset_index")?
-        .cast(&DataType::Int64)?
-        .i64()
-        .cloned()
-}
-
-fn validate_ledger_columns(
-    symbols: &StringChunked,
-    max_leverages: &ChunkedArray<Int64Type>,
-    asset_indices: &ChunkedArray<Int64Type>,
-) -> Result<(), PolarsError> {
-    if symbols.len() != max_leverages.len() || symbols.len() != asset_indices.len() {
-        return Err(PolarsError::ComputeError(
-            "markets ledger symbol, max_leverage, and asset_index column lengths differ".into(),
-        ));
-    }
-    Ok(())
-}
-
-fn ledger_symbol_and_max_leverage<'ledger>(
-    index: usize,
-    symbols: &'ledger StringChunked,
-    max_leverages: &ChunkedArray<Int64Type>,
-) -> Result<(&'ledger str, i64), PolarsError> {
-    let symbol = symbols.get(index).ok_or_else(|| {
-        PolarsError::ComputeError(format!("markets ledger row {index} has null symbol").into())
-    })?;
-    if symbol.is_empty() {
-        return Err(PolarsError::ComputeError(
-            format!("markets ledger row {index} has empty symbol").into(),
-        ));
-    }
-    let raw_max_leverage = max_leverages.get(index).ok_or_else(|| {
-        PolarsError::ComputeError(
-            format!("markets ledger row {index} has null max_leverage").into(),
-        )
-    })?;
-    Ok((symbol, raw_max_leverage))
 }
 
 async fn file_modified_at_rfc3339(path: &Path) -> Result<Option<String>, MarketsMetadataError> {
@@ -273,18 +311,29 @@ pub(crate) async fn refresh_all_markets(
     }
 }
 
-fn markets_from_frame(frame: &DataFrame) -> Result<Vec<Market>, PolarsError> {
-    let symbols = frame.column("symbol")?.str()?;
-    let max_leverages = max_leverage_column(frame)?;
-    let asset_indices = asset_index_column(frame)?;
-    validate_ledger_columns(symbols, &max_leverages, &asset_indices)?;
+/// Refreshes both ledgers, retrying with exponential backoff until at least one
+/// ledger succeeds.
+pub(crate) async fn refresh_all_markets_until_success(
+    clients: &crate::hyperliquid::HyperliquidClients,
+    data_dir: &Path,
+) {
+    with_backoff(move || async move {
+        match refresh_all_markets(clients, data_dir).await {
+            Ok(()) => ControlFlow::Break(()),
+            Err(error) => {
+                ControlFlow::Continue(format!("markets metadata refresh failed: {error}"))
+            }
+        }
+    })
+    .await;
+    info!("markets metadata refresh succeeded");
+}
 
-    (0..symbols.len())
-        .map(|index| {
-            let (symbol, _) = ledger_symbol_and_max_leverage(index, symbols, &max_leverages)?;
-            Ok(Market::new(symbol.to_string()))
-        })
-        .collect()
+fn markets_from_frame(frame: &DataFrame) -> Result<Vec<Market>, PolarsError> {
+    Ok(parse_ledger_rows(frame)?
+        .into_iter()
+        .map(|row| Market::new(row.symbol))
+        .collect())
 }
 
 fn build_markets_frame(fetched: &[MarketMetadata]) -> Result<DataFrame, PolarsError> {

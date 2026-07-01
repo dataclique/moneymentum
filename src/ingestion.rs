@@ -14,7 +14,7 @@ use thiserror::Error;
 use tracing::{debug, error, info, warn};
 
 use crate::hyperliquid::{CandleIngester, FundingRateIngester, Hyperliquid, HyperliquidError};
-use crate::market_metadata::{MarketsLedger, load_markets};
+use crate::market_metadata::{MarketsLedger, load_markets_with_backoff};
 use crate::timeframe::Timeframe;
 
 const TIMEFRAMES: &[Timeframe] = &[
@@ -114,7 +114,7 @@ async fn ingest_all(
     funding_ingester: &FundingRateIngester<dyn Hyperliquid>,
     data_dir: &Path,
 ) -> Result<DateTime<Utc>, IngestionPipelineError> {
-    let markets = load_markets(data_dir, MarketsLedger::Mainnet).await?;
+    let markets = load_markets_with_backoff(data_dir, MarketsLedger::Mainnet).await?;
 
     funding_ingester
         .ingest_with_markets(data_dir, &markets)
@@ -584,37 +584,40 @@ mod tests {
 
     #[traced_test]
     #[tokio::test]
-    async fn job_records_failed_run_when_markets_file_is_missing() {
+    async fn job_retries_until_markets_file_appears_then_completes() {
+        use std::time::Duration;
+
         let data_dir = TempDir::new().unwrap();
+        let data_dir_path = data_dir.path().to_path_buf();
         let pool = setup_pool().await;
         let run_id = create_run(&pool).await.unwrap();
         let job = IngestionJob::new(run_id.clone());
         let services = IngestionServices {
             hyperliquid: Arc::new(MockHyperliquid),
-            data_dir: data_dir.path().to_path_buf(),
+            data_dir: data_dir_path.clone(),
             max_concurrent_requests: 10,
         };
+
+        let write_task = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(25)).await;
+            write_test_markets_csv(&data_dir_path).await;
+        });
 
         job.run(Data::new(pool.clone()), Data::new(Arc::new(services)))
             .await
             .unwrap();
+        write_task.await.unwrap();
 
         let status = latest_status(&pool).await.unwrap();
-        let failure_reason: String =
-            sqlx::query_scalar("SELECT failure_reason FROM ingestion_runs LIMIT 1")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
 
-        assert_eq!(status, Some(IngestionStatus::Failed));
-        assert!(failure_reason.contains("markets metadata file is missing"));
+        assert_eq!(status, Some(IngestionStatus::Completed));
         assert!(logs_contain_at(
-            Level::ERROR,
-            &[
-                "ingestion failed",
-                run_id.as_str(),
-                "markets metadata file is missing",
-            ],
+            Level::WARN,
+            &["markets ledger file missing", "retry scheduled"],
+        ));
+        assert!(logs_contain_at(
+            Level::INFO,
+            &["ingestion complete", run_id.as_str()],
         ));
     }
 }

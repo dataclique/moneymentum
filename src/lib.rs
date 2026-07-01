@@ -663,11 +663,8 @@ pub async fn rocket(
         config.max_retries,
     )
     .await?;
-    if let Err(err) =
-        market_metadata::refresh_all_markets(&hyperliquid_clients, &config.data_dir).await
-    {
-        warn!(error = %err, "failed to refresh markets metadata on startup");
-    }
+    market_metadata::refresh_all_markets_until_success(&hyperliquid_clients, &config.data_dir)
+        .await;
     let services = Arc::new(IngestionServices {
         hyperliquid: Arc::clone(&hyperliquid_clients.mainnet),
         data_dir: config.data_dir.clone(),

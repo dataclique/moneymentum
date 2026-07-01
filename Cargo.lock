@@ -3485,7 +3485,6 @@ dependencies = [
  "derive",
  "event-sorcery",
  "futures",
- "getrandom 0.4.3",
  "hyperliquid_rust_sdk",
  "moneymentum",
  "polars",

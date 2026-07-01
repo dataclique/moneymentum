@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/solid-query"
 import { useWallet } from "./useWallet"
 import {
   fetchHyperliquidMarkets,
-  MARKETS_MAX_AGE_MS,
+  millisecondsUntilNextUtcMidnight,
   type OrderResult,
   type CurrentPosition,
   type LeverageLimit,
@@ -44,8 +44,8 @@ export const useHyperliquidMarkets = () => {
   return useQuery(() => ({
     queryKey: [...QUERY_KEYS.markets, network()],
     queryFn: () => fetchHyperliquidMarkets(network()),
-    staleTime: MARKETS_MAX_AGE_MS,
-    gcTime: MARKETS_MAX_AGE_MS,
+    staleTime: millisecondsUntilNextUtcMidnight(),
+    gcTime: millisecondsUntilNextUtcMidnight(),
   }))
 }
 

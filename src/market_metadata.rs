@@ -2,8 +2,8 @@
 //! in `markets.csv` as a restart cache. At startup the on-disk cache is loaded
 //! into memory, any missing ledgers are fetched from Hyperliquid before the
 //! service accepts traffic, and a background task refreshes both ledgers every
-//! UTC midnight. HTTP serves from the in-memory store. The CSV is best-effort:
-//! a successful fetch updates memory even when the disk write fails.
+//! UTC midnight. HTTP serves from the in-memory store. Disk and memory stay in
+//! sync: a refresh commits the CSV before updating the in-memory store.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -14,7 +14,7 @@ use polars::prelude::{ChunkedArray, DataFrame, DataType, Int64Type, PolarsError,
 use serde::Serialize;
 use thiserror::Error;
 use tokio::sync::RwLock;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 use crate::finance::{self, CcxtSymbol, Market};
 use crate::hyperliquid::{Hyperliquid, HyperliquidError};
@@ -195,8 +195,9 @@ pub(crate) fn spawn_nightly_refresh(
     });
 }
 
-/// Refreshes both ledgers from the live exchange into `store`, best-effort
-/// writing each on-disk cache. Returns an error only when every ledger failed.
+/// Refreshes both ledgers from the live exchange into `store`, writing each
+/// on-disk cache before updating memory. Returns an error only when every
+/// ledger failed.
 async fn refresh_all_markets_into_store(
     clients: &crate::hyperliquid::HyperliquidClients,
     data_dir: &Path,
@@ -214,31 +215,29 @@ async fn refresh_all_markets_into_store(
         }
     }
     match last_error {
-        Some(error) if !any_succeeded => Err(error.into()),
+        Some(error) if !any_succeeded => Err(error),
         _ => Ok(()),
     }
 }
 
-/// Refreshes one ledger from the live exchange, updates the in-memory store,
-/// and best-effort writes the on-disk cache. A disk write failure is logged but
-/// does not fail the refresh, since the CSV is only a restart cache.
+/// Refreshes one ledger from the live exchange, persists the on-disk cache,
+/// then updates the in-memory store so HTTP and ingestion see the same data.
 async fn refresh_ledger_into_store(
     client: &dyn Hyperliquid,
     data_dir: &Path,
     ledger: MarketsLedger,
     store: &MarketsStore,
-) -> Result<(), HyperliquidError> {
+) -> Result<(), MarketsMetadataError> {
     let fetched = client.fetch_market_metadata().await?;
     let frame = build_markets_frame(&fetched)?;
     let refreshed_at = Utc::now().to_rfc3339();
     let response = markets_api_response_from_frame(&frame, Some(refreshed_at))?;
     let market_count = response.leverage_limits.len();
-    store.set_ledger(ledger, response).await;
 
     let path = markets_file_path(data_dir, ledger);
-    if let Err(error) = crate::dataframe::write_csv(path, frame).await {
-        error!(%error, ?ledger, "failed to write markets ledger disk cache");
-    }
+    crate::dataframe::write_csv(path, frame).await?;
+
+    store.set_ledger(ledger, response).await;
 
     info!(
         markets = market_count,

@@ -13,7 +13,7 @@ import {
   useWalletSettings,
   useSwitchNetwork,
 } from "./useTrading"
-import { MARKETS_MAX_AGE_MS } from "@/services/hyperliquid-client"
+import { millisecondsUntilNextUtcMidnight } from "@/services/hyperliquid-client"
 import { WalletProvider } from "@/contexts/WalletProvider"
 import { useWallet } from "@/hooks/useWallet"
 
@@ -35,7 +35,7 @@ const mockMarketsResponse = {
     { symbol: "ETH/USDC:USDC", maxLeverage: 25, assetIndex: 1 },
   ],
   refreshedAt: new Date().toISOString(),
-  marketsMaxAgeMs: MARKETS_MAX_AGE_MS,
+  marketsMaxAgeMs: millisecondsUntilNextUtcMidnight(),
 }
 
 // Mock the HyperliquidClient as a class; keep real fetchHyperliquidMarkets.

@@ -581,4 +581,40 @@ mod tests {
             &["ingestion complete", run_id.as_str()]
         ));
     }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn job_records_failed_run_when_markets_file_is_missing() {
+        let data_dir = TempDir::new().unwrap();
+        let pool = setup_pool().await;
+        let run_id = create_run(&pool).await.unwrap();
+        let job = IngestionJob::new(run_id.clone());
+        let services = IngestionServices {
+            hyperliquid: Arc::new(MockHyperliquid),
+            data_dir: data_dir.path().to_path_buf(),
+            max_concurrent_requests: 10,
+        };
+
+        job.run(Data::new(pool.clone()), Data::new(Arc::new(services)))
+            .await
+            .unwrap();
+
+        let status = latest_status(&pool).await.unwrap();
+        let failure_reason: String =
+            sqlx::query_scalar("SELECT failure_reason FROM ingestion_runs LIMIT 1")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+
+        assert_eq!(status, Some(IngestionStatus::Failed));
+        assert!(failure_reason.contains("markets metadata file is missing"));
+        assert!(logs_contain_at(
+            Level::ERROR,
+            &[
+                "ingestion failed",
+                run_id.as_str(),
+                "markets metadata file is missing",
+            ],
+        ));
+    }
 }

@@ -1,7 +1,6 @@
 //! Deterministic [`Wallet`] test doubles.
 
 use std::convert::Infallible;
-
 use tracing::debug;
 
 use crate::Wallet;
@@ -51,6 +50,7 @@ impl MockWallet<[u8; 32], Vec<u8>> {
     }
 }
 
+/// Builds the default byte-signature scheme used by [`MockWallet::new`].
 fn byte_signature(address: [u8; 32], payload: &[u8]) -> Vec<u8> {
     let mut signature = b"sig:".to_vec();
     signature.extend_from_slice(&address);
@@ -70,11 +70,13 @@ where
     /// The mock never fails, so its error type is uninhabitable.
     type Error = Infallible;
 
+    /// Returns the wallet's configured address.
     async fn address(&self) -> Result<Self::Address, Self::Error> {
         debug!("mock wallet address resolved");
         Ok(self.address.clone())
     }
 
+    /// Signs the payload with this wallet's configured signing function.
     async fn sign(&self, payload: &[u8]) -> Result<Self::Signature, Self::Error> {
         debug!(payload_bytes = payload.len(), "mock wallet signed payload");
         Ok((self.sign_payload)(payload))
@@ -115,6 +117,14 @@ mod tests {
             wallet.sign(b"hello").await.unwrap(),
             "sig:evm:0xabc:hello".to_string()
         );
+        assert!(logs_contain_at(
+            Level::DEBUG,
+            &["mock wallet address resolved"]
+        ));
+        assert!(logs_contain_at(
+            Level::DEBUG,
+            &["mock wallet signed payload", "payload_bytes"]
+        ));
     }
 
     #[traced_test]

@@ -54,16 +54,12 @@ stack's ecosystem, and unifies HTTP observability with the rest of the service.
 
 ## Dev: chain-agnostic signing for execution
 
-Execution and non-custodial fund management both require authorizing
-transactions, but today signing lives only in the frontend, welded to a raw
-private key in browser storage. Modeling signing as a backend-targetable,
-chain-agnostic capability lets execution code be written and tested against a
-mock signer while real signer backends (e.g. Turnkey) are built in parallel, and
-lets the same execution paths scale across venues and into managed-vault signing
-without being rebuilt around new key handling each time. This foundation
-unblocks verified deployed rebalancing and the Vault theme below.
+Decouple transaction signing from browser-held keys so execution code can target
+backend custody without rewriting call sites. Consumers constrain on
+[`Wallet`](./crates/wallet/src/lib.rs) and swap in chain-specific backends as
+they land.
 
-- [x] Make signing a chain-agnostic wallet capability with a mock signer --
+- [x] Add a chain-agnostic `Wallet` trait and mock --
       [#398](https://github.com/dataclique/moneymentum/issues/398) /
       [#120](https://github.com/dataclique/moneymentum/pull/120)
 

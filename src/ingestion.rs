@@ -11,8 +11,10 @@ use std::fmt::{self, Display};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 
-use apalis::prelude::Data;
+use apalis::prelude::{Data, TaskSink};
+use apalis_sqlite::{SqlitePool, SqliteStorage};
 use chrono::{DateTime, Utc};
 use event_sorcery::{
     Column, DomainEvent, EventSourced, JobQueue, Nil, Projection, ProjectionError, SendError,
@@ -427,6 +429,8 @@ pub(crate) enum IngestionError {
     Send(#[from] SendError<IngestionRun>),
     #[error(transparent)]
     Projection(#[from] ProjectionError<IngestionRun>),
+    #[error("failed to queue ingestion job")]
+    Queue,
 }
 
 pub(crate) struct IngestionServices {
@@ -591,6 +595,52 @@ pub(crate) async fn fail_run(
 
     debug!(run_id = %run_id, "ingestion run failed");
     Ok(())
+}
+
+/// Opens an ingestion run and enqueues its job, recording the run as failed if
+/// the enqueue itself fails. Shared by the `/ingest` handler and the scheduler.
+pub(crate) async fn enqueue_run(
+    store: &Store<IngestionRun>,
+    projection: &Projection<IngestionRun>,
+    apalis_pool: &SqlitePool,
+) -> Result<IngestionRunId, IngestionError> {
+    let run_id = create_run(store, projection).await?;
+
+    let mut job_queue = SqliteStorage::<IngestionJob, (), ()>::new(apalis_pool);
+    if let Err(err) = job_queue.push(IngestionJob::new(run_id.clone())).await {
+        error!(error = %err, "failed to queue ingestion job");
+        if let Err(record_err) = fail_run(store, &run_id, "failed to queue ingestion job").await {
+            error!(error = %record_err, "failed to record ingestion queue failure");
+        }
+        return Err(IngestionError::Queue);
+    }
+
+    Ok(run_id)
+}
+
+/// Runs one scheduled ingestion attempt. An already-running run is the normal
+/// skip-this-tick case, not a failure; genuine failures increment a consecutive
+/// counter and warn so an operator can spot a wedged scheduler.
+pub(crate) async fn trigger_scheduled_ingestion(
+    store: &Store<IngestionRun>,
+    projection: &Projection<IngestionRun>,
+    apalis_pool: &SqlitePool,
+    consecutive_failures: &AtomicU32,
+) {
+    match enqueue_run(store, projection, apalis_pool).await {
+        Ok(run_id) => {
+            consecutive_failures.store(0, Ordering::Relaxed);
+            debug!(run_id = %run_id, "scheduled ingestion run enqueued");
+        }
+        Err(IngestionError::AlreadyRunning) => {
+            consecutive_failures.store(0, Ordering::Relaxed);
+            debug!("scheduled ingestion skipped; a run is already active");
+        }
+        Err(err) => {
+            let consecutive = consecutive_failures.fetch_add(1, Ordering::Relaxed) + 1;
+            warn!(error = %err, consecutive, "scheduled ingestion run failed");
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1047,5 +1097,53 @@ mod tests {
             1,
             "exactly one run remains in the Running slot"
         );
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn scheduled_ingestion_skips_when_a_run_is_already_active() {
+        let (store, projection) = ingestion_store().await;
+        // The push is never reached on the already-running path, so an
+        // unmigrated apalis pool is sufficient.
+        let apalis_pool = apalis_sqlite::SqlitePool::connect(":memory:")
+            .await
+            .unwrap();
+        let consecutive_failures = AtomicU32::new(3);
+
+        create_run(&store, &projection).await.unwrap();
+        trigger_scheduled_ingestion(&store, &projection, &apalis_pool, &consecutive_failures).await;
+
+        assert_eq!(
+            consecutive_failures.load(Ordering::Relaxed),
+            0,
+            "an active run is a normal skip, not a failure"
+        );
+        assert!(logs_contain_at(
+            Level::DEBUG,
+            &["scheduled ingestion skipped"]
+        ));
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn scheduled_ingestion_warns_and_counts_consecutive_failures() {
+        let (store, projection) = ingestion_store().await;
+        // A closed apalis pool makes every enqueue's push fail -- the failure
+        // path under test. create_run/fail_run use the separate event store, so
+        // each tick still opens a run and marks it failed, freeing the next tick.
+        let apalis_pool = apalis_sqlite::SqlitePool::connect(":memory:")
+            .await
+            .unwrap();
+        apalis_pool.close().await;
+        let consecutive_failures = AtomicU32::new(0);
+
+        trigger_scheduled_ingestion(&store, &projection, &apalis_pool, &consecutive_failures).await;
+        trigger_scheduled_ingestion(&store, &projection, &apalis_pool, &consecutive_failures).await;
+
+        assert_eq!(consecutive_failures.load(Ordering::Relaxed), 2);
+        assert!(logs_contain_at(
+            Level::WARN,
+            &["scheduled ingestion run failed", "consecutive=2"]
+        ));
     }
 }

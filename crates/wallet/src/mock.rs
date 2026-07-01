@@ -1,51 +1,83 @@
+//! Deterministic [`Wallet`] test doubles.
+
 use std::convert::Infallible;
 
 use tracing::debug;
 
 use crate::Wallet;
 
-/// Deterministic wallet for testing.
+/// Deterministic wallet for testing any [`Wallet`] associated-type pairing.
 ///
-/// Uses a fixed 32-byte "address" derived from the seed, and signs by
-/// concatenating `b"sig:"`, the wallet's address, `b":"`, and the payload, so
-/// different mock wallets produce distinguishable signatures for the same
-/// payload.
+/// Use [`MockWallet::with`] to construct mocks for chain-specific address and
+/// signature types (for example `MockWallet<alloy_primitives::Address,
+/// alloy_primitives::Signature>`). [`MockWallet::new`] remains a convenience
+/// constructor for the default `[u8; 32]` / `Vec<u8>` pairing used in crate
+/// tests.
 ///
-/// The "signature" is a non-cryptographic, trivially forgeable byte
-/// concatenation -- it exists only to give tests a deterministic, per-wallet
-/// value. Never treat a `MockWallet` signature as authentic.
-pub struct MockWallet {
-    address: [u8; 32],
+/// The default byte-signature scheme concatenates `b"sig:"`, the wallet's
+/// address bytes, `b":"`, and the payload so different mock wallets produce
+/// distinguishable signatures for the same payload. Custom closures passed to
+/// [`MockWallet::with`] may use any deterministic scheme appropriate to the
+/// target chain types.
+///
+/// Signatures from this mock are non-cryptographic and trivially forgeable --
+/// never treat them as authentic.
+pub struct MockWallet<Address, Signature> {
+    address: Address,
+    sign_payload: Box<dyn Fn(&[u8]) -> Signature + Send + Sync>,
 }
 
-impl MockWallet {
-    /// Creates a mock wallet whose address is `[seed; 32]`.
-    pub fn new(seed: u8) -> Self {
+impl<Address, Signature> MockWallet<Address, Signature> {
+    /// Creates a mock from an address and a payload-to-signature function.
+    ///
+    /// The closure receives already-encoded payload bytes exactly as production
+    /// [`Wallet::sign`] callers would pass them.
+    pub fn with(
+        address: Address,
+        sign_payload: impl Fn(&[u8]) -> Signature + Send + Sync + 'static,
+    ) -> Self {
         Self {
-            address: [seed; 32],
+            address,
+            sign_payload: Box::new(sign_payload),
         }
     }
 }
 
+impl MockWallet<[u8; 32], Vec<u8>> {
+    /// Creates a mock wallet whose address is `[seed; 32]`.
+    pub fn new(seed: u8) -> Self {
+        let address = [seed; 32];
+        Self::with(address, move |payload| byte_signature(address, payload))
+    }
+}
+
+fn byte_signature(address: [u8; 32], payload: &[u8]) -> Vec<u8> {
+    let mut signature = b"sig:".to_vec();
+    signature.extend_from_slice(&address);
+    signature.push(b':');
+    signature.extend_from_slice(payload);
+    signature
+}
+
 #[async_trait::async_trait]
-impl Wallet for MockWallet {
-    type Address = [u8; 32];
-    type Signature = Vec<u8>;
+impl<Address, Signature> Wallet for MockWallet<Address, Signature>
+where
+    Address: Clone + Send + Sync,
+    Signature: Clone + Send + Sync,
+{
+    type Address = Address;
+    type Signature = Signature;
     /// The mock never fails, so its error type is uninhabitable.
     type Error = Infallible;
 
     async fn address(&self) -> Result<Self::Address, Self::Error> {
         debug!("mock wallet address resolved");
-        Ok(self.address)
+        Ok(self.address.clone())
     }
 
     async fn sign(&self, payload: &[u8]) -> Result<Self::Signature, Self::Error> {
-        let mut signature = b"sig:".to_vec();
-        signature.extend_from_slice(&self.address);
-        signature.push(b':');
-        signature.extend_from_slice(payload);
         debug!(payload_bytes = payload.len(), "mock wallet signed payload");
-        Ok(signature)
+        Ok((self.sign_payload)(payload))
     }
 }
 
@@ -58,11 +90,31 @@ mod tests {
     use crate::logs_contain_at;
 
     fn expected_signature(seed: u8, payload: &[u8]) -> Vec<u8> {
-        let mut signature = b"sig:".to_vec();
-        signature.extend_from_slice(&[seed; 32]);
-        signature.push(b':');
-        signature.extend_from_slice(payload);
-        signature
+        byte_signature([seed; 32], payload)
+    }
+
+    async fn string_wallet_address<W>(wallet: &W) -> String
+    where
+        W: Wallet<Address = String, Signature = String>,
+    {
+        wallet.address().await.unwrap()
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn with_accepts_custom_address_and_signature_types() {
+        let wallet = MockWallet::with("evm:0xabc".to_string(), |payload| {
+            format!("sig:{}:{}", "evm:0xabc", String::from_utf8_lossy(payload))
+        });
+
+        assert_eq!(
+            string_wallet_address(&wallet).await,
+            "evm:0xabc".to_string()
+        );
+        assert_eq!(
+            wallet.sign(b"hello").await.unwrap(),
+            "sig:evm:0xabc:hello".to_string()
+        );
     }
 
     #[traced_test]

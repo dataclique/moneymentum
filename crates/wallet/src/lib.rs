@@ -1,3 +1,8 @@
+//! Chain-agnostic transaction signing abstractions.
+//!
+//! Execution code constrains on [`Wallet`] so signing can move from browser-held
+//! keys to backend custody without rewriting call sites.
+
 #[cfg(feature = "mock")]
 mod mock;
 

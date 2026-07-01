@@ -50,6 +50,22 @@ stack's ecosystem, and unifies HTTP observability with the rest of the service.
 
 ---
 
+## Dev: chain-agnostic signing for execution
+
+Execution and non-custodial fund management both require authorizing
+transactions, but today signing lives only in the frontend, welded to a raw
+private key in browser storage. Modeling signing as a backend-targetable,
+chain-agnostic capability lets execution code be written and tested against a
+mock signer while real signer backends (e.g. Turnkey) are built in parallel, and
+lets the same execution paths scale across venues and into managed-vault signing
+without being rebuilt around new key handling each time. This foundation
+unblocks verified deployed rebalancing and the Vault theme below.
+
+- [ ] Make signing a chain-agnostic wallet capability with a mock signer -- #398
+      / #120
+
+---
+
 ## Dev: finish the Python -> Rust analytics migration
 
 Port the deleted Python quant analytics to Rust as the factor and risk engine

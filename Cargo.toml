@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "crates/timeseries"]
+members = [".", "crates/timeseries", "crates/wallet"]
 
 [workspace.dependencies]
 polars = { version = "0.51" }

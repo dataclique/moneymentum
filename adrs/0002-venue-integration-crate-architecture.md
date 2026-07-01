@@ -21,9 +21,9 @@ it today, at very different levels of maturity:
   (currently behind `#[cfg(test)]`).
 - `src/derive.rs` (1036 lines, new in PR #158) is a **monolith**: it mixes wire
   DTOs, `DeriveConfig`, in-memory state (`OptionsCatalogue`, `DeriveState`), a
-  Rocket `CorsFairing`, the websocket hub (`run_websocket_hub`,
+  Axum CORS middleware, the websocket hub (`run_websocket_hub`,
   subscribe/unsubscribe batching), parsing helpers, options-domain math
-  (`build_greeks`, `aggregate_risk`, `scenario_pnl`), **and** the Rocket HTTP
+  (`build_greeks`, `aggregate_risk`, `scenario_pnl`), **and** the Axum HTTP
   routes/SSE stream. There is no client trait, no mock seam, and financial
   values flow as raw `f64`.
 
@@ -33,7 +33,7 @@ flags toggling real vs mock implementations. This is consistent with the
 existing SPEC principle quoted in ADR 0001.
 
 This is a large, cross-cutting refactor (it touches `lib.rs`'s ingestion/cqrs/
-apalis wiring, `bin/derive_cli.rs`, and the Rocket route surface), so it is
+apalis wiring, `bin/derive_cli.rs`, and the Axum route surface), so it is
 recorded here for review before any code moves.
 
 ## Decision
@@ -43,9 +43,9 @@ recorded here for review before any code moves.
      ingesters.
    - `crates/derive` -- the venue client + its capability trait + options
      domain.
-   - the existing app (server/bin, Rocket routes, cqrs/apalis wiring) becomes
-     the top-level crate that depends on both venue crates. A shared
-     `crates/venue` holds only the cross-venue trait surface (below).
+   - the existing app (server/bin, Axum routes, cqrs/apalis wiring) becomes the
+     top-level crate that depends on both venue crates. A shared `crates/venue`
+     holds only the cross-venue trait surface (below).
 
 2. **Per-venue capability traits, NOT one unified trait.** Hyperliquid exposes
    perp **market data** (markets, candles, funding); Derive exposes an **options
@@ -71,9 +71,9 @@ recorded here for review before any code moves.
    Split the monolith into: (a) the **Derive venue client** (websocket hub +
    catalogue + quote state) behind `trait Derive` -> `crates/derive`; (b) the
    **options domain** (greeks/risk/scenario, pure functions) -> a module in the
-   derive crate; (c) the **Rocket routes/SSE + CORS fairing** -> stay in the app
-   crate as the web adapter. The HTTP layer is not part of the venue integration
-   and must not live in the venue crate.
+   derive crate; (c) the **Axum routes/SSE + CORS middleware** -> stay in the
+   app crate as the web adapter. The HTTP layer is not part of the venue
+   integration and must not live in the venue crate.
 
 5. **Replace `f64` money/quantity at the venue boundary with `rust_decimal` /
    domain newtypes** as part of the extraction (`rust_decimal` is already a
@@ -84,8 +84,8 @@ recorded here for review before any code moves.
 
 - Clear seam for testing both venues without network via the `mock` feature; the
   app can run against mock venues end-to-end.
-- Workspace build/CI changes; `lib.rs` wiring, `derive_cli`, and the Rocket
-  routes must be re-pointed at the new crates.
+- Workspace build/CI changes; `lib.rs` wiring, `derive_cli`, and the Axum routes
+  must be re-pointed at the new crates.
 - Larger blast radius than a review fix -- this is its own effort, not a
   surgical change.
 

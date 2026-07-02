@@ -84,7 +84,7 @@ impl Job for IngestionJob {
                 error!(error = %err, run_id = %self.run_id, "failed to load ingestion run");
                 return Err(err.into());
             }
-        };
+        }
 
         // Both concurrent `create_run` losers and winners enqueue a job atomically
         // with `Start`. The aggregate can still read Running for a loser until its

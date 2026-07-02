@@ -848,8 +848,8 @@ mod tests {
                 low: 95.0,
                 close: 102.0,
                 volume: 1000.0,
-                symbol: hyperliquid_swap_ccxt_symbol(market.as_str()).into_string(),
-                ticker: Symbol::from_raw(market.as_str()),
+                market: hyperliquid_swap_ccxt_symbol(market.as_str()),
+                symbol: Symbol::from_raw(market.as_str()),
             }])
         }
 

@@ -125,6 +125,14 @@ impl TestApp {
 }
 
 async fn spawn_test_app(mock_server: &MockServer, data_dir: &TempDir) -> TestApp {
+    spawn_test_app_with_retries(mock_server, data_dir, 2).await
+}
+
+async fn spawn_test_app_with_retries(
+    mock_server: &MockServer,
+    data_dir: &TempDir,
+    max_retries: usize,
+) -> TestApp {
     let database_path = data_dir.path().join("moneymentum-test.db");
     let toml_str = format!(
         r#"
@@ -134,7 +142,7 @@ async fn spawn_test_app(mock_server: &MockServer, data_dir: &TempDir) -> TestApp
         hyperliquid_base_url = "{}"
         log_level = "debug"
         max_concurrent_requests = 3
-        max_retries = 2
+        max_retries = {max_retries}
         "#,
         data_dir.path().display(),
         database_path.display(),
@@ -248,10 +256,14 @@ async fn status_advances_after_failed_scheduled_run() {
     mount_failing_ingestion_mocks(&mock_server).await;
 
     let data_dir = TempDir::new().unwrap();
-    let app = spawn_test_app(&mock_server, &data_dir).await;
+    let app = spawn_test_app_with_retries(&mock_server, &data_dir, 0).await;
 
-    let failed = poll_for_status(&app, "Failed", 60, 200).await;
-    assert!(failed, "first scheduled ingestion should fail");
+    let failed = poll_for_status(&app, "Failed", 40, 100).await;
+    assert!(
+        failed,
+        "first scheduled ingestion should fail, last status: {}",
+        ingestion_status_body(&app).await
+    );
 
     mock_server.reset().await;
     mount_successful_ingestion_mocks(&mock_server).await;

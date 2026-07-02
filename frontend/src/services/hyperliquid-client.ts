@@ -318,6 +318,12 @@ interface HyperliquidExchange {
     orders: OrderRequest[],
     params?: Record<string, unknown>,
   ) => Promise<Order[]>
+  watchOrders: (
+    symbol?: string,
+    since?: number,
+    limit?: number,
+    params?: Record<string, unknown>,
+  ) => Promise<Order[]>
 }
 
 export class HyperliquidClient {
@@ -627,6 +633,32 @@ export class HyperliquidClient {
     this.exchange.setMarkets(markets)
   }
 
+  private logWatchOrdersResult(
+    watchOrdersPromise: Promise<Order[]>,
+    uniqueSymbols: Set<string>,
+  ): void {
+    void watchOrdersPromise
+      .then(orders => {
+        const relevantOrders = orders.filter(order =>
+          uniqueSymbols.has(order.symbol),
+        )
+
+        console.log("[HyperliquidClient] watchOrders update", {
+          symbols: [...uniqueSymbols],
+          orders: relevantOrders,
+        })
+      })
+      .catch((error: unknown) => {
+        const errorMessage =
+          error instanceof Error ? error.message : String(error)
+
+        console.error("[HyperliquidClient] watchOrders failed", {
+          symbols: [...uniqueSymbols],
+          error: errorMessage,
+        })
+      })
+  }
+
   private mapOrderResults(
     requests: OrderRequest[],
     responses: Order[],
@@ -863,6 +895,24 @@ export class HyperliquidClient {
     )
 
     const results: OrderResult[] = []
+    const watchSinceMs = Date.now()
+    const orderedSymbols = [
+      ...reduction.map(request => request.symbol),
+      ...expansion.map(request => request.symbol),
+    ]
+    const uniqueSymbols = new Set(orderedSymbols)
+    const userAddress = this.getWalletAddress()
+    const watchParams = userAddress ? { user: userAddress } : {}
+
+    let watchOrdersPromise: Promise<Order[]> | undefined
+    if (orderedSymbols.length > 0) {
+      watchOrdersPromise = this.exchange.watchOrders(
+        undefined,
+        watchSinceMs,
+        undefined,
+        watchParams,
+      )
+    }
 
     if (reduction.length > 0) {
       const reductionResponses = await this.exchange.createOrdersWs(reduction)
@@ -881,6 +931,12 @@ export class HyperliquidClient {
       )
       results.push(...expansionResults)
     }
+
+    if (watchOrdersPromise) {
+      this.logWatchOrdersResult(watchOrdersPromise, uniqueSymbols)
+    }
+
+    console.log("results", results)
 
     return results
   }

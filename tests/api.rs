@@ -63,6 +63,30 @@ async fn mount_funding_mock(server: &MockServer) {
         .await;
 }
 
+async fn mount_failing_candle_mock(server: &MockServer) {
+    Mock::given(method("POST"))
+        .and(path("/info"))
+        .and(body_partial_json(json!({"type": "candleSnapshot"})))
+        .respond_with(ResponseTemplate::new(500))
+        .mount(server)
+        .await;
+}
+
+async fn mount_failing_funding_mock(server: &MockServer) {
+    Mock::given(method("POST"))
+        .and(path("/info"))
+        .and(body_partial_json(json!({"type": "fundingHistory"})))
+        .respond_with(ResponseTemplate::new(500))
+        .mount(server)
+        .await;
+}
+
+async fn mount_failing_ingestion_mocks(server: &MockServer) {
+    mount_meta_mock(server).await;
+    mount_failing_candle_mock(server).await;
+    mount_failing_funding_mock(server).await;
+}
+
 async fn mount_successful_ingestion_mocks(server: &MockServer) {
     mount_meta_mock(server).await;
     mount_candle_mock(server).await;
@@ -221,13 +245,7 @@ async fn scheduled_ingestion_completes_and_candles_are_queryable() {
 #[tokio::test(flavor = "multi_thread")]
 async fn status_advances_after_failed_scheduled_run() {
     let mock_server = MockServer::start().await;
-    mount_meta_mock(&mock_server).await;
-    Mock::given(method("POST"))
-        .and(path("/info"))
-        .and(body_partial_json(json!({"type": "candleSnapshot"})))
-        .respond_with(ResponseTemplate::new(500))
-        .mount(&mock_server)
-        .await;
+    mount_failing_ingestion_mocks(&mock_server).await;
 
     let data_dir = TempDir::new().unwrap();
     let app = spawn_test_app(&mock_server, &data_dir).await;

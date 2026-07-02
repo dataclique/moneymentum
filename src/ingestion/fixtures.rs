@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use async_trait::async_trait;
 use chrono::{DateTime, TimeZone, Utc};
@@ -21,7 +22,7 @@ use super::run::IngestionRun;
 use super::services::IngestionServices;
 
 pub(crate) struct MockHyperliquid {
-    pub(crate) fetch_market_metadata_calls: Option<Arc<std::sync::atomic::AtomicU32>>,
+    pub(crate) fetch_market_metadata_calls: Option<Arc<AtomicU32>>,
 }
 
 impl MockHyperliquid {
@@ -31,9 +32,7 @@ impl MockHyperliquid {
         }
     }
 
-    pub(crate) fn with_call_counter(
-        fetch_market_metadata_calls: Arc<std::sync::atomic::AtomicU32>,
-    ) -> Self {
+    pub(crate) fn with_call_counter(fetch_market_metadata_calls: Arc<AtomicU32>) -> Self {
         Self {
             fetch_market_metadata_calls: Some(fetch_market_metadata_calls),
         }
@@ -44,7 +43,7 @@ impl MockHyperliquid {
 impl Hyperliquid for MockHyperliquid {
     async fn fetch_market_metadata(&self) -> Result<Vec<MarketMetadata>, HyperliquidError> {
         if let Some(fetch_market_metadata_calls) = &self.fetch_market_metadata_calls {
-            fetch_market_metadata_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            fetch_market_metadata_calls.fetch_add(1, Ordering::SeqCst);
         }
         Ok(vec![MarketMetadata {
             symbol: Market::new("BTC".into()),

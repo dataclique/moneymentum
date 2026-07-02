@@ -31,7 +31,7 @@ Design: [adrs/0001](./adrs/0001-event-sorcery-persistence-foundation.md).
 - [ ] Adopt the event-sorcery event-store stack (sqlx 0.9, apalis 1.0-rc) --
       [#363](https://github.com/data-cartel/moneymentum/issues/363) /
       [#361](https://github.com/data-cartel/moneymentum/pull/361)
-- [ ] Event-source portfolios, ingestion runs, and the market universe --
+- [x] Event-source portfolios, ingestion runs, and the market universe --
       [#364](https://github.com/data-cartel/moneymentum/issues/364) /
       [#362](https://github.com/data-cartel/moneymentum/pull/362)
 

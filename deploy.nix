@@ -38,6 +38,13 @@ in
       sshUser = "root";
       user = "root";
 
+      # Failed activations already roll back the profile copy; re-running
+      # switch-to-configuration on the previous generation often hangs while
+      # stopping dbus-broker (nixpkgs#527469) and blocks deploy for the full
+      # activation timeout.
+      autoRollback = false;
+      activationTimeout = 600;
+
       profilesOrder = [ "system" ] ++ enabledServices;
 
       profiles = {
@@ -94,12 +101,21 @@ in
         map (name: "systemctl reset-failed ${name} || true") enabledServices
       );
 
-      # nixpkgs#398370: an earlier `switch-to-configuration` activation can hang
-      # in the systemd settle loop while holding an exclusive flock on
-      # /run/nixos/switch-to-configuration.lock, after which every subsequent
-      # deploy fails fast with "Could not acquire lock" (exit 11). Drop the
-      # stale lock before activating so the new switch takes a fresh one.
-      staleLockCleanup = "rm -f /run/nixos/switch-to-configuration.lock";
+      # nixpkgs#398370 / #527469: a hung switch-to-configuration leaves a stale
+      # lock and/or wedged dbus-logind, which makes the next activation fail with
+      # "Unable to list users with logind" and can trap autoRollback in a long
+      # dbus-broker stop. Heal before activating.
+      deployPreflight = builtins.concatStringsSep "; " [
+        "systemctl stop 'nixos-rebuild-switch-to-configuration*' 2>/dev/null || true"
+        "pkill -9 -f switch-to-configuration || true"
+        "rm -f /run/nixos/switch-to-configuration.lock"
+        "systemctl reset-failed dbus-broker systemd-logind || true"
+        "systemctl restart dbus-broker"
+        "systemctl restart systemd-logind"
+        "systemctl stop moneymentum-markets-refresh.timer staging-markets-refresh.timer 2>/dev/null || true"
+        "systemctl disable moneymentum-markets-refresh.timer staging-markets-refresh.timer 2>/dev/null || true"
+        serviceCleanup
+      ];
 
     in
     {
@@ -129,7 +145,7 @@ in
         text = ''
           ${deployPreamble}
 
-          ssh -i "$identity" "root@$host_ip" '${staleLockCleanup}; ${serviceCleanup}'
+          ssh -i "$identity" "root@$host_ip" '${deployPreflight}'
 
           deploy ${deployFlags} --hostname "$host_ip" ''${ssh_flag:+"$ssh_flag"} "$@" .#moneymentum
         '';

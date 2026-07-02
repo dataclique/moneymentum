@@ -21,7 +21,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU32;
 
-use apalis::prelude::{Data, Monitor, WorkerBuilder};
+use apalis::prelude::{Monitor, WorkerBuilder};
 use axum::Json;
 use axum::Router;
 use axum::extract::{Path as AxumPath, Query, State};
@@ -46,7 +46,7 @@ use crate::hyperliquid::{Hyperliquid, HyperliquidClient};
 use finance::Symbol;
 use ingestion::{
     IngestionJob, IngestionJobContext, IngestionRun, IngestionRunStatus, IngestionServices,
-    IngestionWork, default_ingestion_schedules,
+    IngestionWork, default_ingestion_schedules, trigger_scheduled_ingestion,
 };
 use market_catalog::MarketCatalog;
 use market_enablement::{
@@ -745,24 +745,6 @@ fn spawn_ingestion_worker(
     });
 }
 
-/// apalis-cron handler: enqueues a scoped ingestion run on each schedule tick.
-async fn run_scheduled_ingestion(
-    work: IngestionWork,
-    _tick: apalis_cron::Tick<chrono::Utc>,
-    ingestion_store: Data<Arc<Store<IngestionRun>>>,
-    ingestion_projection: Data<Arc<Projection<IngestionRun>>>,
-    consecutive_failures: Data<Arc<AtomicU32>>,
-) -> Result<(), std::convert::Infallible> {
-    ingestion::trigger_scheduled_ingestion(
-        &ingestion_store,
-        &ingestion_projection,
-        work,
-        &consecutive_failures,
-    )
-    .await;
-    Ok(())
-}
-
 /// Spawns supervised apalis-cron workers -- one per built-in schedule -- so each
 /// candle timeframe and funding refresh tick on its own cadence.
 fn spawn_ingestion_schedulers(
@@ -784,7 +766,7 @@ fn spawn_ingestion_schedulers(
                     .data(Arc::clone(&ingestion_projection))
                     .data(Arc::clone(&consecutive_failures))
                     .build(move |tick, store, projection, failures| {
-                        run_scheduled_ingestion(work, tick, store, projection, failures)
+                        trigger_scheduled_ingestion(work, tick, store, projection, failures)
                     })
             });
         }

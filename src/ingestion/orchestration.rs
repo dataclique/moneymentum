@@ -1,6 +1,8 @@
 use std::str::FromStr;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
+use apalis::prelude::Data;
 use chrono::Utc;
 use cron::Schedule;
 use event_sorcery::{EventSourced, Projection, ProjectionError, SendError, Store};
@@ -115,17 +117,18 @@ pub(crate) async fn create_run(
     Ok(run_id)
 }
 
-/// Runs one scheduled ingestion attempt for a scoped work unit. An
-/// already-running run is the normal skip-this-tick case, not a failure;
+/// apalis-cron handler: enqueues a scoped ingestion run on each schedule tick.
+/// An already-running run is the normal skip-this-tick case, not a failure;
 /// genuine failures increment a consecutive counter and warn so an operator can
 /// spot a wedged scheduler.
 pub(crate) async fn trigger_scheduled_ingestion(
-    store: &Store<IngestionRun>,
-    projection: &Projection<IngestionRun>,
     work: IngestionWork,
-    consecutive_failures: &AtomicU32,
-) {
-    match create_run(store, projection, work).await {
+    _tick: apalis_cron::Tick<Utc>,
+    store: Data<Arc<Store<IngestionRun>>>,
+    projection: Data<Arc<Projection<IngestionRun>>>,
+    consecutive_failures: Data<Arc<AtomicU32>>,
+) -> Result<(), std::convert::Infallible> {
+    match create_run(&store, &projection, work).await {
         Ok(run_id) => {
             consecutive_failures.store(0, Ordering::Relaxed);
             debug!(
@@ -151,6 +154,8 @@ pub(crate) async fn trigger_scheduled_ingestion(
             );
         }
     }
+
+    Ok(())
 }
 
 /// Abandons every still-running stream. Run unconditionally at startup, before
@@ -256,8 +261,11 @@ pub(crate) async fn latest_status(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
     use std::sync::atomic::{AtomicU32, Ordering};
 
+    use apalis::prelude::Data;
+    use chrono::Utc;
     use tracing::Level;
     use tracing_test::traced_test;
 
@@ -266,10 +274,29 @@ mod tests {
         trigger_scheduled_ingestion,
     };
     use crate::ingestion::fixtures::{ingestion_store, instant};
-    use crate::ingestion::run::{IngestionRunCommand, IngestionRunStatus, running_runs};
+    use crate::ingestion::run::{
+        IngestionRun, IngestionRunCommand, IngestionRunStatus, Projection, Store, running_runs,
+    };
     use crate::ingestion::work::IngestionWork;
     use crate::logs_contain_at;
     use crate::timeframe::Timeframe;
+
+    async fn trigger_scheduled_ingestion_for_test(
+        store: Arc<Store<IngestionRun>>,
+        projection: Arc<Projection<IngestionRun>>,
+        work: IngestionWork,
+        consecutive_failures: Arc<AtomicU32>,
+    ) {
+        trigger_scheduled_ingestion(
+            work,
+            apalis_cron::Tick::<Utc>::default(),
+            Data(Arc::clone(&store)),
+            Data(Arc::clone(&projection)),
+            Data(consecutive_failures),
+        )
+        .await
+        .unwrap();
+    }
 
     #[tokio::test]
     async fn latest_status_returns_none_when_no_runs_exist() {
@@ -457,13 +484,13 @@ mod tests {
     #[tokio::test]
     async fn scheduled_ingestion_starts_a_scoped_run_when_idle() {
         let (store, projection, pool) = ingestion_store().await;
-        let consecutive_failures = AtomicU32::new(5);
+        let consecutive_failures = Arc::new(AtomicU32::new(5));
 
-        trigger_scheduled_ingestion(
-            &store,
-            &projection,
+        trigger_scheduled_ingestion_for_test(
+            Arc::clone(&store),
+            Arc::clone(&projection),
             IngestionWork::Candles(Timeframe::OneHour),
-            &consecutive_failures,
+            Arc::clone(&consecutive_failures),
         )
         .await;
 
@@ -495,13 +522,13 @@ mod tests {
     #[tokio::test]
     async fn scheduled_ingestion_starts_a_run_when_idle() {
         let (store, projection, pool) = ingestion_store().await;
-        let consecutive_failures = AtomicU32::new(5);
+        let consecutive_failures = Arc::new(AtomicU32::new(5));
 
-        trigger_scheduled_ingestion(
-            &store,
-            &projection,
+        trigger_scheduled_ingestion_for_test(
+            Arc::clone(&store),
+            Arc::clone(&projection),
             IngestionWork::Candles(Timeframe::OneHour),
-            &consecutive_failures,
+            Arc::clone(&consecutive_failures),
         )
         .await;
 
@@ -520,7 +547,7 @@ mod tests {
     #[tokio::test]
     async fn scheduled_ingestion_skips_when_a_run_is_already_active() {
         let (store, projection, _pool) = ingestion_store().await;
-        let consecutive_failures = AtomicU32::new(3);
+        let consecutive_failures = Arc::new(AtomicU32::new(3));
 
         create_run(
             &store,
@@ -529,11 +556,11 @@ mod tests {
         )
         .await
         .unwrap();
-        trigger_scheduled_ingestion(
-            &store,
-            &projection,
+        trigger_scheduled_ingestion_for_test(
+            Arc::clone(&store),
+            Arc::clone(&projection),
             IngestionWork::Candles(Timeframe::OneHour),
-            &consecutive_failures,
+            Arc::clone(&consecutive_failures),
         )
         .await;
 
@@ -553,20 +580,20 @@ mod tests {
     async fn scheduled_ingestion_warns_and_counts_consecutive_failures() {
         let (store, projection, pool) = ingestion_store().await;
         pool.close().await;
-        let consecutive_failures = AtomicU32::new(0);
+        let consecutive_failures = Arc::new(AtomicU32::new(0));
 
-        trigger_scheduled_ingestion(
-            &store,
-            &projection,
+        trigger_scheduled_ingestion_for_test(
+            Arc::clone(&store),
+            Arc::clone(&projection),
             IngestionWork::Candles(Timeframe::OneHour),
-            &consecutive_failures,
+            Arc::clone(&consecutive_failures),
         )
         .await;
-        trigger_scheduled_ingestion(
-            &store,
-            &projection,
+        trigger_scheduled_ingestion_for_test(
+            Arc::clone(&store),
+            Arc::clone(&projection),
             IngestionWork::Candles(Timeframe::OneHour),
-            &consecutive_failures,
+            Arc::clone(&consecutive_failures),
         )
         .await;
 

@@ -216,18 +216,90 @@ describe("HyperliquidClient", () => {
   })
 
   it("maps positions to buy/sell current positions", async () => {
-    mockExchange.fetchPositions.mockResolvedValue([
-      { symbol: "BTC/USDC:USDC", side: "long", notional: 100, leverage: 2 },
-      { symbol: "ETH/USDC:USDC", side: "short", notional: 200, leverage: 3 },
-      { symbol: "SOL/USDC:USDC", side: "long", notional: 0, leverage: 1 },
-    ])
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.href
+            : input.url
+
+      if (!url.includes("/info")) {
+        throw new Error(`Unexpected fetch URL: ${url}`)
+      }
+
+      const rawBody = init?.body
+      const bodyText =
+        typeof rawBody === "string"
+          ? rawBody
+          : rawBody === undefined
+            ? "{}"
+            : null
+
+      if (bodyText === null) {
+        throw new Error("unexpected fetch body type in test stub")
+      }
+
+      const body = JSON.parse(bodyText) as { type?: string }
+
+      if (body.type === "clearinghouseState") {
+        return {
+          ok: true,
+          json: async () => ({
+            assetPositions: [
+              {
+                position: {
+                  coin: "BTC",
+                  szi: "0.001",
+                  entryPx: "50000",
+                  positionValue: "100",
+                  unrealizedPnl: "1",
+                  leverage: { value: "2" },
+                },
+              },
+              {
+                position: {
+                  coin: "ETH",
+                  szi: "-0.1",
+                  entryPx: "2000",
+                  positionValue: "200",
+                  unrealizedPnl: "-2",
+                  leverage: { value: "3" },
+                },
+              },
+              {
+                position: {
+                  coin: "SOL",
+                  szi: "0",
+                  positionValue: "0",
+                  leverage: { value: "1" },
+                },
+              },
+            ],
+          }),
+        } as Response
+      }
+
+      throw new Error(`Unexpected info request type: ${body.type ?? "unknown"}`)
+    })
 
     const client = new HyperliquidClient(credentials, "mainnet")
     const positions = await client.getCurrentPositions()
 
     expect(positions).toHaveLength(2)
-    expect(positions[0].side).toBe("buy")
-    expect(positions[1].side).toBe("sell")
+    expect(positions[0]).toMatchObject({
+      symbol: "BTC/USDC:USDC",
+      side: "buy",
+      notional: 100,
+      leverage: 2,
+    })
+    expect(positions[1]).toMatchObject({
+      symbol: "ETH/USDC:USDC",
+      side: "sell",
+      notional: 200,
+      leverage: 3,
+    })
+    expect(mockExchange.fetchPositions).not.toHaveBeenCalled()
   })
 
   it("rejects a malformed metaAndAssetCtxs payload shape", async () => {

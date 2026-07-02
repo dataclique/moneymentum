@@ -33,6 +33,12 @@ interface PerpMarketContext {
 const normalizePerpMarketLookupKey = (base: string): string =>
   base.toUpperCase().replace(/:/g, "-")
 
+/** Matches `finance::hyperliquid_swap_ccxt_symbol`. */
+const hyperliquidSwapCcxtSymbol = (baseName: string): string => {
+  const base = baseName.toUpperCase().replace(/:/g, "-")
+  return `${base}/USDC:USDC`
+}
+
 const lookupPerpMarketContext = (
   contexts: Map<string, PerpMarketContext>,
   base: string,
@@ -463,41 +469,92 @@ export class HyperliquidClient {
     return typeof orderError === "string" ? orderError : null
   }
 
-  async getCurrentPositions(): Promise<CurrentPosition[]> {
-    const positions = await this.exchange.fetchPositions()
+  private async fetchClearinghouseState(): Promise<Record<string, unknown>> {
+    const userAddress = this.getWalletAddress()
+    if (!userAddress) {
+      throw new Error("Wallet address is required for clearinghouse state")
+    }
+
+    const response = await fetch(hyperliquidInfoUrl(this.networkMode), {
+      method: "POST",
+      signal: AbortSignal.timeout(HYPERLIQUID_REQUEST_TIMEOUT_MS),
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: "clearinghouseState",
+        user: userAddress,
+      }),
+    })
+
+    if (!response.ok) {
+      throw new Error(
+        `Failed to fetch clearinghouse state: ${response.statusText}`,
+      )
+    }
+
+    const json = (await response.json()) as unknown
+    if (typeof json !== "object" || json === null) {
+      throw new Error("Unexpected clearinghouseState payload shape")
+    }
+
+    return json as Record<string, unknown>
+  }
+
+  private parseClearinghouseAssetPositions(
+    assetPositions: unknown,
+  ): CurrentPosition[] {
+    if (!Array.isArray(assetPositions)) {
+      return []
+    }
+
     const processed: CurrentPosition[] = []
 
-    for (const pos of positions) {
-      try {
-        const notionalRaw = pos.notional
-        if (notionalRaw === undefined) continue
-        const notional =
-          typeof notionalRaw === "number"
-            ? notionalRaw
-            : parseFloat(notionalRaw)
-        if (notional <= 0) continue
-
-        const parseNumeric = (value: unknown, fallback: number): number => {
-          if (value === undefined || value === null) return fallback
-          if (typeof value === "number") return value
-          if (typeof value === "string") return parseFloat(value)
-          return fallback
-        }
-
-        processed.push({
-          symbol: pos.symbol,
-          side: pos.side === "long" ? "buy" : "sell",
-          notional,
-          entryPrice: parseNumeric(pos.entryPrice, 0),
-          unrealizedPnl: parseNumeric(pos.unrealizedPnl, 0),
-          leverage: Math.round(parseNumeric(pos.leverage, 1)),
-        })
-      } catch {
+    for (const item of assetPositions) {
+      if (typeof item !== "object" || item === null) {
         continue
       }
+
+      const position = (item as { position?: unknown }).position
+      if (typeof position !== "object" || position === null) {
+        continue
+      }
+
+      const entry = position as Record<string, unknown>
+      const coin = typeof entry.coin === "string" ? entry.coin : ""
+      if (!coin) {
+        continue
+      }
+
+      const notional = Math.abs(this.parseNumericValue(entry.positionValue, 0))
+      if (notional <= 0) {
+        continue
+      }
+
+      const signedSize = this.parseNumericValue(entry.szi, 0)
+      const leverageEntry = entry.leverage
+      const leverageValue =
+        typeof leverageEntry === "object" && leverageEntry !== null
+          ? this.parseNumericValue(
+              (leverageEntry as { value?: unknown }).value,
+              1,
+            )
+          : 1
+
+      processed.push({
+        symbol: hyperliquidSwapCcxtSymbol(coin),
+        side: signedSize >= 0 ? "buy" : "sell",
+        notional,
+        entryPrice: this.parseNumericValue(entry.entryPx, 0),
+        unrealizedPnl: this.parseNumericValue(entry.unrealizedPnl, 0),
+        leverage: Math.round(leverageValue),
+      })
     }
 
     return processed
+  }
+
+  async getCurrentPositions(): Promise<CurrentPosition[]> {
+    const state = await this.fetchClearinghouseState()
+    return this.parseClearinghouseAssetPositions(state.assetPositions)
   }
 
   private async setLeverage(symbol: string, leverage: number): Promise<void> {

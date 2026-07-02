@@ -706,17 +706,23 @@ describe("HyperliquidClient", () => {
     expect(result).toHaveLength(2)
 
     const firstCall = mockExchange.createOrdersWs.mock.calls[0][0]
-    expect(firstCall[0]).toMatchObject({
+    expect(firstCall[0]).toEqual({
+      symbol: "BTC/USDC:USDC",
+      type: "market",
       side: "sell",
       amount: 11 / 50_000,
-      params: expect.objectContaining({ reduceOnly: true }),
+      price: 50_000,
+      params: { reduceOnly: true },
     })
 
     const secondCall = mockExchange.createOrdersWs.mock.calls[1][0]
-    expect(secondCall[0]).toMatchObject({
+    expect(secondCall[0]).toEqual({
+      symbol: "BTC/USDC:USDC",
+      type: "market",
       side: "buy",
       amount: 13 / 50_000,
-      params: expect.not.objectContaining({ reduceOnly: true }),
+      price: 50_000,
+      params: {},
     })
   })
 

@@ -48,6 +48,8 @@ const bytesToHex = (bytes: Uint8Array): string =>
     .map(byte => byte.toString(16).padStart(2, "0"))
     .join("")
 
+const HEX_BYTE_PATTERN = /^[0-9a-fA-F]{2}$/
+
 const hexToBytes = (hex: string): Uint8Array => {
   if (hex.length % 2 !== 0) {
     throw new WalletCredentialCryptoError("invalid hex encoding")
@@ -55,11 +57,11 @@ const hexToBytes = (hex: string): Uint8Array => {
 
   const bytes = new Uint8Array(hex.length / 2)
   for (let index = 0; index < bytes.length; index += 1) {
-    const byte = Number.parseInt(hex.slice(index * 2, index * 2 + 2), 16)
-    if (Number.isNaN(byte)) {
+    const pair = hex.slice(index * 2, index * 2 + 2)
+    if (!HEX_BYTE_PATTERN.test(pair)) {
       throw new WalletCredentialCryptoError("invalid hex encoding")
     }
-    bytes[index] = byte
+    bytes[index] = Number.parseInt(pair, 16)
   }
 
   return bytes

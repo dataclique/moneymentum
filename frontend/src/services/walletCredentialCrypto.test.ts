@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest"
 import * as Effect from "effect/Effect"
 
-import { WalletIncorrectPin } from "./wallet"
+import { WalletCredentialCryptoFailure, WalletIncorrectPin } from "./wallet"
 import {
   decryptWalletPrivateKey,
   encryptWalletPrivateKey,
@@ -72,6 +72,22 @@ describe("walletCredentialCrypto", () => {
     ).rejects.toMatchObject({
       name: "WalletCredentialCryptoError",
     })
+  })
+
+  it("rejects decryption with malformed hex encodings", async () => {
+    const encrypted = await encryptWalletPrivateKey("0xsecret", "123456")
+
+    const error = await failureError(
+      decryptWalletPrivateKey(
+        encrypted.encryptedPrivateKey,
+        "123456",
+        `${encrypted.salt.slice(0, 30)}fg`,
+        encrypted.iv,
+      ),
+    )
+
+    expect(error).toBeInstanceOf(WalletCredentialCryptoFailure)
+    expect(error._tag).toBe("WalletCredentialCryptoFailure")
   })
 
   it("rejects decryption with the wrong pin", async () => {

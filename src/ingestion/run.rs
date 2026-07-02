@@ -8,6 +8,7 @@ use tracing::debug;
 
 use super::job::IngestionJob;
 use super::run_id::IngestionRunId;
+use super::work::IngestionWork;
 
 /// The lifecycle state of an ingestion run. `Running` is the only non-terminal
 /// state; every other state is final.
@@ -72,6 +73,7 @@ pub(crate) enum IngestionRunCommand {
     Start {
         run_id: IngestionRunId,
         started_at: DateTime<Utc>,
+        work: IngestionWork,
     },
     Complete {
         last_record_at: DateTime<Utc>,
@@ -135,7 +137,7 @@ impl EventSourced for IngestionRun {
         };
 
         match event {
-            IngestionRunEvent::Started { .. } => Err(IngestionRunError::AlreadyStarted),
+            IngestionRunEvent::Started { .. } => Ok(None),
             IngestionRunEvent::Completed { .. } => terminal(IngestionRunStatus::Completed),
             IngestionRunEvent::Failed { .. } => terminal(IngestionRunStatus::Failed),
             IngestionRunEvent::Abandoned { .. } => terminal(IngestionRunStatus::Abandoned),
@@ -147,12 +149,16 @@ impl EventSourced for IngestionRun {
         jobs: &mut JobQueue<Self::Jobs>,
     ) -> Result<Vec<IngestionRunEvent>, IngestionRunError> {
         match command {
-            IngestionRunCommand::Start { run_id, started_at } => {
+            IngestionRunCommand::Start {
+                run_id,
+                started_at,
+                work,
+            } => {
                 // Enqueue the ingestion job on the same handle the framework
                 // flushes inside the event-commit transaction, so the job is
                 // queued iff the `Started` event commits -- there is no window
                 // where a run is Running with no job behind it (issue #404).
-                jobs.push(IngestionJob::new(run_id));
+                jobs.push(IngestionJob::new(run_id, work));
                 Ok(vec![IngestionRunEvent::Started { started_at }])
             }
             IngestionRunCommand::Complete { .. }
@@ -259,7 +265,9 @@ mod tests {
     use crate::ingestion::fixtures::{ingestion_store, instant};
     use crate::ingestion::orchestration::{ABANDONED_RUN_REASON, create_run, latest_status};
     use crate::ingestion::run_id::IngestionRunId;
+    use crate::ingestion::work::IngestionWork;
     use crate::logs_contain_at;
+    use crate::timeframe::Timeframe;
 
     #[test]
     fn replay_reconstructs_a_running_run() {
@@ -270,23 +278,6 @@ mod tests {
         .unwrap();
 
         assert_eq!(run.status, IngestionRunStatus::Running);
-    }
-
-    #[test]
-    fn replay_rejects_duplicate_started_events() {
-        let result = replay::<IngestionRun>(vec![
-            IngestionRunEvent::Started {
-                started_at: instant(),
-            },
-            IngestionRunEvent::Started {
-                started_at: instant(),
-            },
-        ]);
-
-        assert!(
-            result.is_err(),
-            "duplicate Started events must not erase or preserve an invalid run history"
-        );
     }
 
     #[test]
@@ -326,7 +317,11 @@ mod tests {
 
         TestHarness::<IngestionRun>::with()
             .given(vec![])
-            .when(IngestionRunCommand::Start { run_id, started_at })
+            .when(IngestionRunCommand::Start {
+                run_id,
+                started_at,
+                work: IngestionWork::Candles(Timeframe::OneHour),
+            })
             .await
             .then_expect_events(&[IngestionRunEvent::Started { started_at }]);
     }
@@ -337,7 +332,11 @@ mod tests {
         let run_id = IngestionRunId::new(started_at);
         let error = TestHarness::<IngestionRun>::with()
             .given(vec![IngestionRunEvent::Started { started_at }])
-            .when(IngestionRunCommand::Start { run_id, started_at })
+            .when(IngestionRunCommand::Start {
+                run_id,
+                started_at,
+                work: IngestionWork::Candles(Timeframe::OneHour),
+            })
             .await
             .then_expect_error();
 
@@ -368,7 +367,13 @@ mod tests {
     #[tokio::test]
     async fn complete_run_transitions_a_running_run_via_store() {
         let (store, projection, pool) = ingestion_store().await;
-        let run_id = create_run(&store, &projection).await.unwrap();
+        let run_id = create_run(
+            &store,
+            &projection,
+            IngestionWork::Candles(Timeframe::OneHour),
+        )
+        .await
+        .unwrap();
 
         complete_run(&store, &run_id, instant()).await.unwrap();
 
@@ -388,7 +393,13 @@ mod tests {
     #[tokio::test]
     async fn fail_run_transitions_a_running_run_via_store() {
         let (store, projection, pool) = ingestion_store().await;
-        let run_id = create_run(&store, &projection).await.unwrap();
+        let run_id = create_run(
+            &store,
+            &projection,
+            IngestionWork::Candles(Timeframe::OneHour),
+        )
+        .await
+        .unwrap();
 
         fail_run(&store, &run_id, "boom").await.unwrap();
 

@@ -5,11 +5,17 @@
 //! back (3 years for weekly). This balances storage costs against analytical
 //! utility - higher-frequency data is most relevant for recent periods.
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum Timeframe {
+    #[serde(rename = "15m")]
     FifteenMin,
+    #[serde(rename = "1h")]
     OneHour,
+    #[serde(rename = "1d")]
     OneDay,
+    #[serde(rename = "1w")]
     OneWeek,
 }
 
@@ -31,6 +37,21 @@ impl Timeframe {
             Self::OneDay => "1d",
             Self::OneWeek => "1w",
         }
+    }
+
+    /// Default 6-field cron expression (sec min hour day-of-month month day-of-week)
+    /// for scheduled ingestion of this candle interval.
+    pub(crate) fn ingestion_cron_expression(self) -> &'static str {
+        match self {
+            Self::FifteenMin => "0 */15 * * * *",
+            Self::OneHour => "0 0 * * * *",
+            Self::OneDay => "0 0 0 * * *",
+            Self::OneWeek => "0 0 0 * * 1",
+        }
+    }
+
+    pub(crate) fn all() -> [Self; 4] {
+        [Self::FifteenMin, Self::OneHour, Self::OneDay, Self::OneWeek]
     }
 
     /// Duration covered by a window of `max_entries` candles for this timeframe.

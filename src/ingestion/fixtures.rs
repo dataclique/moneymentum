@@ -8,9 +8,6 @@ use rust_decimal_macros::dec;
 use sqlx::SqlitePool;
 use sqlx::sqlite::SqlitePoolOptions;
 
-use super::job::IngestionJobContext;
-use super::run::IngestionRun;
-use super::services::IngestionServices;
 use crate::candle::Candle;
 use crate::finance::{Market, Symbol, hyperliquid_swap_ccxt_symbol};
 use crate::funding::FundingRate;
@@ -20,8 +17,13 @@ use crate::market_enablement::MarketEnablement;
 use crate::market_metadata::MarketMetadata;
 use crate::timeframe::Timeframe;
 
+use super::job::IngestionJobContext;
+use super::run::IngestionRun;
+use super::services::IngestionServices;
+
 pub(crate) struct MockHyperliquid {
     pub(crate) fetch_market_metadata_calls: Option<Arc<AtomicU32>>,
+    pub(crate) fetch_candles_calls: Option<Arc<AtomicU32>>,
 }
 
 pub(crate) struct FailingMockHyperliquid;
@@ -30,12 +32,21 @@ impl MockHyperliquid {
     pub(crate) fn without_call_counter() -> Self {
         Self {
             fetch_market_metadata_calls: None,
+            fetch_candles_calls: None,
         }
     }
 
     pub(crate) fn with_call_counter(fetch_market_metadata_calls: Arc<AtomicU32>) -> Self {
         Self {
             fetch_market_metadata_calls: Some(fetch_market_metadata_calls),
+            fetch_candles_calls: None,
+        }
+    }
+
+    pub(crate) fn with_candle_call_counter(fetch_candles_calls: Arc<AtomicU32>) -> Self {
+        Self {
+            fetch_market_metadata_calls: None,
+            fetch_candles_calls: Some(fetch_candles_calls),
         }
     }
 }
@@ -59,6 +70,9 @@ impl Hyperliquid for MockHyperliquid {
         _timeframe: Timeframe,
         _start: DateTime<Utc>,
     ) -> Result<Vec<Candle>, HyperliquidError> {
+        if let Some(fetch_candles_calls) = &self.fetch_candles_calls {
+            fetch_candles_calls.fetch_add(1, Ordering::SeqCst);
+        }
         Ok(vec![Candle {
             timestamp: Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
             open: 100.0,
@@ -110,6 +124,18 @@ impl Hyperliquid for FailingMockHyperliquid {
 
 pub(crate) async fn test_services() -> IngestionServices {
     test_services_with_hyperliquid(Arc::new(MockHyperliquid::without_call_counter())).await
+}
+
+async fn in_memory_sqlite_pool() -> SqlitePool {
+    SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect(":memory:")
+        .await
+        .unwrap()
+}
+
+fn unique_test_data_dir() -> std::path::PathBuf {
+    tempfile::tempdir().expect("test data dir").keep()
 }
 
 pub(crate) async fn test_services_with_hyperliquid(
@@ -165,16 +191,4 @@ pub(crate) async fn ingestion_store() -> (
 
 pub(crate) fn instant() -> DateTime<Utc> {
     Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap()
-}
-
-async fn in_memory_sqlite_pool() -> SqlitePool {
-    SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect(":memory:")
-        .await
-        .unwrap()
-}
-
-fn unique_test_data_dir() -> std::path::PathBuf {
-    tempfile::tempdir().expect("test data dir").keep()
 }

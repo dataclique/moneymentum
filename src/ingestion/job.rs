@@ -1,15 +1,11 @@
 use chrono::{DateTime, Utc};
 use event_sorcery::{Job, Label, Projection, ProjectionError, SendError, Store};
 use serde::{Deserialize, Serialize};
-use std::path::Path;
 use std::sync::Arc;
 use tracing::{error, info, warn};
 
 use crate::hyperliquid::{CandleIngester, FundingRateIngester, Hyperliquid};
-use crate::market_catalog::MarketCatalog;
-use crate::market_enablement::MarketEnablement;
 use crate::market_metadata::RefreshError;
-use crate::timeframe::Timeframe;
 
 use super::orchestration::LOST_RACE_REASON;
 use super::run::{
@@ -17,6 +13,7 @@ use super::run::{
 };
 use super::run_id::IngestionRunId;
 use super::services::IngestionServices;
+use super::work::IngestionWork;
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum IngestionJobError {
@@ -26,21 +23,15 @@ pub(crate) enum IngestionJobError {
     Projection(#[from] ProjectionError<IngestionRun>),
 }
 
-const TIMEFRAMES: &[Timeframe] = &[
-    Timeframe::FifteenMin,
-    Timeframe::OneHour,
-    Timeframe::OneDay,
-    Timeframe::OneWeek,
-];
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct IngestionJob {
     run_id: IngestionRunId,
+    work: IngestionWork,
 }
 
 impl IngestionJob {
-    pub(crate) fn new(run_id: IngestionRunId) -> Self {
-        Self { run_id }
+    pub(crate) fn new(run_id: IngestionRunId, work: IngestionWork) -> Self {
+        Self { run_id, work }
     }
 }
 
@@ -63,7 +54,11 @@ impl Job for IngestionJob {
     const KIND: &'static str = "ingestion";
 
     fn label(&self) -> Label {
-        Label::new(format!("ingestion:{}", self.run_id))
+        Label::new(format!(
+            "ingestion:{}:{}",
+            self.work.schedule_key(),
+            self.run_id
+        ))
     }
 
     async fn perform(&self, context: &IngestionJobContext) -> Result<(), IngestionJobError> {
@@ -140,17 +135,7 @@ impl Job for IngestionJob {
             services.max_concurrent_requests,
         );
 
-        match ingest_all(
-            services.hyperliquid.as_ref(),
-            &candle_ingester,
-            &funding_ingester,
-            &services.data_dir,
-            &services.market_catalog,
-            &services.market_catalog_projection,
-            &services.market_enablement_projection,
-        )
-        .await
-        {
+        match ingest_work(self.work, &candle_ingester, &funding_ingester, services).await {
             Ok(last_record) => {
                 // The run stays Running until this commits; surface a
                 // terminalization failure so the worker retries instead of
@@ -180,31 +165,31 @@ impl Job for IngestionJob {
     }
 }
 
-async fn ingest_all(
-    client: &dyn Hyperliquid,
+async fn ingest_work(
+    work: IngestionWork,
     candle_ingester: &CandleIngester<dyn Hyperliquid>,
     funding_ingester: &FundingRateIngester<dyn Hyperliquid>,
-    data_dir: &Path,
-    market_catalog: &Store<MarketCatalog>,
-    market_catalog_projection: &Projection<MarketCatalog>,
-    market_enablement_projection: &Projection<MarketEnablement>,
+    services: &IngestionServices,
 ) -> Result<DateTime<Utc>, RefreshError> {
     let markets = crate::market_metadata::refresh_markets(
-        client,
-        market_catalog,
-        market_catalog_projection,
-        market_enablement_projection,
+        services.hyperliquid.as_ref(),
+        &services.market_catalog,
+        &services.market_catalog_projection,
+        &services.market_enablement_projection,
     )
     .await?;
 
-    funding_ingester
-        .ingest_with_markets(data_dir, &markets)
-        .await?;
-
-    for timeframe in TIMEFRAMES {
-        candle_ingester
-            .ingest_with_markets(*timeframe, data_dir, &markets)
-            .await?;
+    match work {
+        IngestionWork::Funding => {
+            funding_ingester
+                .ingest_with_markets(&services.data_dir, &markets)
+                .await?;
+        }
+        IngestionWork::Candles(timeframe) => {
+            candle_ingester
+                .ingest_with_markets(timeframe, &services.data_dir, &markets)
+                .await?;
+        }
     }
 
     Ok(Utc::now())
@@ -235,29 +220,93 @@ mod tests {
         test_services, test_services_with_hyperliquid,
     };
     use crate::ingestion::orchestration::{create_run, latest_status, recover_abandoned_runs};
-    use crate::ingestion::run::running_runs;
-    use crate::ingestion::run::{IngestionRunCommand, IngestionRunStatus};
+    use crate::ingestion::run::{IngestionRunCommand, IngestionRunStatus, running_runs};
     use crate::ingestion::run_id::IngestionRunId;
+    use crate::ingestion::work::IngestionWork;
     use crate::logs_contain_at;
+    use crate::timeframe::Timeframe;
 
     #[test]
     fn ingestion_job_label_includes_run_id() {
         let run_id: IngestionRunId = "ingestion-123-00000000000000000000000000000001"
             .parse()
             .unwrap();
-        let label = IngestionJob::new(run_id.clone()).label();
+        let label =
+            IngestionJob::new(run_id.clone(), IngestionWork::Candles(Timeframe::OneHour)).label();
 
-        assert_eq!(label.to_string(), format!("ingestion:{run_id}"));
+        assert_eq!(label.to_string(), format!("ingestion:1h:{run_id}"));
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn scoped_candle_job_ingests_only_one_timeframe() {
+        let fetch_candles_calls = Arc::new(AtomicU32::new(0));
+        let (store, projection, pool) = ingestion_store().await;
+        let services = test_services_with_hyperliquid(Arc::new(
+            MockHyperliquid::with_candle_call_counter(Arc::clone(&fetch_candles_calls)),
+        ))
+        .await;
+        let run_id = create_run(
+            &store,
+            &projection,
+            IngestionWork::Candles(Timeframe::OneHour),
+        )
+        .await
+        .unwrap();
+        let job = IngestionJob::new(run_id, IngestionWork::Candles(Timeframe::OneHour));
+        let context = job_context(&store, &projection, services);
+
+        job.perform(&context).await.unwrap();
+
+        assert_eq!(fetch_candles_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            latest_status(&pool).await.unwrap(),
+            Some(IngestionRunStatus::Completed)
+        );
+    }
+
+    #[tokio::test]
+    async fn latest_status_shows_running_after_failed_run() {
+        let (store, projection, pool) = ingestion_store().await;
+        let work = IngestionWork::Candles(Timeframe::OneHour);
+        let failed_run_id = create_run(&store, &projection, work).await.unwrap();
+        let failing_context = job_context(
+            &store,
+            &projection,
+            test_services_with_hyperliquid(Arc::new(FailingMockHyperliquid)).await,
+        );
+        IngestionJob::new(failed_run_id, work)
+            .perform(&failing_context)
+            .await
+            .unwrap();
+        assert_eq!(
+            latest_status(&pool).await.unwrap(),
+            Some(IngestionRunStatus::Failed)
+        );
+
+        create_run(&store, &projection, work).await.unwrap();
+
+        assert_eq!(
+            latest_status(&pool).await.unwrap(),
+            Some(IngestionRunStatus::Running),
+            "a new run must replace the failed status in the aggregate view"
+        );
     }
 
     #[traced_test]
     #[tokio::test]
     async fn job_records_failure_when_ingestion_errors() {
         let (store, projection, pool) = ingestion_store().await;
-        let run_id = create_run(&store, &projection).await.unwrap();
+        let run_id = create_run(
+            &store,
+            &projection,
+            IngestionWork::Candles(Timeframe::OneHour),
+        )
+        .await
+        .unwrap();
         let services = test_services_with_hyperliquid(Arc::new(FailingMockHyperliquid)).await;
         let context = job_context(&store, &projection, services);
-        let job = IngestionJob::new(run_id.clone());
+        let job = IngestionJob::new(run_id.clone(), IngestionWork::Candles(Timeframe::OneHour));
 
         job.perform(&context).await.unwrap();
 
@@ -275,9 +324,15 @@ mod tests {
     #[tokio::test]
     async fn stale_job_for_recovered_run_does_not_execute() {
         let (store, projection, pool) = ingestion_store().await;
-        let run_id = create_run(&store, &projection).await.unwrap();
+        let run_id = create_run(
+            &store,
+            &projection,
+            IngestionWork::Candles(Timeframe::OneHour),
+        )
+        .await
+        .unwrap();
         recover_abandoned_runs(&store, &projection).await.unwrap();
-        let job = IngestionJob::new(run_id.clone());
+        let job = IngestionJob::new(run_id.clone(), IngestionWork::Candles(Timeframe::OneHour));
         let context = job_context(&store, &projection, test_services().await);
 
         job.perform(&context).await.unwrap();
@@ -296,8 +351,14 @@ mod tests {
     #[tokio::test]
     async fn job_completes_a_running_run_and_logs() {
         let (store, projection, pool) = ingestion_store().await;
-        let run_id = create_run(&store, &projection).await.unwrap();
-        let job = IngestionJob::new(run_id.clone());
+        let run_id = create_run(
+            &store,
+            &projection,
+            IngestionWork::Candles(Timeframe::OneHour),
+        )
+        .await
+        .unwrap();
+        let job = IngestionJob::new(run_id.clone(), IngestionWork::Candles(Timeframe::OneHour));
         let context = job_context(&store, &projection, test_services().await);
 
         job.perform(&context).await.unwrap();
@@ -341,6 +402,7 @@ mod tests {
                 IngestionRunCommand::Start {
                     run_id: first_id.clone(),
                     started_at: shared_start,
+                    work: IngestionWork::Candles(Timeframe::OneHour),
                 },
             )
             .await
@@ -351,6 +413,7 @@ mod tests {
                 IngestionRunCommand::Start {
                     run_id: second_id.clone(),
                     started_at: shared_start,
+                    work: IngestionWork::Candles(Timeframe::OneHour),
                 },
             )
             .await
@@ -366,14 +429,17 @@ mod tests {
         };
 
         // Run the loser's job first -- the ordering that previously duplicated work.
-        IngestionJob::new(loser_id.clone())
+        IngestionJob::new(loser_id.clone(), IngestionWork::Candles(Timeframe::OneHour))
             .perform(&context)
             .await
             .unwrap();
-        IngestionJob::new(winner_id.clone())
-            .perform(&context)
-            .await
-            .unwrap();
+        IngestionJob::new(
+            winner_id.clone(),
+            IngestionWork::Candles(Timeframe::OneHour),
+        )
+        .perform(&context)
+        .await
+        .unwrap();
 
         assert_eq!(
             fetch_market_metadata_calls.load(Ordering::SeqCst),

@@ -243,16 +243,6 @@ in
   programs.bash.interactiveShellInit = "set -o vi";
 
   systemd.services = lib.mapAttrs mkService enabledServices // {
-    moneymentum-ingest = {
-      description = "Trigger moneymentum data ingestion";
-      unitConfig.ConditionPathExists = "/run/moneymentum/moneymentum.ready";
-      serviceConfig = {
-        Type = "oneshot";
-        DynamicUser = true;
-        ExecStart = "${pkgs.curl}/bin/curl -sSf --max-time 300 -X POST http://127.0.0.1:8000/ingest";
-      };
-    };
-
     moneymentum-markets-refresh = mkMarketsRefreshService {
       description = "Refresh Hyperliquid markets metadata";
       readyMarker = "/run/moneymentum/moneymentum.ready";
@@ -265,15 +255,6 @@ in
       readyMarker = "/run/moneymentum/staging.ready";
       port = 8001;
       runtimeTokenPath = "/run/moneymentum/staging/markets-refresh-token";
-    };
-  };
-
-  systemd.timers.moneymentum-ingest = {
-    wantedBy = [ "timers.target" ];
-    timerConfig = {
-      OnBootSec = "5min";
-      OnUnitActiveSec = "6h";
-      Persistent = true;
     };
   };
 

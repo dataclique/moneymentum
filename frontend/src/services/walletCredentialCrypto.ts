@@ -1,3 +1,11 @@
+import * as Effect from "effect/Effect"
+
+import {
+  WalletCredentialCryptoFailure,
+  WalletIncorrectPin,
+  type WalletDecryptFailure,
+} from "./wallet"
+
 export const WALLET_PIN_LENGTH = 6
 export const PBKDF2_ITERATIONS = 100_000
 
@@ -111,33 +119,47 @@ export const encryptWalletPrivateKey = async (
   }
 }
 
-export const decryptWalletPrivateKey = async (
+export const decryptWalletPrivateKey = (
   encryptedHex: string,
   pin: string,
   saltHex: string,
   ivHex: string,
-): Promise<string> => {
+): Effect.Effect<string, WalletDecryptFailure> => {
   if (!validateWalletPin(pin)) {
-    throw new WalletCredentialCryptoError(
-      `pin must be exactly ${String(WALLET_PIN_LENGTH)} characters`,
+    return Effect.fail(
+      new WalletCredentialCryptoFailure({
+        cause: new WalletCredentialCryptoError(
+          `pin must be exactly ${String(WALLET_PIN_LENGTH)} characters`,
+        ),
+      }),
     )
   }
 
-  const cryptoApi = assertWebCrypto()
-  const decoder = new TextDecoder()
+  return Effect.tryPromise({
+    try: async () => {
+      const cryptoApi = assertWebCrypto()
+      const decoder = new TextDecoder()
 
-  try {
-    const cryptoKey = await deriveKey(pin, hexToBytes(saltHex))
-    const decrypted = await cryptoApi.subtle.decrypt(
-      { name: "AES-GCM", iv: hexToBytes(ivHex) },
-      cryptoKey,
-      hexToBytes(encryptedHex),
-    )
-    return decoder.decode(decrypted)
-  } catch (error) {
-    if (error instanceof WalletCredentialCryptoError) {
-      throw error
-    }
-    throw new WalletCredentialDecryptError()
-  }
+      try {
+        const cryptoKey = await deriveKey(pin, hexToBytes(saltHex))
+        const decrypted = await cryptoApi.subtle.decrypt(
+          { name: "AES-GCM", iv: hexToBytes(ivHex) },
+          cryptoKey,
+          hexToBytes(encryptedHex),
+        )
+        return decoder.decode(decrypted)
+      } catch (error) {
+        if (error instanceof WalletCredentialCryptoError) {
+          throw error
+        }
+        throw new WalletCredentialDecryptError()
+      }
+    },
+    catch: cause => {
+      if (cause instanceof WalletCredentialDecryptError) {
+        return new WalletIncorrectPin()
+      }
+      return new WalletCredentialCryptoFailure({ cause })
+    },
+  })
 }

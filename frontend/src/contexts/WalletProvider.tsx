@@ -18,16 +18,13 @@ import {
 import * as Effect from "effect/Effect"
 import {
   WalletConnectError,
-  WalletIncorrectPin,
   WalletSessionMissing,
-  WalletUnlockError,
   type WalletUnlockFailure,
 } from "@/services/wallet"
 import { HyperliquidClient } from "@/services/hyperliquid-client"
 import {
   decryptWalletPrivateKey,
   encryptWalletPrivateKey,
-  WalletCredentialDecryptError,
 } from "@/services/walletCredentialCrypto"
 
 const credentialsFromSession = (
@@ -106,21 +103,12 @@ export const WalletProvider = (props: ParentProps) => {
       return Effect.fail(new WalletSessionMissing())
     }
 
-    return Effect.tryPromise({
-      try: () =>
-        decryptWalletPrivateKey(
-          session.encryptedPrivateKey,
-          pin,
-          session.salt,
-          session.iv,
-        ),
-      catch: cause => {
-        if (cause instanceof WalletCredentialDecryptError) {
-          return new WalletIncorrectPin()
-        }
-        return new WalletUnlockError({ cause })
-      },
-    }).pipe(
+    return decryptWalletPrivateKey(
+      session.encryptedPrivateKey,
+      pin,
+      session.salt,
+      session.iv,
+    ).pipe(
       Effect.tap(privateKey =>
         Effect.sync(() => {
           setCredentials(credentialsFromSession(session, privateKey))

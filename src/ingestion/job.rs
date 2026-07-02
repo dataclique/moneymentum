@@ -1,9 +1,8 @@
-use std::path::Path;
-use std::sync::Arc;
-
 use chrono::{DateTime, Utc};
 use event_sorcery::{Job, Label, Projection, ProjectionError, SendError, Store};
 use serde::{Deserialize, Serialize};
+use std::path::Path;
+use std::sync::Arc;
 use tracing::{error, info, warn};
 
 use crate::hyperliquid::{CandleIngester, FundingRateIngester, Hyperliquid};
@@ -18,6 +17,14 @@ use super::run::{
 };
 use super::run_id::IngestionRunId;
 use super::services::IngestionServices;
+
+#[derive(Debug, thiserror::Error)]
+enum IngestionJobError {
+    #[error(transparent)]
+    Send(#[from] SendError<IngestionRun>),
+    #[error(transparent)]
+    Projection(#[from] ProjectionError<IngestionRun>),
+}
 
 const TIMEFRAMES: &[Timeframe] = &[
     Timeframe::FifteenMin,
@@ -50,7 +57,7 @@ pub(crate) struct IngestionJobContext {
 impl Job for IngestionJob {
     type Input = IngestionJobContext;
     type Output = ();
-    type Error = SendError<IngestionRun>;
+    type Error = IngestionJobError;
 
     const WORKER_NAME: &'static str = "ingestion";
     const KIND: &'static str = "ingestion";
@@ -59,7 +66,7 @@ impl Job for IngestionJob {
         Label::new(format!("ingestion:{}", self.run_id))
     }
 
-    async fn perform(&self, context: &IngestionJobContext) -> Result<(), SendError<IngestionRun>> {
+    async fn perform(&self, context: &IngestionJobContext) -> Result<(), IngestionJobError> {
         let store = &context.run_store;
         let services = &context.services;
 
@@ -91,7 +98,7 @@ impl Job for IngestionJob {
                     run_id = %self.run_id,
                     "failed to verify the one-running slot"
                 );
-                return retry_ingestion_job(store, &self.run_id).await;
+                return Err(err.into());
             }
         };
         if !holds_slot {
@@ -211,27 +218,6 @@ async fn holds_one_running_slot(
         running_runs(projection).await?.as_slice(),
         [(winner, _)] if winner == run_id
     ))
-}
-
-async fn retry_ingestion_job(
-    store: &Store<IngestionRun>,
-    run_id: &IngestionRunId,
-) -> Result<(), SendError<IngestionRun>> {
-    let Some(run) = store.load(run_id).await? else {
-        return Ok(());
-    };
-    if run.status != IngestionRunStatus::Running {
-        return Ok(());
-    }
-    store
-        .send(
-            run_id,
-            IngestionRunCommand::Start {
-                run_id: run_id.clone(),
-                started_at: run.started_at,
-            },
-        )
-        .await
 }
 
 #[cfg(test)]

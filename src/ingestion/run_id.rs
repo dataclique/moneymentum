@@ -53,10 +53,8 @@ impl FromStr for IngestionRunId {
         let (micros, nonce) = body
             .split_once('-')
             .ok_or(IngestionRunIdParseError::MissingNonce)?;
-        let started_at_micros = micros
-            .parse::<i64>()
-            .map_err(IngestionRunIdParseError::Timestamp)?;
-        let nonce = Uuid::parse_str(nonce).map_err(IngestionRunIdParseError::Nonce)?;
+        let started_at_micros = micros.parse::<i64>()?;
+        let nonce = Uuid::parse_str(nonce)?;
         Ok(Self {
             started_at_micros,
             nonce,
@@ -72,9 +70,9 @@ pub(crate) enum IngestionRunIdParseError {
     #[error("ingestion run id is missing its nonce segment")]
     MissingNonce,
     #[error("ingestion run id has a non-numeric start timestamp")]
-    Timestamp(#[source] std::num::ParseIntError),
+    ParseInt(#[from] std::num::ParseIntError),
     #[error("ingestion run id has a malformed nonce")]
-    Nonce(#[source] uuid::Error),
+    Uuid(#[from] uuid::Error),
 }
 
 impl Serialize for IngestionRunId {

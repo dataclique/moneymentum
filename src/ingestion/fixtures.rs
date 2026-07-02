@@ -2,10 +2,10 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use chrono::{DateTime, TimeZone, Utc};
+use event_sorcery::{Projection, Store, StoreBuilder};
 use rust_decimal_macros::dec;
 use sqlx::SqlitePool;
-
-use event_sorcery::{Projection, Store, StoreBuilder};
+use sqlx::sqlite::SqlitePoolOptions;
 
 use crate::candle::Candle;
 use crate::finance::{Market, Symbol, hyperliquid_swap_ccxt_symbol};
@@ -88,10 +88,22 @@ pub(crate) async fn test_services() -> IngestionServices {
     test_services_with_hyperliquid(Arc::new(MockHyperliquid::without_call_counter())).await
 }
 
+async fn in_memory_sqlite_pool() -> SqlitePool {
+    SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect(":memory:")
+        .await
+        .unwrap()
+}
+
+fn unique_test_data_dir() -> std::path::PathBuf {
+    tempfile::tempdir().expect("test data dir").into_path()
+}
+
 pub(crate) async fn test_services_with_hyperliquid(
     hyperliquid: Arc<dyn Hyperliquid>,
 ) -> IngestionServices {
-    let pool = SqlitePool::connect(":memory:").await.unwrap();
+    let pool = in_memory_sqlite_pool().await;
     sqlx::migrate!("./migrations").run(&pool).await.unwrap();
     let (market_catalog, market_catalog_projection) =
         StoreBuilder::<MarketCatalog>::new(pool.clone())
@@ -105,7 +117,7 @@ pub(crate) async fn test_services_with_hyperliquid(
 
     IngestionServices {
         hyperliquid,
-        data_dir: std::env::temp_dir(),
+        data_dir: unique_test_data_dir(),
         max_concurrent_requests: 10,
         market_catalog,
         market_catalog_projection,
@@ -130,7 +142,7 @@ pub(crate) async fn ingestion_store() -> (
     Arc<Projection<IngestionRun>>,
     SqlitePool,
 ) {
-    let pool = SqlitePool::connect(":memory:").await.unwrap();
+    let pool = in_memory_sqlite_pool().await;
     sqlx::migrate!("./migrations").run(&pool).await.unwrap();
     let (store, projection) = StoreBuilder::<IngestionRun>::new(pool.clone())
         .build()

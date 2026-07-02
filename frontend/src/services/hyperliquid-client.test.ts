@@ -35,6 +35,7 @@ const mockExchange = {
   setLeverage: vi.fn(),
   createOrder: vi.fn(),
   createOrdersWs: vi.fn(),
+  watchOrders: vi.fn(),
 }
 
 vi.mock("ccxt", () => ({
@@ -67,6 +68,7 @@ vi.mock("ccxt", () => ({
       setLeverage = mockExchange.setLeverage
       createOrder = mockExchange.createOrder
       createOrdersWs = mockExchange.createOrdersWs
+      watchOrders = mockExchange.watchOrders
     },
   },
 }))
@@ -160,6 +162,7 @@ describe("HyperliquidClient", () => {
     mockExchange.urls = {}
     mockExchange.markets = undefined
     mockExchange.markets_by_id = undefined
+    mockExchange.watchOrders.mockResolvedValue([])
 
     stubBackendMarketsFetch("mainnet", [
       { symbol: "BTC/USDC:USDC", assetIndex: 0 },
@@ -912,5 +915,53 @@ describe("HyperliquidClient", () => {
       amount: 0.002,
       params: expect.objectContaining({ reduceOnly: true }),
     })
+  })
+
+  it("subscribes with watchOrders before createOrdersWs", async () => {
+    const callOrder: string[] = []
+    const actions: RebalanceAction[] = [
+      {
+        kind: "rebalance",
+        symbol: "BTC/USDC:USDC",
+        signedNotionalDelta: 100,
+        leverage: 2,
+        leverageChanged: false,
+      },
+      {
+        kind: "close",
+        symbol: "ETH/USDC:USDC",
+        side: "buy",
+      },
+    ]
+
+    mockExchange.fetchTickers.mockResolvedValue({
+      "BTC/USDC:USDC": { last: 50_000 },
+      "ETH/USDC:USDC": { last: 4_000 },
+    })
+    mockExchange.fetchPositions.mockResolvedValue([
+      { symbol: "ETH/USDC:USDC", side: "long", contracts: 0.5 },
+    ])
+    mockExchange.watchOrders.mockImplementation(async () => {
+      callOrder.push("watchOrders")
+      return []
+    })
+    mockExchange.createOrdersWs.mockImplementation(async () => {
+      callOrder.push("createOrdersWs")
+      return [{ status: "closed", info: {} }]
+    })
+
+    const client = new HyperliquidClient(credentials, "mainnet")
+    await client.rebalancePositions(actions)
+
+    expect(mockExchange.watchOrders).toHaveBeenCalledTimes(1)
+    expect(mockExchange.watchOrders).toHaveBeenCalledWith(
+      undefined,
+      expect.any(Number),
+      undefined,
+      { user: "0xWallet" },
+    )
+    expect(callOrder.indexOf("watchOrders")).toBeLessThan(
+      callOrder.indexOf("createOrdersWs"),
+    )
   })
 })

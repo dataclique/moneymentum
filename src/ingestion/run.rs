@@ -29,6 +29,7 @@ pub(crate) enum IngestionRunStatus {
 pub(crate) struct IngestionRun {
     pub(super) status: IngestionRunStatus,
     pub(super) started_at: DateTime<Utc>,
+    pub(super) schedule_key: String,
 }
 
 /// The immutable facts of an ingestion run's lifecycle.
@@ -36,6 +37,7 @@ pub(crate) struct IngestionRun {
 pub(crate) enum IngestionRunEvent {
     Started {
         started_at: DateTime<Utc>,
+        schedule_key: String,
     },
     Completed {
         last_record_at: DateTime<Utc>,
@@ -110,13 +112,17 @@ impl EventSourced for IngestionRun {
 
     const AGGREGATE_TYPE: &'static str = "IngestionRun";
     const PROJECTION: Table = Table("ingestion_run_view");
-    const SCHEMA_VERSION: u64 = 1;
+    const SCHEMA_VERSION: u64 = 2;
 
     fn originate(event: &IngestionRunEvent) -> Option<Self> {
         match event {
-            IngestionRunEvent::Started { started_at } => Some(Self {
+            IngestionRunEvent::Started {
+                started_at,
+                schedule_key,
+            } => Some(Self {
                 status: IngestionRunStatus::Running,
                 started_at: *started_at,
+                schedule_key: schedule_key.clone(),
             }),
             IngestionRunEvent::Completed { .. }
             | IngestionRunEvent::Failed { .. }
@@ -159,7 +165,10 @@ impl EventSourced for IngestionRun {
                 // queued iff the `Started` event commits -- there is no window
                 // where a run is Running with no job behind it (issue #404).
                 jobs.push(IngestionJob::new(run_id, work));
-                Ok(vec![IngestionRunEvent::Started { started_at }])
+                Ok(vec![IngestionRunEvent::Started {
+                    started_at,
+                    schedule_key: work.schedule_key().to_string(),
+                }])
             }
             IngestionRunCommand::Complete { .. }
             | IngestionRunCommand::Fail { .. }
@@ -252,6 +261,18 @@ pub(crate) async fn running_runs(
         .await
 }
 
+pub(crate) async fn running_runs_for_work(
+    projection: &event_sorcery::Projection<IngestionRun>,
+    work: IngestionWork,
+) -> Result<Vec<(IngestionRunId, IngestionRun)>, ProjectionError<IngestionRun>> {
+    let schedule_key = work.schedule_key();
+    running_runs(projection).await.map(|runs| {
+        runs.into_iter()
+            .filter(|(_, run)| run.schedule_key == schedule_key)
+            .collect()
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use event_sorcery::{LifecycleError, TestHarness, replay};
@@ -269,10 +290,24 @@ mod tests {
     use crate::logs_contain_at;
     use crate::timeframe::Timeframe;
 
+    use crate::timeframe::Timeframe;
+
+    fn started_event(started_at: chrono::DateTime<chrono::Utc>) -> IngestionRunEvent {
+        IngestionRunEvent::Started {
+            started_at,
+            schedule_key: IngestionWork::candles(Timeframe::OneHour)
+                .schedule_key()
+                .to_string(),
+        }
+    }
+
     #[test]
     fn replay_reconstructs_a_running_run() {
         let run = replay::<IngestionRun>(vec![IngestionRunEvent::Started {
             started_at: instant(),
+            schedule_key: IngestionWork::candles(Timeframe::OneHour)
+                .schedule_key()
+                .to_string(),
         }])
         .unwrap()
         .unwrap();
@@ -298,6 +333,9 @@ mod tests {
         let run = replay::<IngestionRun>(vec![
             IngestionRunEvent::Started {
                 started_at: instant(),
+                schedule_key: IngestionWork::candles(Timeframe::OneHour)
+                    .schedule_key()
+                    .to_string(),
             },
             IngestionRunEvent::Completed {
                 last_record_at: instant(),
@@ -320,10 +358,10 @@ mod tests {
             .when(IngestionRunCommand::Start {
                 run_id,
                 started_at,
-                work: IngestionWork::Candles(Timeframe::OneHour),
+                work: IngestionWork::candles(Timeframe::OneHour),
             })
             .await
-            .then_expect_events(&[IngestionRunEvent::Started { started_at }]);
+            .then_expect_events(&[started_event(started_at)]);
     }
 
     #[tokio::test]
@@ -331,11 +369,11 @@ mod tests {
         let started_at = instant();
         let run_id = IngestionRunId::new(started_at);
         let error = TestHarness::<IngestionRun>::with()
-            .given(vec![IngestionRunEvent::Started { started_at }])
+            .given(vec![started_event(started_at)])
             .when(IngestionRunCommand::Start {
                 run_id,
                 started_at,
-                work: IngestionWork::Candles(Timeframe::OneHour),
+                work: IngestionWork::candles(Timeframe::OneHour),
             })
             .await
             .then_expect_error();
@@ -370,7 +408,7 @@ mod tests {
         let run_id = create_run(
             &store,
             &projection,
-            IngestionWork::Candles(Timeframe::OneHour),
+            IngestionWork::candles(Timeframe::OneHour),
         )
         .await
         .unwrap();
@@ -396,7 +434,7 @@ mod tests {
         let run_id = create_run(
             &store,
             &projection,
-            IngestionWork::Candles(Timeframe::OneHour),
+            IngestionWork::candles(Timeframe::OneHour),
         )
         .await
         .unwrap();
@@ -418,9 +456,7 @@ mod tests {
     #[tokio::test]
     async fn completing_a_running_run_emits_completed() {
         TestHarness::<IngestionRun>::with()
-            .given(vec![IngestionRunEvent::Started {
-                started_at: instant(),
-            }])
+            .given(vec![started_event(instant())])
             .when(IngestionRunCommand::Complete {
                 last_record_at: instant(),
                 completed_at: instant(),
@@ -436,9 +472,7 @@ mod tests {
     async fn finalizing_a_finished_run_is_refused() {
         let error = TestHarness::<IngestionRun>::with()
             .given(vec![
-                IngestionRunEvent::Started {
-                    started_at: instant(),
-                },
+                started_event(instant()),
                 IngestionRunEvent::Completed {
                     last_record_at: instant(),
                     completed_at: instant(),
@@ -460,9 +494,7 @@ mod tests {
     #[tokio::test]
     async fn failing_a_running_run_emits_failed() {
         TestHarness::<IngestionRun>::with()
-            .given(vec![IngestionRunEvent::Started {
-                started_at: instant(),
-            }])
+            .given(vec![started_event(instant())])
             .when(IngestionRunCommand::Fail {
                 reason: "boom".to_string(),
                 failed_at: instant(),
@@ -477,9 +509,7 @@ mod tests {
     #[tokio::test]
     async fn abandoning_a_running_run_emits_abandoned() {
         TestHarness::<IngestionRun>::with()
-            .given(vec![IngestionRunEvent::Started {
-                started_at: instant(),
-            }])
+            .given(vec![started_event(instant())])
             .when(IngestionRunCommand::Abandon {
                 reason: ABANDONED_RUN_REASON.to_string(),
                 reconciled_at: instant(),
@@ -496,6 +526,9 @@ mod tests {
         let run = replay::<IngestionRun>(vec![
             IngestionRunEvent::Started {
                 started_at: instant(),
+                schedule_key: IngestionWork::candles(Timeframe::OneHour)
+                    .schedule_key()
+                    .to_string(),
             },
             IngestionRunEvent::Failed {
                 reason: "boom".to_string(),
@@ -513,6 +546,9 @@ mod tests {
         let run = replay::<IngestionRun>(vec![
             IngestionRunEvent::Started {
                 started_at: instant(),
+                schedule_key: IngestionWork::candles(Timeframe::OneHour)
+                    .schedule_key()
+                    .to_string(),
             },
             IngestionRunEvent::Abandoned {
                 reason: ABANDONED_RUN_REASON.to_string(),

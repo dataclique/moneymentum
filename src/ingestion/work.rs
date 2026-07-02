@@ -8,10 +8,10 @@ use crate::timeframe::Timeframe;
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub(crate) enum IngestionWork {
     Funding,
-    Candles(Timeframe),
+    Candles { timeframe: Timeframe },
 }
 
-const FUNDING_INGESTION_CRON: &str = "0 0 * * * *";
+const FUNDING_INGESTION_CRON: &str = "20 0 * * * *";
 
 /// Six-field cron used only under `test-support` so e2e tests observe scheduled
 /// ticks without waiting for production cadences.
@@ -21,10 +21,10 @@ const TEST_INGESTION_CRON: &str = "*/2 * * * * *";
 impl IngestionWork {
     pub(crate) fn scheduled_units() -> [Self; 5] {
         [
-            Self::Candles(Timeframe::FifteenMin),
-            Self::Candles(Timeframe::OneHour),
-            Self::Candles(Timeframe::OneDay),
-            Self::Candles(Timeframe::OneWeek),
+            Self::candles(Timeframe::FifteenMin),
+            Self::candles(Timeframe::OneHour),
+            Self::candles(Timeframe::OneDay),
+            Self::candles(Timeframe::OneWeek),
             Self::Funding,
         ]
     }
@@ -33,26 +33,34 @@ impl IngestionWork {
     /// plus funding, avoiding the OneWeek lookback overflow (issue #64).
     #[cfg(feature = "test-support")]
     pub(crate) fn test_e2e_scheduled_units() -> [Self; 2] {
-        [Self::Candles(Timeframe::OneHour), Self::Funding]
+        [Self::candles(Timeframe::OneHour), Self::Funding]
+    }
+
+    pub(crate) fn candles(timeframe: Timeframe) -> Self {
+        Self::Candles { timeframe }
+    }
+
+    pub(crate) fn production_cron_expression(self) -> &'static str {
+        match self {
+            Self::Funding => FUNDING_INGESTION_CRON,
+            Self::Candles { timeframe } => timeframe.ingestion_cron_expression(),
+        }
     }
 
     pub(crate) fn default_cron_expression(self) -> &'static str {
         #[cfg(feature = "test-support")]
         {
-            let _ = self;
-            return TEST_INGESTION_CRON;
+            let _ = self.production_cron_expression();
+            TEST_INGESTION_CRON
         }
         #[cfg(not(feature = "test-support"))]
-        match self {
-            Self::Funding => FUNDING_INGESTION_CRON,
-            Self::Candles(timeframe) => timeframe.ingestion_cron_expression(),
-        }
+        self.production_cron_expression()
     }
 
     pub(crate) fn schedule_key(self) -> &'static str {
         match self {
             Self::Funding => "funding",
-            Self::Candles(timeframe) => timeframe.interval_string(),
+            Self::Candles { timeframe } => timeframe.interval_string(),
         }
     }
 
@@ -60,7 +68,7 @@ impl IngestionWork {
         match key {
             "funding" => Ok(Self::Funding),
             interval => Timeframe::from_interval_string(interval)
-                .map(Self::Candles)
+                .map(|timeframe| Self::Candles { timeframe })
                 .ok_or_else(|| IngestionWorkParseError::UnknownScheduleKey {
                     key: key.to_string(),
                 }),
@@ -86,10 +94,10 @@ mod tests {
     #[test]
     fn schedule_key_round_trips_for_candle_intervals() {
         for (interval, work) in [
-            ("15m", IngestionWork::Candles(Timeframe::FifteenMin)),
-            ("1h", IngestionWork::Candles(Timeframe::OneHour)),
-            ("1d", IngestionWork::Candles(Timeframe::OneDay)),
-            ("1w", IngestionWork::Candles(Timeframe::OneWeek)),
+            ("15m", IngestionWork::candles(Timeframe::FifteenMin)),
+            ("1h", IngestionWork::candles(Timeframe::OneHour)),
+            ("1d", IngestionWork::candles(Timeframe::OneDay)),
+            ("1w", IngestionWork::candles(Timeframe::OneWeek)),
         ] {
             assert_eq!(work.schedule_key(), interval);
             assert_eq!(IngestionWork::from_schedule_key(interval).unwrap(), work);
@@ -109,7 +117,7 @@ mod tests {
     fn scheduled_units_cover_every_candle_timeframe_and_funding() {
         assert_eq!(IngestionWork::scheduled_units().len(), 5);
         for timeframe in Timeframe::all() {
-            assert!(IngestionWork::scheduled_units().contains(&IngestionWork::Candles(timeframe)));
+            assert!(IngestionWork::scheduled_units().contains(&IngestionWork::candles(timeframe)));
         }
         assert!(IngestionWork::scheduled_units().contains(&IngestionWork::Funding));
     }
@@ -118,17 +126,33 @@ mod tests {
     #[cfg(not(feature = "test-support"))]
     fn default_cron_expressions_match_timeframe_cadence() {
         assert_eq!(
-            IngestionWork::Candles(Timeframe::FifteenMin).default_cron_expression(),
+            IngestionWork::candles(Timeframe::FifteenMin).default_cron_expression(),
             "0 */15 * * * *"
         );
         assert_eq!(
-            IngestionWork::Candles(Timeframe::OneWeek).default_cron_expression(),
-            "0 0 0 * * 1"
+            IngestionWork::candles(Timeframe::OneHour).default_cron_expression(),
+            "10 0 * * * *"
+        );
+        assert_eq!(
+            IngestionWork::candles(Timeframe::OneDay).default_cron_expression(),
+            "0 0 0 * * *"
+        );
+        assert_eq!(
+            IngestionWork::candles(Timeframe::OneWeek).default_cron_expression(),
+            "0 30 0 * * 1"
         );
         assert_eq!(
             IngestionWork::Funding.default_cron_expression(),
-            "0 0 * * * *"
+            "20 0 * * * *"
         );
+    }
+
+    #[test]
+    fn ingestion_work_serializes_with_internally_tagged_candles_variant() {
+        let work = IngestionWork::candles(Timeframe::OneHour);
+        let json = serde_json::to_string(&work).unwrap();
+        assert_eq!(json, r#"{"kind":"candles","timeframe":"1h"}"#);
+        assert_eq!(serde_json::from_str::<IngestionWork>(&json).unwrap(), work);
     }
 
     #[test]

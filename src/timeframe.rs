@@ -44,9 +44,9 @@ impl Timeframe {
     pub(crate) fn ingestion_cron_expression(self) -> &'static str {
         match self {
             Self::FifteenMin => "0 */15 * * * *",
-            Self::OneHour => "0 0 * * * *",
+            Self::OneHour => "10 0 * * * *",
             Self::OneDay => "0 0 0 * * *",
-            Self::OneWeek => "0 0 0 * * 1",
+            Self::OneWeek => "0 30 0 * * 1",
         }
     }
 

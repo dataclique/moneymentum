@@ -9,7 +9,8 @@ use crate::market_metadata::RefreshError;
 
 use super::orchestration::LOST_RACE_REASON;
 use super::run::{
-    IngestionRun, IngestionRunCommand, IngestionRunStatus, complete_run, fail_run, running_runs,
+    IngestionRun, IngestionRunCommand, IngestionRunStatus, complete_run, fail_run,
+    running_runs_for_work,
 };
 use super::run_id::IngestionRunId;
 use super::services::IngestionServices;
@@ -85,17 +86,18 @@ impl Job for IngestionJob {
         // with `Start`. The aggregate can still read Running for a loser until its
         // `Abandon` commits, so verify this run_id is the projection's sole winner
         // before any ingestion I/O.
-        let holds_slot = match holds_one_running_slot(&context.run_projection, &self.run_id).await {
-            Ok(holds_slot) => holds_slot,
-            Err(err) => {
-                error!(
-                    error = %err,
-                    run_id = %self.run_id,
-                    "failed to verify the one-running slot"
-                );
-                return Err(err.into());
-            }
-        };
+        let holds_slot =
+            match holds_one_running_slot(&context.run_projection, &self.run_id, self.work).await {
+                Ok(holds_slot) => holds_slot,
+                Err(err) => {
+                    error!(
+                        error = %err,
+                        run_id = %self.run_id,
+                        "failed to verify the one-running slot"
+                    );
+                    return Err(err.into());
+                }
+            };
         if !holds_slot {
             match store.load(&self.run_id).await {
                 Ok(Some(run)) if run.status == IngestionRunStatus::Running => {
@@ -144,10 +146,19 @@ impl Job for IngestionJob {
                     error!(error = %err, run_id = %self.run_id, "failed to record ingestion completion");
                     return Err(err.into());
                 }
-                info!(run_id = %self.run_id, "ingestion complete");
+                info!(
+                    run_id = %self.run_id,
+                    work = self.work.schedule_key(),
+                    "ingestion complete"
+                );
             }
             Err(err) => {
-                error!(error = %err, run_id = %self.run_id, "ingestion failed");
+                error!(
+                    error = %err,
+                    run_id = %self.run_id,
+                    work = self.work.schedule_key(),
+                    "ingestion failed"
+                );
                 // If we cannot even record the failure the run stays Running;
                 // surface it so the worker retries rather than wedging the slot.
                 if let Err(record_err) = fail_run(store, &self.run_id, &err.to_string()).await {
@@ -185,7 +196,7 @@ async fn ingest_work(
                 .ingest_with_markets(&services.data_dir, &markets)
                 .await?;
         }
-        IngestionWork::Candles(timeframe) => {
+        IngestionWork::Candles { timeframe } => {
             candle_ingester
                 .ingest_with_markets(timeframe, &services.data_dir, &markets)
                 .await?;
@@ -198,9 +209,10 @@ async fn ingest_work(
 async fn holds_one_running_slot(
     projection: &Projection<IngestionRun>,
     run_id: &IngestionRunId,
+    work: IngestionWork,
 ) -> Result<bool, ProjectionError<IngestionRun>> {
     Ok(matches!(
-        running_runs(projection).await?.as_slice(),
+        running_runs_for_work(projection, work).await?.as_slice(),
         [(winner, _)] if winner == run_id
     ))
 }
@@ -232,7 +244,7 @@ mod tests {
             .parse()
             .unwrap();
         let label =
-            IngestionJob::new(run_id.clone(), IngestionWork::Candles(Timeframe::OneHour)).label();
+            IngestionJob::new(run_id.clone(), IngestionWork::candles(Timeframe::OneHour)).label();
 
         assert_eq!(label.to_string(), format!("ingestion:1h:{run_id}"));
     }
@@ -249,11 +261,11 @@ mod tests {
         let run_id = create_run(
             &store,
             &projection,
-            IngestionWork::Candles(Timeframe::OneHour),
+            IngestionWork::candles(Timeframe::OneHour),
         )
         .await
         .unwrap();
-        let job = IngestionJob::new(run_id, IngestionWork::Candles(Timeframe::OneHour));
+        let job = IngestionJob::new(run_id, IngestionWork::candles(Timeframe::OneHour));
         let context = job_context(&store, &projection, services);
 
         job.perform(&context).await.unwrap();
@@ -263,12 +275,14 @@ mod tests {
             latest_status(&pool).await.unwrap(),
             Some(IngestionRunStatus::Completed)
         );
+        assert!(logs_contain_at(Level::INFO, &["ingestion complete", "1h"]));
     }
 
+    #[traced_test]
     #[tokio::test]
     async fn latest_status_shows_running_after_failed_run() {
         let (store, projection, pool) = ingestion_store().await;
-        let work = IngestionWork::Candles(Timeframe::OneHour);
+        let work = IngestionWork::candles(Timeframe::OneHour);
         let failed_run_id = create_run(&store, &projection, work).await.unwrap();
         let failing_context = job_context(
             &store,
@@ -291,6 +305,7 @@ mod tests {
             Some(IngestionRunStatus::Running),
             "a new run must replace the failed status in the aggregate view"
         );
+        assert!(logs_contain_at(Level::ERROR, &["ingestion failed", "1h"]));
     }
 
     #[traced_test]
@@ -300,13 +315,13 @@ mod tests {
         let run_id = create_run(
             &store,
             &projection,
-            IngestionWork::Candles(Timeframe::OneHour),
+            IngestionWork::candles(Timeframe::OneHour),
         )
         .await
         .unwrap();
         let services = test_services_with_hyperliquid(Arc::new(FailingMockHyperliquid)).await;
         let context = job_context(&store, &projection, services);
-        let job = IngestionJob::new(run_id.clone(), IngestionWork::Candles(Timeframe::OneHour));
+        let job = IngestionJob::new(run_id.clone(), IngestionWork::candles(Timeframe::OneHour));
 
         job.perform(&context).await.unwrap();
 
@@ -327,12 +342,12 @@ mod tests {
         let run_id = create_run(
             &store,
             &projection,
-            IngestionWork::Candles(Timeframe::OneHour),
+            IngestionWork::candles(Timeframe::OneHour),
         )
         .await
         .unwrap();
         recover_abandoned_runs(&store, &projection).await.unwrap();
-        let job = IngestionJob::new(run_id.clone(), IngestionWork::Candles(Timeframe::OneHour));
+        let job = IngestionJob::new(run_id.clone(), IngestionWork::candles(Timeframe::OneHour));
         let context = job_context(&store, &projection, test_services().await);
 
         job.perform(&context).await.unwrap();
@@ -354,11 +369,11 @@ mod tests {
         let run_id = create_run(
             &store,
             &projection,
-            IngestionWork::Candles(Timeframe::OneHour),
+            IngestionWork::candles(Timeframe::OneHour),
         )
         .await
         .unwrap();
-        let job = IngestionJob::new(run_id.clone(), IngestionWork::Candles(Timeframe::OneHour));
+        let job = IngestionJob::new(run_id.clone(), IngestionWork::candles(Timeframe::OneHour));
         let context = job_context(&store, &projection, test_services().await);
 
         job.perform(&context).await.unwrap();
@@ -402,7 +417,7 @@ mod tests {
                 IngestionRunCommand::Start {
                     run_id: first_id.clone(),
                     started_at: shared_start,
-                    work: IngestionWork::Candles(Timeframe::OneHour),
+                    work: IngestionWork::candles(Timeframe::OneHour),
                 },
             )
             .await
@@ -413,7 +428,7 @@ mod tests {
                 IngestionRunCommand::Start {
                     run_id: second_id.clone(),
                     started_at: shared_start,
-                    work: IngestionWork::Candles(Timeframe::OneHour),
+                    work: IngestionWork::candles(Timeframe::OneHour),
                 },
             )
             .await
@@ -429,13 +444,13 @@ mod tests {
         };
 
         // Run the loser's job first -- the ordering that previously duplicated work.
-        IngestionJob::new(loser_id.clone(), IngestionWork::Candles(Timeframe::OneHour))
+        IngestionJob::new(loser_id.clone(), IngestionWork::candles(Timeframe::OneHour))
             .perform(&context)
             .await
             .unwrap();
         IngestionJob::new(
             winner_id.clone(),
-            IngestionWork::Candles(Timeframe::OneHour),
+            IngestionWork::candles(Timeframe::OneHour),
         )
         .perform(&context)
         .await

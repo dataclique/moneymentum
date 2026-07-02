@@ -126,8 +126,6 @@ pub(crate) struct AppState {
     database_pool: SqlitePool,
     portfolio_store: Arc<Store<Portfolio>>,
     portfolio_projection: Arc<Projection<Portfolio>>,
-    ingestion_store: Arc<Store<IngestionRun>>,
-    ingestion_projection: Arc<Projection<IngestionRun>>,
     market_enablement: Arc<Store<MarketEnablement>>,
     market_enablement_projection: Arc<Projection<MarketEnablement>>,
     market_catalog_projection: Arc<Projection<MarketCatalog>>,
@@ -870,8 +868,6 @@ pub async fn app(config: Config) -> Result<Router, Box<dyn std::error::Error + S
         database_pool: pool,
         portfolio_store,
         portfolio_projection,
-        ingestion_store,
-        ingestion_projection,
         market_enablement,
         market_enablement_projection,
         market_catalog_projection,
@@ -1002,7 +998,7 @@ mod tests {
             .build()
             .await
             .unwrap();
-        let (ingestion_store, ingestion_projection) =
+        let (_ingestion_store, _ingestion_projection) =
             StoreBuilder::<IngestionRun>::new(pool.clone())
                 .build()
                 .await
@@ -1023,8 +1019,6 @@ mod tests {
             database_pool: pool,
             portfolio_store,
             portfolio_projection,
-            ingestion_store,
-            ingestion_projection,
             market_enablement,
             market_enablement_projection,
             market_catalog_projection,

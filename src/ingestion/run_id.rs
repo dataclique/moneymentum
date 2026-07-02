@@ -51,7 +51,7 @@ impl FromStr for IngestionRunId {
             .strip_prefix(INGESTION_RUN_ID_PREFIX)
             .ok_or(IngestionRunIdParseError::MissingPrefix)?;
         let (micros, nonce) = body
-            .split_once('-')
+            .rsplit_once('-')
             .ok_or(IngestionRunIdParseError::MissingNonce)?;
         let started_at_micros = micros.parse::<i64>()?;
         let nonce = Uuid::parse_str(nonce)?;
@@ -104,6 +104,14 @@ mod tests {
 
         assert!(rendered.starts_with("ingestion-"));
         assert_eq!(parsed, run_id);
+    }
+
+    #[test]
+    fn ingestion_run_id_round_trips_pre_epoch_micros() {
+        let rendered = "ingestion--1230000000000000000-00000000000000000000000000000001";
+        let parsed: IngestionRunId = rendered.parse().unwrap();
+
+        assert_eq!(parsed.to_string(), rendered);
     }
 
     #[test]

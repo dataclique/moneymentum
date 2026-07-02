@@ -2,10 +2,10 @@
 //!
 //! Each ingestion attempt is its own [`IngestionRun`] stream -- a monotone
 //! `Running -> {Completed, Failed, Abandoned}` state machine -- so crashed and
-//! abandoned runs stay visible without a database reset. The "one running"
-//! invariant is enforced by the one-running projection check plus a partial
-//! unique index; an unconditional startup reconciler abandons every still-running
-//! stream before schedulers start, so a crash can never wedge the slot.
+//! abandoned runs stay visible without a database reset. The one-running-run-per-
+//! schedule-key invariant is enforced by the per-work projection check plus a
+//! partial unique index; an unconditional startup reconciler abandons every
+//! still-running stream before schedulers start, so a crash can never wedge a slot.
 //!
 //! Organized by concern:
 //! - [`run_id`]: opaque run identity and wire parsing.
@@ -26,8 +26,7 @@ pub(crate) mod fixtures;
 
 pub(crate) use job::{IngestionJob, IngestionJobContext};
 pub(crate) use orchestration::{
-    IngestionError, create_run, default_ingestion_schedules, latest_status, recover_abandoned_runs,
-    trigger_scheduled_ingestion,
+    default_ingestion_schedules, latest_status, recover_abandoned_runs, trigger_scheduled_ingestion,
 };
 pub(crate) use run::{IngestionRun, IngestionRunStatus};
 pub(crate) use services::IngestionServices;

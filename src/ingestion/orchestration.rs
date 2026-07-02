@@ -12,9 +12,12 @@ use sqlx::{AssertSqlSafe, SqlitePool};
 use thiserror::Error;
 use tracing::{debug, error, warn};
 
-use super::run::{IngestionRun, IngestionRunCommand, IngestionRunStatus, running_runs};
+use super::run::{
+    IngestionRun, IngestionRunCommand, IngestionRunStatus, running_runs, running_runs_for_work,
+};
 use super::run_id::{INGESTION_RUN_ID_PREFIX, IngestionRunId};
 use super::work::IngestionWork;
+use crate::timeframe::Timeframe;
 
 pub(crate) const ABANDONED_RUN_REASON: &str = "backend restarted before ingestion completed";
 pub(super) const LOST_RACE_REASON: &str = "lost the one-running race to a concurrent ingestion";
@@ -35,11 +38,26 @@ pub(crate) enum IngestionError {
 pub(crate) enum IngestionScheduleError {
     #[error(transparent)]
     Cron(#[from] cron::error::Error),
+    #[error(transparent)]
+    ScheduleKey(#[from] super::work::IngestionWorkParseError),
+}
+
+fn validate_production_schedule_definitions() -> Result<(), IngestionScheduleError> {
+    for timeframe in Timeframe::all() {
+        Schedule::from_str(timeframe.ingestion_cron_expression())?;
+    }
+    for work in IngestionWork::scheduled_units() {
+        Schedule::from_str(work.production_cron_expression())?;
+        IngestionWork::from_schedule_key(work.schedule_key())?;
+    }
+    Ok(())
 }
 
 /// Built-in apalis-cron schedules for each candle timeframe and funding refresh.
 pub(crate) fn default_ingestion_schedules()
 -> Result<Vec<(IngestionWork, Schedule)>, IngestionScheduleError> {
+    validate_production_schedule_definitions()?;
+
     #[cfg(feature = "test-support")]
     let units: Vec<IngestionWork> = IngestionWork::test_e2e_scheduled_units().into();
     #[cfg(not(feature = "test-support"))]
@@ -68,7 +86,7 @@ pub(crate) async fn create_run(
     projection: &Projection<IngestionRun>,
     work: IngestionWork,
 ) -> Result<IngestionRunId, IngestionError> {
-    if !running_runs(projection).await?.is_empty() {
+    if !running_runs_for_work(projection, work).await?.is_empty() {
         return Err(IngestionError::AlreadyRunning);
     }
 
@@ -93,12 +111,8 @@ pub(crate) async fn create_run(
     // are dropped by the reactor. So after `send`, exactly one run holds the
     // Running slot. If it is not this one, we lost the race: abandon the orphan
     // stream and report AlreadyRunning, so only the winner proceeds.
-    let running = running_runs(projection).await?;
-    let won = if let [(winner, _)] = running.as_slice() {
-        *winner == run_id
-    } else {
-        false
-    };
+    let running = running_runs_for_work(projection, work).await?;
+    let won = matches!(running.as_slice(), [(winner, _)] if *winner == run_id);
     if !won {
         store
             .send(
@@ -315,7 +329,7 @@ mod tests {
         let run_id = create_run(
             &store,
             &projection,
-            IngestionWork::Candles(Timeframe::OneHour),
+            IngestionWork::candles(Timeframe::OneHour),
         )
         .await
         .unwrap();
@@ -348,7 +362,7 @@ mod tests {
                 IngestionRunCommand::Start {
                     run_id: first_id.clone(),
                     started_at: shared_start,
-                    work: IngestionWork::Candles(Timeframe::OneHour),
+                    work: IngestionWork::candles(Timeframe::OneHour),
                 },
             )
             .await
@@ -369,7 +383,7 @@ mod tests {
                 IngestionRunCommand::Start {
                     run_id: second_id.clone(),
                     started_at: shared_start,
-                    work: IngestionWork::Candles(Timeframe::OneHour),
+                    work: IngestionWork::candles(Timeframe::OneHour),
                 },
             )
             .await
@@ -388,14 +402,14 @@ mod tests {
         create_run(
             &store,
             &projection,
-            IngestionWork::Candles(Timeframe::OneHour),
+            IngestionWork::candles(Timeframe::OneHour),
         )
         .await
         .unwrap();
         let duplicate = create_run(
             &store,
             &projection,
-            IngestionWork::Candles(Timeframe::OneHour),
+            IngestionWork::candles(Timeframe::OneHour),
         )
         .await;
 
@@ -410,7 +424,7 @@ mod tests {
         create_run(
             &store,
             &projection,
-            IngestionWork::Candles(Timeframe::OneHour),
+            IngestionWork::candles(Timeframe::OneHour),
         )
         .await
         .unwrap();
@@ -448,12 +462,12 @@ mod tests {
             create_run(
                 &store,
                 &projection,
-                IngestionWork::Candles(Timeframe::OneHour)
+                IngestionWork::candles(Timeframe::OneHour)
             ),
             create_run(
                 &store,
                 &projection,
-                IngestionWork::Candles(Timeframe::OneHour)
+                IngestionWork::candles(Timeframe::OneHour)
             ),
         );
 
@@ -480,6 +494,23 @@ mod tests {
         ));
     }
 
+    #[tokio::test]
+    async fn concurrent_create_run_for_different_work_admits_both() {
+        let (store, projection, _pool) = ingestion_store().await;
+
+        let (hourly, funding) = tokio::join!(
+            create_run(
+                &store,
+                &projection,
+                IngestionWork::candles(Timeframe::OneHour)
+            ),
+            create_run(&store, &projection, IngestionWork::Funding),
+        );
+
+        assert!(hourly.is_ok() && funding.is_ok());
+        assert_eq!(running_runs(&projection).await.unwrap().len(), 2);
+    }
+
     #[traced_test]
     #[tokio::test]
     async fn scheduled_ingestion_starts_a_scoped_run_when_idle() {
@@ -489,7 +520,7 @@ mod tests {
         trigger_scheduled_ingestion_for_test(
             Arc::clone(&store),
             Arc::clone(&projection),
-            IngestionWork::Candles(Timeframe::OneHour),
+            IngestionWork::candles(Timeframe::OneHour),
             Arc::clone(&consecutive_failures),
         )
         .await;
@@ -527,7 +558,7 @@ mod tests {
         trigger_scheduled_ingestion_for_test(
             Arc::clone(&store),
             Arc::clone(&projection),
-            IngestionWork::Candles(Timeframe::OneHour),
+            IngestionWork::candles(Timeframe::OneHour),
             Arc::clone(&consecutive_failures),
         )
         .await;
@@ -552,14 +583,14 @@ mod tests {
         create_run(
             &store,
             &projection,
-            IngestionWork::Candles(Timeframe::OneHour),
+            IngestionWork::candles(Timeframe::OneHour),
         )
         .await
         .unwrap();
         trigger_scheduled_ingestion_for_test(
             Arc::clone(&store),
             Arc::clone(&projection),
-            IngestionWork::Candles(Timeframe::OneHour),
+            IngestionWork::candles(Timeframe::OneHour),
             Arc::clone(&consecutive_failures),
         )
         .await;
@@ -585,14 +616,14 @@ mod tests {
         trigger_scheduled_ingestion_for_test(
             Arc::clone(&store),
             Arc::clone(&projection),
-            IngestionWork::Candles(Timeframe::OneHour),
+            IngestionWork::candles(Timeframe::OneHour),
             Arc::clone(&consecutive_failures),
         )
         .await;
         trigger_scheduled_ingestion_for_test(
             Arc::clone(&store),
             Arc::clone(&projection),
-            IngestionWork::Candles(Timeframe::OneHour),
+            IngestionWork::candles(Timeframe::OneHour),
             Arc::clone(&consecutive_failures),
         )
         .await;

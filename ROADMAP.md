@@ -34,6 +34,9 @@ Design: [adrs/0001](./adrs/0001-event-sorcery-persistence-foundation.md).
 - [ ] Event-source portfolios, ingestion runs, and the market universe --
       [#364](https://github.com/data-cartel/moneymentum/issues/364) /
       [#362](https://github.com/data-cartel/moneymentum/pull/362)
+- [x] Enqueue the ingestion job atomically with the Started event --
+      [#404](https://github.com/dataclique/moneymentum/issues/404) /
+      [#406](https://github.com/dataclique/moneymentum/pull/406)
 
 ---
 

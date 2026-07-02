@@ -74,22 +74,6 @@ pub(crate) trait Hyperliquid: Send + Sync {
     ) -> Result<Vec<FundingRate>, HyperliquidError>;
 }
 
-/// Hyperliquid info client for ingestion.
-pub(crate) struct HyperliquidClients {
-    pub(crate) mainnet: Arc<dyn Hyperliquid>,
-}
-
-impl HyperliquidClients {
-    pub(crate) async fn from_config(
-        mainnet_base_url: Option<&Url>,
-        max_retries: usize,
-    ) -> Result<Self, HyperliquidError> {
-        let mainnet = Arc::new(HyperliquidClient::new(mainnet_base_url, max_retries).await?)
-            as Arc<dyn Hyperliquid>;
-        Ok(Self { mainnet })
-    }
-}
-
 pub(crate) struct HyperliquidClient {
     info: InfoClient,
     max_retries: usize,

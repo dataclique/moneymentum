@@ -33,7 +33,7 @@ pub(crate) struct MarketMetadata {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct LeverageLimit {
-    pub(crate) symbol: String,
+    pub(crate) symbol: Symbol,
     pub(crate) max_leverage: u32,
 }
 
@@ -141,7 +141,7 @@ pub(crate) async fn leverage_limits(
         .markets()
         .iter()
         .map(|market| LeverageLimit {
-            symbol: market.symbol().as_str().to_string(),
+            symbol: market.symbol().clone(),
             max_leverage: market.max_leverage(),
         })
         .collect();
@@ -344,6 +344,12 @@ mod tests {
             .unwrap()
             .unwrap();
 
+        let catalog = catalog_projection
+            .load(&VenueRef::Hyperliquid)
+            .await
+            .unwrap()
+            .unwrap();
+
         let mut by_symbol: Vec<(&str, u32)> = limits
             .limits
             .iter()
@@ -351,6 +357,7 @@ mod tests {
             .collect();
         by_symbol.sort_unstable();
         assert_eq!(by_symbol, vec![("BTC", 50), ("ETH", 25)]);
+        assert_eq!(limits.fetched_at, catalog.observed_at());
         assert!(crate::logs_contain_at(
             Level::DEBUG,
             &["leverage limits read", "markets=2"]

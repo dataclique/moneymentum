@@ -165,9 +165,9 @@ mod tests {
     use event_sorcery::StoreBuilder;
 
     use super::*;
-    use crate::market_catalog::{CatalogMarket, MarketCatalogCommand};
     use crate::candle::Candle;
     use crate::funding::FundingRate;
+    use crate::market_catalog::{CatalogMarket, MarketCatalogCommand};
     use crate::market_enablement::MarketEnablementCommand;
     use crate::timeframe::Timeframe;
 

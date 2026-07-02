@@ -12,7 +12,7 @@ use std::collections::BTreeSet;
 
 use chrono::{DateTime, Utc};
 use event_sorcery::{Projection, ProjectionError, SendError, Store};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tracing::{debug, info};
 
 use crate::finance::{Market, Symbol};
@@ -30,7 +30,7 @@ pub(crate) struct MarketMetadata {
 }
 
 /// One market's max leverage, as served to clients.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct LeverageLimit {
     pub(crate) symbol: String,
@@ -39,7 +39,7 @@ pub(crate) struct LeverageLimit {
 
 /// A venue's per-market leverage limits plus the time the universe behind them
 /// was last observed, so clients can reason about freshness.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct LeverageLimits {
     pub(crate) limits: Vec<LeverageLimit>,

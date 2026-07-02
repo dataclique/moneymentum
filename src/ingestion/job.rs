@@ -82,9 +82,9 @@ impl Job for IngestionJob {
             // worker retries rather than silently marking the job done.
             Err(err) => {
                 error!(error = %err, run_id = %self.run_id, "failed to load ingestion run");
-                return Err(err);
+                return Err(err.into());
             }
-        }
+        };
 
         // Both concurrent `create_run` losers and winners enqueue a job atomically
         // with `Start`. The aggregate can still read Running for a loser until its
@@ -121,7 +121,7 @@ impl Job for IngestionJob {
                         run_id = %self.run_id,
                         "failed to load ingestion run before abandoning race loser"
                     );
-                    return Err(err);
+                    return Err(err.into());
                 }
             }
             warn!(
@@ -157,7 +157,7 @@ impl Job for IngestionJob {
                 // leaving the slot wedged until the next startup reconcile.
                 if let Err(err) = complete_run(store, &self.run_id, last_record).await {
                     error!(error = %err, run_id = %self.run_id, "failed to record ingestion completion");
-                    return Err(err);
+                    return Err(err.into());
                 }
                 info!(run_id = %self.run_id, "ingestion complete");
             }
@@ -171,7 +171,7 @@ impl Job for IngestionJob {
                         run_id = %self.run_id,
                         "failed to record ingestion failure"
                     );
-                    return Err(record_err);
+                    return Err(record_err.into());
                 }
             }
         }

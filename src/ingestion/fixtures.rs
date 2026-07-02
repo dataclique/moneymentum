@@ -97,7 +97,7 @@ async fn in_memory_sqlite_pool() -> SqlitePool {
 }
 
 fn unique_test_data_dir() -> std::path::PathBuf {
-    tempfile::tempdir().expect("test data dir").into_path()
+    tempfile::tempdir().expect("test data dir").keep()
 }
 
 pub(crate) async fn test_services_with_hyperliquid(

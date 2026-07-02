@@ -5,6 +5,8 @@ import { WalletIncorrectPin } from "./wallet"
 import {
   decryptWalletPrivateKey,
   encryptWalletPrivateKey,
+  normalizeWalletPinInput,
+  validateWalletPin,
   WALLET_PIN_LENGTH,
 } from "./walletCredentialCrypto"
 
@@ -37,7 +39,21 @@ describe("walletCredentialCrypto", () => {
     expect(encrypted.encryptedPrivateKey).not.toContain(privateKey)
   })
 
-  it("rejects pins that are not exactly six characters", async () => {
+  it("accepts only six numeric digits as a valid pin", () => {
+    expect(validateWalletPin("123456")).toBe(true)
+    expect(validateWalletPin("12ab34")).toBe(false)
+    expect(validateWalletPin("12 345")).toBe(false)
+    expect(validateWalletPin("12345")).toBe(false)
+    expect(validateWalletPin("1234567")).toBe(false)
+  })
+
+  it("strips non-digit characters before truncating pin input", () => {
+    expect(normalizeWalletPinInput("12ab34")).toBe("1234")
+    expect(normalizeWalletPinInput("12 345")).toBe("12345")
+    expect(normalizeWalletPinInput("1234567890")).toBe("123456")
+  })
+
+  it("rejects pins that are not exactly six digits", async () => {
     const shortPin = "1".repeat(WALLET_PIN_LENGTH - 1)
     const longPin = "1".repeat(WALLET_PIN_LENGTH + 1)
 
@@ -48,6 +64,11 @@ describe("walletCredentialCrypto", () => {
     })
     await expect(
       encryptWalletPrivateKey("0xsecret", longPin),
+    ).rejects.toMatchObject({
+      name: "WalletCredentialCryptoError",
+    })
+    await expect(
+      encryptWalletPrivateKey("0xsecret", "12ab34"),
     ).rejects.toMatchObject({
       name: "WalletCredentialCryptoError",
     })

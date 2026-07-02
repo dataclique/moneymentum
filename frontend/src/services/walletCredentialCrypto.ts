@@ -30,10 +30,10 @@ export class WalletCredentialDecryptError extends WalletCredentialCryptoError {
 }
 
 export const validateWalletPin = (pin: string): boolean =>
-  pin.length === WALLET_PIN_LENGTH
+  pin.length === WALLET_PIN_LENGTH && /^\d+$/.test(pin)
 
 export const normalizeWalletPinInput = (value: string): string =>
-  value.slice(0, WALLET_PIN_LENGTH)
+  value.replace(/\D/g, "").slice(0, WALLET_PIN_LENGTH)
 
 const assertWebCrypto = (): Crypto => {
   const cryptoApi = (globalThis as { crypto?: Crypto }).crypto

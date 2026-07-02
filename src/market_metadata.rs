@@ -157,7 +157,7 @@ mod tests {
     use std::sync::Arc;
 
     use async_trait::async_trait;
-    use chrono::{DateTime, Utc};
+    use chrono::{DateTime, TimeZone, Utc};
     use sqlx::sqlite::SqlitePoolOptions;
     use tracing::Level;
     use tracing_test::traced_test;
@@ -165,6 +165,7 @@ mod tests {
     use event_sorcery::StoreBuilder;
 
     use super::*;
+    use crate::market_catalog::{CatalogMarket, MarketCatalogCommand};
     use crate::candle::Candle;
     use crate::funding::FundingRate;
     use crate::market_enablement::MarketEnablementCommand;
@@ -362,6 +363,72 @@ mod tests {
             Level::DEBUG,
             &["leverage limits read", "markets=2"]
         ));
+    }
+
+    #[tokio::test]
+    async fn leverage_limits_reflects_latest_catalog_observation_time() {
+        let (catalog, catalog_projection, _enablement, _enablement_projection) =
+            market_stores().await;
+        let first_observed = Utc.with_ymd_and_hms(2026, 3, 15, 12, 0, 0).unwrap();
+        let second_observed = Utc.with_ymd_and_hms(2026, 3, 16, 8, 30, 0).unwrap();
+
+        catalog
+            .send(
+                &VenueRef::Hyperliquid,
+                MarketCatalogCommand::RecordUniverse {
+                    markets: vec![CatalogMarket::new(Symbol::from_raw("BTC"), 50)],
+                    observed_at: first_observed,
+                },
+            )
+            .await
+            .unwrap();
+
+        let first_limits = leverage_limits(VenueRef::Hyperliquid, &catalog_projection)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(first_limits.fetched_at, first_observed);
+        assert_eq!(first_limits.limits.len(), 1);
+        assert_eq!(first_limits.limits[0].max_leverage, 50);
+
+        catalog
+            .send(
+                &VenueRef::Hyperliquid,
+                MarketCatalogCommand::RecordUniverse {
+                    markets: vec![CatalogMarket::new(Symbol::from_raw("ETH"), 40)],
+                    observed_at: second_observed,
+                },
+            )
+            .await
+            .unwrap();
+
+        let latest_limits = leverage_limits(VenueRef::Hyperliquid, &catalog_projection)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(latest_limits.fetched_at, second_observed);
+        assert_eq!(latest_limits.limits.len(), 1);
+        assert_eq!(latest_limits.limits[0].symbol.as_str(), "ETH");
+        assert_eq!(latest_limits.limits[0].max_leverage, 40);
+    }
+
+    #[test]
+    fn leverage_limits_serialize_with_camel_case_fields() {
+        let limits = LeverageLimits {
+            limits: vec![LeverageLimit {
+                symbol: Symbol::from_raw("BTC"),
+                max_leverage: 50,
+            }],
+            fetched_at: Utc.with_ymd_and_hms(2026, 3, 15, 12, 0, 0).unwrap(),
+        };
+
+        let json = serde_json::to_value(&limits).unwrap();
+        assert_eq!(json["limits"][0]["symbol"], "BTC");
+        assert_eq!(json["limits"][0]["maxLeverage"], 50);
+        assert_eq!(json["fetchedAt"], "2026-03-15T12:00:00Z");
+
+        let roundtrip: LeverageLimits = serde_json::from_value(json).unwrap();
+        assert_eq!(roundtrip, limits);
     }
 
     #[tokio::test]

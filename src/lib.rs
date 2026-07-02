@@ -1149,6 +1149,14 @@ mod tests {
             router,
             market_catalog,
         } = test_harness(data_dir.path()).await;
+
+        let unobserved = router
+            .clone()
+            .oneshot(get_request("/markets/hyperliquid/leverage"))
+            .await
+            .unwrap();
+        assert_eq!(unobserved.status(), StatusCode::NOT_FOUND);
+
         let observed_at = Utc.with_ymd_and_hms(2026, 3, 15, 12, 0, 0).unwrap();
 
         market_catalog
@@ -1171,10 +1179,29 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(listed.status(), StatusCode::OK);
-        let body: market_metadata::LeverageLimits =
-            serde_json::from_str(&body_text(listed).await).unwrap();
+        let raw = body_text(listed).await;
+        let body: market_metadata::LeverageLimits = serde_json::from_str(&raw).unwrap();
         assert_eq!(body.limits.len(), 2);
         assert_eq!(body.fetched_at, observed_at);
+
+        let mut by_symbol: Vec<(&str, u32)> = body
+            .limits
+            .iter()
+            .map(|limit| (limit.symbol.as_str(), limit.max_leverage))
+            .collect();
+        by_symbol.sort_unstable();
+        assert_eq!(by_symbol, vec![("BTC", 50), ("ETH", 25)]);
+
+        let wire: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        let btc = wire["limits"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|limit| limit["symbol"] == "BTC")
+            .unwrap();
+        assert_eq!(btc["maxLeverage"], 50);
+        assert_eq!(wire["fetchedAt"], "2026-03-15T12:00:00Z");
+
         assert!(logs_contain_at(
             tracing::Level::DEBUG,
             &["leverage limits read", "markets=2"]
@@ -1185,6 +1212,68 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(unknown.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn markets_leverage_includes_disabled_markets() {
+        let data_dir = TempDir::new().unwrap();
+        let TestHarness {
+            router,
+            market_catalog,
+        } = test_harness(data_dir.path()).await;
+        let observed_at = Utc.with_ymd_and_hms(2026, 3, 15, 12, 0, 0).unwrap();
+
+        market_catalog
+            .send(
+                &VenueRef::Hyperliquid,
+                MarketCatalogCommand::RecordUniverse {
+                    markets: vec![
+                        CatalogMarket::new(Symbol::from_raw("BTC"), 50),
+                        CatalogMarket::new(Symbol::from_raw("ETH"), 25),
+                    ],
+                    observed_at,
+                },
+            )
+            .await
+            .unwrap();
+
+        let disabled = router
+            .clone()
+            .oneshot(post_json(
+                "/markets/hyperliquid/BTC/disable",
+                &serde_json::json!({ "reason": "maintenance" }),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(disabled.status(), StatusCode::ACCEPTED);
+
+        let tradable = router
+            .clone()
+            .oneshot(get_request("/markets/hyperliquid"))
+            .await
+            .unwrap();
+        assert_eq!(tradable.status(), StatusCode::OK);
+        let tradable_symbols: Vec<String> = serde_json::from_str(&body_text(tradable).await).unwrap();
+        assert_eq!(tradable_symbols, vec!["ETH".to_string()]);
+
+        let leverage = router
+            .clone()
+            .oneshot(get_request("/markets/hyperliquid/leverage"))
+            .await
+            .unwrap();
+        assert_eq!(leverage.status(), StatusCode::OK);
+        let body: market_metadata::LeverageLimits =
+            serde_json::from_str(&body_text(leverage).await).unwrap();
+
+        let mut symbols: Vec<&str> = body
+            .limits
+            .iter()
+            .map(|limit| limit.symbol.as_str())
+            .collect();
+        symbols.sort_unstable();
+        assert_eq!(symbols, vec!["BTC", "ETH"]);
+        assert_eq!(body.fetched_at, observed_at);
     }
 
     #[traced_test]

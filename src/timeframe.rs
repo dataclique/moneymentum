@@ -5,18 +5,29 @@
 //! back (3 years for weekly). This balances storage costs against analytical
 //! utility - higher-frequency data is most relevant for recent periods.
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Timeframe {
-    #[serde(rename = "15m")]
     FifteenMin,
-    #[serde(rename = "1h")]
     OneHour,
-    #[serde(rename = "1d")]
     OneDay,
-    #[serde(rename = "1w")]
     OneWeek,
+}
+
+impl Serialize for Timeframe {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.interval_string())
+    }
+}
+
+impl<'de> Deserialize<'de> for Timeframe {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let interval = String::deserialize(deserializer)?;
+        Self::from_interval_string(&interval).ok_or_else(|| {
+            serde::de::Error::custom(format!("unknown timeframe interval: {interval}"))
+        })
+    }
 }
 
 impl Timeframe {
@@ -234,16 +245,20 @@ mod tests {
 
     #[test]
     fn interval_string_roundtrips() {
-        for timeframe in [
-            Timeframe::FifteenMin,
-            Timeframe::OneHour,
-            Timeframe::OneDay,
-            Timeframe::OneWeek,
-        ] {
+        for timeframe in Timeframe::all() {
             assert_eq!(
                 Timeframe::from_interval_string(timeframe.interval_string()),
                 Some(timeframe)
             );
+        }
+    }
+
+    #[test]
+    fn serde_uses_interval_strings() {
+        for timeframe in Timeframe::all() {
+            let json = serde_json::to_string(&timeframe).unwrap();
+            assert_eq!(json, format!("\"{}\"", timeframe.interval_string()));
+            assert_eq!(serde_json::from_str::<Timeframe>(&json).unwrap(), timeframe);
         }
     }
 

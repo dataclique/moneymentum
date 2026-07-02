@@ -19,7 +19,7 @@ use super::run_id::IngestionRunId;
 use super::services::IngestionServices;
 
 #[derive(Debug, thiserror::Error)]
-enum IngestionJobError {
+pub(crate) enum IngestionJobError {
     #[error(transparent)]
     Send(#[from] SendError<IngestionRun>),
     #[error(transparent)]

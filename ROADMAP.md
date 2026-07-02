@@ -36,7 +36,7 @@ Design: [adrs/0001](./adrs/0001-event-sorcery-persistence-foundation.md).
       [#362](https://github.com/dataclique/moneymentum/pull/362)
 - [ ] Persist market catalog freshness and enablement snapshots --
       [#413](https://github.com/dataclique/moneymentum/issues/413) /
-      [#TBD](https://github.com/dataclique/moneymentum/pull/TBD)
+      [#414](https://github.com/dataclique/moneymentum/pull/414)
 
 ---
 

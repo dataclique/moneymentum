@@ -1,4 +1,4 @@
-import type { ColumnDef, Row, SortingState } from "@tanstack/solid-table"
+import type { Row, SortingState } from "@tanstack/solid-table"
 import {
   createSolidTable,
   flexRender,
@@ -35,7 +35,10 @@ import {
   allSymbolTableColumnIds,
   isAllSymbolColumnId,
 } from "./allSymbolColumnLayout"
-import { DEFAULT_ALL_SYMBOLS_SORTING } from "./allSymbolsColumns"
+import {
+  buildAllSymbolsColumns,
+  DEFAULT_ALL_SYMBOLS_SORTING,
+} from "./allSymbolsColumns"
 import type { PortfolioMetricColumnId } from "./portfolioMetricVisibility"
 
 const ESTIMATED_ALL_SYMBOL_ROW_HEIGHT_PX = 34
@@ -82,7 +85,6 @@ const AllSymbolsVirtualRow = (
 }
 
 interface AllSymbolsDataTableProps {
-  columns: ColumnDef<AllSymbolRowData>[]
   data: Accessor<AllSymbolRowData[]>
   visibleMetricColumns: PortfolioMetricColumnId[]
   targetPortfolio: Record<string, PortfolioInterface | undefined>
@@ -97,7 +99,6 @@ export const AllSymbolsDataTable = (
   props: AllSymbolsDataTableProps,
 ): JSX.Element => {
   const [local] = splitProps(props, [
-    "columns",
     "data",
     "visibleMetricColumns",
     "targetPortfolio",
@@ -117,12 +118,20 @@ export const AllSymbolsDataTable = (
     filterAllSymbolRows(local.data(), searchQuery()),
   )
 
+  const columns = createMemo(() =>
+    buildAllSymbolsColumns(local.visibleMetricColumns),
+  )
+
+  const tableColumnIds = createMemo(() =>
+    allSymbolTableColumnIds(local.visibleMetricColumns),
+  )
+
   const table = createSolidTable({
     get data() {
       return filteredData()
     },
     get columns() {
-      return local.columns
+      return columns()
     },
     getRowId: row => row.symbol,
     getCoreRowModel: getCoreRowModel(),
@@ -201,9 +210,6 @@ export const AllSymbolsDataTable = (
       : 0
   }
 
-  const tableColumnIds = () =>
-    allSymbolTableColumnIds(local.visibleMetricColumns)
-
   return (
     <div class={cn("flex h-full min-h-0 flex-col", local.class)}>
       <div class="shrink-0 border-b border-border px-2 py-1.5">
@@ -266,7 +272,7 @@ export const AllSymbolsDataTable = (
               fallback={
                 <tr>
                   <td
-                    colSpan={local.columns.length}
+                    colSpan={tableColumnIds().length}
                     class="h-24 text-center text-muted-foreground text-[11px]"
                   >
                     {searchQuery().trim() === ""
@@ -279,7 +285,7 @@ export const AllSymbolsDataTable = (
               <Show when={paddingTop() > 0}>
                 <tr>
                   <td
-                    colSpan={local.columns.length}
+                    colSpan={tableColumnIds().length}
                     style={{ height: `${String(paddingTop())}px` }}
                   />
                 </tr>
@@ -302,7 +308,7 @@ export const AllSymbolsDataTable = (
               <Show when={paddingBottom() > 0}>
                 <tr>
                   <td
-                    colSpan={local.columns.length}
+                    colSpan={tableColumnIds().length}
                     style={{ height: `${String(paddingBottom())}px` }}
                   />
                 </tr>

@@ -11,6 +11,7 @@ use std::fmt::{self, Display};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use chrono::{DateTime, Utc};
 use event_sorcery::{
@@ -569,6 +570,39 @@ pub(crate) async fn create_run(
 
     debug!(run_id = %run_id, "ingestion run created");
     Ok(run_id)
+}
+
+/// Opens an ingestion run and enqueues its job atomically with the `Started`
+/// event. Shared by the `/ingest` handler and the scheduler.
+pub(crate) async fn enqueue_run(
+    store: &Store<IngestionRun>,
+    projection: &Projection<IngestionRun>,
+) -> Result<IngestionRunId, IngestionError> {
+    create_run(store, projection).await
+}
+
+/// Runs one scheduled ingestion attempt. An already-running run is the normal
+/// skip-this-tick case, not a failure; genuine failures increment a consecutive
+/// counter and warn so an operator can spot a wedged scheduler.
+pub(crate) async fn trigger_scheduled_ingestion(
+    store: &Store<IngestionRun>,
+    projection: &Projection<IngestionRun>,
+    consecutive_failures: &AtomicU32,
+) {
+    match enqueue_run(store, projection).await {
+        Ok(run_id) => {
+            consecutive_failures.store(0, Ordering::Relaxed);
+            debug!(run_id = %run_id, "scheduled ingestion run enqueued");
+        }
+        Err(IngestionError::AlreadyRunning) => {
+            consecutive_failures.store(0, Ordering::Relaxed);
+            debug!("scheduled ingestion skipped; a run is already active");
+        }
+        Err(err) => {
+            let consecutive = consecutive_failures.fetch_add(1, Ordering::Relaxed) + 1;
+            warn!(error = %err, consecutive, "scheduled ingestion run failed");
+        }
+    }
 }
 
 /// Abandons every still-running stream. Run unconditionally at startup, before
@@ -1330,6 +1364,43 @@ mod tests {
         assert!(logs_contain_at(
             Level::INFO,
             &["ingestion complete", winner_id.as_str()]
+        ));
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn scheduled_ingestion_skips_when_a_run_is_already_active() {
+        let (store, projection, _pool) = ingestion_store().await;
+        let consecutive_failures = AtomicU32::new(3);
+
+        create_run(&store, &projection).await.unwrap();
+        trigger_scheduled_ingestion(&store, &projection, &consecutive_failures).await;
+
+        assert_eq!(
+            consecutive_failures.load(Ordering::Relaxed),
+            0,
+            "an active run is a normal skip, not a failure"
+        );
+        assert!(logs_contain_at(
+            Level::DEBUG,
+            &["scheduled ingestion skipped"]
+        ));
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn scheduled_ingestion_warns_and_counts_consecutive_failures() {
+        let (store, projection, pool) = ingestion_store().await;
+        pool.close().await;
+        let consecutive_failures = AtomicU32::new(0);
+
+        trigger_scheduled_ingestion(&store, &projection, &consecutive_failures).await;
+        trigger_scheduled_ingestion(&store, &projection, &consecutive_failures).await;
+
+        assert_eq!(consecutive_failures.load(Ordering::Relaxed), 2);
+        assert!(logs_contain_at(
+            Level::WARN,
+            &["scheduled ingestion run failed", "consecutive=2"]
         ));
     }
 }

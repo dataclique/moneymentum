@@ -42,6 +42,16 @@ export interface EncryptedWalletSession {
   iv: string
 }
 
+const HEX_ENCODING_PATTERN = /^[0-9a-fA-F]+$/
+const SALT_BYTE_LENGTH = 16
+const IV_BYTE_LENGTH = 12
+
+const isHexEncoding = (value: string): boolean =>
+  value.length > 0 && HEX_ENCODING_PATTERN.test(value)
+
+const isFixedLengthHex = (value: string, byteLength: number): boolean =>
+  value.length === byteLength * 2 && isHexEncoding(value)
+
 const isEncryptedSession = (
   value: unknown,
 ): value is EncryptedWalletSession => {
@@ -51,17 +61,25 @@ const isEncryptedSession = (
 
   const sessionCandidate = value as Record<string, unknown>
 
+  if (
+    typeof sessionCandidate.accountAddress !== "string" ||
+    sessionCandidate.accountAddress === "" ||
+    typeof sessionCandidate.apiWalletAddress !== "string" ||
+    sessionCandidate.apiWalletAddress === "" ||
+    typeof sessionCandidate.encryptedPrivateKey !== "string" ||
+    typeof sessionCandidate.salt !== "string" ||
+    typeof sessionCandidate.iv !== "string"
+  ) {
+    return false
+  }
+
+  const { encryptedPrivateKey, salt, iv } = sessionCandidate
+
   return (
-    typeof sessionCandidate.accountAddress === "string" &&
-    sessionCandidate.accountAddress !== "" &&
-    typeof sessionCandidate.apiWalletAddress === "string" &&
-    sessionCandidate.apiWalletAddress !== "" &&
-    typeof sessionCandidate.encryptedPrivateKey === "string" &&
-    sessionCandidate.encryptedPrivateKey !== "" &&
-    typeof sessionCandidate.salt === "string" &&
-    sessionCandidate.salt !== "" &&
-    typeof sessionCandidate.iv === "string" &&
-    sessionCandidate.iv !== ""
+    isHexEncoding(encryptedPrivateKey) &&
+    encryptedPrivateKey.length % 2 === 0 &&
+    isFixedLengthHex(salt, SALT_BYTE_LENGTH) &&
+    isFixedLengthHex(iv, IV_BYTE_LENGTH)
   )
 }
 

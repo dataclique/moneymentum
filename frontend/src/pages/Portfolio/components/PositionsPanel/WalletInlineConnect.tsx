@@ -4,10 +4,7 @@ import { toast } from "solid-sonner"
 
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import {
-  getStoredEncryptedSession,
-  getStoredWalletAddresses,
-} from "@/contexts/wallet-context"
+import { getStoredWalletAddresses } from "@/contexts/wallet-context"
 import { useWallet } from "@/hooks/useWallet"
 import { getErrorMessage } from "@/lib/error-message"
 import {
@@ -25,7 +22,7 @@ export const WalletInlineConnect = (): JSX.Element => {
 
   onMount(() => {
     const stored = getStoredWalletAddresses()
-    if (!stored || getStoredEncryptedSession()) {
+    if (!stored) {
       return
     }
 

@@ -441,6 +441,7 @@ export const usePortfolioState = () => {
     symbolsDeltaBelowMinimum().length > 0
 
   const handleAddToken = (symbol: string) => {
+    if (!isConnected()) return
     if (symbol in targetPortfolio) return
     if (deletedArchive[symbol] !== undefined) return
 

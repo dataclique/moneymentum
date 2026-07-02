@@ -71,6 +71,14 @@ const messageForTag = (error: TaggedError): string | null => {
       return "Connect a wallet to continue."
     case "ExchangeRequestError":
       return "The exchange rejected the request. Please try again."
+    case "WalletConnectError":
+      return "Failed to save wallet credentials. Please try again."
+    case "WalletUnlockError":
+      return "Failed to unlock wallet. Please try again."
+    case "WalletIncorrectPin":
+      return "Incorrect PIN"
+    case "WalletSessionMissing":
+      return "No saved wallet session found."
     default:
       return null
   }

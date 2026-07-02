@@ -1,4 +1,5 @@
 import { createMemo, createSignal, onMount, type JSX } from "solid-js"
+import * as Effect from "effect/Effect"
 import { toast } from "solid-sonner"
 
 import { Button } from "@/components/ui/button"
@@ -8,6 +9,7 @@ import {
   getStoredWalletAddresses,
 } from "@/contexts/wallet-context"
 import { useWallet } from "@/hooks/useWallet"
+import { getErrorMessage } from "@/lib/error-message"
 import {
   normalizeWalletPinInput,
   WALLET_PIN_LENGTH,
@@ -51,13 +53,13 @@ export const WalletInlineConnect = (): JSX.Element => {
 
     setIsConnecting(true)
     try {
-      await connect(credentials, pin())
+      await Effect.runPromise(connect(credentials, pin()))
       setPrivateKey("")
       setPin("")
       toast.success("Wallet connected")
     } catch (error) {
       console.error("Failed to encrypt and store wallet credentials:", error)
-      toast.error("Failed to save wallet credentials. Please try again.")
+      toast.error(getErrorMessage(error))
     } finally {
       setIsConnecting(false)
     }

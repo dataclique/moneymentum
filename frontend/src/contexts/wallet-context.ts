@@ -1,5 +1,7 @@
 import { createContext, type Accessor } from "solid-js"
+import type * as Effect from "effect/Effect"
 import type { HyperliquidClient } from "@/services/hyperliquid-client"
+import type { WalletConnectError, WalletUnlockFailure } from "@/services/wallet"
 
 export type NetworkMode = "testnet" | "mainnet"
 
@@ -16,8 +18,11 @@ export interface WalletContextType {
   isLocked: Accessor<boolean>
   hasStoredSession: Accessor<boolean>
   client: Accessor<HyperliquidClient | null>
-  connect: (credentials: WalletCredentials, pin: string) => Promise<void>
-  unlock: (pin: string) => Promise<void>
+  connect: (
+    credentials: WalletCredentials,
+    pin: string,
+  ) => Effect.Effect<void, WalletConnectError>
+  unlock: (pin: string) => Effect.Effect<void, WalletUnlockFailure>
   disconnect: () => void
   setNetworkMode: (mode: NetworkMode) => void
 }

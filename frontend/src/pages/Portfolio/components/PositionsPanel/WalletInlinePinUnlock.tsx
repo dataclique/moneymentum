@@ -1,12 +1,13 @@
 import { createSignal, onMount, Show, type JSX } from "solid-js"
+import * as Effect from "effect/Effect"
 
 import { Input } from "@/components/ui/input"
 import { getStoredEncryptedSession } from "@/contexts/wallet-context"
 import { useWallet } from "@/hooks/useWallet"
+import { getErrorMessage } from "@/lib/error-message"
 import {
   normalizeWalletPinInput,
   WALLET_PIN_LENGTH,
-  WalletCredentialDecryptError,
 } from "@/services/walletCredentialCrypto"
 
 const formatWalletAddress = (address: string): string => {
@@ -45,16 +46,12 @@ export const WalletInlinePinUnlock = (): JSX.Element => {
     setIsUnlocking(true)
     setUnlockError(null)
     try {
-      await unlock(enteredPin)
+      await Effect.runPromise(unlock(enteredPin))
       setPin("")
     } catch (error) {
       setPin("")
-      if (error instanceof WalletCredentialDecryptError) {
-        setUnlockError("Incorrect PIN")
-      } else {
-        console.error("Failed to unlock wallet:", error)
-        setUnlockError("Failed to unlock wallet. Please try again.")
-      }
+      console.error("Failed to unlock wallet:", error)
+      setUnlockError(getErrorMessage(error))
     } finally {
       setIsUnlocking(false)
       focusPinInput()

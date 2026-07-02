@@ -231,13 +231,45 @@ mod tests {
 
     use super::IngestionJob;
     use crate::ingestion::fixtures::{
-        MockHyperliquid, ingestion_store, instant, job_context, test_services,
-        test_services_with_hyperliquid,
+        FailingMockHyperliquid, MockHyperliquid, ingestion_store, instant, job_context,
+        test_services, test_services_with_hyperliquid,
     };
     use crate::ingestion::orchestration::{create_run, latest_status, recover_abandoned_runs};
     use crate::ingestion::run::running_runs;
     use crate::ingestion::run::{IngestionRunCommand, IngestionRunStatus};
+    use crate::ingestion::run_id::IngestionRunId;
     use crate::logs_contain_at;
+
+    #[test]
+    fn ingestion_job_label_includes_run_id() {
+        let run_id: IngestionRunId = format!("ingestion-123-00000000000000000000000000000001")
+            .parse()
+            .unwrap();
+        let label = IngestionJob::new(run_id.clone()).label();
+
+        assert_eq!(label.to_string(), format!("ingestion:{run_id}"));
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn job_records_failure_when_ingestion_errors() {
+        let (store, projection, pool) = ingestion_store().await;
+        let run_id = create_run(&store, &projection).await.unwrap();
+        let services = test_services_with_hyperliquid(Arc::new(FailingMockHyperliquid)).await;
+        let context = job_context(&store, &projection, services);
+        let job = IngestionJob::new(run_id.clone());
+
+        job.perform(&context).await.unwrap();
+
+        let status = latest_status(&pool).await.unwrap();
+
+        assert_eq!(status, Some(IngestionRunStatus::Failed));
+        let run_id = run_id.to_string();
+        assert!(logs_contain_at(
+            Level::ERROR,
+            &["ingestion failed", run_id.as_str()]
+        ));
+    }
 
     #[traced_test]
     #[tokio::test]

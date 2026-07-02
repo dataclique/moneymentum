@@ -249,12 +249,17 @@ pub(crate) async fn running_runs(
 #[cfg(test)]
 mod tests {
     use event_sorcery::{LifecycleError, TestHarness, replay};
+    use tracing::Level;
+    use tracing_test::traced_test;
 
     use super::{
-        IngestionRun, IngestionRunCommand, IngestionRunError, IngestionRunEvent, IngestionRunStatus,
+        IngestionRun, IngestionRunCommand, IngestionRunError, IngestionRunEvent,
+        IngestionRunStatus, complete_run, fail_run, running_runs,
     };
-    use crate::ingestion::fixtures::instant;
-    use crate::ingestion::orchestration::ABANDONED_RUN_REASON;
+    use crate::ingestion::fixtures::{ingestion_store, instant};
+    use crate::ingestion::orchestration::{ABANDONED_RUN_REASON, create_run, latest_status};
+    use crate::ingestion::run_id::IngestionRunId;
+    use crate::logs_contain_at;
 
     #[test]
     fn replay_reconstructs_a_running_run() {
@@ -278,6 +283,108 @@ mod tests {
             result.is_err(),
             "a history starting with a terminal event must not originate a run"
         );
+    }
+
+    #[test]
+    fn replay_reconstructs_a_completed_run() {
+        let run = replay::<IngestionRun>(vec![
+            IngestionRunEvent::Started {
+                started_at: instant(),
+            },
+            IngestionRunEvent::Completed {
+                last_record_at: instant(),
+                completed_at: instant(),
+            },
+        ])
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(run.status, IngestionRunStatus::Completed);
+    }
+
+    #[tokio::test]
+    async fn starting_a_fresh_run_emits_started() {
+        let started_at = instant();
+        let run_id = IngestionRunId::new(started_at);
+
+        TestHarness::<IngestionRun>::with()
+            .given(vec![])
+            .when(IngestionRunCommand::Start { run_id, started_at })
+            .await
+            .then_expect_events(&[IngestionRunEvent::Started { started_at }]);
+    }
+
+    #[tokio::test]
+    async fn starting_an_existing_run_returns_already_started() {
+        let started_at = instant();
+        let run_id = IngestionRunId::new(started_at);
+        let error = TestHarness::<IngestionRun>::with()
+            .given(vec![IngestionRunEvent::Started { started_at }])
+            .when(IngestionRunCommand::Start { run_id, started_at })
+            .await
+            .then_expect_error();
+
+        assert!(matches!(
+            error,
+            LifecycleError::Apply(IngestionRunError::AlreadyStarted)
+        ));
+    }
+
+    #[tokio::test]
+    async fn complete_before_start_returns_not_started() {
+        let error = TestHarness::<IngestionRun>::with()
+            .given(vec![])
+            .when(IngestionRunCommand::Complete {
+                last_record_at: instant(),
+                completed_at: instant(),
+            })
+            .await
+            .then_expect_error();
+
+        assert!(matches!(
+            error,
+            LifecycleError::Apply(IngestionRunError::NotStarted)
+        ));
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn complete_run_transitions_a_running_run_via_store() {
+        let (store, projection, pool) = ingestion_store().await;
+        let run_id = create_run(&store, &projection).await.unwrap();
+
+        complete_run(&store, &run_id, instant()).await.unwrap();
+
+        assert_eq!(
+            latest_status(&pool).await.unwrap(),
+            Some(IngestionRunStatus::Completed)
+        );
+        assert!(running_runs(&projection).await.unwrap().is_empty());
+        let run_id = run_id.to_string();
+        assert!(logs_contain_at(
+            Level::DEBUG,
+            &["ingestion run completed", run_id.as_str()]
+        ));
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn fail_run_transitions_a_running_run_via_store() {
+        let (store, projection, pool) = ingestion_store().await;
+        let run_id = create_run(&store, &projection).await.unwrap();
+
+        fail_run(&store, &run_id, "boom").await.unwrap();
+
+        assert_eq!(
+            latest_status(&pool).await.unwrap(),
+            Some(IngestionRunStatus::Failed)
+        );
+        assert!(running_runs(&projection).await.unwrap().is_empty());
+        let run_id = run_id.to_string();
+        assert!(logs_contain_at(
+            Level::DEBUG,
+            &["ingestion run failed", run_id.as_str()]
+        ));
     }
 
     #[tokio::test]

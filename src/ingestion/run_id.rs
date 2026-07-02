@@ -121,4 +121,18 @@ mod tests {
                 .is_err()
         );
     }
+
+    #[test]
+    fn ingestion_run_id_serializes_as_its_display_form() {
+        let started_at = Utc.with_ymd_and_hms(2026, 1, 2, 3, 4, 5).unwrap();
+        let run_id = IngestionRunId::new(started_at);
+
+        let json = serde_json::to_string(&run_id).unwrap();
+
+        assert_eq!(json, format!("\"{run_id}\""));
+        assert_eq!(
+            serde_json::from_str::<IngestionRunId>(&json).unwrap(),
+            run_id
+        );
+    }
 }

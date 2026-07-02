@@ -226,6 +226,15 @@ mod tests {
     use crate::ingestion::run::{IngestionRunCommand, IngestionRunStatus, running_runs};
     use crate::logs_contain_at;
 
+    #[tokio::test]
+    async fn latest_status_returns_none_when_no_runs_exist() {
+        let (_store, _projection, pool) = ingestion_store().await;
+
+        let status = latest_status(&pool).await.unwrap();
+
+        assert_eq!(status, None);
+    }
+
     #[traced_test]
     #[tokio::test]
     async fn create_run_starts_a_running_run_and_logs() {
@@ -360,6 +369,29 @@ mod tests {
             1,
             "exactly one run remains in the Running slot"
         );
+        assert!(logs_contain_at(
+            Level::DEBUG,
+            &["lost the one-running race", "abandoned the orphan run"]
+        ));
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn scheduled_ingestion_starts_a_run_when_idle() {
+        let (store, projection, pool) = ingestion_store().await;
+        let consecutive_failures = AtomicU32::new(5);
+
+        trigger_scheduled_ingestion(&store, &projection, &consecutive_failures).await;
+
+        assert_eq!(consecutive_failures.load(Ordering::Relaxed), 0);
+        assert_eq!(
+            latest_status(&pool).await.unwrap(),
+            Some(IngestionRunStatus::Running)
+        );
+        assert!(logs_contain_at(
+            Level::DEBUG,
+            &["scheduled ingestion run enqueued"]
+        ));
     }
 
     #[traced_test]

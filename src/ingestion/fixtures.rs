@@ -25,6 +25,8 @@ pub(crate) struct MockHyperliquid {
     pub(crate) fetch_market_metadata_calls: Option<Arc<AtomicU32>>,
 }
 
+pub(crate) struct FailingMockHyperliquid;
+
 impl MockHyperliquid {
     pub(crate) fn without_call_counter() -> Self {
         Self {
@@ -80,6 +82,30 @@ impl Hyperliquid for MockHyperliquid {
             rate: dec!(0.0001),
             symbol: Symbol::from_raw(market.as_str()),
         }])
+    }
+}
+
+#[async_trait]
+impl Hyperliquid for FailingMockHyperliquid {
+    async fn fetch_market_metadata(&self) -> Result<Vec<MarketMetadata>, HyperliquidError> {
+        Err(HyperliquidError::Url(url::ParseError::EmptyHost))
+    }
+
+    async fn fetch_candles(
+        &self,
+        _market: &Market,
+        _timeframe: Timeframe,
+        _start: DateTime<Utc>,
+    ) -> Result<Vec<Candle>, HyperliquidError> {
+        Err(HyperliquidError::Url(url::ParseError::EmptyHost))
+    }
+
+    async fn fetch_funding_rates(
+        &self,
+        _market: &Market,
+        _start: DateTime<Utc>,
+    ) -> Result<Vec<FundingRate>, HyperliquidError> {
+        Err(HyperliquidError::Url(url::ParseError::EmptyHost))
     }
 }
 

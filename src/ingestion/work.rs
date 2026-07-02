@@ -19,14 +19,12 @@ const FUNDING_INGESTION_CRON: &str = "20 0 * * * *";
 const TEST_INGESTION_CRON: &str = "*/2 * * * * *";
 
 impl IngestionWork {
-    pub(crate) fn scheduled_units() -> [Self; 5] {
-        [
-            Self::candles(Timeframe::FifteenMin),
-            Self::candles(Timeframe::OneHour),
-            Self::candles(Timeframe::OneDay),
-            Self::candles(Timeframe::OneWeek),
-            Self::Funding,
-        ]
+    pub(crate) fn scheduled_units() -> Vec<Self> {
+        Timeframe::all()
+            .into_iter()
+            .map(Self::candles)
+            .chain([Self::Funding])
+            .collect()
     }
 
     /// Scoped work units started by schedulers in e2e tests: one candle interval
@@ -115,7 +113,10 @@ mod tests {
 
     #[test]
     fn scheduled_units_cover_every_candle_timeframe_and_funding() {
-        assert_eq!(IngestionWork::scheduled_units().len(), 5);
+        assert_eq!(
+            IngestionWork::scheduled_units().len(),
+            Timeframe::all().len() + 1
+        );
         for timeframe in Timeframe::all() {
             assert!(IngestionWork::scheduled_units().contains(&IngestionWork::candles(timeframe)));
         }

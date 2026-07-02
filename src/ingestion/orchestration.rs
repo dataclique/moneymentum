@@ -61,7 +61,7 @@ pub(crate) fn default_ingestion_schedules()
     #[cfg(feature = "test-support")]
     let units: Vec<IngestionWork> = IngestionWork::test_e2e_scheduled_units().into();
     #[cfg(not(feature = "test-support"))]
-    let units: Vec<IngestionWork> = IngestionWork::scheduled_units().into();
+    let units = IngestionWork::scheduled_units();
 
     units
         .into_iter()

@@ -22,6 +22,14 @@ const wrapper = (props: ParentProps) => (
 
 const TEST_PIN = "123456"
 
+const validEncryptedSessionFixture = {
+  accountAddress: "0xStoredAccountAddress",
+  apiWalletAddress: "0xStoredApiWalletAddress",
+  encryptedPrivateKey: "deadbeef".repeat(4),
+  salt: "0123456789abcdef0123456789abcdef",
+  iv: "0123456789abcdef01234567",
+}
+
 describe("useWallet", () => {
   const ensureLocalStorage = () => {
     const globalAny = globalThis as { localStorage?: Storage }
@@ -88,6 +96,19 @@ describe("useWallet", () => {
   it("reports a locked session when encrypted credentials exist on disk", () => {
     localStorage.setItem(
       "hyperliquid-wallet",
+      JSON.stringify(validEncryptedSessionFixture),
+    )
+
+    const { result } = renderHook(() => useWallet(), { wrapper })
+
+    expect(result.isLocked()).toBe(true)
+    expect(result.hasStoredSession()).toBe(true)
+    expect(result.isConnected()).toBe(false)
+  })
+
+  it("ignores malformed encrypted session payloads on disk", () => {
+    localStorage.setItem(
+      "hyperliquid-wallet",
       JSON.stringify({
         accountAddress: "0xStoredAccountAddress",
         apiWalletAddress: "0xStoredApiWalletAddress",
@@ -99,9 +120,8 @@ describe("useWallet", () => {
 
     const { result } = renderHook(() => useWallet(), { wrapper })
 
-    expect(result.isLocked()).toBe(true)
-    expect(result.hasStoredSession()).toBe(true)
-    expect(result.isConnected()).toBe(false)
+    expect(result.isLocked()).toBe(false)
+    expect(result.hasStoredSession()).toBe(false)
   })
 
   it("reads network mode from localStorage", () => {

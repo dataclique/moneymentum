@@ -1288,7 +1288,8 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(tradable.status(), StatusCode::OK);
-        let tradable_symbols: Vec<String> = serde_json::from_str(&body_text(tradable).await).unwrap();
+        let tradable_symbols: Vec<String> =
+            serde_json::from_str(&body_text(tradable).await).unwrap();
         assert_eq!(tradable_symbols, vec!["ETH".to_string()]);
 
         let leverage = router

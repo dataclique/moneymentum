@@ -143,7 +143,20 @@ in
             /bin/sh -c 'systemctl reset-failed dbus-broker systemd-logind || true; systemctl restart dbus-broker; systemctl restart systemd-logind' \
             || true
           REMOTE_PREFLIGHT
-          sleep 5
+
+          # dbus heal is scheduled for +3s after preflight SSH closes; poll logind
+          # before deploy-rs activation so wedged logind fails fast instead of timing
+          # out for the full activation window (nixpkgs#527469).
+          for ((attempt = 1; attempt <= 15; attempt++)); do
+            if ssh -i "$identity" "root@$host_ip" loginctl list-users >/dev/null 2>&1; then
+              break
+            fi
+            if [ "$attempt" -eq 15 ]; then
+              echo "ERROR: logind still unhealthy after deploy preflight" >&2
+              exit 1
+            fi
+            sleep 2
+          done
 
           deploy ${deployFlags} --hostname "$host_ip" ''${ssh_flag:+"$ssh_flag"} "$@" .#moneymentum
         '';

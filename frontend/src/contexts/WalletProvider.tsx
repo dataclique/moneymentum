@@ -15,10 +15,19 @@ import {
   type NetworkMode,
   type WalletCredentials,
 } from "./wallet-context"
+import * as Effect from "effect/Effect"
+import {
+  WalletConnectError,
+  WalletIncorrectPin,
+  WalletSessionMissing,
+  WalletUnlockError,
+  type WalletUnlockFailure,
+} from "@/services/wallet"
 import { HyperliquidClient } from "@/services/hyperliquid-client"
 import {
   decryptWalletPrivateKey,
   encryptWalletPrivateKey,
+  WalletCredentialDecryptError,
 } from "@/services/walletCredentialCrypto"
 
 const credentialsFromSession = (
@@ -73,32 +82,52 @@ export const WalletProvider = (props: ParentProps) => {
     return new HyperliquidClient(creds, networkMode())
   })
 
-  const connect = async (
+  const connect = (
     newCredentials: WalletCredentials,
     pin: string,
-  ): Promise<void> => {
-    const encrypted = await encryptWalletPrivateKey(
-      newCredentials.privateKey,
-      pin,
+  ): Effect.Effect<void, WalletConnectError> =>
+    Effect.tryPromise({
+      try: () => encryptWalletPrivateKey(newCredentials.privateKey, pin),
+      catch: cause => new WalletConnectError({ cause }),
+    }).pipe(
+      Effect.tap(encrypted =>
+        Effect.sync(() => {
+          persistEncryptedSession(newCredentials, encrypted)
+          setCredentials(newCredentials)
+          syncStoredSessionState()
+        }),
+      ),
+      Effect.asVoid,
     )
-    persistEncryptedSession(newCredentials, encrypted)
-    setCredentials(newCredentials)
-    syncStoredSessionState()
-  }
 
-  const unlock = async (pin: string): Promise<void> => {
+  const unlock = (pin: string): Effect.Effect<void, WalletUnlockFailure> => {
     const session = getStoredEncryptedSession()
     if (!session) {
-      throw new Error("no encrypted wallet session in storage")
+      return Effect.fail(new WalletSessionMissing())
     }
 
-    const privateKey = await decryptWalletPrivateKey(
-      session.encryptedPrivateKey,
-      pin,
-      session.salt,
-      session.iv,
+    return Effect.tryPromise({
+      try: () =>
+        decryptWalletPrivateKey(
+          session.encryptedPrivateKey,
+          pin,
+          session.salt,
+          session.iv,
+        ),
+      catch: cause => {
+        if (cause instanceof WalletCredentialDecryptError) {
+          return new WalletIncorrectPin()
+        }
+        return new WalletUnlockError({ cause })
+      },
+    }).pipe(
+      Effect.tap(privateKey =>
+        Effect.sync(() => {
+          setCredentials(credentialsFromSession(session, privateKey))
+        }),
+      ),
+      Effect.asVoid,
     )
-    setCredentials(credentialsFromSession(session, privateKey))
   }
 
   const disconnect = () => {

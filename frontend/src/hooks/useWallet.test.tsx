@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import * as Effect from "effect/Effect"
 import { renderHook } from "@solidjs/testing-library"
 import { useWallet } from "./useWallet"
 import { WalletProvider } from "@/contexts/WalletProvider"
 import type { ParentProps } from "solid-js"
-import { WalletCredentialDecryptError } from "@/services/walletCredentialCrypto"
+import { getErrorMessage } from "@/lib/error-message"
 
 vi.mock("@/services/hyperliquid-client", () => ({
   HyperliquidClient: class MockHyperliquidClient {
@@ -118,7 +119,7 @@ describe("useWallet", () => {
       privateKey: "TEST_PRIVATE_KEY_PLACEHOLDER",
     }
 
-    await result.connect(credentials, TEST_PIN)
+    await Effect.runPromise(result.connect(credentials, TEST_PIN))
 
     expect(result.isConnected()).toBe(true)
     expect(result.credentials()).toEqual(credentials)
@@ -148,13 +149,13 @@ describe("useWallet", () => {
     }
 
     const { result: initial } = renderHook(() => useWallet(), { wrapper })
-    await initial.connect(credentials, TEST_PIN)
+    await Effect.runPromise(initial.connect(credentials, TEST_PIN))
     expect(localStorage.getItem("hyperliquid-wallet")).not.toBeNull()
 
     const { result: reloaded } = renderHook(() => useWallet(), { wrapper })
     expect(reloaded.isLocked()).toBe(true)
 
-    await reloaded.unlock(TEST_PIN)
+    await Effect.runPromise(reloaded.unlock(TEST_PIN))
 
     expect(reloaded.isConnected()).toBe(true)
     expect(reloaded.credentials()?.privateKey).toBe(credentials.privateKey)
@@ -162,20 +163,28 @@ describe("useWallet", () => {
 
   it("rejects unlock with the wrong pin", async () => {
     const { result } = renderHook(() => useWallet(), { wrapper })
-    await result.connect(
-      {
-        accountAddress: "0xTestAccountAddress",
-        apiWalletAddress: "0xTestApiWalletAddress",
-        privateKey: "TEST_PRIVATE_KEY_PLACEHOLDER",
-      },
-      TEST_PIN,
+    await Effect.runPromise(
+      result.connect(
+        {
+          accountAddress: "0xTestAccountAddress",
+          apiWalletAddress: "0xTestApiWalletAddress",
+          privateKey: "TEST_PRIVATE_KEY_PLACEHOLDER",
+        },
+        TEST_PIN,
+      ),
     )
 
     const { result: reloaded } = renderHook(() => useWallet(), { wrapper })
 
-    await expect(reloaded.unlock("999999")).rejects.toBeInstanceOf(
-      WalletCredentialDecryptError,
-    )
+    let unlockFailure: unknown
+    try {
+      await Effect.runPromise(reloaded.unlock("999999"))
+    } catch (error) {
+      unlockFailure = error
+    }
+
+    expect(unlockFailure).toBeDefined()
+    expect(getErrorMessage(unlockFailure)).toBe("Incorrect PIN")
     expect(reloaded.isConnected()).toBe(false)
   })
 

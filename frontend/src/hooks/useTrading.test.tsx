@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
+import * as Effect from "effect/Effect"
 import { renderHook, waitFor } from "@solidjs/testing-library"
 import { QueryClient, QueryClientProvider } from "@tanstack/solid-query"
 import type { ParentProps } from "solid-js"
@@ -90,7 +91,7 @@ const createConnectedWrapper = (walletCredentials: {
   const ConnectOnMount = (props: ParentProps) => {
     const { connect } = useWallet()
     onMount(() => {
-      void connect(walletCredentials, TEST_PIN)
+      void Effect.runPromise(connect(walletCredentials, TEST_PIN))
     })
     return <>{props.children}</>
   }

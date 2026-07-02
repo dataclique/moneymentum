@@ -103,18 +103,16 @@ in
 
       # nixpkgs#398370 / #527469: a hung switch-to-configuration leaves a stale
       # lock and/or wedged dbus-logind, which makes the next activation fail with
-      # "Unable to list users with logind" and can trap autoRollback in a long
-      # dbus-broker stop. Heal before activating.
+      # "Unable to list users with logind". dbus/logind must not be restarted
+      # inline over SSH -- that drops the session (exit 255) before deploy runs.
       deployPreflight = builtins.concatStringsSep "; " [
         "systemctl stop 'nixos-rebuild-switch-to-configuration*' 2>/dev/null || true"
-        "pkill -9 -f switch-to-configuration || true"
+        "pkill -9 -f '[s]witch-to-configuration' || true"
         "rm -f /run/nixos/switch-to-configuration.lock"
-        "systemctl reset-failed dbus-broker systemd-logind || true"
-        "systemctl restart dbus-broker"
-        "systemctl restart systemd-logind"
         "systemctl stop moneymentum-markets-refresh.timer staging-markets-refresh.timer 2>/dev/null || true"
         "systemctl disable moneymentum-markets-refresh.timer staging-markets-refresh.timer 2>/dev/null || true"
         serviceCleanup
+        "systemd-run --on-active=3s --collect --unit=moneymentum-deploy-dbus-heal /bin/sh -c 'systemctl reset-failed dbus-broker systemd-logind || true; systemctl restart dbus-broker; systemctl restart systemd-logind' || true"
       ];
 
     in
@@ -146,6 +144,7 @@ in
           ${deployPreamble}
 
           ssh -i "$identity" "root@$host_ip" '${deployPreflight}'
+          sleep 5
 
           deploy ${deployFlags} --hostname "$host_ip" ''${ssh_flag:+"$ssh_flag"} "$@" .#moneymentum
         '';

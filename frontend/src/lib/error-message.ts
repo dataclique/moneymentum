@@ -77,6 +77,8 @@ const messageForTag = (error: TaggedError): string | null => {
       return "Failed to unlock wallet. Please try again."
     case "WalletIncorrectPin":
       return "Incorrect PIN"
+    case "WalletCredentialCryptoFailure":
+      return "Failed to unlock wallet. Please try again."
     case "WalletSessionMissing":
       return "No saved wallet session found."
     default:

@@ -1,11 +1,22 @@
 import { describe, expect, it } from "vitest"
+import * as Effect from "effect/Effect"
 
+import { WalletIncorrectPin } from "./wallet"
 import {
   decryptWalletPrivateKey,
   encryptWalletPrivateKey,
   WALLET_PIN_LENGTH,
-  WalletCredentialDecryptError,
 } from "./walletCredentialCrypto"
+
+const failureError = async <ErrorType>(
+  effect: Effect.Effect<unknown, ErrorType>,
+): Promise<ErrorType> => {
+  const exit = await Effect.runPromiseExit(effect)
+  if (exit._tag === "Failure" && exit.cause._tag === "Fail") {
+    return exit.cause.error
+  }
+  throw new Error(`expected a tagged failure, got: ${JSON.stringify(exit)}`)
+}
 
 describe("walletCredentialCrypto", () => {
   it("round-trips a private key with the same pin", async () => {
@@ -13,11 +24,13 @@ describe("walletCredentialCrypto", () => {
     const pin = "654321"
 
     const encrypted = await encryptWalletPrivateKey(privateKey, pin)
-    const decrypted = await decryptWalletPrivateKey(
-      encrypted.encryptedPrivateKey,
-      pin,
-      encrypted.salt,
-      encrypted.iv,
+    const decrypted = await Effect.runPromise(
+      decryptWalletPrivateKey(
+        encrypted.encryptedPrivateKey,
+        pin,
+        encrypted.salt,
+        encrypted.iv,
+      ),
     )
 
     expect(decrypted).toBe(privateKey)
@@ -43,14 +56,17 @@ describe("walletCredentialCrypto", () => {
   it("rejects decryption with the wrong pin", async () => {
     const encrypted = await encryptWalletPrivateKey("0xsecret", "123456")
 
-    await expect(
+    const error = await failureError(
       decryptWalletPrivateKey(
         encrypted.encryptedPrivateKey,
         "999999",
         encrypted.salt,
         encrypted.iv,
       ),
-    ).rejects.toBeInstanceOf(WalletCredentialDecryptError)
+    )
+
+    expect(error).toBeInstanceOf(WalletIncorrectPin)
+    expect(error._tag).toBe("WalletIncorrectPin")
   })
 
   it("produces different ciphertext for the same key on each encryption", async () => {

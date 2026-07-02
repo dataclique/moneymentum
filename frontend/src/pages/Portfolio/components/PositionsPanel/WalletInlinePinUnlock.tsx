@@ -1,5 +1,6 @@
 import { createSignal, onMount, Show, type JSX } from "solid-js"
 import * as Effect from "effect/Effect"
+import * as Either from "effect/Either"
 
 import { Input } from "@/components/ui/input"
 import { getStoredEncryptedSession } from "@/contexts/wallet-context"
@@ -45,17 +46,21 @@ export const WalletInlinePinUnlock = (): JSX.Element => {
 
     setIsUnlocking(true)
     setUnlockError(null)
-    try {
-      await Effect.runPromise(unlock(enteredPin))
+
+    const unlockResult = await Effect.runPromise(
+      Effect.either(unlock(enteredPin)),
+    )
+
+    if (Either.isRight(unlockResult)) {
       setPin("")
-    } catch (error) {
+    } else {
       setPin("")
-      console.error("Failed to unlock wallet:", error)
-      setUnlockError(getErrorMessage(error))
-    } finally {
-      setIsUnlocking(false)
-      focusPinInput()
+      console.error("Failed to unlock wallet:", unlockResult.left)
+      setUnlockError(getErrorMessage(unlockResult.left))
     }
+
+    setIsUnlocking(false)
+    focusPinInput()
   }
 
   return (

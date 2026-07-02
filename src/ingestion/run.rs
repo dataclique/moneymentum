@@ -135,7 +135,7 @@ impl EventSourced for IngestionRun {
         };
 
         match event {
-            IngestionRunEvent::Started { .. } => Ok(None),
+            IngestionRunEvent::Started { .. } => Err(IngestionRunError::AlreadyStarted),
             IngestionRunEvent::Completed { .. } => terminal(IngestionRunStatus::Completed),
             IngestionRunEvent::Failed { .. } => terminal(IngestionRunStatus::Failed),
             IngestionRunEvent::Abandoned { .. } => terminal(IngestionRunStatus::Abandoned),
@@ -270,6 +270,23 @@ mod tests {
         .unwrap();
 
         assert_eq!(run.status, IngestionRunStatus::Running);
+    }
+
+    #[test]
+    fn replay_rejects_duplicate_started_events() {
+        let result = replay::<IngestionRun>(vec![
+            IngestionRunEvent::Started {
+                started_at: instant(),
+            },
+            IngestionRunEvent::Started {
+                started_at: instant(),
+            },
+        ]);
+
+        assert!(
+            result.is_err(),
+            "duplicate Started events must not erase or preserve an invalid run history"
+        );
     }
 
     #[test]

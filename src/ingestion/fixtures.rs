@@ -8,6 +8,9 @@ use rust_decimal_macros::dec;
 use sqlx::SqlitePool;
 use sqlx::sqlite::SqlitePoolOptions;
 
+use super::job::IngestionJobContext;
+use super::run::IngestionRun;
+use super::services::IngestionServices;
 use crate::candle::Candle;
 use crate::finance::{Market, Symbol, hyperliquid_swap_ccxt_symbol};
 use crate::funding::FundingRate;
@@ -16,10 +19,6 @@ use crate::market_catalog::MarketCatalog;
 use crate::market_enablement::MarketEnablement;
 use crate::market_metadata::MarketMetadata;
 use crate::timeframe::Timeframe;
-
-use super::job::IngestionJobContext;
-use super::run::IngestionRun;
-use super::services::IngestionServices;
 
 pub(crate) struct MockHyperliquid {
     pub(crate) fetch_market_metadata_calls: Option<Arc<AtomicU32>>,
@@ -113,18 +112,6 @@ pub(crate) async fn test_services() -> IngestionServices {
     test_services_with_hyperliquid(Arc::new(MockHyperliquid::without_call_counter())).await
 }
 
-async fn in_memory_sqlite_pool() -> SqlitePool {
-    SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect(":memory:")
-        .await
-        .unwrap()
-}
-
-fn unique_test_data_dir() -> std::path::PathBuf {
-    tempfile::tempdir().expect("test data dir").keep()
-}
-
 pub(crate) async fn test_services_with_hyperliquid(
     hyperliquid: Arc<dyn Hyperliquid>,
 ) -> IngestionServices {
@@ -178,4 +165,16 @@ pub(crate) async fn ingestion_store() -> (
 
 pub(crate) fn instant() -> DateTime<Utc> {
     Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap()
+}
+
+async fn in_memory_sqlite_pool() -> SqlitePool {
+    SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect(":memory:")
+        .await
+        .unwrap()
+}
+
+fn unique_test_data_dir() -> std::path::PathBuf {
+    tempfile::tempdir().expect("test data dir").keep()
 }

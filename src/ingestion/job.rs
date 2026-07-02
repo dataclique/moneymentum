@@ -242,7 +242,7 @@ mod tests {
 
     #[test]
     fn ingestion_job_label_includes_run_id() {
-        let run_id: IngestionRunId = format!("ingestion-123-00000000000000000000000000000001")
+        let run_id: IngestionRunId = "ingestion-123-00000000000000000000000000000001"
             .parse()
             .unwrap();
         let label = IngestionJob::new(run_id.clone()).label();

@@ -21,7 +21,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU32;
 
-use apalis::prelude::{Data, Monitor, WorkerBuilder};
+use apalis::prelude::{Monitor, WorkerBuilder};
 use axum::Json;
 use axum::Router;
 use axum::extract::{Path as AxumPath, Query, State};
@@ -45,8 +45,8 @@ use tracing_subscriber::EnvFilter;
 use crate::hyperliquid::{Hyperliquid, HyperliquidClient};
 use finance::Symbol;
 use ingestion::{
-    IngestionError, IngestionJob, IngestionJobContext, IngestionRun, IngestionRunStatus,
-    IngestionServices,
+    IngestionJob, IngestionJobContext, IngestionRun, IngestionRunStatus, IngestionServices,
+    IngestionWork, default_ingestion_schedules, trigger_scheduled_ingestion,
 };
 use market_catalog::MarketCatalog;
 use market_enablement::{
@@ -90,7 +90,6 @@ pub struct Config {
     log_level: LogLevel,
     max_concurrent_requests: usize,
     max_retries: usize,
-    ingestion_schedule: String,
     pub derive: Option<derive::DeriveConfig>,
 }
 
@@ -127,8 +126,6 @@ pub(crate) struct AppState {
     database_pool: SqlitePool,
     portfolio_store: Arc<Store<Portfolio>>,
     portfolio_projection: Arc<Projection<Portfolio>>,
-    ingestion_store: Arc<Store<IngestionRun>>,
-    ingestion_projection: Arc<Projection<IngestionRun>>,
     market_enablement: Arc<Store<MarketEnablement>>,
     market_enablement_projection: Arc<Projection<MarketEnablement>>,
     market_catalog_projection: Arc<Projection<MarketCatalog>>,
@@ -202,19 +199,6 @@ async fn post_screener(
         Err(err) => {
             error!(error = %err, "failed to screen perps");
             Err(StatusCode::INTERNAL_SERVER_ERROR)
-        }
-    }
-}
-
-async fn start_ingestion(State(state): State<Arc<AppState>>) -> StatusCode {
-    // `create_run` enqueues the ingestion job atomically with the `Started`
-    // event so a concurrent loser cannot wedge the slot.
-    match ingestion::create_run(&state.ingestion_store, &state.ingestion_projection).await {
-        Ok(_) => StatusCode::ACCEPTED,
-        Err(IngestionError::AlreadyRunning) => StatusCode::CONFLICT,
-        Err(err) => {
-            error!(error = %err, "failed to start ingestion run");
-            StatusCode::INTERNAL_SERVER_ERROR
         }
     }
 }
@@ -759,40 +743,31 @@ fn spawn_ingestion_worker(
     });
 }
 
-/// apalis-cron handler: enqueues an ingestion run on each schedule tick.
-async fn run_scheduled_ingestion(
-    _tick: apalis_cron::Tick<chrono::Utc>,
-    ingestion_store: Data<Arc<Store<IngestionRun>>>,
-    ingestion_projection: Data<Arc<Projection<IngestionRun>>>,
-    consecutive_failures: Data<Arc<AtomicU32>>,
-) -> Result<(), std::convert::Infallible> {
-    ingestion::trigger_scheduled_ingestion(
-        &ingestion_store,
-        &ingestion_projection,
-        &consecutive_failures,
-    )
-    .await;
-    Ok(())
-}
-
-/// Spawns the supervised apalis-cron worker that enqueues an ingestion run on a
-/// fixed schedule, so deployed data stays current without an operator poking
-/// `/ingest`.
-fn spawn_ingestion_scheduler(
-    schedule: cron::Schedule,
+/// Spawns supervised apalis-cron workers -- one per built-in schedule -- so each
+/// candle timeframe and funding refresh tick on its own cadence.
+fn spawn_ingestion_schedulers(
+    schedules: Vec<(IngestionWork, cron::Schedule)>,
     ingestion_store: Arc<Store<IngestionRun>>,
     ingestion_projection: Arc<Projection<IngestionRun>>,
 ) {
-    let consecutive_failures = Arc::new(AtomicU32::new(0));
     tokio::spawn(async move {
-        let monitor = Monitor::new().register(move |_worker_index| {
-            WorkerBuilder::new("ingestion-scheduler")
-                .backend(apalis_cron::CronStream::new(schedule.clone()))
-                .data(Arc::clone(&ingestion_store))
-                .data(Arc::clone(&ingestion_projection))
-                .data(Arc::clone(&consecutive_failures))
-                .build(run_scheduled_ingestion)
-        });
+        let mut monitor = Monitor::new();
+        for (work, schedule) in schedules {
+            let ingestion_store = Arc::clone(&ingestion_store);
+            let ingestion_projection = Arc::clone(&ingestion_projection);
+            let consecutive_failures = Arc::new(AtomicU32::new(0));
+            let worker_name = format!("ingestion-scheduler-{}", work.schedule_key());
+            monitor = monitor.register(move |_worker_index| {
+                WorkerBuilder::new(worker_name.clone())
+                    .backend(apalis_cron::CronStream::new(schedule.clone()))
+                    .data(Arc::clone(&ingestion_store))
+                    .data(Arc::clone(&ingestion_projection))
+                    .data(Arc::clone(&consecutive_failures))
+                    .build(move |tick, store, projection, failures| {
+                        trigger_scheduled_ingestion(work, tick, store, projection, failures)
+                    })
+            });
+        }
         if let Err(err) = monitor.run().await {
             error!(error = %err, "ingestion scheduler monitor crashed");
         }
@@ -812,10 +787,7 @@ pub async fn app(config: Config) -> Result<Router, Box<dyn std::error::Error + S
 
     ensure_shared_database(&config.database_url)?;
 
-    // Parse the schedule before any setup or background task: an invalid cron
-    // expression must fail startup outright, never after a worker has already
-    // been detached.
-    let ingestion_schedule = cron::Schedule::from_str(&config.ingestion_schedule)?;
+    let ingestion_schedules = default_ingestion_schedules()?;
 
     let database_options = SqliteConnectOptions::from_str(&config.database_url)?
         .journal_mode(SqliteJournalMode::Wal)
@@ -850,8 +822,8 @@ pub async fn app(config: Config) -> Result<Router, Box<dyn std::error::Error + S
             .await?;
     debug!("event-sourced stores ready");
 
-    // Abandon any run left Running by a crash before we accept /ingest, so the
-    // one-running slot can never stay wedged across a restart (issue #339).
+    // Abandon any run left Running by a crash before schedulers enqueue work, so
+    // the one-running slot can never stay wedged across a restart (issue #339).
     ingestion::recover_abandoned_runs(&ingestion_store, &ingestion_projection).await?;
 
     // apalis-sqlite is built against sqlx 0.8, so its storage needs its own
@@ -884,20 +856,18 @@ pub async fn app(config: Config) -> Result<Router, Box<dyn std::error::Error + S
     spawn_ingestion_worker(apalis_pool.clone(), ingestion_context);
     debug!("ingestion worker started");
 
-    spawn_ingestion_scheduler(
-        ingestion_schedule,
+    spawn_ingestion_schedulers(
+        ingestion_schedules,
         Arc::clone(&ingestion_store),
         Arc::clone(&ingestion_projection),
     );
-    debug!("ingestion scheduler started");
+    debug!("ingestion schedulers started");
 
     let state = Arc::new(AppState {
         config,
         database_pool: pool,
         portfolio_store,
         portfolio_projection,
-        ingestion_store,
-        ingestion_projection,
         market_enablement,
         market_enablement_projection,
         market_catalog_projection,
@@ -913,7 +883,6 @@ fn build_router(state: Arc<AppState>) -> Router {
         .route("/candles/{timeframe}", get(get_candles))
         .route("/factors/{timeframe}", get(get_factors))
         .route("/screener/{timeframe}", post(post_screener))
-        .route("/ingest", post(start_ingestion))
         .route("/ingestion/status", get(get_ingestion_status))
         .route(
             "/portfolio",
@@ -1011,7 +980,6 @@ mod tests {
             log_level: LogLevel::Info,
             max_concurrent_requests: 3,
             max_retries: 5,
-            ingestion_schedule: "0 0 * * * *".to_string(),
             derive: None,
         };
 
@@ -1030,7 +998,7 @@ mod tests {
             .build()
             .await
             .unwrap();
-        let (ingestion_store, ingestion_projection) =
+        let (_ingestion_store, _ingestion_projection) =
             StoreBuilder::<IngestionRun>::new(pool.clone())
                 .build()
                 .await
@@ -1051,8 +1019,6 @@ mod tests {
             database_pool: pool,
             portfolio_store,
             portfolio_projection,
-            ingestion_store,
-            ingestion_projection,
             market_enablement,
             market_enablement_projection,
             market_catalog_projection,
@@ -1422,7 +1388,6 @@ mod tests {
                 log_level = "info"
                 max_concurrent_requests = 3
                 max_retries = 5
-                ingestion_schedule = "0 0 * * * *"
             "#);
             let config: Config = toml::from_str(&toml).unwrap();
             prop_assert_eq!(config.port, port);

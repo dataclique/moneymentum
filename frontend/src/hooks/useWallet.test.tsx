@@ -206,6 +206,8 @@ describe("useWallet", () => {
     expect(unlockFailure).toBeDefined()
     expect(getErrorMessage(unlockFailure)).toBe("Incorrect PIN")
     expect(reloaded.isConnected()).toBe(false)
+    expect(reloaded.isLocked()).toBe(true)
+    expect(reloaded.hasStoredSession()).toBe(true)
   })
 
   it("setNetworkMode updates signal and localStorage", () => {

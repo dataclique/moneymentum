@@ -280,6 +280,7 @@ mod tests {
 
     use apalis::prelude::Data;
     use chrono::Utc;
+    use event_sorcery::{Projection, Store};
     use tracing::Level;
     use tracing_test::traced_test;
 
@@ -289,7 +290,7 @@ mod tests {
     };
     use crate::ingestion::fixtures::{ingestion_store, instant};
     use crate::ingestion::run::{
-        IngestionRun, IngestionRunCommand, IngestionRunStatus, Projection, Store, running_runs,
+        IngestionRun, IngestionRunCommand, IngestionRunStatus, running_runs,
     };
     use crate::ingestion::work::IngestionWork;
     use crate::logs_contain_at;
@@ -304,9 +305,9 @@ mod tests {
         trigger_scheduled_ingestion(
             work,
             apalis_cron::Tick::<Utc>::default(),
-            Data(Arc::clone(&store)),
-            Data(Arc::clone(&projection)),
-            Data(consecutive_failures),
+            Data::new(Arc::clone(&store)),
+            Data::new(Arc::clone(&projection)),
+            Data::new(consecutive_failures),
         )
         .await
         .unwrap();

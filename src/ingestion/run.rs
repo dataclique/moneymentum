@@ -290,8 +290,6 @@ mod tests {
     use crate::logs_contain_at;
     use crate::timeframe::Timeframe;
 
-    use crate::timeframe::Timeframe;
-
     fn started_event(started_at: chrono::DateTime<chrono::Utc>) -> IngestionRunEvent {
         IngestionRunEvent::Started {
             started_at,

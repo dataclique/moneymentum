@@ -207,7 +207,9 @@ async fn post_screener(
 }
 
 async fn start_ingestion(State(state): State<Arc<AppState>>) -> StatusCode {
-    match ingestion::enqueue_run(&state.ingestion_store, &state.ingestion_projection).await {
+    // `create_run` enqueues the ingestion job atomically with the `Started`
+    // event so a concurrent loser cannot wedge the slot.
+    match ingestion::create_run(&state.ingestion_store, &state.ingestion_projection).await {
         Ok(_) => StatusCode::ACCEPTED,
         Err(IngestionError::AlreadyRunning) => StatusCode::CONFLICT,
         Err(err) => {

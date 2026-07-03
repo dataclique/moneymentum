@@ -12,6 +12,7 @@ const hyperliquidInfoUrl = (network: NetworkMode): string =>
     : HYPERLIQUID_MAINNET_INFO_URL
 
 const HYPERLIQUID_REQUEST_TIMEOUT_MS = 10_000
+const HYPERLIQUID_WATCH_ORDERS_TIMEOUT_MS = 10_000
 
 type LeverageChangedAction = Extract<
   RebalanceAction,
@@ -157,6 +158,15 @@ const applyApiProxy = (
 ): void => {
   if (!isDeployed()) return
   const proxyBase = networkMode === "testnet" ? "/hl-testnet" : "/hl"
+  const existingApi = exchange.urls["api"]
+  if (typeof existingApi === "object") {
+    exchange.urls["api"] = {
+      ...existingApi,
+      public: proxyBase,
+      private: proxyBase,
+    }
+    return
+  }
   exchange.urls["api"] = { public: proxyBase, private: proxyBase }
 }
 
@@ -324,6 +334,10 @@ interface HyperliquidExchange {
     limit?: number,
     params?: Record<string, unknown>,
   ) => Promise<Order[]>
+  unWatchOrders: (
+    symbol?: string,
+    params?: Record<string, unknown>,
+  ) => Promise<unknown>
 }
 
 export class HyperliquidClient {
@@ -473,6 +487,93 @@ export class HyperliquidClient {
 
     const orderError = (info as { error: unknown }).error
     return typeof orderError === "string" ? orderError : null
+  }
+
+  private hyperliquidStatusEntryToOrder(status: unknown): Order {
+    if (typeof status !== "object" || status === null) {
+      return { info: status } as Order
+    }
+    if ("error" in status) {
+      return { status: "rejected", info: status } as Order
+    }
+    if ("filled" in status) {
+      return { status: "closed", info: status } as Order
+    }
+    if ("resting" in status) {
+      return { status: "open", info: status } as Order
+    }
+    return { info: status } as Order
+  }
+
+  /**
+   * CCXT hyperliquid handleErrors throws ExchangeError when any order in a batch
+   * statuses[] has { error: "..." }, even if status is "ok" and other orders filled.
+   * The full response JSON is embedded in the error message -- recover per-order results.
+   */
+  private parseOrdersFromPartialBatchExchangeError(
+    error: unknown,
+  ): Order[] | null {
+    const message = error instanceof Error ? error.message : String(error)
+    const jsonStart = message.indexOf("{")
+    if (jsonStart < 0) return null
+
+    let payload: unknown
+    try {
+      payload = JSON.parse(message.slice(jsonStart))
+    } catch {
+      return null
+    }
+
+    if (
+      typeof payload !== "object" ||
+      payload === null ||
+      (payload as { status?: string }).status !== "ok"
+    ) {
+      return null
+    }
+
+    const statuses = (
+      payload as { response?: { data?: { statuses?: unknown[] } } }
+    ).response?.data?.statuses
+    if (!Array.isArray(statuses)) return null
+
+    const exchange = this.exchange as HyperliquidExchange & {
+      parseOrders?: (orders: unknown[], market?: undefined) => Order[]
+    }
+
+    if (typeof exchange.parseOrders === "function") {
+      return exchange.parseOrders(statuses, undefined)
+    }
+
+    return statuses.map(status => this.hyperliquidStatusEntryToOrder(status))
+  }
+
+  private async createOrdersWsBatch(orders: OrderRequest[]): Promise<Order[]> {
+    try {
+      return await this.exchange.createOrdersWs(orders)
+    } catch (error: unknown) {
+      const recovered = this.parseOrdersFromPartialBatchExchangeError(error)
+      if (recovered === null) {
+        throw error
+      }
+
+      console.warn(
+        "[HyperliquidClient] createOrdersWs partial batch recovered",
+        {
+          requestCount: orders.length,
+          responseCount: recovered.length,
+          outcomes: recovered.map((response, index) => ({
+            index,
+            symbol: orders[index]?.symbol,
+            side: orders[index]?.side,
+            status: this.orderResultStatusFromResponse(response),
+            message: this.parseOrderErrorMessage(response.info),
+          })),
+        },
+      )
+
+      return recovered
+    }
   }
 
   private async fetchClearinghouseState(): Promise<Record<string, unknown>> {
@@ -633,30 +734,54 @@ export class HyperliquidClient {
     this.exchange.setMarkets(markets)
   }
 
-  private logWatchOrdersResult(
-    watchOrdersPromise: Promise<Order[]>,
-    uniqueSymbols: Set<string>,
+  private logCreateOrdersWsResponses(
+    phase: "reduction" | "expansion",
+    requests: OrderRequest[],
+    responses: Order[],
   ): void {
-    void watchOrdersPromise
-      .then(orders => {
-        const relevantOrders = orders.filter(order =>
-          uniqueSymbols.has(order.symbol),
-        )
+    const summaries = requests.map((request, index) => {
+      const response = index < responses.length ? responses[index] : undefined
+      const resultStatus = response
+        ? this.orderResultStatusFromResponse(response)
+        : "failed"
+      return {
+        symbol: request.symbol,
+        side: request.side,
+        amount: request.amount,
+        ccxtStatus: response?.status ?? "missing",
+        resultStatus,
+        message: response
+          ? this.parseOrderErrorMessage(response.info)
+          : "order response missing",
+      }
+    })
 
-        console.log("[HyperliquidClient] watchOrders update", {
-          symbols: [...uniqueSymbols],
-          orders: relevantOrders,
-        })
-      })
-      .catch((error: unknown) => {
-        const errorMessage =
-          error instanceof Error ? error.message : String(error)
+    console.log("[HyperliquidClient] createOrdersWs response", {
+      phase,
+      requestCount: requests.length,
+      responseCount: responses.length,
+      orders: summaries,
+    })
+  }
 
-        console.error("[HyperliquidClient] watchOrders failed", {
-          symbols: [...uniqueSymbols],
-          error: errorMessage,
-        })
-      })
+  private orderResultStatusFromResponse(
+    res: Order,
+  ): "filled" | "failed" | "working" {
+    const errorMessage = this.parseOrderErrorMessage(res.info)
+    if (res.status === "rejected" || errorMessage !== null) {
+      return "failed"
+    }
+    if (res.status === "closed" || res.status === "filled") {
+      return "filled"
+    }
+    if (
+      typeof res.info === "object" &&
+      res.info !== null &&
+      "filled" in res.info
+    ) {
+      return "filled"
+    }
+    return "working"
   }
 
   private mapOrderResults(
@@ -670,18 +795,16 @@ export class HyperliquidClient {
         return {
           symbol: request.symbol,
           side: (request.side ?? "buy") as OrderSide,
-          status: "working",
+          status: "failed",
           message: "order response missing",
         }
       }
+      const errorMessage = this.parseOrderErrorMessage(res.info)
       return {
         symbol: request.symbol,
         side: (request.side ?? "buy") as OrderSide,
-        status:
-          res.status === "closed" || res.status === "filled"
-            ? "filled"
-            : "working",
-        message: this.parseOrderErrorMessage(res.info),
+        status: this.orderResultStatusFromResponse(res),
+        message: errorMessage,
       }
     })
   }
@@ -888,55 +1011,70 @@ export class HyperliquidClient {
       this.exchange.fetchPositions(),
     ])
 
+    const results: OrderResult[] = []
+
+    // Subscribe to orders before sending them
+    const watchSince = Date.now()
+    let nextWatch = this.exchange.watchOrders(undefined, watchSince)
+
     const { reduction, expansion } = this.splitRebalanceActionsIntoPhases(
       actions,
       tickers,
       positions,
     )
 
-    const results: OrderResult[] = []
-    const watchSinceMs = Date.now()
-    const orderedSymbols = [
-      ...reduction.map(request => request.symbol),
-      ...expansion.map(request => request.symbol),
-    ]
-    const uniqueSymbols = new Set(orderedSymbols)
-    const userAddress = this.getWalletAddress()
-    const watchParams = userAddress ? { user: userAddress } : {}
-
-    let watchOrdersPromise: Promise<Order[]> | undefined
-    if (orderedSymbols.length > 0) {
-      watchOrdersPromise = this.exchange.watchOrders(
-        undefined,
-        watchSinceMs,
-        undefined,
-        watchParams,
-      )
-    }
-
     if (reduction.length > 0) {
-      const reductionResponses = await this.exchange.createOrdersWs(reduction)
-      const reductionResults = this.mapOrderResults(
-        reduction,
-        reductionResponses,
-      )
-      results.push(...reductionResults)
+      const responses = await this.createOrdersWsBatch(reduction)
+      this.logCreateOrdersWsResponses("reduction", reduction, responses)
+      results.push(...this.mapOrderResults(reduction, responses))
     }
 
     if (expansion.length > 0) {
-      const expansionResponses = await this.exchange.createOrdersWs(expansion)
-      const expansionResults = this.mapOrderResults(
-        expansion,
-        expansionResponses,
-      )
-      results.push(...expansionResults)
+      const responses = await this.createOrdersWsBatch(expansion)
+      this.logCreateOrdersWsResponses("expansion", expansion, responses)
+      results.push(...this.mapOrderResults(expansion, responses))
     }
 
-    if (watchOrdersPromise) {
-      this.logWatchOrdersResult(watchOrdersPromise, uniqueSymbols)
+    const expectedSymbols = new Set(results.map(res => res.symbol))
+
+    while (expectedSymbols.size) {
+      const timeoutPromise: Promise<Error> = new Promise((_, reject) => {
+        setTimeout(() => {
+          reject(
+            new Error(
+              `Operation timed out after ${HYPERLIQUID_WATCH_ORDERS_TIMEOUT_MS}ms`,
+            ),
+          )
+        }, HYPERLIQUID_WATCH_ORDERS_TIMEOUT_MS)
+      })
+
+      const ordersUpdate: Order[] | Error = await Promise.race([
+        nextWatch,
+        timeoutPromise,
+      ])
+
+      if (ordersUpdate instanceof Error) {
+        console.error(ordersUpdate.message)
+        break
+      }
+
+      console.log("ordersUpdate", ordersUpdate)
+
+      for (const order of ordersUpdate) {
+        expectedSymbols.delete(order.symbol)
+      }
+
+      if (expectedSymbols.size > 0) {
+        console.log("watching orders again")
+        console.log("expectedSymbols", expectedSymbols)
+        nextWatch = this.exchange.watchOrders(undefined, watchSince)
+      } else {
+        console.log("no more expected order ids")
+      }
     }
 
-    console.log("results", results)
+    console.log("unwatching orders")
+    await this.exchange.unWatchOrders()
 
     return results
   }

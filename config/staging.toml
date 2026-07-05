@@ -4,3 +4,10 @@ database_url = "sqlite:///mnt/data/staging/moneymentum.db?mode=rwc"
 log_level = "debug"
 max_concurrent_requests = 3
 max_retries = 5
+
+# Deploy bridge: the per-service profile still runs the pre-#417 binary during
+# system activation, and that binary refuses to start unless the token is set
+# here (its --markets-refresh-token-publish-path flag no longer exists in the
+# new unit). The current binary ignores this key. Remove once the per-service
+# profiles have picked up a post-markets-refresh-removal binary.
+markets_refresh_token = "deploy-bridge-token-unused-by-current-binary"

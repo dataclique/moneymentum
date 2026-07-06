@@ -137,6 +137,12 @@ the next user-facing priority; it runs in parallel to the Dev track above.
 - [ ] [Serve The App From A Domain](./stories/0x009.serve-app-from-domain.md)
 - [x] [Clear stale switch-to-configuration lock blocking deploys](https://github.com/dataclique/moneymentum/issues/394)
       ([#395](https://github.com/dataclique/moneymentum/pull/395))
+- [x] [Bridge the stale per-service binary through deploy activation](https://github.com/dataclique/moneymentum/issues/421)
+      ([#423](https://github.com/dataclique/moneymentum/pull/423))
+- [x] [Restore the applied migration #407 rewrote so the binary starts](https://github.com/dataclique/moneymentum/issues/426)
+      ([#427](https://github.com/dataclique/moneymentum/pull/427))
+- [ ] [Remove the markets_refresh_token deploy bridge from service configs](https://github.com/dataclique/moneymentum/issues/425)
+- [ ] [Deploy the service binary, unit, and config atomically](https://github.com/dataclique/moneymentum/issues/422)
 - [x] [Address #377 review follow-ups](https://github.com/dataclique/moneymentum/issues/392)
       ([#393](https://github.com/dataclique/moneymentum/pull/393))
 

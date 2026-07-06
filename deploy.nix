@@ -38,6 +38,13 @@ in
       sshUser = "root";
       user = "root";
 
+      # Failed activations already roll back the profile copy; re-running
+      # switch-to-configuration on the previous generation often hangs while
+      # stopping dbus-broker (nixpkgs#527469) and blocks deploy for the full
+      # activation timeout.
+      autoRollback = false;
+      activationTimeout = 600;
+
       profilesOrder = [ "system" ] ++ enabledServices;
 
       profiles = {
@@ -90,16 +97,9 @@ in
       deployFlags =
         if localSystem == "x86_64-linux" then "--skip-checks" else "--remote-build --skip-checks";
 
-      serviceCleanup = builtins.concatStringsSep "; " (
+      serviceResetLines = builtins.concatStringsSep "\n" (
         map (name: "systemctl reset-failed ${name} || true") enabledServices
       );
-
-      # nixpkgs#398370: an earlier `switch-to-configuration` activation can hang
-      # in the systemd settle loop while holding an exclusive flock on
-      # /run/nixos/switch-to-configuration.lock, after which every subsequent
-      # deploy fails fast with "Could not acquire lock" (exit 11). Drop the
-      # stale lock before activating so the new switch takes a fresh one.
-      staleLockCleanup = "rm -f /run/nixos/switch-to-configuration.lock";
 
     in
     {
@@ -129,7 +129,34 @@ in
         text = ''
           ${deployPreamble}
 
-          ssh -i "$identity" "root@$host_ip" '${staleLockCleanup}; ${serviceCleanup}'
+          # Preflight runs on the remote host via heredoc so nested quotes do not
+          # break shellcheck or the generated deploy-server script (SC2026).
+          ssh -i "$identity" "root@$host_ip" bash -s <<'REMOTE_PREFLIGHT'
+          set -eu
+          systemctl stop 'nixos-rebuild-switch-to-configuration*' 2>/dev/null || true
+          pkill -9 -f '[s]witch-to-configuration' || true
+          rm -f /run/nixos/switch-to-configuration.lock
+          systemctl stop moneymentum-markets-refresh.timer staging-markets-refresh.timer 2>/dev/null || true
+          systemctl disable moneymentum-markets-refresh.timer staging-markets-refresh.timer 2>/dev/null || true
+          ${serviceResetLines}
+          systemd-run --on-active=3s --collect --unit=moneymentum-deploy-dbus-heal \
+            /bin/sh -c 'systemctl reset-failed dbus-broker systemd-logind || true; systemctl restart dbus-broker; systemctl restart systemd-logind' \
+            || true
+          REMOTE_PREFLIGHT
+
+          # dbus heal is scheduled for +3s after preflight SSH closes; poll logind
+          # before deploy-rs activation so wedged logind fails fast instead of timing
+          # out for the full activation window (nixpkgs#527469).
+          for ((attempt = 1; attempt <= 15; attempt++)); do
+            if ssh -i "$identity" "root@$host_ip" loginctl list-users >/dev/null 2>&1; then
+              break
+            fi
+            if [ "$attempt" -eq 15 ]; then
+              echo "ERROR: logind still unhealthy after deploy preflight" >&2
+              exit 1
+            fi
+            sleep 2
+          done
 
           deploy ${deployFlags} --hostname "$host_ip" ''${ssh_flag:+"$ssh_flag"} "$@" .#moneymentum
         '';

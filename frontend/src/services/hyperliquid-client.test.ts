@@ -452,9 +452,7 @@ describe("HyperliquidClient", () => {
     const client = new HyperliquidClient(credentials, "mainnet")
     const result = await client.rebalancePositions(actions)
 
-    expect(mockExchange.setLeverage).toHaveBeenCalledWith(5, "BTC/USDC:USDC", {
-      marginMode: "cross",
-    })
+    expect(mockExchange.setLeverage).toHaveBeenCalledWith(5, "BTC/USDC:USDC")
 
     expect(mockExchange.createOrdersWs).toHaveBeenCalledTimes(2)
     expect(mockExchange.fetchPositions).toHaveBeenCalledTimes(1)
@@ -482,7 +480,7 @@ describe("HyperliquidClient", () => {
     })
   })
 
-  it("falls back to isolated margin when cross leverage is rejected", async () => {
+  it("throws when setLeverage is rejected", async () => {
     stubBackendMarketsFetch("mainnet", [
       { symbol: "BTC/USDC:USDC", assetIndex: 0 },
       { symbol: "ETH/USDC:USDC", assetIndex: 1 },
@@ -494,21 +492,16 @@ describe("HyperliquidClient", () => {
       },
     ])
 
-    const crossMarginError = new Error(
+    const leverageError = new Error(
       'hyperliquid {"status":"err","response":"Cross margin is not allowed for this asset."}',
     )
 
-    mockExchange.setLeverage
-      .mockRejectedValueOnce(crossMarginError)
-      .mockResolvedValueOnce(undefined)
+    mockExchange.setLeverage.mockRejectedValueOnce(leverageError)
 
     mockExchange.fetchTickers.mockResolvedValue({
       "BANANA/USDC:USDC": { last: 0.05 },
     })
     mockExchange.fetchPositions.mockResolvedValue([])
-    mockExchange.createOrdersWs.mockResolvedValue([
-      { status: "closed", info: {} },
-    ])
 
     const actions: RebalanceAction[] = [
       {
@@ -521,22 +514,12 @@ describe("HyperliquidClient", () => {
     ]
 
     const client = new HyperliquidClient(credentials, "mainnet")
-    const result = await client.rebalancePositions(actions)
+    await expect(client.rebalancePositions(actions)).rejects.toThrow(
+      "Cross margin is not allowed",
+    )
 
-    expect(mockExchange.setLeverage).toHaveBeenNthCalledWith(
-      1,
-      3,
-      "BANANA/USDC:USDC",
-      { marginMode: "cross" },
-    )
-    expect(mockExchange.setLeverage).toHaveBeenNthCalledWith(
-      2,
-      3,
-      "BANANA/USDC:USDC",
-      { marginMode: "isolated" },
-    )
-    expect(result).toHaveLength(1)
-    expect(result[0]?.status).toBe("filled")
+    expect(mockExchange.setLeverage).toHaveBeenCalledWith(3, "BANANA/USDC:USDC")
+    expect(mockExchange.createOrdersWs).not.toHaveBeenCalled()
   })
 
   it("OrderResult array lists reduction fills before expansion fills", async () => {
@@ -1089,7 +1072,7 @@ describe("HyperliquidClient", () => {
     ])
   })
 
-  it("marks results filled from hyperliquid filled info on createOrdersWs response", async () => {
+  it("marks results filled when watch reports closed after createOrdersWs", async () => {
     mockExchange.fetchTickers.mockResolvedValue({
       "BTC/USDC:USDC": { last: 50_000 },
     })
@@ -1101,11 +1084,6 @@ describe("HyperliquidClient", () => {
         info: { filled: { totalSz: "0.002", avgPx: "50000", oid: 1 } },
       },
     ])
-    mockExchange.watchOrders.mockImplementation(async () => {
-      throw new Error(
-        "watch loop should not run when submit responses are terminal",
-      )
-    })
 
     const actions: RebalanceAction[] = [
       {
@@ -1122,9 +1100,10 @@ describe("HyperliquidClient", () => {
 
     expect(result).toHaveLength(1)
     expect(result[0]?.status).toBe("filled")
+    expect(mockExchange.watchOrders).toHaveBeenCalled()
   })
 
-  it("marks remaining working orders timed_out instead of throwing when watch stalls", async () => {
+  it("rejects when watch stalls past the watch timeout", async () => {
     vi.useFakeTimers()
 
     mockExchange.fetchTickers.mockResolvedValue({
@@ -1154,19 +1133,18 @@ describe("HyperliquidClient", () => {
 
     const client = new HyperliquidClient(credentials, "mainnet")
     const resultPromise = client.rebalancePositions(actions)
+    const rejection = expect(resultPromise).rejects.toThrow(
+      "Operation timed out after 10000ms",
+    )
 
     await vi.advanceTimersByTimeAsync(10_000)
 
-    const result = await resultPromise
-
-    expect(result).toHaveLength(1)
-    expect(result[0]?.status).toBe("timed_out")
-    expect(mockExchange.unWatchOrders).toHaveBeenCalledTimes(1)
+    await rejection
 
     vi.useRealTimers()
   })
 
-  it("marks results filled from createOrdersWs without entering the watch loop", async () => {
+  it("marks results filled when watch reports closed after createOrdersWs submit", async () => {
     mockExchange.fetchTickers.mockResolvedValue({
       "BTC/USDC:USDC": { last: 50_000 },
     })
@@ -1175,11 +1153,6 @@ describe("HyperliquidClient", () => {
     mockExchange.createOrdersWs.mockResolvedValue([
       { symbol: "BTC/USDC:USDC", status: "closed", info: {} },
     ])
-    mockExchange.watchOrders.mockImplementation(async () => {
-      throw new Error(
-        "watch loop should not run when submit responses are terminal",
-      )
-    })
 
     const actions: RebalanceAction[] = [
       {
@@ -1196,7 +1169,7 @@ describe("HyperliquidClient", () => {
 
     expect(result).toHaveLength(1)
     expect(result[0]?.status).toBe("filled")
-    expect(mockExchange.watchOrders).toHaveBeenCalledTimes(1)
+    expect(mockExchange.watchOrders).toHaveBeenCalled()
     expect(mockExchange.unWatchOrders).toHaveBeenCalledTimes(1)
   })
 

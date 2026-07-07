@@ -201,9 +201,7 @@ export const useRebalanceHyperliquidPositions = () => {
   return useMutation(() => ({
     mutationFn: (params: RebalanceParams) =>
       Effect.runPromise(
-        Hyperliquid.rebalancePositions(client(), params.actions).pipe(
-          Effect.map(orders => ({ orders })),
-        ),
+        Hyperliquid.rebalancePositions(client(), params.actions),
       ),
     onSuccess: () => {
       const account = credentials()?.accountAddress
@@ -213,6 +211,9 @@ export const useRebalanceHyperliquidPositions = () => {
       })
       void queryClient.invalidateQueries({
         queryKey: [...QUERY_KEYS.balance, account, network],
+      })
+      void queryClient.invalidateQueries({
+        queryKey: [...QUERY_KEYS.accountSummary, account, network],
       })
     },
   }))

@@ -23,6 +23,23 @@ export const getErrorMessage = (error: unknown): string => {
   return String(unwrapped)
 }
 
+/** Unwraps ExchangeRequestError to the underlying exchange failure for logs. */
+export const getExchangeErrorDetail = (error: unknown): string => {
+  const unwrapped = unwrapTaggedError(error)
+
+  if (
+    hasTag(unwrapped) &&
+    unwrapped._tag === "ExchangeRequestError" &&
+    "cause" in unwrapped
+  ) {
+    const cause = (unwrapped as { cause: unknown }).cause
+    if (cause instanceof Error) return cause.message
+    return String(cause)
+  }
+
+  return getErrorMessage(error)
+}
+
 const unwrapTaggedError = (error: unknown): unknown => {
   if (Runtime.isFiberFailure(error)) {
     const failure = Cause.failureOption(error[Runtime.FiberFailureCauseId])

@@ -39,6 +39,7 @@ export interface PositionsTableMeta {
   currentPortfolio: Record<string, PortfolioInterface | undefined>
   targetPortfolio: Record<string, PortfolioInterface | undefined>
   deletedArchive: Record<string, PortfolioInterface | undefined>
+  errorsBySymbol: Record<string, string | undefined>
   leverageLimitsMap: Record<string, number>
   leverageLimitsIsLoading: boolean
   isPrecise: boolean
@@ -128,6 +129,7 @@ const PositionsTableBodyRow = (
           symbolsBelowMinimum={props.meta.symbolsBelowMinimum}
           symbolsDeltaBelowMinimum={props.meta.symbolsDeltaBelowMinimum}
           symbolDelta={resolvedRow().symbolDelta}
+          rebalanceError={props.meta.errorsBySymbol[props.symbol]}
         />
       )}
     </Show>

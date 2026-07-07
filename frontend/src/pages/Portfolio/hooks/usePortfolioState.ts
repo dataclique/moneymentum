@@ -12,8 +12,17 @@ import {
   useHyperliquidLeverageLimits,
   useRebalanceHyperliquidPositions,
   type OrderSide,
+  type OrderResult,
 } from "@/hooks/useTrading"
-import { buildApiPayload, diffPortfolios } from "./portfolioRebalancer"
+import {
+  buildApiPayload,
+  diffPortfolios,
+  portfolioMapFromExchangePositions,
+  targetAndArchiveAfterRebalance,
+  type RebalanceAction,
+} from "./portfolioRebalancer"
+import { getErrorMessage, getExchangeErrorDetail } from "@/lib/error-message"
+import { toast } from "solid-sonner"
 import {
   useReadonlyPortfolioState,
   type ReadonlyBetaPosition,
@@ -81,6 +90,7 @@ export interface StagedTradeItem {
   notional: number
   previousWeight?: number
   newWeight?: number
+  orderError?: string
 }
 
 const calcLeverage = (totalNotional: number, accountValue: number): number => {
@@ -121,6 +131,10 @@ export const usePortfolioState = () => {
     Record<string, PortfolioInterface | undefined>
   >({})
 
+  const [errorsBySymbol, setErrorsBySymbol] = createStore<
+    Record<string, string | undefined>
+  >({})
+
   const [currentCrossAccountLeverage, setCurrentCrossAccountLeverage] =
     createSignal(DEFAULT_CROSS_ACCOUNT_LEVERAGE)
   const [targetCrossAccountLeverage, setTargetCrossAccountLeverage] =
@@ -142,6 +156,7 @@ export const usePortfolioState = () => {
       setCurrentPortfolio(reconcile({}))
       setTargetPortfolio(reconcile({}))
       setDeletedArchive(reconcile({}))
+      setErrorsBySymbol(reconcile({}))
       readonlyPortfolio.clearAddresses()
       setCurrentCrossAccountLeverage(DEFAULT_CROSS_ACCOUNT_LEVERAGE)
       setTargetCrossAccountLeverage(DEFAULT_CROSS_ACCOUNT_LEVERAGE)
@@ -149,6 +164,12 @@ export const usePortfolioState = () => {
       setTargetTotalNotional(0)
       setPositionsLoadedFromExchange(false)
     })
+  }
+
+  const clearRebalanceErrorForSymbol = (symbol: string) => {
+    if (errorsBySymbol[symbol] !== undefined) {
+      setErrorsBySymbol(symbol, undefined)
+    }
   }
 
   const redistributeWeights = (
@@ -306,6 +327,73 @@ export const usePortfolioState = () => {
 
   const readonlyPortfolio = useReadonlyPortfolioState()
 
+  const applyCurrentFromExchange = (
+    portfolioMap: Record<string, PortfolioInterface | undefined>,
+    totalNotional: number,
+  ) => {
+    setCurrentPortfolio(reconcile(portfolioMap))
+    setCurrentTotalNotional(totalNotional)
+  }
+
+  const finalizeRebalance = async (
+    orders: OrderResult[],
+    actions: RebalanceAction[],
+  ) => {
+    if (orders.length === 0) {
+      setIsRebalancingUi(false)
+      return
+    }
+
+    try {
+      const [positionsRefetch] = await Promise.all([
+        positionsQuery.refetch(),
+        accountSummaryQuery.refetch(),
+      ])
+
+      const positionsData = positionsRefetch.data
+      if (!positionsData?.positions) {
+        return
+      }
+
+      const { map, totalNotional } = portfolioMapFromExchangePositions(
+        positionsData.positions,
+      )
+
+      const {
+        nextTarget,
+        nextDeletedArchive,
+        errorsBySymbol: nextErrors,
+      } = targetAndArchiveAfterRebalance(
+        untrack(() => targetPortfolio),
+        untrack(() => deletedArchive),
+        map,
+        actions,
+        orders,
+      )
+
+      const nextTargetTotalNotional = Object.values(nextTarget).reduce(
+        (sum, position) => sum + (position?.notional ?? 0),
+        0,
+      )
+
+      batch(() => {
+        applyCurrentFromExchange(map, totalNotional)
+        setTargetPortfolio(reconcile(nextTarget))
+        setTargetTotalNotional(nextTargetTotalNotional)
+        setDeletedArchive(reconcile(nextDeletedArchive))
+        setErrorsBySymbol(reconcile(nextErrors))
+      })
+
+      if (orders.some(order => order.status === "timed_out")) {
+        console.warn(
+          "rebalance order watch timed out; portfolio refreshed from exchange",
+        )
+      }
+    } finally {
+      setIsRebalancingUi(false)
+    }
+  }
+
   // Wait for positionsQuery data and positive accountValue, then initialize from exchange positions
   createEffect(() => {
     if (positionsLoadedFromExchange()) {
@@ -321,34 +409,18 @@ export const usePortfolioState = () => {
       return
     }
 
-    // Calculate total notional from all exchange positions first
-    const totalExchangeNotional = positionsData.positions.reduce(
-      (sum, pos) => sum + pos.notional,
-      0,
+    const { map, totalNotional } = portfolioMapFromExchangePositions(
+      positionsData.positions,
     )
 
-    const exchangeTokens: PortfolioInterface[] = positionsData.positions.map(
-      pos => ({
-        symbol: pos.symbol,
-        side: pos.side,
-        leverage: pos.leverage || 1,
-        notional: pos.notional,
-      }),
-    )
-
-    const portfolioMap = Object.fromEntries(
-      exchangeTokens.map(token => [token.symbol, token]),
-    ) as Record<string, PortfolioInterface>
-
-    setCurrentPortfolio(reconcile(portfolioMap))
+    applyCurrentFromExchange(map, totalNotional)
 
     // Create a FULLY independent copy for the target
-    setTargetPortfolio(reconcile(structuredClone(portfolioMap)))
+    setTargetPortfolio(reconcile(structuredClone(map)))
 
     // Calculate leverage from the formula: leverage = totalNotional / accountValue
-    const initialLeverage = calcLeverage(totalExchangeNotional, accountValue())
-    setTargetTotalNotional(totalExchangeNotional)
-    setCurrentTotalNotional(totalExchangeNotional)
+    const initialLeverage = calcLeverage(totalNotional, accountValue())
+    setTargetTotalNotional(totalNotional)
     setTargetCrossAccountLeverage(initialLeverage)
     setCurrentCrossAccountLeverage(initialLeverage)
 
@@ -412,6 +484,7 @@ export const usePortfolioState = () => {
         newWeight: totalTarget
           ? (targetPosition?.notional ?? 0) / totalTarget
           : 0,
+        orderError: errorsBySymbol[symbol],
       }
     })
   })
@@ -494,10 +567,12 @@ export const usePortfolioState = () => {
   }
 
   const handleSideChange = (symbol: string, side: OrderSide) => {
+    clearRebalanceErrorForSymbol(symbol)
     setTargetPortfolio(symbol, "side", side)
   }
 
   const handleLeverageChange = (symbol: string, leverage: number) => {
+    clearRebalanceErrorForSymbol(symbol)
     const maxLeverage = leverageLimitsMap()[symbol] || 1
     const newLeverage = Math.max(1, Math.min(leverage, maxLeverage))
 
@@ -505,6 +580,7 @@ export const usePortfolioState = () => {
   }
 
   const handleNotionalChange = (symbol: string, newNotional: number) => {
+    clearRebalanceErrorForSymbol(symbol)
     const oldNotional = targetPortfolio[symbol]?.notional ?? 0
     const diff = newNotional - oldNotional
 
@@ -516,6 +592,7 @@ export const usePortfolioState = () => {
   }
 
   const handleWeightChange = (changedSymbol: string, newPercentage: number) => {
+    clearRebalanceErrorForSymbol(changedSymbol)
     if (!isManualWeightEntry()) {
       redistributeWeights(changedSymbol, newPercentage)
       return
@@ -569,19 +646,36 @@ export const usePortfolioState = () => {
       setTargetPortfolio(reconcile(nextTarget))
       setTargetTotalNotional(currentTotalNotional())
       setDeletedArchive(reconcile({}))
+      setErrorsBySymbol(reconcile({}))
     })
   }
 
   const handleRebalancePositions = () => {
+    if (isRebalancingUi() || rebalancePositionsMutation.isPending) {
+      return
+    }
+
     const apiPayload = buildApiPayload(
       currentPortfolio,
       targetPortfolio,
       isPrecise(),
     )
 
-    rebalancePositionsMutation.mutate(apiPayload)
-
     setIsRebalancingUi(true)
+    rebalancePositionsMutation.mutate(apiPayload, {
+      onSettled: (data, error) => {
+        if (error || !data) {
+          if (error) {
+            console.error("rebalance failed", getExchangeErrorDetail(error))
+            toast.error(getErrorMessage(error))
+          }
+          setIsRebalancingUi(false)
+          return
+        }
+
+        void finalizeRebalance(data, apiPayload.actions)
+      },
+    })
   }
 
   const canSubmit = () => {
@@ -602,6 +696,7 @@ export const usePortfolioState = () => {
       setCurrentPortfolio(reconcile({}))
       setTargetPortfolio(reconcile({}))
       setDeletedArchive(reconcile({}))
+      setErrorsBySymbol(reconcile({}))
       readonlyPortfolio.clearAddresses()
       setCurrentCrossAccountLeverage(DEFAULT_CROSS_ACCOUNT_LEVERAGE)
       setTargetCrossAccountLeverage(DEFAULT_CROSS_ACCOUNT_LEVERAGE)
@@ -639,6 +734,9 @@ export const usePortfolioState = () => {
     },
     get deletedArchive() {
       return deletedArchive
+    },
+    get errorsBySymbol() {
+      return errorsBySymbol
     },
     get leverageLimitsMap() {
       return leverageLimitsMap()

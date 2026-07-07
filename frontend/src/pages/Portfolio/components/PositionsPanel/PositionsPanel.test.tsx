@@ -80,6 +80,7 @@ const renderPositionsPanel = () => {
         currentPortfolio={{}}
         targetPortfolio={{}}
         deletedArchive={{}}
+        errorsBySymbol={{}}
         isLoading={false}
         fundingIsLoading={false}
         leverageLimitsIsLoading={false}

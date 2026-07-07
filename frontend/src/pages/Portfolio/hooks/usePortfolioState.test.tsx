@@ -59,9 +59,50 @@ const createWrapper = () => {
 
 describe("usePortfolioState", () => {
   const mutate = vi.fn()
+  const refetchPositions = vi.fn()
+  const refetchAccountSummary = vi.fn()
+
+  const exchangePositions = {
+    positions: [
+      {
+        symbol: "BTC/USDC:USDC",
+        side: "buy" as const,
+        leverage: 2,
+        notional: 600,
+        percentage: 60,
+      },
+      {
+        symbol: "ETH/USDC:USDC",
+        side: "buy" as const,
+        leverage: 3,
+        notional: 400,
+        percentage: 40,
+      },
+    ],
+    totalNotional: 1000,
+  }
 
   beforeEach(() => {
     vi.clearAllMocks()
+    refetchPositions.mockResolvedValue({ data: exchangePositions })
+    refetchAccountSummary.mockResolvedValue({
+      data: {
+        accountValue: 1000,
+        totalNotionalPosition: 1000,
+        withdrawable: 500,
+        crossAccountLeverage: 1,
+      },
+    })
+    mutate.mockImplementation((_payload, options) => {
+      options?.onSettled?.(
+        [
+          { symbol: "BTC/USDC:USDC", side: "buy", status: "filled" },
+          { symbol: "ETH/USDC:USDC", side: "buy", status: "filled" },
+        ],
+        null,
+      )
+    })
+
     vi.mocked(useHyperliquidAccountSummary).mockReturnValue({
       data: {
         accountValue: 1000,
@@ -70,29 +111,13 @@ describe("usePortfolioState", () => {
         crossAccountLeverage: 1,
       },
       isLoading: false,
+      refetch: refetchAccountSummary,
     } as ReturnType<typeof useHyperliquidAccountSummary>)
 
     vi.mocked(useHyperliquidPositions).mockReturnValue({
-      data: {
-        positions: [
-          {
-            symbol: "BTC/USDC:USDC",
-            side: "buy",
-            leverage: 2,
-            notional: 600,
-            percentage: 60,
-          },
-          {
-            symbol: "ETH/USDC:USDC",
-            side: "buy",
-            leverage: 3,
-            notional: 400,
-            percentage: 40,
-          },
-        ],
-        totalNotional: 1000,
-      },
+      data: exchangePositions,
       isLoading: false,
+      refetch: refetchPositions,
     } as ReturnType<typeof useHyperliquidPositions>)
 
     vi.mocked(useHyperliquidLeverageLimits).mockReturnValue({
@@ -237,11 +262,21 @@ describe("usePortfolioState", () => {
 
     result.handleRebalancePositions()
 
-    expect(mutate).toHaveBeenCalledWith({
-      actions: [
-        { kind: "close", symbol: "BTC/USDC:USDC", side: "buy" },
-        { kind: "close", symbol: "ETH/USDC:USDC", side: "buy" },
-      ],
+    expect(mutate).toHaveBeenCalledWith(
+      {
+        actions: [
+          { kind: "close", symbol: "BTC/USDC:USDC", side: "buy" },
+          { kind: "close", symbol: "ETH/USDC:USDC", side: "buy" },
+        ],
+      },
+      expect.objectContaining({
+        onSettled: expect.any(Function),
+      }),
+    )
+
+    await waitFor(() => {
+      expect(refetchPositions).toHaveBeenCalled()
+      expect(result.isRebalancing).toBe(false)
     })
   })
 
@@ -325,16 +360,21 @@ describe("usePortfolioState", () => {
     result.handleNotionalChange("BTC/USDC:USDC", 700)
     result.handleRebalancePositions()
 
-    expect(mutate).toHaveBeenCalledWith({
-      actions: [
-        expect.objectContaining({
-          kind: "rebalance",
-          symbol: "BTC/USDC:USDC",
-          signedNotionalDelta: 100,
-          leverage: 2,
-          leverageChanged: false,
-        }),
-      ],
-    })
+    expect(mutate).toHaveBeenCalledWith(
+      {
+        actions: [
+          expect.objectContaining({
+            kind: "rebalance",
+            symbol: "BTC/USDC:USDC",
+            signedNotionalDelta: 100,
+            leverage: 2,
+            leverageChanged: false,
+          }),
+        ],
+      },
+      expect.objectContaining({
+        onSettled: expect.any(Function),
+      }),
+    )
   })
 })

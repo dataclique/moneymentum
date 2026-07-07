@@ -9,7 +9,7 @@ import {
   WalletNotConnected,
   ExchangeRequestError,
 } from "./hyperliquid"
-import type { HyperliquidClient, OrderResult } from "./hyperliquid-client"
+import type { HyperliquidClient } from "./hyperliquid-client"
 import type { RebalanceAction } from "@/pages/Portfolio/hooks/portfolioRebalancer"
 
 const createMockClient = (
@@ -119,8 +119,12 @@ describe("hyperliquid Effect service", () => {
     })
 
     it("rebalancePositions delegates the actions and returns the orders", async () => {
-      const orders: OrderResult[] = [
-        { symbol: "BTC/USDC:USDC", side: "buy", status: "filled" },
+      const orders = [
+        {
+          symbol: "BTC/USDC:USDC",
+          side: "buy" as const,
+          status: "filled" as const,
+        },
       ]
       const mockRebalance = vi.fn().mockResolvedValue(orders)
       const mockClient = createMockClient({

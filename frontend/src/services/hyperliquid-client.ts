@@ -201,7 +201,7 @@ export interface CurrentPosition {
 export interface OrderResult {
   symbol: string
   side: OrderSide
-  status: "working" | "filled" | "failed"
+  status: "working" | "filled" | "failed" | "timed_out"
   message?: string | null
 }
 
@@ -566,7 +566,7 @@ export class HyperliquidClient {
             index,
             symbol: orders[index]?.symbol,
             side: orders[index]?.side,
-            status: this.orderResultStatusFromResponse(response),
+            status: response.status,
             message: this.parseOrderErrorMessage(response.info),
           })),
         },
@@ -734,79 +734,56 @@ export class HyperliquidClient {
     this.exchange.setMarkets(markets)
   }
 
-  private logCreateOrdersWsResponses(
-    phase: "reduction" | "expansion",
+  private workingOrderResultsFromRequests(
     requests: OrderRequest[],
-    responses: Order[],
-  ): void {
-    const summaries = requests.map((request, index) => {
-      const response = index < responses.length ? responses[index] : undefined
-      const resultStatus = response
-        ? this.orderResultStatusFromResponse(response)
-        : "failed"
-      return {
-        symbol: request.symbol,
-        side: request.side,
-        amount: request.amount,
-        ccxtStatus: response?.status ?? "missing",
-        resultStatus,
-        message: response
-          ? this.parseOrderErrorMessage(response.info)
-          : "order response missing",
-      }
-    })
-
-    console.log("[HyperliquidClient] createOrdersWs response", {
-      phase,
-      requestCount: requests.length,
-      responseCount: responses.length,
-      orders: summaries,
-    })
-  }
-
-  private orderResultStatusFromResponse(
-    res: Order,
-  ): "filled" | "failed" | "working" {
-    const errorMessage = this.parseOrderErrorMessage(res.info)
-    if (res.status === "rejected" || errorMessage !== null) {
-      return "failed"
-    }
-    if (res.status === "closed" || res.status === "filled") {
-      return "filled"
-    }
-    if (
-      typeof res.info === "object" &&
-      res.info !== null &&
-      "filled" in res.info
-    ) {
-      return "filled"
-    }
-    return "working"
-  }
-
-  private mapOrderResults(
-    requests: OrderRequest[],
-    responses: Order[],
   ): OrderResult[] {
-    return requests.map((request, index): OrderResult => {
-      const res: Order | undefined =
-        index < responses.length ? responses[index] : undefined
-      if (res === undefined) {
-        return {
-          symbol: request.symbol,
-          side: (request.side ?? "buy") as OrderSide,
-          status: "failed",
-          message: "order response missing",
-        }
-      }
-      const errorMessage = this.parseOrderErrorMessage(res.info)
-      return {
+    return requests.map(
+      (request): OrderResult => ({
         symbol: request.symbol,
         side: (request.side ?? "buy") as OrderSide,
-        status: this.orderResultStatusFromResponse(res),
-        message: errorMessage,
+        status: "working",
+      }),
+    )
+  }
+
+  private mergeWatchUpdatesIntoResults(
+    results: OrderResult[],
+    orders: Order[],
+  ): void {
+    for (const order of orders) {
+      const index = results.findIndex(
+        result => result.symbol === order.symbol && result.status === "working",
+      )
+      if (index < 0) {
+        continue
       }
-    })
+
+      const current = results[index]
+      const watchStatus = order.status
+      const nextStatus: OrderResult["status"] =
+        watchStatus === "rejected"
+          ? "failed"
+          : watchStatus === "closed" || watchStatus === "filled"
+            ? "filled"
+            : "working"
+
+      results[index] = {
+        ...current,
+        status: nextStatus,
+      }
+    }
+  }
+
+  private hasWorkingOrderResults(results: OrderResult[]): boolean {
+    return results.some(result => result.status === "working")
+  }
+
+  private markWorkingOrdersTimedOut(results: OrderResult[]): void {
+    for (let index = 0; index < results.length; index++) {
+      if (results[index].status === "working") {
+        results[index] = { ...results[index], status: "timed_out" }
+      }
+    }
   }
 
   private positionSideIsBuy(pos: { side: string }): boolean {
@@ -992,6 +969,7 @@ export class HyperliquidClient {
   }
 
   async rebalancePositions(actions: RebalanceAction[]): Promise<OrderResult[]> {
+    console.log("rebalancePositions", actions)
     const allSymbols = [...new Set(actions.map(action => action.symbol))]
 
     const [backendMarkets, perpContexts] = await Promise.all([
@@ -1025,19 +1003,19 @@ export class HyperliquidClient {
 
     if (reduction.length > 0) {
       const responses = await this.createOrdersWsBatch(reduction)
-      this.logCreateOrdersWsResponses("reduction", reduction, responses)
-      results.push(...this.mapOrderResults(reduction, responses))
+      console.log("responses", responses)
+      results.push(...this.workingOrderResultsFromRequests(reduction))
     }
 
     if (expansion.length > 0) {
       const responses = await this.createOrdersWsBatch(expansion)
-      this.logCreateOrdersWsResponses("expansion", expansion, responses)
-      results.push(...this.mapOrderResults(expansion, responses))
+      console.log("responses", responses)
+      results.push(...this.workingOrderResultsFromRequests(expansion))
     }
 
-    const expectedSymbols = new Set(results.map(res => res.symbol))
+    console.log("results", results)
 
-    while (expectedSymbols.size) {
+    while (this.hasWorkingOrderResults(results)) {
       const timeoutPromise: Promise<Error> = new Promise((_, reject) => {
         setTimeout(() => {
           reject(
@@ -1053,28 +1031,25 @@ export class HyperliquidClient {
         timeoutPromise,
       ])
 
+      console.log("ordersUpdate", ordersUpdate)
+
       if (ordersUpdate instanceof Error) {
         console.error(ordersUpdate.message)
+        this.markWorkingOrdersTimedOut(results)
         break
       }
 
-      console.log("ordersUpdate", ordersUpdate)
+      this.mergeWatchUpdatesIntoResults(results, ordersUpdate)
 
-      for (const order of ordersUpdate) {
-        expectedSymbols.delete(order.symbol)
-      }
-
-      if (expectedSymbols.size > 0) {
-        console.log("watching orders again")
-        console.log("expectedSymbols", expectedSymbols)
+      if (this.hasWorkingOrderResults(results)) {
         nextWatch = this.exchange.watchOrders(undefined, watchSince)
-      } else {
-        console.log("no more expected order ids")
       }
     }
 
-    console.log("unwatching orders")
     await this.exchange.unWatchOrders()
+
+    console.log("unwatching orders")
+    console.log("results", results)
 
     return results
   }

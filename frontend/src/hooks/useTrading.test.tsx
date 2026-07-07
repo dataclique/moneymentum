@@ -406,8 +406,8 @@ describe("useTrading hooks", () => {
         },
       ])
 
-      expect(result.rebalance.data?.orders).toHaveLength(1)
-      expect(result.rebalance.data?.orders[0].status).toBe("filled")
+      expect(result.rebalance.data).toHaveLength(1)
+      expect(result.rebalance.data?.[0].status).toBe("filled")
     })
 
     it("calls rebalancePositions with only the actions array (no separate precise arg)", async () => {

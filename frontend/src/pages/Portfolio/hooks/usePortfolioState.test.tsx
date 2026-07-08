@@ -65,6 +65,7 @@ describe("usePortfolioState", () => {
     symbol: string
     side: "buy" | "sell"
     status: "filled" | "timed_out" | "failed"
+    message?: string
   }>
 
   const exchangePositions = {
@@ -415,6 +416,7 @@ describe("usePortfolioState", () => {
         symbol: "ETH/USDC:USDC",
         side: "sell",
         status: "failed",
+        message: "Order rejected: below minimum notional",
       },
     ]
 
@@ -428,7 +430,9 @@ describe("usePortfolioState", () => {
     expect(result.errorsBySymbol["BTC/USDC:USDC"]).toBe(
       "Order did not confirm in time — portfolio was refreshed from the exchange",
     )
-    expect(result.errorsBySymbol["ETH/USDC:USDC"]).toBe("Order was not filled")
+    expect(result.errorsBySymbol["ETH/USDC:USDC"]).toBe(
+      "Order rejected: below minimum notional",
+    )
 
     const btcTrade = result.stagedTrades.find(
       trade => trade.underlying === "BTC/USDC:USDC",
@@ -443,7 +447,7 @@ describe("usePortfolioState", () => {
     expect(btcTrade?.orderError).toBe(
       "Order did not confirm in time — portfolio was refreshed from the exchange",
     )
-    expect(ethTrade?.orderError).toBe("Order was not filled")
+    expect(ethTrade?.orderError).toBe("Order rejected: below minimum notional")
 
     expect(consoleWarn).toHaveBeenCalledWith(
       "rebalance order watch timed out; portfolio refreshed from exchange",

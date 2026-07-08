@@ -209,6 +209,8 @@ export interface LeverageLimit {
   symbol: string
   maxLeverage: number
   assetIndex: number
+  /** `true` when Hyperliquid forbids cross margin; always a boolean from the backend. */
+  onlyIsolated: boolean
 }
 
 export interface HyperliquidMarketsResponse {
@@ -664,8 +666,46 @@ export class HyperliquidClient {
     return this.parseClearinghouseAssetPositions(state.assetPositions)
   }
 
-  private async setLeverage(symbol: string, leverage: number): Promise<void> {
-    await this.exchange.setLeverage(leverage, symbol)
+  private parseHyperliquidExchangeErrorMessage(error: unknown): string {
+    const message = error instanceof Error ? error.message : String(error)
+    const jsonStart = message.indexOf("{")
+    if (jsonStart >= 0) {
+      try {
+        const payload = JSON.parse(message.slice(jsonStart)) as {
+          response?: unknown
+        }
+        if (typeof payload.response === "string") {
+          return payload.response
+        }
+      } catch {
+        // fall through to the raw exchange message
+      }
+    }
+
+    return message.replace(/^hyperliquid\s+/i, "")
+  }
+
+  private exchangeOperationError(
+    symbol: string,
+    operation: string,
+    error: unknown,
+  ): Error {
+    const detail = this.parseHyperliquidExchangeErrorMessage(error)
+    return new Error(`Failed to ${operation} for ${symbol}: ${detail}`)
+  }
+
+  private async setLeverage(
+    symbol: string,
+    leverage: number,
+    onlyIsolated: boolean,
+  ): Promise<void> {
+    // Default {} in setLeverage is cross margin
+    const params = onlyIsolated ? { marginMode: "isolated" } : {}
+    try {
+      await this.exchange.setLeverage(leverage, symbol, params)
+    } catch (error: unknown) {
+      throw this.exchangeOperationError(symbol, "set leverage", error)
+    }
   }
 
   private parseCcxtPerpSymbolParts(symbol: string): {
@@ -976,9 +1016,14 @@ export class HyperliquidClient {
 
     this.hydrateMarketsFromBackend(backendMarkets.leverageLimits, perpContexts)
 
+    const leverageBySymbol = new Map(
+      backendMarkets.leverageLimits.map(entry => [entry.symbol, entry]),
+    )
     const leverageActions = actions.filter(isLeverageChangedAction)
     for (const action of leverageActions) {
-      await this.setLeverage(action.symbol, action.leverage)
+      const onlyIsolated =
+        leverageBySymbol.get(action.symbol)?.onlyIsolated === true
+      await this.setLeverage(action.symbol, action.leverage, onlyIsolated)
     }
 
     const [tickers, positions] = await Promise.all([

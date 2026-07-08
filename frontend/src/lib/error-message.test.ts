@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect"
 import { getErrorMessage } from "./error-message"
 import { HttpStatusError, NetworkError } from "./http"
 import { ApiMessageError, MissingTickerError } from "@/hooks/useApi"
+import { ExchangeRequestError } from "@/services/hyperliquid"
 
 const asFiberFailure = async (error: unknown): Promise<unknown> => {
   try {
@@ -42,6 +43,19 @@ describe("getErrorMessage", () => {
       new ApiMessageError({ message: "no data for ticker" }),
     )
     expect(getErrorMessage(failure)).toBe("no data for ticker")
+  })
+
+  it("surfaces ExchangeRequestError cause message when present", async () => {
+    const failure = await asFiberFailure(
+      new ExchangeRequestError({
+        cause: new Error(
+          "Failed to set leverage for BANANA/USDC:USDC: Cross margin is not allowed for this asset.",
+        ),
+      }),
+    )
+    expect(getErrorMessage(failure)).toBe(
+      "Failed to set leverage for BANANA/USDC:USDC: Cross margin is not allowed for this asset.",
+    )
   })
 
   it("falls back to a plain Error message", () => {

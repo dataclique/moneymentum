@@ -141,7 +141,10 @@ export const StagedChangesPanel = (props: StagedChangesPanelProps) => {
                     </span>
                   </div>
                   <Show when={orderError}>
-                    <p class="px-2 pb-1.5 text-[10px] leading-snug text-destructive">
+                    <p
+                      role="alert"
+                      class="px-2 pb-1.5 text-[10px] leading-snug text-destructive"
+                    >
                       {orderError}
                     </p>
                   </Show>

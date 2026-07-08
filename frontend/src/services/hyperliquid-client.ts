@@ -749,16 +749,16 @@ export class HyperliquidClient {
   private mergeWatchUpdatesIntoResults(
     results: OrderResult[],
     orders: Order[],
-  ): void {
-    for (const order of orders) {
-      const index = results.findIndex(
+  ): OrderResult[] {
+    return orders.reduce((updatedResults, order) => {
+      const index = updatedResults.findIndex(
         result => result.symbol === order.symbol && result.status === "working",
       )
       if (index < 0) {
-        continue
+        return updatedResults
       }
 
-      const current = results[index]
+      const current = updatedResults[index]
       const watchStatus = order.status
       const nextStatus: OrderResult["status"] =
         watchStatus === "rejected"
@@ -767,23 +767,20 @@ export class HyperliquidClient {
             ? "filled"
             : "working"
 
-      results[index] = {
-        ...current,
-        status: nextStatus,
-      }
-    }
+      return updatedResults.map((result, resultIndex) =>
+        resultIndex === index ? { ...current, status: nextStatus } : result,
+      )
+    }, results)
   }
 
   private hasWorkingOrderResults(results: OrderResult[]): boolean {
     return results.some(result => result.status === "working")
   }
 
-  private markWorkingOrdersTimedOut(results: OrderResult[]): void {
-    for (let index = 0; index < results.length; index++) {
-      if (results[index].status === "working") {
-        results[index] = { ...results[index], status: "timed_out" }
-      }
-    }
+  private markWorkingOrdersTimedOut(results: OrderResult[]): OrderResult[] {
+    return results.map(result =>
+      result.status === "working" ? { ...result, status: "timed_out" } : result,
+    )
   }
 
   private positionSideIsBuy(pos: { side: string }): boolean {
@@ -989,7 +986,7 @@ export class HyperliquidClient {
       this.exchange.fetchPositions(),
     ])
 
-    const results: OrderResult[] = []
+    let results: OrderResult[] = []
 
     // Subscribe to orders before sending them
     const watchSince = Date.now()
@@ -1013,7 +1010,7 @@ export class HyperliquidClient {
       results.push(...this.workingOrderResultsFromRequests(expansion))
     }
 
-    console.log("results", results)
+    console.log("results after create orders", results)
 
     while (this.hasWorkingOrderResults(results)) {
       let timeoutHandle: ReturnType<typeof setTimeout> | undefined
@@ -1040,11 +1037,11 @@ export class HyperliquidClient {
 
       if (ordersUpdate instanceof Error) {
         console.error(ordersUpdate.message)
-        this.markWorkingOrdersTimedOut(results)
+        results = this.markWorkingOrdersTimedOut(results)
         break
       }
 
-      this.mergeWatchUpdatesIntoResults(results, ordersUpdate)
+      results = this.mergeWatchUpdatesIntoResults(results, ordersUpdate)
 
       if (this.hasWorkingOrderResults(results)) {
         nextWatch = this.exchange.watchOrders(undefined, watchSince)
@@ -1054,7 +1051,7 @@ export class HyperliquidClient {
     await this.exchange.unWatchOrders()
 
     console.log("unwatching orders")
-    console.log("results", results)
+    console.log("results after watch", results)
 
     return results
   }

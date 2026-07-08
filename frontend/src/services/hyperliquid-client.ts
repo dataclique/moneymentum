@@ -218,6 +218,7 @@ const ORDER_STATUS_USER_MESSAGES: Record<string, string> = {
   triggered: "Order still open after watch timeout",
   canceled: "Order was canceled",
   cancelled: "Order was canceled",
+  expired: "Order expired",
   rejected: "Order was rejected",
   marginCanceled: "Order canceled due to margin",
   vaultWithdrawalCanceled: "Order canceled due to vault withdrawal",
@@ -295,11 +296,13 @@ const mapExchangeOrderForWatch = (
     ccxtStatus === "rejected" ||
     ccxtStatus === "canceled" ||
     ccxtStatus === "cancelled" ||
+    ccxtStatus === "expired" ||
     (infoStatus !== null &&
       (infoStatus.endsWith("Canceled") ||
         infoStatus.endsWith("Rejected") ||
         infoStatus === "rejected" ||
         infoStatus === "canceled" ||
+        infoStatus === "expired" ||
         hasOrderStatusUserMessage(infoStatus)))
   ) {
     const messageKey = infoStatus ?? ccxtStatus

@@ -1506,6 +1506,40 @@ describe("HyperliquidClient", () => {
     expect(mockExchange.unWatchOrders).toHaveBeenCalledTimes(1)
   })
 
+  it("maps expired watch updates to failed OrderResult", async () => {
+    mockExchange.fetchTickers.mockResolvedValue({
+      "BTC/USDC:USDC": { last: 50_000 },
+    })
+    mockExchange.fetchPositions.mockResolvedValue([])
+
+    mockExchange.createOrdersWs.mockResolvedValue([
+      { symbol: "BTC/USDC:USDC", status: "open", info: {} },
+    ])
+    mockExchange.watchOrders.mockResolvedValue([
+      {
+        symbol: "BTC/USDC:USDC",
+        status: "expired",
+        info: { status: "expired" },
+      },
+    ])
+
+    const actions: RebalanceAction[] = [
+      {
+        kind: "rebalance",
+        symbol: "BTC/USDC:USDC",
+        signedNotionalDelta: 100,
+        leverage: 2,
+        leverageChanged: false,
+      },
+    ]
+
+    const client = new HyperliquidClient(credentials, "mainnet")
+    const result = await client.rebalancePositions(actions)
+
+    expect(result[0]?.status).toBe("failed")
+    expect(result[0]?.message).toBe("Order expired")
+  })
+
   it("maps rejected createOrdersWs responses to failed OrderResult", async () => {
     mockExchange.fetchTickers.mockResolvedValue({
       "ETH/USDC:USDC": { last: 4_000 },

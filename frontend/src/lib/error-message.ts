@@ -23,6 +23,22 @@ export const getErrorMessage = (error: unknown): string => {
   return String(unwrapped)
 }
 
+const EXCHANGE_REJECTED_MESSAGE =
+  "The exchange rejected the request. Please try again."
+
+/** Readable text from an ExchangeRequestError cause, or null if unusable. */
+const messageFromExchangeCause = (cause: unknown): string | null => {
+  if (cause instanceof Error) {
+    const message = cause.message.trim()
+    return message.length > 0 ? message : null
+  }
+  if (typeof cause === "string") {
+    const message = cause.trim()
+    return message.length > 0 ? message : null
+  }
+  return null
+}
+
 /** Unwraps ExchangeRequestError to the underlying exchange failure for logs. */
 export const getExchangeErrorDetail = (error: unknown): string => {
   const unwrapped = unwrapTaggedError(error)
@@ -32,9 +48,10 @@ export const getExchangeErrorDetail = (error: unknown): string => {
     unwrapped._tag === "ExchangeRequestError" &&
     "cause" in unwrapped
   ) {
-    const cause = (unwrapped as { cause: unknown }).cause
-    if (cause instanceof Error) return cause.message
-    return String(cause)
+    return (
+      messageFromExchangeCause((unwrapped as { cause: unknown }).cause) ??
+      EXCHANGE_REJECTED_MESSAGE
+    )
   }
 
   return getErrorMessage(error)
@@ -87,12 +104,8 @@ const messageForTag = (error: TaggedError): string | null => {
     case "WalletNotConnected":
       return "Connect a wallet to continue."
     case "ExchangeRequestError": {
-      const cause =
-        "cause" in error && error.cause instanceof Error ? error.cause : null
-      if (cause !== null && cause.message.length > 0) {
-        return cause.message
-      }
-      return "The exchange rejected the request. Please try again."
+      const cause = "cause" in error ? error.cause : undefined
+      return messageFromExchangeCause(cause) ?? EXCHANGE_REJECTED_MESSAGE
     }
     case "WalletConnectError":
       return "Failed to save wallet credentials. Please try again."

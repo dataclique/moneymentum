@@ -133,9 +133,16 @@
           eslint = {
             enable = true;
             files = "^frontend/.*\\.(ts|tsx|js|jsx)$";
-            pass_filenames = false;
+            pass_filenames = true;
             entry = ''
-              ${pkgs.bash}/bin/bash -c 'cd frontend && ${pkgs.bun}/bin/bun run lint'
+              ${pkgs.bash}/bin/bash -c '
+                cd frontend
+                paths=()
+                for file in "$@"; do
+                  paths+=("''${file#frontend/}")
+                done
+                exec ${pkgs.bun}/bin/bun run lint:staged -- "''${paths[@]}"
+              ' _
             '';
           };
 

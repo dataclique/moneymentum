@@ -270,7 +270,7 @@ fn only_isolated_column(frame: &DataFrame) -> Result<ChunkedArray<BooleanType>, 
         .clone();
 
     // Null cells mean "not isolated-only" -- normalize before serving the API.
-    Ok(column.fill_null_with_values(false)?)
+    column.fill_null_with_values(false)
 }
 
 fn validate_ledger_columns(

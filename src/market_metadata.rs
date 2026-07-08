@@ -637,7 +637,7 @@ mod tests {
         assert_eq!(response.leverage_limits[0].symbol.as_str(), "BTC/USDC:USDC");
         assert_eq!(response.leverage_limits[0].max_leverage, 50);
         assert_eq!(response.leverage_limits[0].asset_index, 0);
-        assert_eq!(response.leverage_limits[0].only_isolated, false);
+        assert!(!response.leverage_limits[0].only_isolated);
         assert!(response.refreshed_at.is_some());
     }
 
@@ -665,8 +665,8 @@ mod tests {
             .iter()
             .find(|entry| entry.symbol.as_str() == "BTC/USDC:USDC")
             .unwrap();
-        assert_eq!(anime.only_isolated, true);
-        assert_eq!(btc.only_isolated, false);
+        assert!(anime.only_isolated);
+        assert!(!btc.only_isolated);
     }
 
     #[tokio::test]

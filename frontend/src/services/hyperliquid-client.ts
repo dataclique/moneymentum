@@ -205,6 +205,141 @@ export interface OrderResult {
   message?: string | null
 }
 
+type TerminalOrderResultStatus = Extract<
+  OrderResult["status"],
+  "filled" | "failed"
+>
+
+type WatchMappedOrderStatus = TerminalOrderResultStatus | "working"
+
+/** User-facing copy for Hyperliquid / CCXT order status strings. */
+const ORDER_STATUS_USER_MESSAGES: Record<string, string> = {
+  open: "Order still open after watch timeout",
+  triggered: "Order still open after watch timeout",
+  canceled: "Order was canceled",
+  cancelled: "Order was canceled",
+  rejected: "Order was rejected",
+  marginCanceled: "Order canceled due to margin",
+  vaultWithdrawalCanceled: "Order canceled due to vault withdrawal",
+  openInterestCapCanceled: "Order canceled due to open interest cap",
+  selfTradeCanceled: "Order canceled due to self-trade prevention",
+  reduceOnlyCanceled: "Reduce-only order was canceled",
+  siblingFilledCanceled: "Order canceled after a sibling fill",
+  delistedCanceled: "Order canceled because the market was delisted",
+  liquidatedCanceled: "Order canceled due to liquidation",
+  scheduledCancel: "Order was scheduled for cancel",
+  tickRejected: "Order rejected: invalid tick size",
+  minTradeNtlRejected: "Order rejected: below minimum notional",
+  perpMarginRejected: "Order rejected: insufficient perp margin",
+  reduceOnlyRejected: "Reduce-only order was rejected",
+  badAloPxRejected: "Order rejected: invalid ALO price",
+  iocCancelRejected: "IOC order was rejected or canceled",
+  badTriggerPxRejected: "Order rejected: invalid trigger price",
+  marketOrderNoLiquidityRejected: "Market order rejected: no liquidity",
+  positionIncreaseAtOpenInterestCapRejected:
+    "Order rejected: position increase at open interest cap",
+  positionFlipAtOpenInterestCapRejected:
+    "Order rejected: position flip at open interest cap",
+  tooAggressiveAtOpenInterestCapRejected:
+    "Order rejected: too aggressive at open interest cap",
+  openInterestIncreaseRejected: "Order rejected: open interest increase",
+  insufficientSpotBalanceRejected: "Order rejected: insufficient spot balance",
+  oracleRejected: "Order rejected by oracle",
+  perpMaxPositionRejected: "Order rejected: perp max position",
+}
+
+const FILLED_STATUSES = new Set(["filled", "closed"])
+const OPEN_STATUSES = new Set(["open", "triggered"])
+
+const readHyperliquidInfoStatus = (order: Order): string | null => {
+  const info: unknown = order.info
+  if (typeof info !== "object" || info === null || !("status" in info)) {
+    return null
+  }
+  const status = (info as { status: unknown }).status
+  return typeof status === "string" && status.length > 0 ? status : null
+}
+
+const hasOrderStatusUserMessage = (status: string): boolean =>
+  Object.prototype.hasOwnProperty.call(ORDER_STATUS_USER_MESSAGES, status)
+
+const normalizeExchangeOrderStatus = (status: string | undefined): string =>
+  (status ?? "").trim()
+
+const userMessageForOrderStatus = (status: string): string =>
+  ORDER_STATUS_USER_MESSAGES[status] ??
+  (status.length > 0 ? status : "Order was not filled")
+
+/**
+ * Maps a CCXT/Hyperliquid order into filled | failed | working for the live
+ * watch loop. Prefer raw info.status for user messages when present.
+ */
+const mapExchangeOrderForWatch = (
+  order: Order,
+): { status: WatchMappedOrderStatus; message: string | null } => {
+  const ccxtStatus = normalizeExchangeOrderStatus(order.status)
+  const infoStatus = readHyperliquidInfoStatus(order)
+
+  if (
+    FILLED_STATUSES.has(ccxtStatus) ||
+    (infoStatus !== null && FILLED_STATUSES.has(infoStatus))
+  ) {
+    return { status: "filled", message: null }
+  }
+
+  if (OPEN_STATUSES.has(ccxtStatus) || OPEN_STATUSES.has(infoStatus ?? "")) {
+    return { status: "working", message: null }
+  }
+
+  if (
+    ccxtStatus === "rejected" ||
+    ccxtStatus === "canceled" ||
+    ccxtStatus === "cancelled" ||
+    (infoStatus !== null &&
+      (infoStatus.endsWith("Canceled") ||
+        infoStatus.endsWith("Rejected") ||
+        infoStatus === "rejected" ||
+        infoStatus === "canceled" ||
+        hasOrderStatusUserMessage(infoStatus)))
+  ) {
+    const messageKey = infoStatus ?? ccxtStatus
+    return {
+      status: "failed",
+      message: userMessageForOrderStatus(messageKey),
+    }
+  }
+
+  return { status: "working", message: null }
+}
+
+/**
+ * Maps a fetched order after watch timeout. Open/triggered become failed.
+ */
+const mapExchangeOrderAfterTimeout = (
+  order: Order,
+): { status: TerminalOrderResultStatus; message: string | null } => {
+  const mapped = mapExchangeOrderForWatch(order)
+  if (mapped.status === "filled") {
+    return { status: "filled", message: null }
+  }
+  if (mapped.status === "failed") {
+    return mapped
+  }
+
+  const infoStatus = readHyperliquidInfoStatus(order)
+  const ccxtStatus = normalizeExchangeOrderStatus(order.status)
+  const messageKey =
+    infoStatus ??
+    (OPEN_STATUSES.has(ccxtStatus) ? ccxtStatus : ccxtStatus || "open")
+
+  return {
+    status: "failed",
+    message: userMessageForOrderStatus(
+      OPEN_STATUSES.has(messageKey) ? messageKey : "open",
+    ),
+  }
+}
+
 export interface LeverageLimit {
   symbol: string
   maxLeverage: number
@@ -340,6 +475,12 @@ interface HyperliquidExchange {
     symbol?: string,
     params?: Record<string, unknown>,
   ) => Promise<unknown>
+  fetchOrders: (
+    symbol?: string,
+    since?: number,
+    limit?: number,
+    params?: Record<string, unknown>,
+  ) => Promise<Order[]>
 }
 
 export class HyperliquidClient {
@@ -799,16 +940,19 @@ export class HyperliquidClient {
       }
 
       const current = updatedResults[index]
-      const watchStatus = order.status
-      const nextStatus: OrderResult["status"] =
-        watchStatus === "rejected"
-          ? "failed"
-          : watchStatus === "closed" || watchStatus === "filled"
-            ? "filled"
-            : "working"
+      const mapped = mapExchangeOrderForWatch(order)
+      if (mapped.status === "working") {
+        return updatedResults
+      }
 
       return updatedResults.map((result, resultIndex) =>
-        resultIndex === index ? { ...current, status: nextStatus } : result,
+        resultIndex === index
+          ? {
+              ...current,
+              status: mapped.status,
+              message: mapped.message,
+            }
+          : result,
       )
     }, results)
   }
@@ -821,6 +965,38 @@ export class HyperliquidClient {
     return results.map(result =>
       result.status === "working" ? { ...result, status: "timed_out" } : result,
     )
+  }
+
+  /**
+   * After watch timeout, reconcile timed_out slots with fetchOrders.
+   * One result per symbol for now (precise multi-leg matching is a follow-up).
+   */
+  private reconcileTimedOutResultsWithFetchedOrders(
+    results: OrderResult[],
+    fetchedOrders: Order[],
+  ): OrderResult[] {
+    return fetchedOrders.reduce((updatedResults, order) => {
+      const index = updatedResults.findIndex(
+        result =>
+          result.symbol === order.symbol && result.status === "timed_out",
+      )
+      if (index < 0) {
+        return updatedResults
+      }
+
+      const current = updatedResults[index]
+      const mapped = mapExchangeOrderAfterTimeout(order)
+
+      return updatedResults.map((result, resultIndex) =>
+        resultIndex === index
+          ? {
+              ...current,
+              status: mapped.status,
+              message: mapped.message,
+            }
+          : result,
+      )
+    }, results)
   }
 
   private positionSideIsBuy(pos: { side: string }): boolean {
@@ -1057,11 +1233,13 @@ export class HyperliquidClient {
 
     console.log("results after create orders", results)
 
+    let watchTimedOut = false
+
     while (this.hasWorkingOrderResults(results)) {
       let timeoutHandle: ReturnType<typeof setTimeout> | undefined
-      const timeoutPromise: Promise<Error> = new Promise((_, reject) => {
+      const timeoutPromise: Promise<Error> = new Promise(resolve => {
         timeoutHandle = setTimeout(() => {
-          reject(
+          resolve(
             new Error(
               `Operation timed out after ${HYPERLIQUID_WATCH_ORDERS_TIMEOUT_MS}ms`,
             ),
@@ -1083,6 +1261,7 @@ export class HyperliquidClient {
       if (ordersUpdate instanceof Error) {
         console.error(ordersUpdate.message)
         results = this.markWorkingOrdersTimedOut(results)
+        watchTimedOut = true
         break
       }
 
@@ -1097,6 +1276,25 @@ export class HyperliquidClient {
 
     console.log("unwatching orders")
     console.log("results after watch", results)
+
+    if (watchTimedOut) {
+      try {
+        const passedOrders = await this.exchange.fetchOrders(
+          undefined,
+          watchSince,
+        )
+        console.log("passedOrders", passedOrders)
+        results = this.reconcileTimedOutResultsWithFetchedOrders(
+          results,
+          passedOrders,
+        )
+      } catch (error: unknown) {
+        console.error(
+          "fetchOrders backup after watch timeout failed",
+          error instanceof Error ? error.message : error,
+        )
+      }
+    }
 
     return results
   }

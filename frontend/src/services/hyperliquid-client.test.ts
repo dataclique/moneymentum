@@ -1106,42 +1106,44 @@ describe("HyperliquidClient", () => {
   it("rejects when watch stalls past the watch timeout", async () => {
     vi.useFakeTimers()
 
-    mockExchange.fetchTickers.mockResolvedValue({
-      "BTC/USDC:USDC": { last: 50_000 },
-    })
-    mockExchange.fetchPositions.mockResolvedValue([])
+    try {
+      mockExchange.fetchTickers.mockResolvedValue({
+        "BTC/USDC:USDC": { last: 50_000 },
+      })
+      mockExchange.fetchPositions.mockResolvedValue([])
 
-    mockExchange.createOrdersWs.mockResolvedValue([
-      { symbol: "BTC/USDC:USDC", status: "open", info: {} },
-    ])
-    mockExchange.watchOrders.mockImplementation(
-      () =>
-        new Promise<Order[]>(() => {
-          // never resolves
-        }),
-    )
+      mockExchange.createOrdersWs.mockResolvedValue([
+        { symbol: "BTC/USDC:USDC", status: "open", info: {} },
+      ])
+      mockExchange.watchOrders.mockImplementation(
+        () =>
+          new Promise<Order[]>(() => {
+            // never resolves
+          }),
+      )
 
-    const actions: RebalanceAction[] = [
-      {
-        kind: "rebalance",
-        symbol: "BTC/USDC:USDC",
-        signedNotionalDelta: 100,
-        leverage: 2,
-        leverageChanged: false,
-      },
-    ]
+      const actions: RebalanceAction[] = [
+        {
+          kind: "rebalance",
+          symbol: "BTC/USDC:USDC",
+          signedNotionalDelta: 100,
+          leverage: 2,
+          leverageChanged: false,
+        },
+      ]
 
-    const client = new HyperliquidClient(credentials, "mainnet")
-    const resultPromise = client.rebalancePositions(actions)
-    const rejection = expect(resultPromise).rejects.toThrow(
-      "Operation timed out after 10000ms",
-    )
+      const client = new HyperliquidClient(credentials, "mainnet")
+      const resultPromise = client.rebalancePositions(actions)
+      const rejection = expect(resultPromise).rejects.toThrow(
+        "Operation timed out after 10000ms",
+      )
 
-    await vi.advanceTimersByTimeAsync(10_000)
+      await vi.advanceTimersByTimeAsync(10_000)
 
-    await rejection
-
-    vi.useRealTimers()
+      await rejection
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it("marks results filled when watch reports closed after createOrdersWs submit", async () => {

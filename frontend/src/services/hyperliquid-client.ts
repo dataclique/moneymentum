@@ -1016,8 +1016,9 @@ export class HyperliquidClient {
     console.log("results", results)
 
     while (this.hasWorkingOrderResults(results)) {
+      let timeoutHandle: ReturnType<typeof setTimeout> | undefined
       const timeoutPromise: Promise<Error> = new Promise((_, reject) => {
-        setTimeout(() => {
+        timeoutHandle = setTimeout(() => {
           reject(
             new Error(
               `Operation timed out after ${HYPERLIQUID_WATCH_ORDERS_TIMEOUT_MS}ms`,
@@ -1026,10 +1027,14 @@ export class HyperliquidClient {
         }, HYPERLIQUID_WATCH_ORDERS_TIMEOUT_MS)
       })
 
-      const ordersUpdate: Order[] | Error = await Promise.race([
-        nextWatch,
-        timeoutPromise,
-      ])
+      let ordersUpdate: Order[] | Error
+      try {
+        ordersUpdate = await Promise.race([nextWatch, timeoutPromise])
+      } finally {
+        if (timeoutHandle !== undefined) {
+          clearTimeout(timeoutHandle)
+        }
+      }
 
       console.log("ordersUpdate", ordersUpdate)
 

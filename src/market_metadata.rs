@@ -6,7 +6,8 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 use polars::prelude::{
-    ChunkedArray, DataFrame, DataType, Int64Type, PolarsError, StringChunked, df,
+    BooleanType, ChunkFillNullValue, ChunkFull, ChunkedArray, DataFrame, DataType, Int64Type,
+    PolarsError, StringChunked, df,
 };
 use serde::Serialize;
 use thiserror::Error;
@@ -52,6 +53,8 @@ pub(crate) struct LeverageLimitEntry {
     pub(crate) symbol: CcxtSymbol,
     pub(crate) max_leverage: u32,
     pub(crate) asset_index: u32,
+    /// `true` when Hyperliquid disallows cross margin for the asset.
+    pub(crate) only_isolated: bool,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -68,6 +71,8 @@ pub(crate) struct MarketMetadata {
     pub(crate) symbol: Market,
     pub(crate) max_leverage: u32,
     pub(crate) asset_index: u32,
+    /// `true` when the asset supports only isolated margin.
+    pub(crate) only_isolated: bool,
 }
 
 /// Hyperliquid deployment whose perp universe is stored in the data directory.
@@ -129,10 +134,16 @@ pub(crate) async fn markets_need_refresh(data_dir: &Path, ledger: MarketsLedger)
     let Some(frame) = frame else {
         return true;
     };
-    if !frame
-        .get_column_names()
+    let column_names = frame.get_column_names();
+    if !column_names
         .iter()
         .any(|column| column.as_str() == "asset_index")
+    {
+        return true;
+    }
+    if !column_names
+        .iter()
+        .any(|column| column.as_str() == "only_isolated")
     {
         return true;
     }
@@ -185,6 +196,7 @@ fn markets_api_response_from_frame(
     let symbols = frame.column("symbol")?.str()?;
     let max_leverages = max_leverage_column(frame)?;
     let asset_indices = asset_index_column(frame)?;
+    let only_isolated_flags = only_isolated_column(frame)?;
     validate_ledger_columns(symbols, &max_leverages, &asset_indices)?;
 
     let mut tickers = Vec::with_capacity(symbols.len());
@@ -209,11 +221,13 @@ fn markets_api_response_from_frame(
                 format!("markets ledger row {index} asset_index out of range").into(),
             ))
         })?;
+        let only_isolated = only_isolated_flags.get(index).unwrap_or(false);
         tickers.push(ccxt_symbol.clone());
         leverage_limits.push(LeverageLimitEntry {
             symbol: ccxt_symbol,
             max_leverage,
             asset_index,
+            only_isolated,
         });
     }
 
@@ -233,6 +247,30 @@ fn asset_index_column(frame: &DataFrame) -> Result<ChunkedArray<Int64Type>, Pola
         .cast(&DataType::Int64)?
         .i64()
         .cloned()
+}
+
+fn only_isolated_column(frame: &DataFrame) -> Result<ChunkedArray<BooleanType>, PolarsError> {
+    // Legacy ledgers may omit only_isolated; treat every row as cross-capable.
+    if !frame
+        .get_column_names()
+        .iter()
+        .any(|column| column.as_str() == "only_isolated")
+    {
+        return Ok(ChunkedArray::full(
+            "only_isolated".into(),
+            false,
+            frame.height(),
+        ));
+    }
+
+    let column = frame
+        .column("only_isolated")?
+        .cast(&DataType::Boolean)?
+        .bool()?
+        .clone();
+
+    // Null cells mean "not isolated-only" -- normalize before serving the API.
+    Ok(column.fill_null_with_values(false)?)
 }
 
 fn validate_ledger_columns(
@@ -353,10 +391,13 @@ fn build_markets_frame(fetched: &[MarketMetadata]) -> Result<DataFrame, PolarsEr
         .collect();
     let max_leverages: Vec<u32> = fetched.iter().map(|market| market.max_leverage).collect();
     let asset_indices: Vec<u32> = fetched.iter().map(|market| market.asset_index).collect();
+    let only_isolated_flags: Vec<bool> =
+        fetched.iter().map(|market| market.only_isolated).collect();
     df! {
         "symbol" => symbols,
         "max_leverage" => max_leverages,
         "asset_index" => asset_indices,
+        "only_isolated" => only_isolated_flags,
     }
 }
 
@@ -378,6 +419,16 @@ mod tests {
             symbol: Market::new(symbol.to_string()),
             max_leverage,
             asset_index,
+            only_isolated: false,
+        }
+    }
+
+    fn metadata_isolated(symbol: &str, max_leverage: u32, asset_index: u32) -> MarketMetadata {
+        MarketMetadata {
+            symbol: Market::new(symbol.to_string()),
+            max_leverage,
+            asset_index,
+            only_isolated: true,
         }
     }
 
@@ -418,7 +469,7 @@ mod tests {
         assert_eq!(frame.height(), 2);
         assert_eq!(
             frame.get_column_names(),
-            ["symbol", "max_leverage", "asset_index"]
+            ["symbol", "max_leverage", "asset_index", "only_isolated"]
         );
         let symbols = frame.column("symbol").unwrap().str().unwrap();
         let leverage = frame.column("max_leverage").unwrap().u32().unwrap();
@@ -486,7 +537,7 @@ mod tests {
                 .unwrap();
         assert_eq!(
             reloaded.get_column_names(),
-            ["symbol", "max_leverage", "asset_index"]
+            ["symbol", "max_leverage", "asset_index", "only_isolated"]
         );
     }
 
@@ -586,7 +637,58 @@ mod tests {
         assert_eq!(response.leverage_limits[0].symbol.as_str(), "BTC/USDC:USDC");
         assert_eq!(response.leverage_limits[0].max_leverage, 50);
         assert_eq!(response.leverage_limits[0].asset_index, 0);
+        assert_eq!(response.leverage_limits[0].only_isolated, false);
         assert!(response.refreshed_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn load_markets_api_response_returns_only_isolated_when_set() {
+        let data_dir = TempDir::new().unwrap();
+        let client = StubClient {
+            metadata: vec![metadata("BTC", 50, 0), metadata_isolated("ANIME", 12, 1)],
+        };
+        refresh_markets(&client, data_dir.path(), MarketsLedger::Mainnet)
+            .await
+            .unwrap();
+
+        let response = load_markets_api_response(data_dir.path(), MarketsLedger::Mainnet)
+            .await
+            .unwrap();
+
+        let anime = response
+            .leverage_limits
+            .iter()
+            .find(|entry| entry.symbol.as_str() == "ANIME/USDC:USDC")
+            .unwrap();
+        let btc = response
+            .leverage_limits
+            .iter()
+            .find(|entry| entry.symbol.as_str() == "BTC/USDC:USDC")
+            .unwrap();
+        assert_eq!(anime.only_isolated, true);
+        assert_eq!(btc.only_isolated, false);
+    }
+
+    #[tokio::test]
+    async fn markets_need_refresh_when_ledger_lacks_only_isolated_column() {
+        let data_dir = TempDir::new().unwrap();
+        let legacy_ledger = df! {
+            "symbol" => &["BTC"],
+            "max_leverage" => &[50_u32],
+            "asset_index" => &[0_u32],
+        }
+        .unwrap();
+        crate::dataframe::write_csv(
+            data_dir.path().join(MarketsLedger::Mainnet.file_name()),
+            legacy_ledger,
+        )
+        .await
+        .unwrap();
+
+        assert!(
+            markets_need_refresh(data_dir.path(), MarketsLedger::Mainnet).await,
+            "a ledger missing the only_isolated column must be treated as stale"
+        );
     }
 
     #[tokio::test]

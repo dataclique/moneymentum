@@ -86,8 +86,14 @@ const messageForTag = (error: TaggedError): string | null => {
       return error.message ?? "The server reported an error."
     case "WalletNotConnected":
       return "Connect a wallet to continue."
-    case "ExchangeRequestError":
+    case "ExchangeRequestError": {
+      const cause =
+        "cause" in error && error.cause instanceof Error ? error.cause : null
+      if (cause !== null && cause.message.length > 0) {
+        return cause.message
+      }
       return "The exchange rejected the request. Please try again."
+    }
     case "WalletConnectError":
       return "Failed to save wallet credentials. Please try again."
     case "WalletUnlockError":

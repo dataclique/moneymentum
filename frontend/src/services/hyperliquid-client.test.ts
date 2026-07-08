@@ -85,6 +85,7 @@ const stubBackendMarketsFetch = (
     assetIndex: number
     universeName?: string
     maxLeverage?: number
+    onlyIsolated?: boolean
     szDecimals?: number
     markPx?: number
   }>,
@@ -166,6 +167,7 @@ const stubBackendMarketsFetch = (
             symbol: entry.symbol,
             maxLeverage: entry.maxLeverage ?? 50,
             assetIndex: entry.assetIndex,
+            onlyIsolated: entry.onlyIsolated === true,
           })),
           refreshedAt: new Date().toISOString(),
         }) as const,
@@ -452,7 +454,11 @@ describe("HyperliquidClient", () => {
     const client = new HyperliquidClient(credentials, "mainnet")
     const result = await client.rebalancePositions(actions)
 
-    expect(mockExchange.setLeverage).toHaveBeenCalledWith(5, "BTC/USDC:USDC")
+    expect(mockExchange.setLeverage).toHaveBeenCalledWith(
+      5,
+      "BTC/USDC:USDC",
+      {},
+    )
 
     expect(mockExchange.createOrdersWs).toHaveBeenCalledTimes(2)
     expect(mockExchange.fetchPositions).toHaveBeenCalledTimes(1)
@@ -515,11 +521,55 @@ describe("HyperliquidClient", () => {
 
     const client = new HyperliquidClient(credentials, "mainnet")
     await expect(client.rebalancePositions(actions)).rejects.toThrow(
-      "Cross margin is not allowed",
+      "Failed to set leverage for BANANA/USDC:USDC: Cross margin is not allowed for this asset.",
     )
 
-    expect(mockExchange.setLeverage).toHaveBeenCalledWith(3, "BANANA/USDC:USDC")
+    expect(mockExchange.setLeverage).toHaveBeenCalledWith(
+      3,
+      "BANANA/USDC:USDC",
+      {},
+    )
     expect(mockExchange.createOrdersWs).not.toHaveBeenCalled()
+  })
+
+  it("sets isolated marginMode when backend marks onlyIsolated", async () => {
+    stubBackendMarketsFetch("mainnet", [
+      { symbol: "BTC/USDC:USDC", assetIndex: 0 },
+      {
+        symbol: "BANANA/USDC:USDC",
+        assetIndex: 2,
+        markPx: 0.05,
+        universeName: "BANANA",
+        onlyIsolated: true,
+      },
+    ])
+
+    mockExchange.fetchTickers.mockResolvedValue({
+      "BANANA/USDC:USDC": { last: 0.05 },
+    })
+    mockExchange.fetchPositions.mockResolvedValue([])
+    mockExchange.createOrdersWs.mockResolvedValue([
+      { symbol: "BANANA/USDC:USDC", status: "closed", info: {} },
+    ])
+
+    const actions: RebalanceAction[] = [
+      {
+        kind: "rebalance",
+        symbol: "BANANA/USDC:USDC",
+        signedNotionalDelta: 15,
+        leverage: 3,
+        leverageChanged: true,
+      },
+    ]
+
+    const client = new HyperliquidClient(credentials, "mainnet")
+    await client.rebalancePositions(actions)
+
+    expect(mockExchange.setLeverage).toHaveBeenCalledWith(
+      3,
+      "BANANA/USDC:USDC",
+      { marginMode: "isolated" },
+    )
   })
 
   it("OrderResult array lists reduction fills before expansion fills", async () => {

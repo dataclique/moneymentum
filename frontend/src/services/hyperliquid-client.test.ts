@@ -1125,6 +1125,62 @@ describe("HyperliquidClient", () => {
     ])
   })
 
+  it("skips watchOrders for leverage-only actions with no order legs", async () => {
+    mockExchange.fetchTickers.mockResolvedValue({
+      "BTC/USDC:USDC": { last: 50_000 },
+    })
+    mockExchange.fetchPositions.mockResolvedValue([
+      { symbol: "BTC/USDC:USDC", side: "long", contracts: 0.1 },
+    ])
+
+    const actions: RebalanceAction[] = [
+      {
+        kind: "rebalance",
+        symbol: "BTC/USDC:USDC",
+        signedNotionalDelta: 0,
+        leverage: 5,
+        leverageChanged: true,
+      },
+    ]
+
+    const client = new HyperliquidClient(credentials, "mainnet")
+    const results = await client.rebalancePositions(actions)
+
+    expect(results).toEqual([])
+    expect(mockExchange.setLeverage).toHaveBeenCalledWith(
+      5,
+      "BTC/USDC:USDC",
+      {},
+    )
+    expect(mockExchange.watchOrders).not.toHaveBeenCalled()
+    expect(mockExchange.unWatchOrders).not.toHaveBeenCalled()
+    expect(mockExchange.createOrdersWs).not.toHaveBeenCalled()
+  })
+
+  it("unWatches orders when createOrdersWsBatch fails after watch subscribe", async () => {
+    mockExchange.fetchTickers.mockResolvedValue({
+      "BTC/USDC:USDC": { last: 50_000 },
+    })
+    mockExchange.fetchPositions.mockResolvedValue([])
+    mockExchange.createOrdersWs.mockRejectedValueOnce(new Error("ws down"))
+
+    const actions: RebalanceAction[] = [
+      {
+        kind: "rebalance",
+        symbol: "BTC/USDC:USDC",
+        signedNotionalDelta: 100,
+        leverage: 2,
+        leverageChanged: false,
+      },
+    ]
+
+    const client = new HyperliquidClient(credentials, "mainnet")
+    await expect(client.rebalancePositions(actions)).rejects.toThrow("ws down")
+
+    expect(mockExchange.watchOrders).toHaveBeenCalled()
+    expect(mockExchange.unWatchOrders).toHaveBeenCalledTimes(1)
+  })
+
   it("marks results filled when watch reports closed after createOrdersWs", async () => {
     mockExchange.fetchTickers.mockResolvedValue({
       "BTC/USDC:USDC": { last: 50_000 },

@@ -1210,72 +1210,78 @@ export class HyperliquidClient {
       this.exchange.fetchPositions(),
     ])
 
-    let results: OrderResult[] = []
-
-    // Subscribe to orders before sending them
-    const watchSince = Date.now()
-    let nextWatch = this.exchange.watchOrders(undefined, watchSince)
-
     const { reduction, expansion } = this.splitRebalanceActionsIntoPhases(
       actions,
       tickers,
       positions,
     )
 
-    if (reduction.length > 0) {
-      const responses = await this.createOrdersWsBatch(reduction)
-      console.log("responses", responses)
-      results.push(...this.workingOrderResultsFromRequests(reduction))
+    // Leverage-only / no-op paths never place orders -- skip watch subscription.
+    if (reduction.length === 0 && expansion.length === 0) {
+      return []
     }
 
-    if (expansion.length > 0) {
-      const responses = await this.createOrdersWsBatch(expansion)
-      console.log("responses", responses)
-      results.push(...this.workingOrderResultsFromRequests(expansion))
-    }
-
-    console.log("results after create orders", results)
-
+    let results: OrderResult[] = []
     let watchTimedOut = false
 
-    while (this.hasWorkingOrderResults(results)) {
-      let timeoutHandle: ReturnType<typeof setTimeout> | undefined
-      const timeoutPromise: Promise<Error> = new Promise(resolve => {
-        timeoutHandle = setTimeout(() => {
-          resolve(
-            new Error(
-              `Operation timed out after ${HYPERLIQUID_WATCH_ORDERS_TIMEOUT_MS}ms`,
-            ),
-          )
-        }, HYPERLIQUID_WATCH_ORDERS_TIMEOUT_MS)
-      })
+    // Subscribe to orders before sending them
+    const watchSince = Date.now()
+    let nextWatch = this.exchange.watchOrders(undefined, watchSince)
 
-      let ordersUpdate: Order[] | Error
-      try {
-        ordersUpdate = await Promise.race([nextWatch, timeoutPromise])
-      } finally {
-        if (timeoutHandle !== undefined) {
-          clearTimeout(timeoutHandle)
+    try {
+      if (reduction.length > 0) {
+        const responses = await this.createOrdersWsBatch(reduction)
+        console.log("responses", responses)
+        results.push(...this.workingOrderResultsFromRequests(reduction))
+      }
+
+      if (expansion.length > 0) {
+        const responses = await this.createOrdersWsBatch(expansion)
+        console.log("responses", responses)
+        results.push(...this.workingOrderResultsFromRequests(expansion))
+      }
+
+      console.log("results after create orders", results)
+
+      while (this.hasWorkingOrderResults(results)) {
+        let timeoutHandle: ReturnType<typeof setTimeout> | undefined
+        const timeoutPromise: Promise<Error> = new Promise(resolve => {
+          timeoutHandle = setTimeout(() => {
+            resolve(
+              new Error(
+                `Operation timed out after ${HYPERLIQUID_WATCH_ORDERS_TIMEOUT_MS}ms`,
+              ),
+            )
+          }, HYPERLIQUID_WATCH_ORDERS_TIMEOUT_MS)
+        })
+
+        let ordersUpdate: Order[] | Error
+        try {
+          ordersUpdate = await Promise.race([nextWatch, timeoutPromise])
+        } finally {
+          if (timeoutHandle !== undefined) {
+            clearTimeout(timeoutHandle)
+          }
+        }
+
+        console.log("ordersUpdate", ordersUpdate)
+
+        if (ordersUpdate instanceof Error) {
+          console.error(ordersUpdate.message)
+          results = this.markWorkingOrdersTimedOut(results)
+          watchTimedOut = true
+          break
+        }
+
+        results = this.mergeWatchUpdatesIntoResults(results, ordersUpdate)
+
+        if (this.hasWorkingOrderResults(results)) {
+          nextWatch = this.exchange.watchOrders(undefined, watchSince)
         }
       }
-
-      console.log("ordersUpdate", ordersUpdate)
-
-      if (ordersUpdate instanceof Error) {
-        console.error(ordersUpdate.message)
-        results = this.markWorkingOrdersTimedOut(results)
-        watchTimedOut = true
-        break
-      }
-
-      results = this.mergeWatchUpdatesIntoResults(results, ordersUpdate)
-
-      if (this.hasWorkingOrderResults(results)) {
-        nextWatch = this.exchange.watchOrders(undefined, watchSince)
-      }
+    } finally {
+      await this.exchange.unWatchOrders()
     }
-
-    await this.exchange.unWatchOrders()
 
     console.log("unwatching orders")
     console.log("results after watch", results)

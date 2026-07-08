@@ -379,6 +379,11 @@ describe("usePortfolioState", () => {
         onSettled: expect.any(Function),
       }),
     )
+
+    await waitFor(() => {
+      expect(refetchPositions).toHaveBeenCalled()
+      expect(result.isRebalancing).toBe(false)
+    })
   })
 
   it("populates errorsBySymbol and stagedTrades.orderError on non-filled and timed_out rebalance orders", async () => {

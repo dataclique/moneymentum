@@ -1,6 +1,10 @@
+use std::str::FromStr;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
+use apalis::prelude::Data;
 use chrono::Utc;
+use cron::Schedule;
 use event_sorcery::{EventSourced, Projection, ProjectionError, SendError, Store};
 use futures::stream::{self, StreamExt};
 use serde::Deserialize;
@@ -8,8 +12,12 @@ use sqlx::{AssertSqlSafe, SqlitePool};
 use thiserror::Error;
 use tracing::{debug, error, warn};
 
-use super::run::{IngestionRun, IngestionRunCommand, IngestionRunStatus, running_runs};
+use super::run::{
+    IngestionRun, IngestionRunCommand, IngestionRunStatus, running_runs, running_runs_for_work,
+};
 use super::run_id::{INGESTION_RUN_ID_PREFIX, IngestionRunId};
+use super::work::IngestionWork;
+use crate::timeframe::Timeframe;
 
 pub(crate) const ABANDONED_RUN_REASON: &str = "backend restarted before ingestion completed";
 pub(super) const LOST_RACE_REASON: &str = "lost the one-running race to a concurrent ingestion";
@@ -25,20 +33,60 @@ pub(crate) enum IngestionError {
     Projection(#[from] ProjectionError<IngestionRun>),
 }
 
+/// Why building the built-in ingestion schedules fails.
+#[derive(Debug, Error)]
+pub(crate) enum IngestionScheduleError {
+    #[error(transparent)]
+    Cron(#[from] cron::error::Error),
+    #[error(transparent)]
+    ScheduleKey(#[from] super::work::IngestionWorkParseError),
+}
+
+fn validate_production_schedule_definitions() -> Result<(), IngestionScheduleError> {
+    for timeframe in Timeframe::all() {
+        Schedule::from_str(timeframe.ingestion_cron_expression())?;
+    }
+    for work in IngestionWork::scheduled_units() {
+        Schedule::from_str(work.production_cron_expression())?;
+        IngestionWork::from_schedule_key(work.schedule_key())?;
+    }
+    Ok(())
+}
+
+/// Built-in apalis-cron schedules for each candle timeframe and funding refresh.
+pub(crate) fn default_ingestion_schedules()
+-> Result<Vec<(IngestionWork, Schedule)>, IngestionScheduleError> {
+    validate_production_schedule_definitions()?;
+
+    #[cfg(feature = "test-support")]
+    let units: Vec<IngestionWork> = IngestionWork::test_e2e_scheduled_units().into();
+    #[cfg(not(feature = "test-support"))]
+    let units = IngestionWork::scheduled_units();
+
+    units
+        .into_iter()
+        .map(|work| {
+            let expression = work.default_cron_expression();
+            Ok((work, Schedule::from_str(expression)?))
+        })
+        .collect()
+}
+
 /// Opens a new ingestion run and enqueues its job atomically with the
 /// `Started` event through the aggregate's `Jobs` handle, refusing if one is
 /// already active.
 ///
 /// The active check reads the projection, so it is not atomic with the `Start`
 /// event (event-sorcery commits projections just after the event, not in the
-/// same transaction). For operator-triggered, sequential ingest this is
-/// sufficient: the partial unique index on `ingestion_run_view` is a backstop,
+/// same transaction). For scheduled, sequential ingest this is sufficient: the
+/// partial unique index on `ingestion_run_view` is a backstop,
 /// and the startup reconciler guarantees a crashed run never wedges the slot.
 pub(crate) async fn create_run(
     store: &Store<IngestionRun>,
     projection: &Projection<IngestionRun>,
+    work: IngestionWork,
 ) -> Result<IngestionRunId, IngestionError> {
-    if !running_runs(projection).await?.is_empty() {
+    if !running_runs_for_work(projection, work).await?.is_empty() {
         return Err(IngestionError::AlreadyRunning);
     }
 
@@ -50,6 +98,7 @@ pub(crate) async fn create_run(
             IngestionRunCommand::Start {
                 run_id: run_id.clone(),
                 started_at,
+                work,
             },
         )
         .await?;
@@ -62,12 +111,8 @@ pub(crate) async fn create_run(
     // are dropped by the reactor. So after `send`, exactly one run holds the
     // Running slot. If it is not this one, we lost the race: abandon the orphan
     // stream and report AlreadyRunning, so only the winner proceeds.
-    let running = running_runs(projection).await?;
-    let won = if let [(winner, _)] = running.as_slice() {
-        *winner == run_id
-    } else {
-        false
-    };
+    let running = running_runs_for_work(projection, work).await?;
+    let won = matches!(running.as_slice(), [(winner, _)] if *winner == run_id);
     if !won {
         store
             .send(
@@ -86,32 +131,49 @@ pub(crate) async fn create_run(
     Ok(run_id)
 }
 
-/// Runs one scheduled ingestion attempt. An already-running run is the normal
-/// skip-this-tick case, not a failure; genuine failures increment a consecutive
-/// counter and warn so an operator can spot a wedged scheduler.
+/// apalis-cron handler: enqueues a scoped ingestion run on each schedule tick.
+/// An already-running run is the normal skip-this-tick case, not a failure;
+/// genuine failures increment a consecutive counter and warn so an operator can
+/// spot a wedged scheduler.
 pub(crate) async fn trigger_scheduled_ingestion(
-    store: &Store<IngestionRun>,
-    projection: &Projection<IngestionRun>,
-    consecutive_failures: &AtomicU32,
-) {
-    match create_run(store, projection).await {
+    work: IngestionWork,
+    _tick: apalis_cron::Tick<Utc>,
+    store: Data<Arc<Store<IngestionRun>>>,
+    projection: Data<Arc<Projection<IngestionRun>>>,
+    consecutive_failures: Data<Arc<AtomicU32>>,
+) -> Result<(), std::convert::Infallible> {
+    match create_run(&store, &projection, work).await {
         Ok(run_id) => {
             consecutive_failures.store(0, Ordering::Relaxed);
-            debug!(run_id = %run_id, "scheduled ingestion run enqueued");
+            debug!(
+                run_id = %run_id,
+                work = work.schedule_key(),
+                "scheduled ingestion run enqueued"
+            );
         }
         Err(IngestionError::AlreadyRunning) => {
             consecutive_failures.store(0, Ordering::Relaxed);
-            debug!("scheduled ingestion skipped; a run is already active");
+            debug!(
+                work = work.schedule_key(),
+                "scheduled ingestion skipped; a run is already active"
+            );
         }
         Err(err) => {
             let consecutive = consecutive_failures.fetch_add(1, Ordering::Relaxed) + 1;
-            warn!(error = %err, consecutive, "scheduled ingestion run failed");
+            warn!(
+                error = %err,
+                work = work.schedule_key(),
+                consecutive,
+                "scheduled ingestion run failed"
+            );
         }
     }
+
+    Ok(())
 }
 
 /// Abandons every still-running stream. Run unconditionally at startup, before
-/// `/ingest` is served, so a crash mid-run cannot leave the one-running slot
+/// before schedulers enqueue work, so a crash mid-run cannot leave the one-running slot
 /// permanently claimed (the regression that issue #339 fixed).
 pub(crate) async fn recover_abandoned_runs(
     store: &Store<IngestionRun>,
@@ -121,7 +183,7 @@ pub(crate) async fn recover_abandoned_runs(
     let reconciled_at = Utc::now();
 
     // Abandon each run independently: one failed write must not block recovery
-    // of the rest, since this completes before /ingest is served.
+    // of the rest, since this completes before schedulers start.
     let (recovered, first_error) = stream::iter(running.iter())
         .fold(
             (0u64, None::<SendError<IngestionRun>>),
@@ -213,8 +275,12 @@ pub(crate) async fn latest_status(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
     use std::sync::atomic::{AtomicU32, Ordering};
 
+    use apalis::prelude::Data;
+    use chrono::Utc;
+    use event_sorcery::{Projection, Store};
     use tracing::Level;
     use tracing_test::traced_test;
 
@@ -223,8 +289,29 @@ mod tests {
         trigger_scheduled_ingestion,
     };
     use crate::ingestion::fixtures::{ingestion_store, instant};
-    use crate::ingestion::run::{IngestionRunCommand, IngestionRunStatus, running_runs};
+    use crate::ingestion::run::{
+        IngestionRun, IngestionRunCommand, IngestionRunStatus, running_runs,
+    };
+    use crate::ingestion::work::IngestionWork;
     use crate::logs_contain_at;
+    use crate::timeframe::Timeframe;
+
+    async fn trigger_scheduled_ingestion_for_test(
+        store: Arc<Store<IngestionRun>>,
+        projection: Arc<Projection<IngestionRun>>,
+        work: IngestionWork,
+        consecutive_failures: Arc<AtomicU32>,
+    ) {
+        trigger_scheduled_ingestion(
+            work,
+            apalis_cron::Tick::<Utc>::default(),
+            Data::new(Arc::clone(&store)),
+            Data::new(Arc::clone(&projection)),
+            Data::new(consecutive_failures),
+        )
+        .await
+        .unwrap();
+    }
 
     #[tokio::test]
     async fn latest_status_returns_none_when_no_runs_exist() {
@@ -240,7 +327,13 @@ mod tests {
     async fn create_run_starts_a_running_run_and_logs() {
         let (store, projection, pool) = ingestion_store().await;
 
-        let run_id = create_run(&store, &projection).await.unwrap();
+        let run_id = create_run(
+            &store,
+            &projection,
+            IngestionWork::candles(Timeframe::OneHour),
+        )
+        .await
+        .unwrap();
         let status = latest_status(&pool).await.unwrap();
 
         assert_eq!(status, Some(IngestionRunStatus::Running));
@@ -270,6 +363,7 @@ mod tests {
                 IngestionRunCommand::Start {
                     run_id: first_id.clone(),
                     started_at: shared_start,
+                    work: IngestionWork::candles(Timeframe::OneHour),
                 },
             )
             .await
@@ -290,6 +384,7 @@ mod tests {
                 IngestionRunCommand::Start {
                     run_id: second_id.clone(),
                     started_at: shared_start,
+                    work: IngestionWork::candles(Timeframe::OneHour),
                 },
             )
             .await
@@ -305,8 +400,19 @@ mod tests {
     async fn create_run_rejects_a_second_sequential_run() {
         let (store, projection, _pool) = ingestion_store().await;
 
-        create_run(&store, &projection).await.unwrap();
-        let duplicate = create_run(&store, &projection).await;
+        create_run(
+            &store,
+            &projection,
+            IngestionWork::candles(Timeframe::OneHour),
+        )
+        .await
+        .unwrap();
+        let duplicate = create_run(
+            &store,
+            &projection,
+            IngestionWork::candles(Timeframe::OneHour),
+        )
+        .await;
 
         assert!(matches!(duplicate, Err(IngestionError::AlreadyRunning)));
     }
@@ -316,7 +422,13 @@ mod tests {
     async fn recover_abandons_running_runs_and_logs() {
         let (store, projection, pool) = ingestion_store().await;
 
-        create_run(&store, &projection).await.unwrap();
+        create_run(
+            &store,
+            &projection,
+            IngestionWork::candles(Timeframe::OneHour),
+        )
+        .await
+        .unwrap();
         let recovered = recover_abandoned_runs(&store, &projection).await.unwrap();
         let status = latest_status(&pool).await.unwrap();
 
@@ -348,8 +460,16 @@ mod tests {
         let (store, projection, _pool) = ingestion_store().await;
 
         let (first, second) = tokio::join!(
-            create_run(&store, &projection),
-            create_run(&store, &projection),
+            create_run(
+                &store,
+                &projection,
+                IngestionWork::candles(Timeframe::OneHour)
+            ),
+            create_run(
+                &store,
+                &projection,
+                IngestionWork::candles(Timeframe::OneHour)
+            ),
         );
 
         let winner_then_loser =
@@ -375,13 +495,74 @@ mod tests {
         ));
     }
 
+    #[tokio::test]
+    async fn concurrent_create_run_for_different_work_admits_both() {
+        let (store, projection, _pool) = ingestion_store().await;
+
+        let (hourly, funding) = tokio::join!(
+            create_run(
+                &store,
+                &projection,
+                IngestionWork::candles(Timeframe::OneHour)
+            ),
+            create_run(&store, &projection, IngestionWork::Funding),
+        );
+
+        assert!(hourly.is_ok() && funding.is_ok());
+        assert_eq!(running_runs(&projection).await.unwrap().len(), 2);
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn scheduled_ingestion_starts_a_scoped_run_when_idle() {
+        let (store, projection, pool) = ingestion_store().await;
+        let consecutive_failures = Arc::new(AtomicU32::new(5));
+
+        trigger_scheduled_ingestion_for_test(
+            Arc::clone(&store),
+            Arc::clone(&projection),
+            IngestionWork::candles(Timeframe::OneHour),
+            Arc::clone(&consecutive_failures),
+        )
+        .await;
+
+        assert_eq!(consecutive_failures.load(Ordering::Relaxed), 0);
+        assert_eq!(
+            latest_status(&pool).await.unwrap(),
+            Some(IngestionRunStatus::Running)
+        );
+        assert!(logs_contain_at(
+            Level::DEBUG,
+            &["scheduled ingestion run enqueued", "1h"]
+        ));
+    }
+
+    #[test]
+    fn default_ingestion_schedules_cover_all_scheduled_work() {
+        let parsed = super::default_ingestion_schedules().unwrap();
+
+        #[cfg(feature = "test-support")]
+        assert_eq!(
+            parsed.len(),
+            IngestionWork::test_e2e_scheduled_units().len()
+        );
+        #[cfg(not(feature = "test-support"))]
+        assert_eq!(parsed.len(), IngestionWork::scheduled_units().len());
+    }
+
     #[traced_test]
     #[tokio::test]
     async fn scheduled_ingestion_starts_a_run_when_idle() {
         let (store, projection, pool) = ingestion_store().await;
-        let consecutive_failures = AtomicU32::new(5);
+        let consecutive_failures = Arc::new(AtomicU32::new(5));
 
-        trigger_scheduled_ingestion(&store, &projection, &consecutive_failures).await;
+        trigger_scheduled_ingestion_for_test(
+            Arc::clone(&store),
+            Arc::clone(&projection),
+            IngestionWork::candles(Timeframe::OneHour),
+            Arc::clone(&consecutive_failures),
+        )
+        .await;
 
         assert_eq!(consecutive_failures.load(Ordering::Relaxed), 0);
         assert_eq!(
@@ -398,10 +579,22 @@ mod tests {
     #[tokio::test]
     async fn scheduled_ingestion_skips_when_a_run_is_already_active() {
         let (store, projection, _pool) = ingestion_store().await;
-        let consecutive_failures = AtomicU32::new(3);
+        let consecutive_failures = Arc::new(AtomicU32::new(3));
 
-        create_run(&store, &projection).await.unwrap();
-        trigger_scheduled_ingestion(&store, &projection, &consecutive_failures).await;
+        create_run(
+            &store,
+            &projection,
+            IngestionWork::candles(Timeframe::OneHour),
+        )
+        .await
+        .unwrap();
+        trigger_scheduled_ingestion_for_test(
+            Arc::clone(&store),
+            Arc::clone(&projection),
+            IngestionWork::candles(Timeframe::OneHour),
+            Arc::clone(&consecutive_failures),
+        )
+        .await;
 
         assert_eq!(
             consecutive_failures.load(Ordering::Relaxed),
@@ -419,10 +612,22 @@ mod tests {
     async fn scheduled_ingestion_warns_and_counts_consecutive_failures() {
         let (store, projection, pool) = ingestion_store().await;
         pool.close().await;
-        let consecutive_failures = AtomicU32::new(0);
+        let consecutive_failures = Arc::new(AtomicU32::new(0));
 
-        trigger_scheduled_ingestion(&store, &projection, &consecutive_failures).await;
-        trigger_scheduled_ingestion(&store, &projection, &consecutive_failures).await;
+        trigger_scheduled_ingestion_for_test(
+            Arc::clone(&store),
+            Arc::clone(&projection),
+            IngestionWork::candles(Timeframe::OneHour),
+            Arc::clone(&consecutive_failures),
+        )
+        .await;
+        trigger_scheduled_ingestion_for_test(
+            Arc::clone(&store),
+            Arc::clone(&projection),
+            IngestionWork::candles(Timeframe::OneHour),
+            Arc::clone(&consecutive_failures),
+        )
+        .await;
 
         assert_eq!(consecutive_failures.load(Ordering::Relaxed), 2);
         assert!(logs_contain_at(

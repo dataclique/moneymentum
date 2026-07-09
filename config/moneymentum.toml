@@ -4,4 +4,3 @@ database_url = "sqlite:///mnt/data/prod/moneymentum.db?mode=rwc"
 log_level = "info"
 max_concurrent_requests = 3
 max_retries = 5
-ingestion_schedule = "0 0 * * * *"

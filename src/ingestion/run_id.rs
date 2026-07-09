@@ -11,7 +11,7 @@ pub(crate) const INGESTION_RUN_ID_PREFIX: &str = "ingestion-";
 /// stream. It is the two values that determine it -- the microsecond the run
 /// started (so ids sort by start time) and a random nonce (so two runs started
 /// in the same microsecond cannot collide onto one stream, which would surface a
-/// legitimate concurrent `/ingest` as a spurious 500 rather than a 409). The
+/// legitimate concurrent ingestion enqueue as a spurious 500 rather than a 409). The
 /// wire form `ingestion-{micros}-{nonce}` is *derived* from those fields by
 /// [`Display`] and parsed back by [`FromStr`]; the fields, not the string, are
 /// the source of truth. The start time is held at microsecond precision -- the
@@ -107,9 +107,8 @@ mod tests {
     }
 
     #[test]
-    fn ingestion_run_id_round_trips_pre_epoch_timestamps() {
-        let rendered = "ingestion--1-00000000000000000000000000000001";
-
+    fn ingestion_run_id_round_trips_pre_epoch_micros() {
+        let rendered = "ingestion--1230000000000000000-00000000000000000000000000000001";
         let parsed: IngestionRunId = rendered.parse().unwrap();
 
         assert_eq!(parsed.to_string(), rendered);

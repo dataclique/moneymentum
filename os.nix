@@ -12,38 +12,12 @@ let
 
   enabledServices = lib.filterAttrs (_: v: v.enabled) services;
 
-  mkMarketsRefreshService =
-    {
-      description,
-      readyMarker,
-      port,
-      runtimeTokenPath,
-    }:
-    {
-      inherit description;
-      unitConfig.ConditionPathExists = [
-        readyMarker
-        runtimeTokenPath
-      ];
-      serviceConfig = {
-        Type = "oneshot";
-        DynamicUser = true;
-        LoadCredential = "markets_refresh_token:${runtimeTokenPath}";
-        ExecStart = pkgs.writeShellScript "markets-refresh-${builtins.baseNameOf runtimeTokenPath}" ''
-          ${pkgs.curl}/bin/curl -sSf --max-time 120 -X POST \
-            -H "X-Markets-Refresh-Token: $(<"$CREDENTIALS_DIRECTORY/markets_refresh_token")" \
-            http://127.0.0.1:${toString port}/hyperliquid/markets/refresh
-        '';
-      };
-    };
-
   mkService =
     name: cfg:
     let
       path = "/nix/var/nix/profiles/per-service/${name}/bin/${cfg.bin}";
       configFile = ./config/${name}.toml;
       runtimeDir = "/run/moneymentum/${name}";
-      runtimeTokenPath = "${runtimeDir}/markets-refresh-token";
     in
     {
       description = "moneymentum ${cfg.bin} (${name})";
@@ -61,7 +35,7 @@ let
       serviceConfig = {
         User = "moneymentum";
         Group = "warehouse";
-        ExecStart = "${path} --config ${configFile} --markets-refresh-token-publish-path ${runtimeTokenPath}";
+        ExecStart = "${path} --config ${configFile}";
         Restart = "always";
         RestartSec = 5;
         ReadWritePaths = [
@@ -253,19 +227,6 @@ in
       };
     };
 
-    moneymentum-markets-refresh = mkMarketsRefreshService {
-      description = "Refresh Hyperliquid markets metadata";
-      readyMarker = "/run/moneymentum/moneymentum.ready";
-      port = 8000;
-      runtimeTokenPath = "/run/moneymentum/moneymentum/markets-refresh-token";
-    };
-
-    staging-markets-refresh = mkMarketsRefreshService {
-      description = "Refresh Hyperliquid markets metadata (staging)";
-      readyMarker = "/run/moneymentum/staging.ready";
-      port = 8001;
-      runtimeTokenPath = "/run/moneymentum/staging/markets-refresh-token";
-    };
   };
 
   systemd.timers.moneymentum-ingest = {
@@ -273,22 +234,6 @@ in
     timerConfig = {
       OnBootSec = "5min";
       OnUnitActiveSec = "6h";
-      Persistent = true;
-    };
-  };
-
-  systemd.timers.moneymentum-markets-refresh = {
-    wantedBy = [ "timers.target" ];
-    timerConfig = {
-      OnCalendar = "*-*-* 00:00:00 UTC";
-      Persistent = true;
-    };
-  };
-
-  systemd.timers.staging-markets-refresh = {
-    wantedBy = [ "timers.target" ];
-    timerConfig = {
-      OnCalendar = "*-*-* 00:00:00 UTC";
       Persistent = true;
     };
   };

@@ -14,7 +14,7 @@ use thiserror::Error;
 use tracing::{debug, error, info, warn};
 
 use crate::hyperliquid::{CandleIngester, FundingRateIngester, Hyperliquid, HyperliquidError};
-use crate::market_metadata::{MarketsLedger, load_markets};
+use crate::market_metadata::{MarketsLedger, load_markets_from_disk};
 use crate::timeframe::Timeframe;
 
 const TIMEFRAMES: &[Timeframe] = &[
@@ -114,7 +114,7 @@ async fn ingest_all(
     funding_ingester: &FundingRateIngester<dyn Hyperliquid>,
     data_dir: &Path,
 ) -> Result<DateTime<Utc>, IngestionPipelineError> {
-    let markets = load_markets(data_dir, MarketsLedger::Mainnet).await?;
+    let markets = load_markets_from_disk(data_dir, MarketsLedger::Mainnet).await?;
 
     funding_ingester
         .ingest_with_markets(data_dir, &markets)
@@ -350,20 +350,8 @@ mod tests {
     use crate::funding::FundingRate;
     use crate::hyperliquid::HyperliquidError;
     use crate::logs_contain_at;
-    use crate::market_metadata::MarketMetadata;
+    use crate::market_metadata::{MarketMetadata, MarketsLedger};
     use crate::timeframe::Timeframe;
-
-    async fn write_test_markets_csv(data_dir: &std::path::Path) {
-        let frame = df! {
-            "symbol" => &["BTC"],
-            "max_leverage" => &[50_u32],
-            "asset_index" => &[0_u32],
-        }
-        .unwrap();
-        crate::dataframe::write_csv(data_dir.join(MarketsLedger::Mainnet.file_name()), frame)
-            .await
-            .unwrap();
-    }
 
     struct MockHyperliquid;
 
@@ -407,6 +395,18 @@ mod tests {
                 symbol: Symbol::from_raw(market.as_str()),
             }])
         }
+    }
+
+    async fn write_test_markets_csv(data_dir: &std::path::Path) {
+        let frame = df! {
+            "symbol" => &["BTC"],
+            "max_leverage" => &[50_u32],
+            "asset_index" => &[0_u32],
+        }
+        .unwrap();
+        crate::dataframe::write_csv(data_dir.join(MarketsLedger::Mainnet.file_name()), frame)
+            .await
+            .unwrap();
     }
 
     fn test_services() -> IngestionServices {
@@ -580,6 +580,32 @@ mod tests {
         assert!(logs_contain_at(
             Level::INFO,
             &["ingestion complete", run_id.as_str()]
+        ));
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn job_fails_when_markets_csv_missing() {
+        let data_dir = TempDir::new().unwrap();
+        let pool = setup_pool().await;
+        let run_id = create_run(&pool).await.unwrap();
+        let job = IngestionJob::new(run_id.clone());
+        let services = IngestionServices {
+            hyperliquid: Arc::new(MockHyperliquid),
+            data_dir: data_dir.path().to_path_buf(),
+            max_concurrent_requests: 10,
+        };
+
+        job.run(Data::new(pool.clone()), Data::new(Arc::new(services)))
+            .await
+            .unwrap();
+
+        let status = latest_status(&pool).await.unwrap();
+
+        assert_eq!(status, Some(IngestionStatus::Failed));
+        assert!(logs_contain_at(
+            Level::ERROR,
+            &["ingestion failed", run_id.as_str()],
         ));
     }
 }

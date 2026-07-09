@@ -77,6 +77,7 @@ pub(crate) trait Hyperliquid: Send + Sync {
 pub(crate) const HYPERLIQUID_TESTNET_BASE_URL: &str = "https://api.hyperliquid-testnet.xyz";
 
 /// Mainnet and testnet Hyperliquid info clients for markets refresh and ingestion.
+#[derive(Clone)]
 pub(crate) struct HyperliquidClients {
     pub(crate) mainnet: Arc<dyn Hyperliquid>,
     pub(crate) testnet: Arc<dyn Hyperliquid>,
@@ -104,6 +105,14 @@ impl HyperliquidClients {
             MarketsLedger::Mainnet => self.mainnet.as_ref(),
             MarketsLedger::Testnet => self.testnet.as_ref(),
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn from_clients(
+        mainnet: Arc<dyn Hyperliquid>,
+        testnet: Arc<dyn Hyperliquid>,
+    ) -> Self {
+        Self { mainnet, testnet }
     }
 }
 
@@ -499,7 +508,6 @@ mod tests {
     use crate::logs_contain_at;
 
     struct MockHyperliquid {
-        market_metadata: Vec<MarketMetadata>,
         candles: Vec<Candle>,
         funding_rates: Vec<FundingRate>,
         fetch_candles_calls: AtomicUsize,
@@ -513,12 +521,6 @@ mod tests {
     impl MockHyperliquid {
         fn new() -> Self {
             Self {
-                market_metadata: vec![MarketMetadata {
-                    symbol: Market::new("BTC".to_string()),
-                    max_leverage: 50,
-                    asset_index: 0,
-                    only_isolated: false,
-                }],
                 candles: vec![Candle {
                     timestamp: Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
                     open: 42000.0,
@@ -549,7 +551,12 @@ mod tests {
     #[async_trait]
     impl Hyperliquid for MockHyperliquid {
         async fn fetch_market_metadata(&self) -> Result<Vec<MarketMetadata>, HyperliquidError> {
-            Ok(self.market_metadata.clone())
+            Ok(vec![MarketMetadata {
+                symbol: Market::new("BTC".into()),
+                max_leverage: 50,
+                asset_index: 0,
+                only_isolated: false,
+            }])
         }
 
         async fn fetch_candles(

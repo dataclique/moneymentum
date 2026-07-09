@@ -73,7 +73,6 @@ async fn create_test_client(mock_server: &MockServer, data_dir: &TempDir) -> Cli
         log_level = "debug"
         max_concurrent_requests = 3
         max_retries = 2
-        markets_refresh_token = "test-markets-refresh-token"
         "#,
         data_dir.path().display(),
         database_path.display(),
@@ -84,6 +83,17 @@ async fn create_test_client(mock_server: &MockServer, data_dir: &TempDir) -> Cli
     Client::tracked(rocket(config).await.unwrap())
         .await
         .unwrap()
+}
+
+async fn poll_until_markets_ready(client: &Client) {
+    for _ in 0..100 {
+        let response = client.get("/hyperliquid/markets").dispatch().await;
+        if response.status() == Status::Ok {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    panic!("markets endpoint never became ready");
 }
 
 async fn poll_for_status(
@@ -115,6 +125,7 @@ async fn ingest_and_query_candles() {
 
     let data_dir = TempDir::new().unwrap();
     let client = create_test_client(&mock_server, &data_dir).await;
+    poll_until_markets_ready(&client).await;
 
     let ingest_response = client.post("/ingest").dispatch().await;
     assert_eq!(ingest_response.status(), Status::Accepted);
@@ -172,6 +183,7 @@ async fn status_shows_running_after_restart_from_failed() {
 
     let data_dir = TempDir::new().unwrap();
     let client = create_test_client(&mock_server, &data_dir).await;
+    poll_until_markets_ready(&client).await;
 
     // Trigger first ingestion (will fail)
     client.post("/ingest").dispatch().await;
@@ -222,60 +234,51 @@ async fn status_shows_running_after_restart_from_failed() {
     );
 }
 
-async fn info_request_count(server: &MockServer) -> usize {
-    server
-        .received_requests()
-        .await
-        .unwrap()
-        .into_iter()
-        .filter(|request| request.url.path() == "/info")
-        .count()
-}
-
 #[rocket::async_test]
-async fn get_hyperliquid_markets_serves_universe_with_cache_header() {
+async fn markets_endpoint_returns_metadata_with_cache_control() {
     let mock_server = MockServer::start().await;
     mount_meta_mock(&mock_server).await;
 
     let data_dir = TempDir::new().unwrap();
     let client = create_test_client(&mock_server, &data_dir).await;
+    poll_until_markets_ready(&client).await;
 
     let response = client.get("/hyperliquid/markets").dispatch().await;
     assert_eq!(response.status(), Status::Ok);
+    assert_eq!(
+        response.content_type(),
+        Some(rocket::http::ContentType::JSON)
+    );
+
     let cache_control = response
         .headers()
         .get_one("Cache-Control")
-        .unwrap_or_default()
-        .to_owned();
+        .expect("markets response should carry Cache-Control");
+    assert!(cache_control.contains("max-age="));
+    assert!(cache_control.contains("must-revalidate"));
+
     let body = response.into_string().await.unwrap();
+    let payload: serde_json::Value = serde_json::from_str(&body).unwrap();
+
+    assert!(payload.get("tickers").and_then(|v| v.as_array()).is_some());
     assert!(
-        body.contains("BTC"),
-        "markets response should list the BTC ticker: {body}"
+        payload
+            .get("leverageLimits")
+            .and_then(|v| v.as_array())
+            .is_some()
     );
-    assert!(
-        cache_control.contains("max-age"),
-        "markets response should carry a Cache-Control max-age header, got: {cache_control:?}"
-    );
-}
+    assert!(payload.get("refreshedAt").is_some());
 
-#[rocket::async_test]
-async fn get_hyperliquid_markets_serves_fresh_ledger_without_refetching() {
-    let mock_server = MockServer::start().await;
-    mount_meta_mock(&mock_server).await;
+    let leverage_limits = payload
+        .get("leverageLimits")
+        .and_then(|v| v.as_array())
+        .unwrap();
+    assert!(!leverage_limits.is_empty());
 
-    let data_dir = TempDir::new().unwrap();
-    let client = create_test_client(&mock_server, &data_dir).await;
-
-    let first = client.get("/hyperliquid/markets").dispatch().await;
-    assert_eq!(first.status(), Status::Ok);
-    let after_first = info_request_count(&mock_server).await;
-
-    let second = client.get("/hyperliquid/markets").dispatch().await;
-    assert_eq!(second.status(), Status::Ok);
-    let after_second = info_request_count(&mock_server).await;
-
-    assert_eq!(
-        after_first, after_second,
-        "GET must only read the on-disk ledger and never re-fetch from Hyperliquid"
-    );
+    let btc = leverage_limits
+        .iter()
+        .find(|entry| entry.get("symbol").and_then(|s| s.as_str()) == Some("BTC/USDC:USDC"))
+        .expect("should include BTC leverage limit");
+    assert_eq!(btc.get("maxLeverage").and_then(|v| v.as_u64()), Some(50));
+    assert_eq!(btc.get("assetIndex").and_then(|v| v.as_u64()), Some(0));
 }

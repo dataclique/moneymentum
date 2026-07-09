@@ -57,7 +57,7 @@ pattern to adapt), `src/dataframe.rs` (Polars DataFrame operations).
       types first, then implementation).
 - [ ] Implement correlation computation in Polars: align returns by date,
       compute pairwise Pearson correlation over the window.
-- [ ] Add endpoint to Rocket router.
+- [ ] Add endpoint to Axum router.
 - [ ] Create `useCorrelations` hook in the frontend.
 - [ ] Refactor `RiskPanel` to accept correlation data as props.
 - [ ] Render the dynamic matrix, replacing the hardcoded one.
@@ -113,7 +113,7 @@ Weights come from `portfolio.activeTokens` (same source as `useBeta`).
 - [ ] Define `POST /risk-metrics` endpoint types.
 - [ ] Implement historical simulation VaR/CVaR in Polars. Write unit tests with
       a known return distribution where VaR is analytically computable.
-- [ ] Add endpoint to Rocket router.
+- [ ] Add endpoint to Axum router.
 - [ ] Create `useRiskMetrics` hook in the frontend.
 - [ ] Refactor `RiskPanel` to accept VaR/CVaR as props.
 - [ ] Add CVaR rows to the Risk panel layout.

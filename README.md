@@ -14,7 +14,7 @@ Moneymentum makes those exposures legible and adjustable.
   cross-account leverage, staged trade preview, execution against Hyperliquid
   perps.
 - **Frontend prototype** at `/prototype`: design reference for the target UI.
-- **Backend** (active development): Rust + Rocket API, Polars analytics,
+- **Backend** (active development): Rust + Axum API, Polars analytics,
   SQLite-backed ingestion runs and job queue. Ingests Hyperliquid
   open-high-low-close-volume (OHLCV) and funding rates; computes rolling beta to
   BTC and serves per-asset factor scores via `GET /factors/<timeframe>`.

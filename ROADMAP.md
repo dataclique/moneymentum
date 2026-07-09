@@ -18,6 +18,38 @@ the order within each theme.
 
 ---
 
+## Dev: event-sourced persistence foundation
+
+Give the toolkit durable, auditable state via
+[event-sorcery](https://github.com/ST0X-Technology/event-sorcery): portfolios
+(target streams that enable auto-rebalancing), the ingestion lifecycle, and the
+tradable market universe. Each domain is an event-sourced aggregate so history
+is a first-class artifact for later performance attribution and prediction, and
+the design stays forward-compatible with multiple instruments and venues.
+Design: [adrs/0001](./adrs/0001-event-sorcery-persistence-foundation.md).
+
+- [ ] Adopt the event-sorcery event-store stack (sqlx 0.9, apalis 1.0-rc) --
+      [#363](https://github.com/data-cartel/moneymentum/issues/363) /
+      [#361](https://github.com/data-cartel/moneymentum/pull/361)
+- [ ] Event-source portfolios, ingestion runs, and the market universe --
+      [#364](https://github.com/data-cartel/moneymentum/issues/364) /
+      [#362](https://github.com/data-cartel/moneymentum/pull/362)
+
+---
+
+## Dev: tower-native HTTP foundation
+
+Bring the backend HTTP layer onto the tower middleware ecosystem the rest of the
+Rust stack already uses, so the apalis job queue and every HTTP cross-cutting
+concern -- instrumentation, timeouts, rate limiting, auth -- share one
+middleware vocabulary instead of being reimplemented per framework. Resolving
+this early keeps new handlers from accumulating against a framework outside the
+stack's ecosystem, and unifies HTTP observability with the rest of the service.
+
+- [ ] Bring the HTTP layer onto the tower middleware ecosystem -- #397 / #119
+
+---
+
 ## Dev: finish the Python -> Rust analytics migration
 
 Port the deleted Python quant analytics to Rust as the factor and risk engine
@@ -79,12 +111,16 @@ of them.
 - [x] Factor: 24h volume (screener tie-break) --
       [#271](https://github.com/dataclique/moneymentum/issues/271) /
       [#272](https://github.com/dataclique/moneymentum/pull/272)
-- [x] Markets metadata + persisted disable flag --
+- [x] Markets metadata ledger --
       [#275](https://github.com/dataclique/moneymentum/issues/275) /
       [#276](https://github.com/dataclique/moneymentum/pull/276)
 - [x] Tradable filter wired into ingestion --
       [#277](https://github.com/dataclique/moneymentum/issues/277) /
       [#278](https://github.com/dataclique/moneymentum/pull/278)
+- [x] Type-safe time-series transforms crate (returns, log-returns, rolling
+      volatility, drawdown, normalization) --
+      [#303](https://github.com/dataclique/moneymentum/issues/303) /
+      [#145](https://github.com/dataclique/moneymentum/pull/145)
 
 ---
 
@@ -96,6 +132,16 @@ the next user-facing priority; it runs in parallel to the Dev track above.
 - [ ] [Keep The App Deployed And Reachable](./stories/0x008.keep-app-deployed-and-reachable.md)
 - [ ] [Verify Deployed Hyperliquid Long-Short Rebalancing](./stories/0x00a.verify-deployed-hyperliquid-long-short-rebalancing.md)
 - [ ] [Serve The App From A Domain](./stories/0x009.serve-app-from-domain.md)
+- [x] [Clear stale switch-to-configuration lock blocking deploys](https://github.com/dataclique/moneymentum/issues/394)
+      ([#395](https://github.com/dataclique/moneymentum/pull/395))
+- [x] [Bridge the stale per-service binary through deploy activation](https://github.com/dataclique/moneymentum/issues/421)
+      ([#423](https://github.com/dataclique/moneymentum/pull/423))
+- [x] [Restore the applied migration #407 rewrote so the binary starts](https://github.com/dataclique/moneymentum/issues/426)
+      ([#427](https://github.com/dataclique/moneymentum/pull/427))
+- [ ] [Remove the markets_refresh_token deploy bridge from service configs](https://github.com/dataclique/moneymentum/issues/425)
+- [ ] [Deploy the service binary, unit, and config atomically](https://github.com/dataclique/moneymentum/issues/422)
+- [x] [Address #377 review follow-ups](https://github.com/dataclique/moneymentum/issues/392)
+      ([#393](https://github.com/dataclique/moneymentum/pull/393))
 
 ---
 
@@ -109,6 +155,9 @@ See [SPEC.md](./SPEC.md) for the beta methodology and the `POST /beta` contract.
 - [x] [Add Read-Only Bitcoin Addresses](./stories/0x00c.add-read-only-bitcoin-addresses.md)
 - [ ] [Include Read-Only Bitcoin Holdings In Beta](./stories/0x00d.include-read-only-bitcoin-holdings-in-beta.md)
 - [ ] [Target Ending Bitcoin Beta While Hedging](./stories/0x00e.target-ending-bitcoin-beta-while-hedging.md)
+- [x] Compute read-only BTC and USD amounts with exact decimals --
+      [#220](https://github.com/dataclique/moneymentum/issues/220) /
+      [#378](https://github.com/dataclique/moneymentum/pull/378)
 
 ---
 
@@ -218,13 +267,13 @@ primitives.
 
 ## Completed: Backend foundation and portfolio beta
 
-Rust backend with Rocket, Polars, and SQLite-backed ingestion runs/job queue.
+Rust backend with Axum, Polars, and SQLite-backed ingestion runs/job queue.
 Ingestion pipeline fetches OHLCV and funding rates from Hyperliquid, stores as
 CSV. Beta calculation computes rolling covariance/variance against BTC. Deployed
 to DigitalOcean via NixOS + deploy-rs.
 
 - [x] Cargo workspace + Nix flake + CI/CD
-- [x] Rocket HTTP server with health check
+- [x] Axum HTTP server with health check
 - [x] Ingestion run ledger + Apalis job queue (SQLite)
 - [x] Hyperliquid OHLCV ingestion (15m, 1h, 1d candles)
 - [x] Funding rate ingestion

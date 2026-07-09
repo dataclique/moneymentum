@@ -31,13 +31,10 @@ vi.mock("@/services/hyperliquid-client", () => ({
   HyperliquidClient: class MockHyperliquidClient {
     getBalance = vi.fn()
     getCurrentPositions = vi.fn()
-    listPerpTickers = vi.fn()
-    getLeverageLimits = vi.fn()
     rebalancePositions = vi.fn()
     getNetworkMode = vi.fn()
     getWalletAddress = vi.fn()
   },
-  preloadMarkets: vi.fn().mockResolvedValue(undefined),
 }))
 
 const createWrapper = () => {
@@ -282,8 +279,8 @@ describe("WalletHeader", () => {
       expect(parsed).toEqual({
         accountAddress: "0xMyAccountAddress",
         apiWalletAddress: "0xMyApiWalletAddress",
-        privateKey: "0xMyPrivateKey",
       })
+      expect(parsed.privateKey).toBeUndefined()
     }, 15000)
 
     it("stores vault address when provided", async () => {
@@ -319,9 +316,9 @@ describe("WalletHeader", () => {
       expect(parsed).toEqual({
         accountAddress: "0xMyAccountAddress",
         apiWalletAddress: "0xMyApiWalletAddress",
-        privateKey: "0xMyPrivateKey",
         vaultAddress: "0xMyVaultAddress",
       })
+      expect(parsed.privateKey).toBeUndefined()
     }, 15000)
 
     it("connects without vault address when not provided", async () => {

@@ -1,5 +1,8 @@
 # Moneymentum Architecture Specification
 
+> **Where we're going.** For the practical path to get there, see
+> [ROADMAP.md](./ROADMAP.md).
+
 ## Terminology Standard
 
 Use proper financial terminology throughout--docs, code, UI. It's precise,
@@ -34,7 +37,7 @@ sizes. This matters because:
   action.
 - **Scaling is trivial**: Double your capital? Same weights, same risk profile.
   No need to recalculate position sizes.
-- **Leverage is explicit**: Total exposure = NAV (net asset value) × leverage. A
+- **Leverage is explicit**: Total exposure = NAV (net asset value) * leverage. A
   2x leveraged portfolio at 40/30/30 weights is immediately understandable.
 
 The alternative--thinking in position sizes ("2.5 BTC, 10 ETH")--obscures risk.
@@ -43,7 +46,7 @@ This tool enforces proportion-based thinking.
 
 ## Core Workflow
 
-**Monitor → Screen → Stage → Simulate → Execute → Repeat**
+**Monitor -> Screen -> Stage -> Simulate -> Execute -> Repeat**
 
 1. **Monitor**: Check how your portfolio is doing--performance, factor
    exposures, risk metrics
@@ -95,7 +98,7 @@ flowchart LR
     subgraph Turnkey["Turnkey (Policy Enforcement)"]
         direction TB
         POL[Policy Engine]
-        WALLET[Server Wallets]
+        WALLET[Enclave Wallets]
         POL --> WALLET
     end
 
@@ -125,7 +128,8 @@ plans). The frontend is a monitoring and control dashboard.
 
 **Turnkey server wallets** provide the custody layer with policy enforcement at
 the signing layer. The backend routes orders to venues but cannot withdraw funds
-or interact with non-whitelisted contracts.
+or interact with non-whitelisted contracts. Signing latency is 50-100ms with
+native Rust SDK support and explicit Hyperliquid EIP-712 compatibility.
 
 **Solana vault program** (Anchor) handles investor deposits/withdrawals, share
 token accounting, and fee deductions. Capital flows from the vault to Turnkey
@@ -139,7 +143,7 @@ total NAV, and posts signed attestations to the vault program.
 title: "Flow of Funds: Deposits, Rebalancing & Withdrawals"
 ---
 graph TB
-    subgraph Solana["── Solana ──"]
+    subgraph Solana["Solana"]
         Investor["Investor"]
         Vault["Vault Program<br/>─────────────<br/>share tokens<br/>fee accounting<br/>NAV attestations"]
         SOLWallet["Turnkey SOL Wallet<br/>(vault custody)"]
@@ -157,8 +161,8 @@ graph TB
         Vault -. "mgmt + perf fee" .-> PMFee
     end
 
-    subgraph Bridge["── deBridge ──"]
-        deBridge["Solana ↔ Hyperliquid<br/>direct USDC"]
+    subgraph Bridge["deBridge"]
+        deBridge["Solana <-> Hyperliquid<br/>direct USDC"]
     end
 
     subgraph Hyperliquid["── Hyperliquid L1 ──"]
@@ -169,7 +173,7 @@ graph TB
         HyperCore -- "withdraw USDC" --> EVMWallet
     end
 
-    subgraph DeriveChain["── Derive Chain ──"]
+    subgraph DeriveChain["Derive Chain"]
         DeriveDeposit["Derive Native Deposit<br/>from HyperEVM"]
         DeriveProtocol["Derive Protocol<br/>options"]
 
@@ -232,7 +236,7 @@ Revenue comes from portfolio managers (PMs) managing other people's money.
 
 | Purpose   | Crate                                            |
 | --------- | ------------------------------------------------ |
-| API       | rocket                                           |
+| API       | axum                                             |
 | Analytics | polars, linfa                                    |
 | State     | SQLite ingestion runs, Apalis job queue          |
 | EVM       | alloy                                            |

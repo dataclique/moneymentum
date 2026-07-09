@@ -1,0 +1,54 @@
+import { describe, it, expect } from "vitest"
+import * as Effect from "effect/Effect"
+
+import { getErrorMessage } from "./error-message"
+import { HttpStatusError, NetworkError } from "./http"
+import { ApiMessageError, MissingTickerError } from "@/hooks/useApi"
+
+const asFiberFailure = async (error: unknown): Promise<unknown> => {
+  try {
+    await Effect.runPromise(Effect.fail(error))
+  } catch (caught) {
+    return caught
+  }
+  throw new Error("expected the effect to fail")
+}
+
+describe("getErrorMessage", () => {
+  it("maps a FiberFailure-wrapped HttpStatusError to its detail", async () => {
+    const failure = await asFiberFailure(
+      new HttpStatusError({ status: 503, detail: "service unavailable" }),
+    )
+    expect(getErrorMessage(failure)).toBe("service unavailable")
+  })
+
+  it("maps an HttpStatusError without detail to its status", async () => {
+    const failure = await asFiberFailure(new HttpStatusError({ status: 500 }))
+    expect(getErrorMessage(failure)).toBe("Request failed with status 500.")
+  })
+
+  it("maps a NetworkError to a connection message", async () => {
+    const failure = await asFiberFailure(new NetworkError({ cause: "offline" }))
+    expect(getErrorMessage(failure)).toContain("Network request failed")
+  })
+
+  it("maps a MissingTickerError to a ticker prompt", async () => {
+    const failure = await asFiberFailure(new MissingTickerError())
+    expect(getErrorMessage(failure)).toBe("Select a ticker to continue.")
+  })
+
+  it("surfaces the ApiMessageError message verbatim", async () => {
+    const failure = await asFiberFailure(
+      new ApiMessageError({ message: "no data for ticker" }),
+    )
+    expect(getErrorMessage(failure)).toBe("no data for ticker")
+  })
+
+  it("falls back to a plain Error message", () => {
+    expect(getErrorMessage(new Error("boom"))).toBe("boom")
+  })
+
+  it("stringifies unknown non-error values", () => {
+    expect(getErrorMessage("weird")).toBe("weird")
+  })
+})

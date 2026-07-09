@@ -108,6 +108,7 @@ mod tests {
             .unwrap()
             .get(0)
             .unwrap();
+
         assert!(
             (autocorrelation - (-1.0)).abs() < 1e-12,
             "alternating returns must give autocorrelation -1, got {autocorrelation}"
@@ -134,23 +135,27 @@ mod tests {
             .chain(0..eth_closes.len())
             .map(|index| format!("{index:04}"))
             .collect();
+
         let tickers: Vec<&str> = std::iter::repeat_n("BTC", btc_closes.len())
             .chain(std::iter::repeat_n("ETH", eth_closes.len()))
             .collect();
+
         let closes: Vec<f64> = btc_closes
             .iter()
             .chain(eth_closes.iter())
             .copied()
             .collect();
+
         let candles = df! {
             "timestamp" => timestamps,
             "ticker" => tickers,
             "close" => closes,
         }
         .unwrap();
-        let with_returns = super::super::returns::compute_log_returns(&candles).unwrap();
 
+        let with_returns = super::super::returns::compute_log_returns(&candles).unwrap();
         let out = autocorrelation_by_ticker(&with_returns, 10).unwrap();
+
         let by_ticker = |ticker: &str| -> f64 {
             let index = out
                 .column("ticker")
@@ -160,6 +165,7 @@ mod tests {
                 .iter()
                 .position(|value| value == Some(ticker))
                 .expect("ticker present");
+
             out.column("autocorrelation")
                 .unwrap()
                 .f64()
@@ -190,9 +196,10 @@ mod tests {
             100.0, 110.0, 100.0, 110.0, 100.0, // alternating prefix
             101.0, 103.0, 106.0, 110.0, 115.0, 121.0_f64, // linear-return tail
         ];
-        let with_returns = log_returns_frame(&closes);
 
+        let with_returns = log_returns_frame(&closes);
         let out = autocorrelation_by_ticker(&with_returns, 4).unwrap();
+
         let autocorrelation = out
             .column("autocorrelation")
             .unwrap()
@@ -200,6 +207,7 @@ mod tests {
             .unwrap()
             .get(0)
             .unwrap();
+
         assert!(
             autocorrelation > 0.9,
             "the trailing window holds only the trend, so the alternating \
@@ -210,9 +218,9 @@ mod tests {
     #[test]
     fn autocorrelation_is_null_for_constant_prices() {
         let with_returns = log_returns_frame(&[100.0, 100.0, 100.0, 100.0, 100.0]);
-
         let out = autocorrelation_by_ticker(&with_returns, 10).unwrap();
         let autocorrelation = out.column("autocorrelation").unwrap().f64().unwrap().get(0);
+
         assert!(
             autocorrelation.is_none(),
             "constant prices have no return variation, so autocorrelation must be null, got {autocorrelation:?}"
@@ -227,6 +235,7 @@ mod tests {
         ) {
             let with_returns = log_returns_frame(&closes);
             let out = autocorrelation_by_ticker(&with_returns, 10).unwrap();
+
             if let Some(autocorrelation) = out.column("autocorrelation").unwrap().f64().unwrap().get(0) {
                 prop_assert!(
                     (-1.0 - 1e-9..=1.0 + 1e-9).contains(&autocorrelation),

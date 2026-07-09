@@ -50,6 +50,7 @@ fn aave_fixture_portfolio_beta_to_btc_is_102() -> Result<(), FixtureTestError> {
         Level::DEBUG,
         &["log returns computed", "rows=740"]
     ));
+
     assert!(crate::logs_contain_at(
         Level::INFO,
         &["portfolio beta calculated", "beta="]

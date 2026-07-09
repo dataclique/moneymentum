@@ -88,10 +88,18 @@ uuid = { version = "1.23.3", features = ["v4", "serde"] }
 [lints]
 workspace = true
 
+[features]
+# Forwards event-sorcery's test-support (TestHarness, FailureInjector, and the
+# 4-argument `work` job handler). The ingestion worker registers a
+# FailureInjector only when event-sorcery's test-support is active, so this
+# feature must track it exactly. Enabling it through the self dev-dependency
+# below turns it on for the whole `cargo test` graph (unit and integration
+# tests alike), so `cfg(feature = "test-support")` lines up with when the
+# 4-argument handler is compiled.
+test-support = ["event-sorcery/test-support"]
+
 [dev-dependencies]
-event-sorcery = { git = "https://github.com/ST0X-Technology/event-sorcery", tag = "0.2.0-rc2", features = [
-  "test-support",
-] }
+moneymentum = { path = ".", features = ["test-support"] }
 proptest.workspace = true
 reqwest = { version = "0.13.2", features = ["blocking"] }
 rust_decimal_macros = "1.40.0"

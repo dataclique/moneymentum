@@ -20,15 +20,17 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
 
-use apalis::prelude::{Monitor, TaskSink, WorkerBuilder};
-use apalis_sqlite::SqliteStorage;
 use axum::Json;
 use axum::Router;
 use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
-use event_sorcery::{AggregateError, LifecycleError, Projection, SendError, Store, StoreBuilder};
+use event_sorcery::{
+    AggregateError, CircuitBreakerConfig, FAIL_STOP_RECOVERY_TIMEOUT, JobBackend, LifecycleError,
+    Monitor as EventSorceryMonitor, Projection, SendError, Store, StoreBuilder,
+    build_supervised_worker,
+};
 use rust_decimal::Decimal;
 use rust_decimal::prelude::FromPrimitive;
 use serde::Deserialize;
@@ -38,10 +40,11 @@ use thiserror::Error;
 use tracing::{debug, error};
 use tracing_subscriber::EnvFilter;
 
-use crate::hyperliquid::HyperliquidClients;
+use crate::hyperliquid::{Hyperliquid, HyperliquidClient};
 use finance::Symbol;
 use ingestion::{
-    IngestionError, IngestionJob, IngestionRun, IngestionRunStatus, IngestionServices,
+    IngestionError, IngestionJob, IngestionJobContext, IngestionRun, IngestionRunStatus,
+    IngestionServices,
 };
 use market_catalog::MarketCatalog;
 use market_enablement::{
@@ -118,6 +121,7 @@ pub enum ConfigError {
 
 pub(crate) struct AppState {
     config: Config,
+    database_pool: SqlitePool,
     portfolio_store: Arc<Store<Portfolio>>,
     portfolio_projection: Arc<Projection<Portfolio>>,
     ingestion_store: Arc<Store<IngestionRun>>,
@@ -125,7 +129,6 @@ pub(crate) struct AppState {
     market_enablement: Arc<Store<MarketEnablement>>,
     market_enablement_projection: Arc<Projection<MarketEnablement>>,
     market_catalog_projection: Arc<Projection<MarketCatalog>>,
-    apalis_pool: apalis_sqlite::SqlitePool,
 }
 
 /// Renders pre-serialized JSON bytes with the `application/json` content type.
@@ -201,38 +204,23 @@ async fn post_screener(
 }
 
 async fn start_ingestion(State(state): State<Arc<AppState>>) -> StatusCode {
-    let run_id =
-        match ingestion::create_run(&state.ingestion_store, &state.ingestion_projection).await {
-            Ok(run_id) => run_id,
-            Err(IngestionError::AlreadyRunning) => return StatusCode::CONFLICT,
-            Err(err) => {
-                error!(error = %err, "failed to create ingestion run");
-                return StatusCode::INTERNAL_SERVER_ERROR;
-            }
-        };
-
-    let mut job_queue = SqliteStorage::<IngestionJob, (), ()>::new(&state.apalis_pool);
-    if let Err(err) = job_queue.push(IngestionJob::new(run_id.clone())).await {
-        error!(error = %err, "failed to queue ingestion job");
-        if let Err(record_err) = ingestion::fail_run(
-            &state.ingestion_store,
-            &run_id,
-            "failed to queue ingestion job",
-        )
-        .await
-        {
-            error!(error = %record_err, "failed to record ingestion queue failure");
+    // `create_run` enqueues the ingestion job atomically with the `Started`
+    // event through the aggregate's `Jobs` handle, so there is no separate push
+    // to fail here and no window where a Running run has no job (issue #404).
+    match ingestion::create_run(&state.ingestion_store, &state.ingestion_projection).await {
+        Ok(_run_id) => StatusCode::ACCEPTED,
+        Err(IngestionError::AlreadyRunning) => StatusCode::CONFLICT,
+        Err(err) => {
+            error!(error = %err, "failed to create ingestion run");
+            StatusCode::INTERNAL_SERVER_ERROR
         }
-        return StatusCode::INTERNAL_SERVER_ERROR;
     }
-
-    StatusCode::ACCEPTED
 }
 
 async fn get_ingestion_status(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<Option<IngestionRunStatus>>, StatusCode> {
-    let status = ingestion::latest_status(&state.ingestion_projection)
+    let status = ingestion::latest_status(&state.database_pool)
         .await
         .map_err(|err| {
             error!(error = %err, "failed to load ingestion status");
@@ -703,20 +691,48 @@ fn classify_enablement_error(error: &SendError<MarketEnablement>, operation: &st
 
 /// Spawns the supervised apalis worker that drains queued ingestion jobs.
 ///
-/// The worker reads the `Jobs` table through its own sqlx-0.8 `apalis_pool` and
-/// drives each run's lifecycle through the sqlx-0.9 `ingestion_store`.
+/// The worker reads the `Jobs` table through its own sqlx-0.8 `apalis_pool`
+/// (matched to the queue by [`JobBackend`], which polls the `IngestionJob::KIND`
+/// queue the enqueue side writes) and drives each run's lifecycle through the
+/// sqlx-0.9 event store bundled in the [`IngestionJobContext`]. It carries the
+/// library's shared retry/backoff/circuit-breaker policy: retries are exhausted
+/// before a terminal failure trips the breaker and stops the worker for a human
+/// to inspect.
 fn spawn_ingestion_worker(
     apalis_pool: apalis_sqlite::SqlitePool,
-    ingestion_store: Arc<Store<IngestionRun>>,
-    services: Arc<IngestionServices>,
+    context: Arc<IngestionJobContext>,
 ) {
     tokio::spawn(async move {
-        let monitor = Monitor::new().register(move |_worker_index| {
-            WorkerBuilder::new("ingestion")
-                .backend(SqliteStorage::<IngestionJob, (), ()>::new(&apalis_pool))
-                .data(Arc::clone(&ingestion_store))
-                .data(services.clone())
-                .build(IngestionJob::run)
+        let failure_notify = Arc::new(tokio::sync::Notify::new());
+        let monitor = EventSorceryMonitor::new().register(move |worker_index| {
+            let backend = JobBackend::<IngestionJob>::new(&apalis_pool);
+            let fail_stop =
+                CircuitBreakerConfig::default().with_recovery_timeout(FAIL_STOP_RECOVERY_TIMEOUT);
+
+            // Under `test-support`, event-sorcery's `work` handler routes
+            // through a `FailureInjector` pulled from worker data, so it must be
+            // registered for jobs to run; production builds omit it entirely.
+            #[cfg(not(feature = "test-support"))]
+            let worker = build_supervised_worker!(
+                ::<IngestionJob>,
+                worker_index,
+                backend,
+                Arc::clone(&context),
+                fail_stop,
+                Arc::clone(&failure_notify),
+            );
+            #[cfg(feature = "test-support")]
+            let worker = build_supervised_worker!(
+                ::<IngestionJob>,
+                worker_index,
+                backend,
+                Arc::clone(&context),
+                fail_stop,
+                Arc::clone(&failure_notify),
+                event_sorcery::FailureInjector::new(),
+            );
+
+            worker
         });
         if let Err(err) = monitor.run().await {
             error!(error = %err, "ingestion monitor crashed");
@@ -784,27 +800,29 @@ pub async fn app(config: Config) -> Result<Router, Box<dyn std::error::Error + S
     let apalis_pool = apalis_sqlite::SqlitePool::connect_with(apalis_options).await?;
     debug!("apalis storage pool connected");
 
-    let hyperliquid_clients =
-        HyperliquidClients::from_config(config.hyperliquid_base_url.as_ref(), config.max_retries)
-            .await?;
-    let services = Arc::new(IngestionServices {
-        hyperliquid: Arc::clone(&hyperliquid_clients.mainnet),
+    let hyperliquid: Arc<dyn Hyperliquid> = Arc::new(
+        HyperliquidClient::new(config.hyperliquid_base_url.as_ref(), config.max_retries).await?,
+    );
+    let services = IngestionServices {
+        hyperliquid,
         data_dir: config.data_dir.clone(),
         max_concurrent_requests: config.max_concurrent_requests,
         market_catalog: Arc::clone(&market_catalog),
         market_catalog_projection: Arc::clone(&market_catalog_projection),
         market_enablement_projection: Arc::clone(&market_enablement_projection),
+    };
+    let ingestion_context = Arc::new(IngestionJobContext {
+        run_store: Arc::clone(&ingestion_store),
+        run_projection: Arc::clone(&ingestion_projection),
+        services,
     });
 
-    spawn_ingestion_worker(
-        apalis_pool.clone(),
-        Arc::clone(&ingestion_store),
-        Arc::clone(&services),
-    );
+    spawn_ingestion_worker(apalis_pool.clone(), ingestion_context);
     debug!("ingestion worker started");
 
     let state = Arc::new(AppState {
         config,
+        database_pool: pool,
         portfolio_store,
         portfolio_projection,
         ingestion_store,
@@ -812,7 +830,6 @@ pub async fn app(config: Config) -> Result<Router, Box<dyn std::error::Error + S
         market_enablement,
         market_enablement_projection,
         market_catalog_projection,
-        apalis_pool,
     });
 
     Ok(build_router(state))
@@ -945,15 +962,9 @@ mod tests {
                 .await
                 .unwrap();
 
-        let apalis_options = apalis_sqlite::SqliteConnectOptions::from_str(&config.database_url)
-            .unwrap()
-            .busy_timeout(std::time::Duration::from_secs(5));
-        let apalis_pool = apalis_sqlite::SqlitePool::connect_with(apalis_options)
-            .await
-            .unwrap();
-
         build_router(Arc::new(AppState {
             config,
+            database_pool: pool,
             portfolio_store,
             portfolio_projection,
             ingestion_store,
@@ -961,7 +972,6 @@ mod tests {
             market_enablement,
             market_enablement_projection,
             market_catalog_projection,
-            apalis_pool,
         }))
     }
 

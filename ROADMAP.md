@@ -10,7 +10,7 @@ Stories link to their per-feature acceptance criteria in
 [stories/](./stories/README.md). Engineering work (refactors, migrations,
 internal foundations) lives in the same folder under a "Dev" sub-heading when a
 written contract is warranted, otherwise as a standalone GitHub issue -- see
-[contributions.md](./contributions.md) for the split.
+[CONTRIBUTING.md](./CONTRIBUTING.md) for the split.
 
 Numeric story IDs (`001`, `018`, etc.) reflect creation order, not
 implementation priority. Priority is defined by this roadmap's theme order and
@@ -34,6 +34,9 @@ Design: [adrs/0001](./adrs/0001-event-sorcery-persistence-foundation.md).
 - [x] Event-source portfolios, ingestion runs, and the market universe --
       [#364](https://github.com/data-cartel/moneymentum/issues/364) /
       [#362](https://github.com/data-cartel/moneymentum/pull/362)
+- [x] Enqueue the ingestion job atomically with the Started event --
+      [#404](https://github.com/dataclique/moneymentum/issues/404) /
+      [#406](https://github.com/dataclique/moneymentum/pull/406)
 
 ---
 
@@ -134,6 +137,12 @@ the next user-facing priority; it runs in parallel to the Dev track above.
 - [ ] [Serve The App From A Domain](./stories/0x009.serve-app-from-domain.md)
 - [x] [Clear stale switch-to-configuration lock blocking deploys](https://github.com/dataclique/moneymentum/issues/394)
       ([#395](https://github.com/dataclique/moneymentum/pull/395))
+- [x] [Bridge the stale per-service binary through deploy activation](https://github.com/dataclique/moneymentum/issues/421)
+      ([#423](https://github.com/dataclique/moneymentum/pull/423))
+- [x] [Restore the applied migration #407 rewrote so the binary starts](https://github.com/dataclique/moneymentum/issues/426)
+      ([#427](https://github.com/dataclique/moneymentum/pull/427))
+- [ ] [Remove the markets_refresh_token deploy bridge from service configs](https://github.com/dataclique/moneymentum/issues/425)
+- [ ] [Deploy the service binary, unit, and config atomically](https://github.com/dataclique/moneymentum/issues/422)
 - [x] [Address #377 review follow-ups](https://github.com/dataclique/moneymentum/issues/392)
       ([#393](https://github.com/dataclique/moneymentum/pull/393))
 

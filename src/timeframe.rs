@@ -5,12 +5,29 @@
 //! back (3 years for weekly). This balances storage costs against analytical
 //! utility - higher-frequency data is most relevant for recent periods.
 
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Timeframe {
     FifteenMin,
     OneHour,
     OneDay,
     OneWeek,
+}
+
+impl Serialize for Timeframe {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.interval_string())
+    }
+}
+
+impl<'de> Deserialize<'de> for Timeframe {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let interval = String::deserialize(deserializer)?;
+        Self::from_interval_string(&interval).ok_or_else(|| {
+            serde::de::Error::custom(format!("unknown timeframe interval: {interval}"))
+        })
+    }
 }
 
 impl Timeframe {
@@ -31,6 +48,21 @@ impl Timeframe {
             Self::OneDay => "1d",
             Self::OneWeek => "1w",
         }
+    }
+
+    /// Default 6-field cron expression (sec min hour day-of-month month day-of-week)
+    /// for scheduled ingestion of this candle interval.
+    pub(crate) fn ingestion_cron_expression(self) -> &'static str {
+        match self {
+            Self::FifteenMin => "0 */15 * * * *",
+            Self::OneHour => "10 0 * * * *",
+            Self::OneDay => "0 0 0 * * *",
+            Self::OneWeek => "0 30 0 * * 1",
+        }
+    }
+
+    pub(crate) fn all() -> [Self; 4] {
+        [Self::FifteenMin, Self::OneHour, Self::OneDay, Self::OneWeek]
     }
 
     /// Duration covered by a window of `max_entries` candles for this timeframe.
@@ -213,16 +245,20 @@ mod tests {
 
     #[test]
     fn interval_string_roundtrips() {
-        for timeframe in [
-            Timeframe::FifteenMin,
-            Timeframe::OneHour,
-            Timeframe::OneDay,
-            Timeframe::OneWeek,
-        ] {
+        for timeframe in Timeframe::all() {
             assert_eq!(
                 Timeframe::from_interval_string(timeframe.interval_string()),
                 Some(timeframe)
             );
+        }
+    }
+
+    #[test]
+    fn serde_uses_interval_strings() {
+        for timeframe in Timeframe::all() {
+            let json = serde_json::to_string(&timeframe).unwrap();
+            assert_eq!(json, format!("\"{}\"", timeframe.interval_string()));
+            assert_eq!(serde_json::from_str::<Timeframe>(&json).unwrap(), timeframe);
         }
     }
 

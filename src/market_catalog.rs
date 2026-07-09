@@ -35,6 +35,10 @@ impl CatalogMarket {
     pub(crate) fn symbol(&self) -> &Symbol {
         &self.symbol
     }
+
+    pub(crate) fn max_leverage(&self) -> u32 {
+        self.max_leverage
+    }
 }
 
 /// The exchange-listed universe of one venue, keyed by [`VenueRef`].

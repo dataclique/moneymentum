@@ -1,6 +1,5 @@
 mod candle;
 mod dataframe;
-pub mod derive;
 mod factors;
 mod finance;
 mod funding;
@@ -19,7 +18,9 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
+use std::sync::atomic::AtomicU32;
 
+use apalis::prelude::{Monitor, WorkerBuilder};
 use axum::Json;
 use axum::Router;
 use axum::extract::{Path as AxumPath, Query, State};
@@ -43,8 +44,8 @@ use tracing_subscriber::EnvFilter;
 use crate::hyperliquid::{Hyperliquid, HyperliquidClient};
 use finance::Symbol;
 use ingestion::{
-    IngestionError, IngestionJob, IngestionJobContext, IngestionRun, IngestionRunStatus,
-    IngestionServices,
+    IngestionJob, IngestionJobContext, IngestionRun, IngestionRunStatus, IngestionServices,
+    IngestionWork, default_ingestion_schedules, trigger_scheduled_ingestion,
 };
 use market_catalog::MarketCatalog;
 use market_enablement::{
@@ -124,8 +125,6 @@ pub(crate) struct AppState {
     database_pool: SqlitePool,
     portfolio_store: Arc<Store<Portfolio>>,
     portfolio_projection: Arc<Projection<Portfolio>>,
-    ingestion_store: Arc<Store<IngestionRun>>,
-    ingestion_projection: Arc<Projection<IngestionRun>>,
     market_enablement: Arc<Store<MarketEnablement>>,
     market_enablement_projection: Arc<Projection<MarketEnablement>>,
     market_catalog_projection: Arc<Projection<MarketCatalog>>,
@@ -199,20 +198,6 @@ async fn post_screener(
         Err(err) => {
             error!(error = %err, "failed to screen perps");
             Err(StatusCode::INTERNAL_SERVER_ERROR)
-        }
-    }
-}
-
-async fn start_ingestion(State(state): State<Arc<AppState>>) -> StatusCode {
-    // `create_run` enqueues the ingestion job atomically with the `Started`
-    // event through the aggregate's `Jobs` handle, so there is no separate push
-    // to fail here and no window where a Running run has no job (issue #404).
-    match ingestion::create_run(&state.ingestion_store, &state.ingestion_projection).await {
-        Ok(_run_id) => StatusCode::ACCEPTED,
-        Err(IngestionError::AlreadyRunning) => StatusCode::CONFLICT,
-        Err(err) => {
-            error!(error = %err, "failed to create ingestion run");
-            StatusCode::INTERNAL_SERVER_ERROR
         }
     }
 }
@@ -666,6 +651,23 @@ async fn get_markets(
     ))
 }
 
+/// Serves a venue's per-market max-leverage limits from the cached catalog so
+/// clients size leverage controls without each running a heavy all-market fetch.
+async fn get_markets_leverage(
+    State(state): State<Arc<AppState>>,
+    AxumPath(venue): AxumPath<String>,
+) -> Result<Json<market_metadata::LeverageLimits>, StatusCode> {
+    let venue = VenueRef::from_str(&venue).map_err(|_| StatusCode::NOT_FOUND)?;
+    match market_metadata::leverage_limits(venue, &state.market_catalog_projection).await {
+        Ok(Some(limits)) => Ok(Json(limits)),
+        Ok(None) => Err(StatusCode::NOT_FOUND),
+        Err(err) => {
+            error!(error = %err, "failed to read leverage limits");
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
+}
+
 fn parse_market_id(venue: &str, symbol: &str) -> Result<MarketId, ApiError> {
     let venue = VenueRef::from_str(venue).map_err(|_| bad_request("unknown venue"))?;
     Ok(MarketId::new(venue, Symbol::from_raw(symbol)))
@@ -740,6 +742,37 @@ fn spawn_ingestion_worker(
     });
 }
 
+/// Spawns supervised apalis-cron workers -- one per built-in schedule -- so each
+/// candle timeframe and funding refresh tick on its own cadence.
+fn spawn_ingestion_schedulers(
+    schedules: Vec<(IngestionWork, cron::Schedule)>,
+    ingestion_store: Arc<Store<IngestionRun>>,
+    ingestion_projection: Arc<Projection<IngestionRun>>,
+) {
+    tokio::spawn(async move {
+        let mut monitor = Monitor::new();
+        for (work, schedule) in schedules {
+            let ingestion_store = Arc::clone(&ingestion_store);
+            let ingestion_projection = Arc::clone(&ingestion_projection);
+            let consecutive_failures = Arc::new(AtomicU32::new(0));
+            let worker_name = format!("ingestion-scheduler-{}", work.schedule_key());
+            monitor = monitor.register(move |_worker_index| {
+                WorkerBuilder::new(worker_name.clone())
+                    .backend(apalis_cron::CronStream::new(schedule.clone()))
+                    .data(Arc::clone(&ingestion_store))
+                    .data(Arc::clone(&ingestion_projection))
+                    .data(Arc::clone(&consecutive_failures))
+                    .build(move |tick, store, projection, failures| {
+                        trigger_scheduled_ingestion(work, tick, store, projection, failures)
+                    })
+            });
+        }
+        if let Err(err) = monitor.run().await {
+            error!(error = %err, "ingestion scheduler monitor crashed");
+        }
+    });
+}
+
 /// Build the moneymentum HTTP router.
 ///
 /// # Errors
@@ -752,6 +785,8 @@ pub async fn app(config: Config) -> Result<Router, Box<dyn std::error::Error + S
     let _ = tracing_subscriber::fmt().with_env_filter(filter).try_init();
 
     ensure_shared_database(&config.database_url)?;
+
+    let ingestion_schedules = default_ingestion_schedules()?;
 
     let database_options = SqliteConnectOptions::from_str(&config.database_url)?
         .journal_mode(SqliteJournalMode::Wal)
@@ -786,8 +821,8 @@ pub async fn app(config: Config) -> Result<Router, Box<dyn std::error::Error + S
             .await?;
     debug!("event-sourced stores ready");
 
-    // Abandon any run left Running by a crash before we accept /ingest, so the
-    // one-running slot can never stay wedged across a restart (issue #339).
+    // Abandon any run left Running by a crash before schedulers enqueue work, so
+    // the one-running slot can never stay wedged across a restart (issue #339).
     ingestion::recover_abandoned_runs(&ingestion_store, &ingestion_projection).await?;
 
     // apalis-sqlite is built against sqlx 0.8, so its storage needs its own
@@ -820,13 +855,18 @@ pub async fn app(config: Config) -> Result<Router, Box<dyn std::error::Error + S
     spawn_ingestion_worker(apalis_pool.clone(), ingestion_context);
     debug!("ingestion worker started");
 
+    spawn_ingestion_schedulers(
+        ingestion_schedules,
+        Arc::clone(&ingestion_store),
+        Arc::clone(&ingestion_projection),
+    );
+    debug!("ingestion schedulers started");
+
     let state = Arc::new(AppState {
         config,
         database_pool: pool,
         portfolio_store,
         portfolio_projection,
-        ingestion_store,
-        ingestion_projection,
         market_enablement,
         market_enablement_projection,
         market_catalog_projection,
@@ -842,7 +882,6 @@ fn build_router(state: Arc<AppState>) -> Router {
         .route("/candles/{timeframe}", get(get_candles))
         .route("/factors/{timeframe}", get(get_factors))
         .route("/screener/{timeframe}", post(post_screener))
-        .route("/ingest", post(start_ingestion))
         .route("/ingestion/status", get(get_ingestion_status))
         .route(
             "/portfolio",
@@ -855,6 +894,7 @@ fn build_router(state: Arc<AppState>) -> Router {
         .route("/portfolio/{id}/rename", post(post_portfolio_rename))
         .route("/portfolio/{id}/archive", post(post_portfolio_archive))
         .route("/markets/{venue}", get(get_markets))
+        .route("/markets/{venue}/leverage", get(get_markets_leverage))
         .route(
             "/markets/{venue}/{symbol}/disable",
             post(post_market_disable),
@@ -908,18 +948,29 @@ pub(crate) fn logs_contain_at(level: tracing::Level, snippets: &[&str]) -> bool 
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::str::FromStr;
+
     use axum::body::Body;
     use axum::http::Request;
+    use chrono::{TimeZone, Utc};
     use proptest::prelude::*;
     use tempfile::TempDir;
     use tower::ServiceExt;
     use tracing_test::traced_test;
 
+    use crate::market_catalog::{CatalogMarket, MarketCatalogCommand};
+
+    use super::*;
+
+    struct TestHarness {
+        router: Router,
+        market_catalog: Arc<Store<MarketCatalog>>,
+    }
+
     /// Builds the full production router backed by a temp-dir SQLite database, so
     /// tests exercise the real route wiring and shared state, not a hand-rolled
     /// subset.
-    async fn test_router(data_dir: &std::path::Path) -> Router {
+    async fn test_harness(data_dir: &std::path::Path) -> TestHarness {
         let config = Config {
             port: 0,
             data_dir: data_dir.to_path_buf(),
@@ -946,12 +997,12 @@ mod tests {
             .build()
             .await
             .unwrap();
-        let (ingestion_store, ingestion_projection) =
+        let (_ingestion_store, _ingestion_projection) =
             StoreBuilder::<IngestionRun>::new(pool.clone())
                 .build()
                 .await
                 .unwrap();
-        let (_market_catalog, market_catalog_projection) =
+        let (market_catalog, market_catalog_projection) =
             StoreBuilder::<MarketCatalog>::new(pool.clone())
                 .build()
                 .await
@@ -962,17 +1013,24 @@ mod tests {
                 .await
                 .unwrap();
 
-        build_router(Arc::new(AppState {
+        let router = build_router(Arc::new(AppState {
             config,
             database_pool: pool,
             portfolio_store,
             portfolio_projection,
-            ingestion_store,
-            ingestion_projection,
             market_enablement,
             market_enablement_projection,
             market_catalog_projection,
-        }))
+        }));
+
+        TestHarness {
+            router,
+            market_catalog,
+        }
+    }
+
+    async fn test_router(data_dir: &std::path::Path) -> Router {
+        test_harness(data_dir).await.router
     }
 
     fn get_request(uri: &str) -> Request<Body> {
@@ -1080,6 +1138,142 @@ mod tests {
         assert_eq!(bad_disable.status(), StatusCode::BAD_REQUEST);
         let bad_list = router.oneshot(get_request("/markets/bogus")).await.unwrap();
         assert_eq!(bad_list.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn markets_leverage_serves_catalog_limits_and_rejects_unknown_venue() {
+        let data_dir = TempDir::new().unwrap();
+        let TestHarness {
+            router,
+            market_catalog,
+        } = test_harness(data_dir.path()).await;
+
+        let unobserved = router
+            .clone()
+            .oneshot(get_request("/markets/hyperliquid/leverage"))
+            .await
+            .unwrap();
+        assert_eq!(unobserved.status(), StatusCode::NOT_FOUND);
+
+        let observed_at = Utc.with_ymd_and_hms(2026, 3, 15, 12, 0, 0).unwrap();
+
+        market_catalog
+            .send(
+                &VenueRef::Hyperliquid,
+                MarketCatalogCommand::RecordUniverse {
+                    markets: vec![
+                        CatalogMarket::new(Symbol::from_raw("BTC"), 50),
+                        CatalogMarket::new(Symbol::from_raw("ETH"), 25),
+                    ],
+                    observed_at,
+                },
+            )
+            .await
+            .unwrap();
+
+        let listed = router
+            .clone()
+            .oneshot(get_request("/markets/hyperliquid/leverage"))
+            .await
+            .unwrap();
+        assert_eq!(listed.status(), StatusCode::OK);
+        let raw = body_text(listed).await;
+        let body: market_metadata::LeverageLimits = serde_json::from_str(&raw).unwrap();
+        assert_eq!(body.limits.len(), 2);
+        assert_eq!(body.fetched_at, observed_at);
+
+        let mut by_symbol: Vec<(&str, u32)> = body
+            .limits
+            .iter()
+            .map(|limit| (limit.symbol.as_str(), limit.max_leverage))
+            .collect();
+        by_symbol.sort_unstable();
+        assert_eq!(by_symbol, vec![("BTC", 50), ("ETH", 25)]);
+
+        let wire: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        let btc = wire["limits"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|limit| limit["symbol"] == "BTC")
+            .unwrap();
+        assert_eq!(btc["maxLeverage"], 50);
+        assert_eq!(wire["fetchedAt"], "2026-03-15T12:00:00Z");
+
+        assert!(logs_contain_at(
+            tracing::Level::DEBUG,
+            &["leverage limits read", "markets=2"]
+        ));
+
+        let unknown = router
+            .oneshot(get_request("/markets/bogus/leverage"))
+            .await
+            .unwrap();
+        assert_eq!(unknown.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn markets_leverage_includes_disabled_markets() {
+        let data_dir = TempDir::new().unwrap();
+        let TestHarness {
+            router,
+            market_catalog,
+        } = test_harness(data_dir.path()).await;
+        let observed_at = Utc.with_ymd_and_hms(2026, 3, 15, 12, 0, 0).unwrap();
+
+        market_catalog
+            .send(
+                &VenueRef::Hyperliquid,
+                MarketCatalogCommand::RecordUniverse {
+                    markets: vec![
+                        CatalogMarket::new(Symbol::from_raw("BTC"), 50),
+                        CatalogMarket::new(Symbol::from_raw("ETH"), 25),
+                    ],
+                    observed_at,
+                },
+            )
+            .await
+            .unwrap();
+
+        let disabled = router
+            .clone()
+            .oneshot(post_json(
+                "/markets/hyperliquid/BTC/disable",
+                &serde_json::json!({ "reason": "maintenance" }),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(disabled.status(), StatusCode::ACCEPTED);
+
+        let tradable = router
+            .clone()
+            .oneshot(get_request("/markets/hyperliquid"))
+            .await
+            .unwrap();
+        assert_eq!(tradable.status(), StatusCode::OK);
+        let tradable_symbols: Vec<String> =
+            serde_json::from_str(&body_text(tradable).await).unwrap();
+        assert_eq!(tradable_symbols, vec!["ETH".to_string()]);
+
+        let leverage = router
+            .clone()
+            .oneshot(get_request("/markets/hyperliquid/leverage"))
+            .await
+            .unwrap();
+        assert_eq!(leverage.status(), StatusCode::OK);
+        let body: market_metadata::LeverageLimits =
+            serde_json::from_str(&body_text(leverage).await).unwrap();
+
+        let mut symbols: Vec<&str> = body
+            .limits
+            .iter()
+            .map(|limit| limit.symbol.as_str())
+            .collect();
+        symbols.sort_unstable();
+        assert_eq!(symbols, vec!["BTC", "ETH"]);
+        assert_eq!(body.fetched_at, observed_at);
     }
 
     #[traced_test]

@@ -1,8 +1,8 @@
 use std::net::{Ipv4Addr, SocketAddr};
 
 use clap::Parser;
+use derive::derive_app;
 use moneymentum::Config;
-use moneymentum::derive::derive_app;
 use tracing::info;
 
 #[derive(Parser)]

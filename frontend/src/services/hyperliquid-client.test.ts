@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
+import type { Order } from "ccxt"
 
 import type { WalletCredentials } from "@/contexts/wallet-context"
 import type { RebalanceAction } from "@/pages/Portfolio/hooks/portfolioRebalancer"
@@ -35,6 +36,9 @@ const mockExchange = {
   setLeverage: vi.fn(),
   createOrder: vi.fn(),
   createOrdersWs: vi.fn(),
+  watchOrders: vi.fn(),
+  unWatchOrders: vi.fn(),
+  fetchOrders: vi.fn(),
 }
 
 vi.mock("ccxt", () => ({
@@ -67,6 +71,9 @@ vi.mock("ccxt", () => ({
       setLeverage = mockExchange.setLeverage
       createOrder = mockExchange.createOrder
       createOrdersWs = mockExchange.createOrdersWs
+      watchOrders = mockExchange.watchOrders
+      unWatchOrders = mockExchange.unWatchOrders
+      fetchOrders = mockExchange.fetchOrders
     },
   },
 }))
@@ -80,9 +87,15 @@ const stubBackendMarketsFetch = (
     assetIndex: number
     universeName?: string
     maxLeverage?: number
+    onlyIsolated?: boolean
     szDecimals?: number
     markPx?: number
   }>,
+  clearinghousePositions: Array<{
+    coin: string
+    szi: string
+    positionValue: string
+  }> = [],
 ): void => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url =
@@ -122,6 +135,24 @@ const stubBackendMarketsFetch = (
           ],
         } as Response
       }
+
+      if (body.type === "clearinghouseState") {
+        return {
+          ok: true,
+          json: async () => ({
+            assetPositions: clearinghousePositions.map(position => ({
+              position: {
+                coin: position.coin,
+                szi: position.szi,
+                entryPx: "1",
+                positionValue: position.positionValue,
+                unrealizedPnl: "0",
+                leverage: { value: "2" },
+              },
+            })),
+          }),
+        } as Response
+      }
     }
 
     if (!url.includes(`network=${network}`)) {
@@ -138,6 +169,7 @@ const stubBackendMarketsFetch = (
             symbol: entry.symbol,
             maxLeverage: entry.maxLeverage ?? 50,
             assetIndex: entry.assetIndex,
+            onlyIsolated: entry.onlyIsolated === true,
           })),
           refreshedAt: new Date().toISOString(),
         }) as const,
@@ -160,10 +192,28 @@ describe("HyperliquidClient", () => {
     mockExchange.urls = {}
     mockExchange.markets = undefined
     mockExchange.markets_by_id = undefined
+    mockExchange.watchOrders.mockImplementation(async () => {
+      const batches = mockExchange.createOrdersWs.mock.calls as Array<
+        [Array<{ symbol: string }>]
+      >
+      if (batches.length === 0) {
+        return []
+      }
+
+      return batches.flatMap(([requests]) =>
+        requests.map(request => ({
+          symbol: request.symbol,
+          status: "closed",
+          info: {},
+        })),
+      )
+    })
+    mockExchange.unWatchOrders.mockResolvedValue(undefined)
+    mockExchange.fetchOrders.mockResolvedValue([])
 
     stubBackendMarketsFetch("mainnet", [
-      { symbol: "BTC/USDC:USDC", assetIndex: 0 },
-      { symbol: "ETH/USDC:USDC", assetIndex: 1 },
+      { symbol: "BTC/USDC:USDC", assetIndex: 0, markPx: 50_000 },
+      { symbol: "ETH/USDC:USDC", assetIndex: 1, markPx: 4_000 },
     ])
 
     const globalAny = globalThis as { localStorage?: Storage }
@@ -400,14 +450,18 @@ describe("HyperliquidClient", () => {
     mockExchange.fetchPositions.mockResolvedValue([
       { symbol: "ETH/USDC:USDC", side: "long", contracts: 0.5 },
     ])
-    mockExchange.createOrdersWs.mockResolvedValue([
-      { status: "closed", info: {} },
-    ])
+    mockExchange.createOrdersWs
+      .mockResolvedValueOnce([{ status: "closed", info: {} }])
+      .mockResolvedValueOnce([{ status: "closed", info: {} }])
 
     const client = new HyperliquidClient(credentials, "mainnet")
     const result = await client.rebalancePositions(actions)
 
-    expect(mockExchange.setLeverage).toHaveBeenCalledWith(5, "BTC/USDC:USDC")
+    expect(mockExchange.setLeverage).toHaveBeenCalledWith(
+      5,
+      "BTC/USDC:USDC",
+      {},
+    )
 
     expect(mockExchange.createOrdersWs).toHaveBeenCalledTimes(2)
     expect(mockExchange.fetchPositions).toHaveBeenCalledTimes(1)
@@ -415,24 +469,110 @@ describe("HyperliquidClient", () => {
     expect(result[0].status).toBe("filled")
     expect(result[1].status).toBe("filled")
 
-    const firstBatch = mockExchange.createOrdersWs.mock.calls[0][0]
-    expect(firstBatch).toHaveLength(1)
-    expect(firstBatch[0]).toMatchObject({
+    const reductionBatch = mockExchange.createOrdersWs.mock.calls[0][0]
+    expect(reductionBatch).toHaveLength(1)
+    expect(reductionBatch[0]).toMatchObject({
       symbol: "ETH/USDC:USDC",
       side: "sell",
       params: expect.objectContaining({ reduceOnly: true }),
     })
 
-    const secondBatch = mockExchange.createOrdersWs.mock.calls[1][0]
-    expect(secondBatch).toHaveLength(1)
-    expect(secondBatch[0]).toMatchObject({
+    const expansionBatch = mockExchange.createOrdersWs.mock.calls[1][0]
+    expect(expansionBatch).toHaveLength(1)
+    expect(expansionBatch[0]).toMatchObject({
       symbol: "BTC/USDC:USDC",
       side: "buy",
     })
 
-    expect(secondBatch[0].params).not.toMatchObject({
+    expect(expansionBatch[0].params).not.toMatchObject({
       reduceOnly: true,
     })
+  })
+
+  it("throws when setLeverage is rejected", async () => {
+    stubBackendMarketsFetch("mainnet", [
+      { symbol: "BTC/USDC:USDC", assetIndex: 0 },
+      { symbol: "ETH/USDC:USDC", assetIndex: 1 },
+      {
+        symbol: "BANANA/USDC:USDC",
+        assetIndex: 2,
+        markPx: 0.05,
+        universeName: "BANANA",
+      },
+    ])
+
+    const leverageError = new Error(
+      'hyperliquid {"status":"err","response":"Cross margin is not allowed for this asset."}',
+    )
+
+    mockExchange.setLeverage.mockRejectedValueOnce(leverageError)
+
+    mockExchange.fetchTickers.mockResolvedValue({
+      "BANANA/USDC:USDC": { last: 0.05 },
+    })
+    mockExchange.fetchPositions.mockResolvedValue([])
+
+    const actions: RebalanceAction[] = [
+      {
+        kind: "rebalance",
+        symbol: "BANANA/USDC:USDC",
+        signedNotionalDelta: 15,
+        leverage: 3,
+        leverageChanged: true,
+      },
+    ]
+
+    const client = new HyperliquidClient(credentials, "mainnet")
+    await expect(client.rebalancePositions(actions)).rejects.toThrow(
+      "Failed to set leverage for BANANA/USDC:USDC: Cross margin is not allowed for this asset.",
+    )
+
+    expect(mockExchange.setLeverage).toHaveBeenCalledWith(
+      3,
+      "BANANA/USDC:USDC",
+      {},
+    )
+    expect(mockExchange.createOrdersWs).not.toHaveBeenCalled()
+  })
+
+  it("sets isolated marginMode when backend marks onlyIsolated", async () => {
+    stubBackendMarketsFetch("mainnet", [
+      { symbol: "BTC/USDC:USDC", assetIndex: 0 },
+      {
+        symbol: "BANANA/USDC:USDC",
+        assetIndex: 2,
+        markPx: 0.05,
+        universeName: "BANANA",
+        onlyIsolated: true,
+      },
+    ])
+
+    mockExchange.fetchTickers.mockResolvedValue({
+      "BANANA/USDC:USDC": { last: 0.05 },
+    })
+    mockExchange.fetchPositions.mockResolvedValue([])
+    mockExchange.createOrdersWs.mockResolvedValue([
+      { symbol: "BANANA/USDC:USDC", status: "closed", info: {} },
+    ])
+
+    const actions: RebalanceAction[] = [
+      {
+        kind: "rebalance",
+        symbol: "BANANA/USDC:USDC",
+        signedNotionalDelta: 15,
+        leverage: 3,
+        leverageChanged: true,
+      },
+    ]
+
+    const client = new HyperliquidClient(credentials, "mainnet")
+    await client.rebalancePositions(actions)
+
+    expect(mockExchange.setLeverage).toHaveBeenCalledWith(
+      3,
+      "BANANA/USDC:USDC",
+      { marginMode: "isolated" },
+    )
   })
 
   it("OrderResult array lists reduction fills before expansion fills", async () => {
@@ -755,9 +895,9 @@ describe("HyperliquidClient", () => {
       },
     ])
 
-    mockExchange.createOrdersWs.mockResolvedValue([
-      { status: "closed", info: {} },
-    ])
+    mockExchange.createOrdersWs
+      .mockResolvedValueOnce([{ status: "closed", info: {} }])
+      .mockResolvedValueOnce([{ status: "closed", info: {} }])
 
     const actions: RebalanceAction[] = [
       {
@@ -777,8 +917,9 @@ describe("HyperliquidClient", () => {
     expect(mockExchange.createOrdersWs).toHaveBeenCalledTimes(2)
     expect(result).toHaveLength(2)
 
-    const firstCall = mockExchange.createOrdersWs.mock.calls[0][0]
-    expect(firstCall[0]).toEqual({
+    const reductionBatch = mockExchange.createOrdersWs.mock.calls[0][0]
+    expect(reductionBatch).toHaveLength(1)
+    expect(reductionBatch[0]).toEqual({
       symbol: "BTC/USDC:USDC",
       type: "market",
       side: "sell",
@@ -787,8 +928,9 @@ describe("HyperliquidClient", () => {
       params: { reduceOnly: true },
     })
 
-    const secondCall = mockExchange.createOrdersWs.mock.calls[1][0]
-    expect(secondCall[0]).toEqual({
+    const expansionBatch = mockExchange.createOrdersWs.mock.calls[1][0]
+    expect(expansionBatch).toHaveLength(1)
+    expect(expansionBatch[0]).toEqual({
       symbol: "BTC/USDC:USDC",
       type: "market",
       side: "buy",
@@ -887,9 +1029,9 @@ describe("HyperliquidClient", () => {
         notional: 8,
       },
     ])
-    mockExchange.createOrdersWs.mockResolvedValue([
-      { status: "closed", info: {} },
-    ])
+    mockExchange.createOrdersWs
+      .mockResolvedValueOnce([{ status: "closed", info: {} }])
+      .mockResolvedValueOnce([{ status: "closed", info: {} }])
 
     const actions: RebalanceAction[] = [
       {
@@ -912,5 +1054,639 @@ describe("HyperliquidClient", () => {
       amount: 0.002,
       params: expect.objectContaining({ reduceOnly: true }),
     })
+  })
+
+  it("subscribes watchOrders before createOrdersWs and unwatchs after collection", async () => {
+    const callOrder: string[] = []
+    const actions: RebalanceAction[] = [
+      {
+        kind: "rebalance",
+        symbol: "BTC/USDC:USDC",
+        signedNotionalDelta: 100,
+        leverage: 2,
+        leverageChanged: false,
+      },
+      {
+        kind: "close",
+        symbol: "ETH/USDC:USDC",
+        side: "buy",
+      },
+    ]
+
+    mockExchange.fetchTickers.mockResolvedValue({
+      "BTC/USDC:USDC": { last: 50_000 },
+      "ETH/USDC:USDC": { last: 4_000 },
+    })
+    mockExchange.fetchPositions.mockResolvedValue([
+      { symbol: "ETH/USDC:USDC", side: "long", contracts: 0.5 },
+    ])
+    mockExchange.watchOrders.mockImplementation(async () => {
+      callOrder.push("watchOrders")
+      const batches = mockExchange.createOrdersWs.mock.calls as Array<
+        [Array<{ symbol: string }>]
+      >
+      if (batches.length === 0) {
+        return []
+      }
+
+      return batches.flatMap(([orders]) =>
+        orders.map(order => ({
+          symbol: order.symbol,
+          status: "closed",
+          info: {},
+        })),
+      )
+    })
+    mockExchange.unWatchOrders.mockImplementation(async () => {
+      callOrder.push("unWatchOrders")
+      return undefined
+    })
+    mockExchange.createOrdersWs.mockImplementation(async orders => {
+      callOrder.push("createOrdersWs")
+      return orders.map(() => ({ status: "closed", info: {} }))
+    })
+
+    const client = new HyperliquidClient(credentials, "mainnet")
+    await client.rebalancePositions(actions)
+
+    expect(mockExchange.watchOrders).toHaveBeenCalledTimes(2)
+    expect(mockExchange.watchOrders).toHaveBeenCalledWith(
+      undefined,
+      expect.any(Number),
+    )
+    expect(mockExchange.unWatchOrders).toHaveBeenCalledTimes(1)
+    expect(mockExchange.unWatchOrders).toHaveBeenCalledWith()
+    expect(callOrder).toEqual([
+      "watchOrders",
+      "createOrdersWs",
+      "createOrdersWs",
+      "watchOrders",
+      "unWatchOrders",
+    ])
+  })
+
+  it("skips watchOrders for leverage-only actions with no order legs", async () => {
+    mockExchange.fetchTickers.mockResolvedValue({
+      "BTC/USDC:USDC": { last: 50_000 },
+    })
+    mockExchange.fetchPositions.mockResolvedValue([
+      { symbol: "BTC/USDC:USDC", side: "long", contracts: 0.1 },
+    ])
+
+    const actions: RebalanceAction[] = [
+      {
+        kind: "rebalance",
+        symbol: "BTC/USDC:USDC",
+        signedNotionalDelta: 0,
+        leverage: 5,
+        leverageChanged: true,
+      },
+    ]
+
+    const client = new HyperliquidClient(credentials, "mainnet")
+    const results = await client.rebalancePositions(actions)
+
+    expect(results).toEqual([])
+    expect(mockExchange.setLeverage).toHaveBeenCalledWith(
+      5,
+      "BTC/USDC:USDC",
+      {},
+    )
+    expect(mockExchange.watchOrders).not.toHaveBeenCalled()
+    expect(mockExchange.unWatchOrders).not.toHaveBeenCalled()
+    expect(mockExchange.createOrdersWs).not.toHaveBeenCalled()
+  })
+
+  it("unWatches orders when createOrdersWsBatch fails after watch subscribe", async () => {
+    mockExchange.fetchTickers.mockResolvedValue({
+      "BTC/USDC:USDC": { last: 50_000 },
+    })
+    mockExchange.fetchPositions.mockResolvedValue([])
+    mockExchange.createOrdersWs.mockRejectedValueOnce(new Error("ws down"))
+
+    const actions: RebalanceAction[] = [
+      {
+        kind: "rebalance",
+        symbol: "BTC/USDC:USDC",
+        signedNotionalDelta: 100,
+        leverage: 2,
+        leverageChanged: false,
+      },
+    ]
+
+    const client = new HyperliquidClient(credentials, "mainnet")
+    await expect(client.rebalancePositions(actions)).rejects.toThrow("ws down")
+
+    expect(mockExchange.watchOrders).toHaveBeenCalled()
+    expect(mockExchange.unWatchOrders).toHaveBeenCalledTimes(1)
+  })
+
+  it("marks results filled when watch reports closed after createOrdersWs", async () => {
+    mockExchange.fetchTickers.mockResolvedValue({
+      "BTC/USDC:USDC": { last: 50_000 },
+    })
+    mockExchange.fetchPositions.mockResolvedValue([])
+
+    mockExchange.createOrdersWs.mockResolvedValue([
+      {
+        symbol: "BTC/USDC:USDC",
+        info: { filled: { totalSz: "0.002", avgPx: "50000", oid: 1 } },
+      },
+    ])
+
+    const actions: RebalanceAction[] = [
+      {
+        kind: "rebalance",
+        symbol: "BTC/USDC:USDC",
+        signedNotionalDelta: 100,
+        leverage: 2,
+        leverageChanged: false,
+      },
+    ]
+
+    const client = new HyperliquidClient(credentials, "mainnet")
+    const result = await client.rebalancePositions(actions)
+
+    expect(result).toHaveLength(1)
+    expect(result[0]?.status).toBe("filled")
+    expect(mockExchange.watchOrders).toHaveBeenCalled()
+  })
+
+  it("rejects when watch stalls past the watch timeout", async () => {
+    vi.useFakeTimers()
+
+    try {
+      mockExchange.fetchTickers.mockResolvedValue({
+        "BTC/USDC:USDC": { last: 50_000 },
+      })
+      mockExchange.fetchPositions.mockResolvedValue([])
+
+      mockExchange.createOrdersWs.mockResolvedValue([
+        { symbol: "BTC/USDC:USDC", status: "open", info: {} },
+      ])
+      mockExchange.watchOrders.mockImplementation(
+        () =>
+          new Promise<Order[]>(() => {
+            // never resolves
+          }),
+      )
+      mockExchange.fetchOrders.mockResolvedValue([])
+
+      const actions: RebalanceAction[] = [
+        {
+          kind: "rebalance",
+          symbol: "BTC/USDC:USDC",
+          signedNotionalDelta: 100,
+          leverage: 2,
+          leverageChanged: false,
+        },
+      ]
+
+      const client = new HyperliquidClient(credentials, "mainnet")
+      const resultPromise = client.rebalancePositions(actions)
+
+      await vi.advanceTimersByTimeAsync(10_000)
+
+      const results = await resultPromise
+      expect(results).toHaveLength(1)
+      expect(results[0]?.status).toBe("timed_out")
+      expect(mockExchange.fetchOrders).toHaveBeenCalledWith(
+        undefined,
+        expect.any(Number),
+      )
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it("reconciles timed_out results to filled via fetchOrders backup", async () => {
+    vi.useFakeTimers()
+
+    try {
+      mockExchange.fetchTickers.mockResolvedValue({
+        "BERA/USDC:USDC": { last: 0.18 },
+      })
+      mockExchange.fetchPositions.mockResolvedValue([])
+      stubBackendMarketsFetch("mainnet", [
+        {
+          symbol: "BERA/USDC:USDC",
+          assetIndex: 10,
+          markPx: 0.18,
+          universeName: "BERA",
+        },
+      ])
+
+      mockExchange.createOrdersWs.mockResolvedValue([
+        { symbol: "BERA/USDC:USDC", status: "open", info: {} },
+      ])
+      mockExchange.watchOrders.mockImplementation(
+        () =>
+          new Promise<Order[]>(() => {
+            // never resolves
+          }),
+      )
+      mockExchange.fetchOrders.mockResolvedValue([
+        {
+          info: {
+            order: {
+              coin: "BERA",
+              side: "A",
+              oid: "56173782575",
+            },
+            status: "filled",
+            statusTimestamp: "1783512080220",
+          },
+          id: "56173782575",
+          symbol: "BERA/USDC:USDC",
+          side: "sell",
+          status: "closed",
+          filled: 57.6,
+          remaining: 0,
+        } as Order,
+      ])
+
+      const actions: RebalanceAction[] = [
+        {
+          kind: "rebalance",
+          symbol: "BERA/USDC:USDC",
+          signedNotionalDelta: -10,
+          leverage: 2,
+          leverageChanged: false,
+        },
+      ]
+
+      const client = new HyperliquidClient(credentials, "mainnet")
+      const resultPromise = client.rebalancePositions(actions)
+      await vi.advanceTimersByTimeAsync(10_000)
+      const results = await resultPromise
+
+      expect(results[0]?.status).toBe("filled")
+      expect(mockExchange.fetchOrders).toHaveBeenCalledWith(
+        undefined,
+        expect.any(Number),
+      )
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it("maps fetchOrders reject statuses to failed with human message after timeout", async () => {
+    vi.useFakeTimers()
+
+    try {
+      mockExchange.fetchTickers.mockResolvedValue({
+        "BTC/USDC:USDC": { last: 50_000 },
+      })
+      mockExchange.fetchPositions.mockResolvedValue([])
+
+      mockExchange.createOrdersWs.mockResolvedValue([
+        { symbol: "BTC/USDC:USDC", status: "open", info: {} },
+      ])
+      mockExchange.watchOrders.mockImplementation(
+        () =>
+          new Promise<Order[]>(() => {
+            // never resolves
+          }),
+      )
+      mockExchange.fetchOrders.mockResolvedValue([
+        {
+          symbol: "BTC/USDC:USDC",
+          side: "buy",
+          status: "canceled",
+          info: { status: "minTradeNtlRejected" },
+        } as Order,
+      ])
+
+      const actions: RebalanceAction[] = [
+        {
+          kind: "rebalance",
+          symbol: "BTC/USDC:USDC",
+          signedNotionalDelta: 100,
+          leverage: 2,
+          leverageChanged: false,
+        },
+      ]
+
+      const client = new HyperliquidClient(credentials, "mainnet")
+      const resultPromise = client.rebalancePositions(actions)
+      await vi.advanceTimersByTimeAsync(10_000)
+      const results = await resultPromise
+
+      expect(results[0]?.status).toBe("failed")
+      expect(results[0]?.message).toBe("Order rejected: below minimum notional")
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it("keeps timed_out when fetchOrders backup throws", async () => {
+    vi.useFakeTimers()
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {})
+
+    try {
+      mockExchange.fetchTickers.mockResolvedValue({
+        "BTC/USDC:USDC": { last: 50_000 },
+      })
+      mockExchange.fetchPositions.mockResolvedValue([])
+
+      mockExchange.createOrdersWs.mockResolvedValue([
+        { symbol: "BTC/USDC:USDC", status: "open", info: {} },
+      ])
+      mockExchange.watchOrders.mockImplementation(
+        () =>
+          new Promise<Order[]>(() => {
+            // never resolves
+          }),
+      )
+      mockExchange.fetchOrders.mockRejectedValueOnce(new Error("info down"))
+
+      const actions: RebalanceAction[] = [
+        {
+          kind: "rebalance",
+          symbol: "BTC/USDC:USDC",
+          signedNotionalDelta: 100,
+          leverage: 2,
+          leverageChanged: false,
+        },
+      ]
+
+      const client = new HyperliquidClient(credentials, "mainnet")
+      const resultPromise = client.rebalancePositions(actions)
+      await vi.advanceTimersByTimeAsync(10_000)
+      const results = await resultPromise
+
+      expect(results[0]?.status).toBe("timed_out")
+      expect(consoleError).toHaveBeenCalledWith(
+        "fetchOrders backup after watch timeout failed",
+        "info down",
+      )
+    } finally {
+      consoleError.mockRestore()
+      vi.useRealTimers()
+    }
+  })
+
+  it("marks still-open fetchOrders backup as failed after timeout", async () => {
+    vi.useFakeTimers()
+
+    try {
+      mockExchange.fetchTickers.mockResolvedValue({
+        "BTC/USDC:USDC": { last: 50_000 },
+      })
+      mockExchange.fetchPositions.mockResolvedValue([])
+
+      mockExchange.createOrdersWs.mockResolvedValue([
+        { symbol: "BTC/USDC:USDC", status: "open", info: {} },
+      ])
+      mockExchange.watchOrders.mockImplementation(
+        () =>
+          new Promise<Order[]>(() => {
+            // never resolves
+          }),
+      )
+      mockExchange.fetchOrders.mockResolvedValue([
+        {
+          symbol: "BTC/USDC:USDC",
+          side: "buy",
+          status: "open",
+          info: { status: "open" },
+        } as Order,
+      ])
+
+      const actions: RebalanceAction[] = [
+        {
+          kind: "rebalance",
+          symbol: "BTC/USDC:USDC",
+          signedNotionalDelta: 100,
+          leverage: 2,
+          leverageChanged: false,
+        },
+      ]
+
+      const client = new HyperliquidClient(credentials, "mainnet")
+      const resultPromise = client.rebalancePositions(actions)
+      await vi.advanceTimersByTimeAsync(10_000)
+      const results = await resultPromise
+
+      expect(results[0]?.status).toBe("failed")
+      expect(results[0]?.message).toBe("Order still open after watch timeout")
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it("does not call fetchOrders on happy-path watch fill", async () => {
+    mockExchange.fetchTickers.mockResolvedValue({
+      "BTC/USDC:USDC": { last: 50_000 },
+    })
+    mockExchange.fetchPositions.mockResolvedValue([])
+
+    mockExchange.createOrdersWs.mockResolvedValue([
+      { symbol: "BTC/USDC:USDC", status: "closed", info: {} },
+    ])
+
+    const actions: RebalanceAction[] = [
+      {
+        kind: "rebalance",
+        symbol: "BTC/USDC:USDC",
+        signedNotionalDelta: 100,
+        leverage: 2,
+        leverageChanged: false,
+      },
+    ]
+
+    const client = new HyperliquidClient(credentials, "mainnet")
+    const result = await client.rebalancePositions(actions)
+
+    expect(result[0]?.status).toBe("filled")
+    expect(mockExchange.fetchOrders).not.toHaveBeenCalled()
+  })
+
+  it("marks results filled when watch reports closed after createOrdersWs submit", async () => {
+    mockExchange.fetchTickers.mockResolvedValue({
+      "BTC/USDC:USDC": { last: 50_000 },
+    })
+    mockExchange.fetchPositions.mockResolvedValue([])
+
+    mockExchange.createOrdersWs.mockResolvedValue([
+      { symbol: "BTC/USDC:USDC", status: "closed", info: {} },
+    ])
+
+    const actions: RebalanceAction[] = [
+      {
+        kind: "rebalance",
+        symbol: "BTC/USDC:USDC",
+        signedNotionalDelta: 100,
+        leverage: 2,
+        leverageChanged: false,
+      },
+    ]
+
+    const client = new HyperliquidClient(credentials, "mainnet")
+    const result = await client.rebalancePositions(actions)
+
+    expect(result).toHaveLength(1)
+    expect(result[0]?.status).toBe("filled")
+    expect(mockExchange.watchOrders).toHaveBeenCalled()
+    expect(mockExchange.unWatchOrders).toHaveBeenCalledTimes(1)
+  })
+
+  it("loops watchOrders until working orders receive filled updates", async () => {
+    mockExchange.fetchTickers.mockResolvedValue({
+      "BTC/USDC:USDC": { last: 50_000 },
+    })
+    mockExchange.fetchPositions.mockResolvedValue([])
+
+    mockExchange.createOrdersWs.mockResolvedValue([
+      { symbol: "BTC/USDC:USDC", status: "open", info: {} },
+    ])
+    mockExchange.watchOrders
+      .mockResolvedValueOnce([{ symbol: "BTC/USDC:USDC", status: "open" }])
+      .mockResolvedValueOnce([{ symbol: "BTC/USDC:USDC", status: "closed" }])
+
+    const actions: RebalanceAction[] = [
+      {
+        kind: "rebalance",
+        symbol: "BTC/USDC:USDC",
+        signedNotionalDelta: 100,
+        leverage: 2,
+        leverageChanged: false,
+      },
+    ]
+
+    const client = new HyperliquidClient(credentials, "mainnet")
+    const result = await client.rebalancePositions(actions)
+
+    expect(result[0].status).toBe("filled")
+    expect(mockExchange.watchOrders).toHaveBeenCalledTimes(2)
+    expect(mockExchange.unWatchOrders).toHaveBeenCalledTimes(1)
+  })
+
+  it("maps expired watch updates to failed OrderResult", async () => {
+    mockExchange.fetchTickers.mockResolvedValue({
+      "BTC/USDC:USDC": { last: 50_000 },
+    })
+    mockExchange.fetchPositions.mockResolvedValue([])
+
+    mockExchange.createOrdersWs.mockResolvedValue([
+      { symbol: "BTC/USDC:USDC", status: "open", info: {} },
+    ])
+    mockExchange.watchOrders.mockResolvedValue([
+      {
+        symbol: "BTC/USDC:USDC",
+        status: "expired",
+        info: { status: "expired" },
+      },
+    ])
+
+    const actions: RebalanceAction[] = [
+      {
+        kind: "rebalance",
+        symbol: "BTC/USDC:USDC",
+        signedNotionalDelta: 100,
+        leverage: 2,
+        leverageChanged: false,
+      },
+    ]
+
+    const client = new HyperliquidClient(credentials, "mainnet")
+    const result = await client.rebalancePositions(actions)
+
+    expect(result[0]?.status).toBe("failed")
+    expect(result[0]?.message).toBe("Order expired")
+  })
+
+  it("maps rejected createOrdersWs responses to failed OrderResult", async () => {
+    mockExchange.fetchTickers.mockResolvedValue({
+      "ETH/USDC:USDC": { last: 4_000 },
+    })
+    mockExchange.fetchPositions.mockResolvedValue([])
+
+    mockExchange.createOrdersWs.mockResolvedValue([
+      {
+        status: "rejected",
+        info: { error: "Order must have minimum value of $10." },
+      },
+    ])
+    mockExchange.watchOrders.mockImplementation(async () => [
+      {
+        symbol: "ETH/USDC:USDC",
+        status: "rejected",
+        info: { error: "Order must have minimum value of $10." },
+      },
+    ])
+
+    const actions: RebalanceAction[] = [
+      {
+        kind: "rebalance",
+        symbol: "ETH/USDC:USDC",
+        signedNotionalDelta: 5,
+        leverage: 2,
+        leverageChanged: false,
+      },
+    ]
+
+    const client = new HyperliquidClient(credentials, "mainnet")
+    const result = await client.rebalancePositions(actions)
+
+    expect(result).toHaveLength(1)
+    expect(result[0].status).toBe("failed")
+  })
+
+  it("recovers per-order results when ccxt throws on partial batch error", async () => {
+    mockExchange.fetchTickers.mockResolvedValue({
+      "BTC/USDC:USDC": { last: 50_000 },
+      "ETH/USDC:USDC": { last: 4_000 },
+    })
+    mockExchange.fetchPositions.mockResolvedValue([
+      { symbol: "ETH/USDC:USDC", side: "long", contracts: 0.5 },
+    ])
+
+    mockExchange.createOrdersWs
+      .mockResolvedValueOnce([{ status: "closed", info: {} }])
+      .mockRejectedValueOnce(
+        new Error(
+          'hyperliquid {"status":"ok","response":{"type":"order","data":{"statuses":[{"filled":{"totalSz":"0.002","avgPx":"50000","oid":2}},{"error":"Order must have minimum value of $10. asset=131"}]}}}',
+        ),
+      )
+    mockExchange.watchOrders.mockImplementation(async () => [
+      { symbol: "ETH/USDC:USDC", status: "closed", info: {} },
+      { symbol: "BTC/USDC:USDC", status: "closed", info: {} },
+      {
+        symbol: "ETH/USDC:USDC",
+        status: "rejected",
+        info: { error: "Order must have minimum value of $10. asset=131" },
+      },
+    ])
+    const actions: RebalanceAction[] = [
+      {
+        kind: "close",
+        symbol: "ETH/USDC:USDC",
+        side: "buy",
+      },
+      {
+        kind: "rebalance",
+        symbol: "BTC/USDC:USDC",
+        signedNotionalDelta: 100,
+        leverage: 2,
+        leverageChanged: false,
+      },
+      {
+        kind: "rebalance",
+        symbol: "ETH/USDC:USDC",
+        signedNotionalDelta: 5,
+        leverage: 2,
+        leverageChanged: false,
+      },
+    ]
+
+    const client = new HyperliquidClient(credentials, "mainnet")
+    const result = await client.rebalancePositions(actions)
+
+    expect(result).toHaveLength(3)
+    expect(result[0].status).toBe("filled")
+    expect(result[1].status).toBe("filled")
+    expect(result[2].status).toBe("failed")
+    expect(mockExchange.watchOrders).toHaveBeenCalledTimes(1)
   })
 })

@@ -23,6 +23,40 @@ export const getErrorMessage = (error: unknown): string => {
   return String(unwrapped)
 }
 
+const EXCHANGE_REJECTED_MESSAGE =
+  "The exchange rejected the request. Please try again."
+
+/** Readable text from an ExchangeRequestError cause, or null if unusable. */
+const messageFromExchangeCause = (cause: unknown): string | null => {
+  if (cause instanceof Error) {
+    const message = cause.message.trim()
+    return message.length > 0 ? message : null
+  }
+  if (typeof cause === "string") {
+    const message = cause.trim()
+    return message.length > 0 ? message : null
+  }
+  return null
+}
+
+/** Unwraps ExchangeRequestError to the underlying exchange failure for logs. */
+export const getExchangeErrorDetail = (error: unknown): string => {
+  const unwrapped = unwrapTaggedError(error)
+
+  if (
+    hasTag(unwrapped) &&
+    unwrapped._tag === "ExchangeRequestError" &&
+    "cause" in unwrapped
+  ) {
+    return (
+      messageFromExchangeCause((unwrapped as { cause: unknown }).cause) ??
+      EXCHANGE_REJECTED_MESSAGE
+    )
+  }
+
+  return getErrorMessage(error)
+}
+
 const unwrapTaggedError = (error: unknown): unknown => {
   if (Runtime.isFiberFailure(error)) {
     const failure = Cause.failureOption(error[Runtime.FiberFailureCauseId])
@@ -69,8 +103,10 @@ const messageForTag = (error: TaggedError): string | null => {
       return error.message ?? "The server reported an error."
     case "WalletNotConnected":
       return "Connect a wallet to continue."
-    case "ExchangeRequestError":
-      return "The exchange rejected the request. Please try again."
+    case "ExchangeRequestError": {
+      const cause = "cause" in error ? error.cause : undefined
+      return messageFromExchangeCause(cause) ?? EXCHANGE_REJECTED_MESSAGE
+    }
     case "WalletConnectError":
       return "Failed to save wallet credentials. Please try again."
     case "WalletUnlockError":

@@ -61,6 +61,7 @@ interface PositionsPanelProps {
   currentPortfolio: Record<string, PortfolioInterface | undefined>
   targetPortfolio: Record<string, PortfolioInterface | undefined>
   deletedArchive: Record<string, PortfolioInterface | undefined>
+  errorsBySymbol: Record<string, string | undefined>
   isLoading: boolean
   fundingIsLoading: boolean
   leverageLimitsIsLoading: boolean
@@ -231,6 +232,7 @@ export const PositionsPanel = (props: PositionsPanelProps): JSX.Element => {
       currentPortfolio: props.currentPortfolio,
       targetPortfolio: props.targetPortfolio,
       deletedArchive: props.deletedArchive,
+      errorsBySymbol: props.errorsBySymbol,
       leverageLimitsMap: props.leverageLimitsMap,
       leverageLimitsIsLoading: props.leverageLimitsIsLoading,
       isPrecise: props.isPrecise,

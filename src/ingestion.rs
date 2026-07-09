@@ -374,6 +374,7 @@ mod tests {
                 symbol: Market::new("BTC".into()),
                 max_leverage: 50,
                 asset_index: 0,
+                only_isolated: false,
             }])
         }
 

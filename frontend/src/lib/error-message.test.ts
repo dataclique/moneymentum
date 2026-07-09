@@ -1,9 +1,10 @@
 import { describe, it, expect } from "vitest"
 import * as Effect from "effect/Effect"
 
-import { getErrorMessage } from "./error-message"
+import { getErrorMessage, getExchangeErrorDetail } from "./error-message"
 import { HttpStatusError, NetworkError } from "./http"
 import { ApiMessageError, MissingTickerError } from "@/hooks/useApi"
+import { ExchangeRequestError } from "@/services/hyperliquid"
 
 const asFiberFailure = async (error: unknown): Promise<unknown> => {
   try {
@@ -42,6 +43,53 @@ describe("getErrorMessage", () => {
       new ApiMessageError({ message: "no data for ticker" }),
     )
     expect(getErrorMessage(failure)).toBe("no data for ticker")
+  })
+
+  it("surfaces ExchangeRequestError cause message when present", async () => {
+    const failure = await asFiberFailure(
+      new ExchangeRequestError({
+        cause: new Error(
+          "Failed to set leverage for BANANA/USDC:USDC: Cross margin is not allowed for this asset.",
+        ),
+      }),
+    )
+    expect(getErrorMessage(failure)).toBe(
+      "Failed to set leverage for BANANA/USDC:USDC: Cross margin is not allowed for this asset.",
+    )
+  })
+
+  it("falls back when ExchangeRequestError cause is an empty Error", async () => {
+    const failure = await asFiberFailure(
+      new ExchangeRequestError({ cause: new Error("") }),
+    )
+    expect(getErrorMessage(failure)).toBe(
+      "The exchange rejected the request. Please try again.",
+    )
+  })
+
+  it("falls back when ExchangeRequestError cause is a non-string object", async () => {
+    const failure = await asFiberFailure(
+      new ExchangeRequestError({ cause: { code: 1 } }),
+    )
+    expect(getErrorMessage(failure)).toBe(
+      "The exchange rejected the request. Please try again.",
+    )
+  })
+
+  it("surfaces a non-empty string ExchangeRequestError cause", async () => {
+    const failure = await asFiberFailure(
+      new ExchangeRequestError({ cause: "rate limited" }),
+    )
+    expect(getErrorMessage(failure)).toBe("rate limited")
+  })
+
+  it("getExchangeErrorDetail skips opaque ExchangeRequestError causes", async () => {
+    const failure = await asFiberFailure(
+      new ExchangeRequestError({ cause: { nested: true } }),
+    )
+    expect(getExchangeErrorDetail(failure)).toBe(
+      "The exchange rejected the request. Please try again.",
+    )
   })
 
   it("falls back to a plain Error message", () => {

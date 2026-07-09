@@ -137,6 +137,7 @@ const PortfolioPage = () => {
                 currentPortfolio={portfolio.currentPortfolio}
                 targetPortfolio={portfolio.targetPortfolio}
                 deletedArchive={portfolio.deletedArchive}
+                errorsBySymbol={portfolio.errorsBySymbol}
                 isLoading={portfolio.isPositionsLoading}
                 fundingIsLoading={fundingRatesQuery.isLoading}
                 leverageLimitsIsLoading={portfolio.isLeverageLimitsLoading}

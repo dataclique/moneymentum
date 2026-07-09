@@ -14,9 +14,10 @@ for the vision and [ROADMAP.md](./ROADMAP.md) for the path.
 
 AI coding agents working in this repo are expected to:
 
-- Read [ROADMAP.md](./ROADMAP.md) and the relevant story under
-  [stories/](./stories/README.md) before changing code. The story's acceptance
-  criteria are the contract.
+- Read [ROADMAP.md](./ROADMAP.md) and the relevant story issue (GitHub issues
+  labeled
+  [`user-story`](https://github.com/data-cartel/moneymentum/issues?q=label%3Auser-story))
+  before changing code. The story's acceptance criteria are the contract.
 - Follow [contributions.md](./contributions.md): types-first, failing test,
   implementation, review.
 - Honor the rules in this document for code style, testing, and quality gates.
@@ -164,9 +165,8 @@ Concrete audit checklist:
   the code?
 - [ROADMAP.md](./ROADMAP.md): are completed items marked completed, are new
   themes/stories listed, are stale ones removed?
-- [stories/](./stories/README.md): is the story status frontmatter current, is
-  the index entry present, are acceptance criteria reworded to match the shipped
-  behavior?
+- Story issues (labeled `user-story`): is the issue's open/closed state current,
+  are acceptance criteria reworded to match the shipped behavior?
 - [contributions.md](./contributions.md) and `AGENTS.md`: did a rule change in
   practice? If so, the rule changes here first.
 - Per-file CLAUDE.md / AGENTS.md (e.g. `frontend/CLAUDE.md`): same audit at the
@@ -305,8 +305,8 @@ in doubt, ask: who is the audience for this exact run of characters?
 This is a strict, blast-radius-asymmetric rule. A bulk find/replace that
 substitutes `—` with `--` across the repo is **not** a safe refactor -- it
 mangles UI strings and the documentation that quotes them. Audit before running
-such a sweep, and never apply it to `*.tsx`, `*.ts`, or to quoted strings inside
-`stories/`.
+such a sweep, and never apply it to `*.tsx`, `*.ts`, or to quoted UI strings in
+documentation (story issues cite UI text verbatim the same way).
 
 ### Self-documenting code
 

@@ -9,10 +9,11 @@ vision.
 
 ## Rules
 
-- Start every change from a user story in [Stories](./stories/README.md). A
-  story is scoped to the value it delivers, not to a single PR; large stories
-  decompose into PR-sized GitHub issues tracked as sub-issues of the story's
-  parent issue.
+- Start every change from a user story -- a GitHub issue labeled
+  [`user-story`](https://github.com/data-cartel/moneymentum/issues?q=label%3Auser-story).
+  A story is scoped to the value it delivers, not to a single PR; large stories
+  decompose into PR-sized GitHub issues tracked as sub-issues of the story
+  issue.
 - Keep each **issue** pull-request sized. One issue, one PR.
 - Make acceptance criteria verifiable before merge; do not require a follow-up
   PR just to mark the story done.
@@ -31,11 +32,10 @@ vision.
 story being delivered" both assume there is a user-facing story driving the
 work. Some legitimate changes do not have one: framework migrations, internal
 refactors, build/CI/infra cleanup. The sanctioned path for these is a **dev
-story** -- a story that lives in [stories/](./stories/README.md) alongside user
-stories (the file index is shared and hex-numbered), listed under the "Dev"
-sub-heading in the index. A dev story plays the same role for foundational work
-that a user story plays for user-facing features: a written contract with
-acceptance criteria.
+story** -- a `user-story`-labeled issue alongside the user stories (the
+hex-indexed title sequence is shared). A dev story plays the same role for
+foundational work that a user story plays for user-facing features: a written
+contract with acceptance criteria.
 
 A PR submitted under this exception must:
 
@@ -50,19 +50,19 @@ A PR submitted under this exception must:
 
 ## Story Format
 
+A story is a GitHub issue labeled `user-story`, titled `0xNNN: Short Story
+Name`
+(hex id in creation order), with this body:
+
 ```markdown
----
-status: completed | planned
----
-
-# Short Story Name
-
 As a user, I want to ...
 
 ## Acceptance Criteria
 
 - [x] Completed or planned behavior
 ```
+
+The issue's open/closed state replaces the old `status` frontmatter.
 
 Use `As a portfolio manager...`, `As a reviewer...`, or another specific role
 when "user" is too vague.
@@ -72,7 +72,7 @@ when "user" is too vague.
 A story is done when a reviewer can audit each item below from the PR alone:
 
 - **Acceptance criteria are satisfied**, with a checked-off list in the PR
-  description (or a link to the story file showing all boxes ticked) and a
+  description (or a link to the story issue showing all boxes ticked) and a
   pointer to the PR that satisfied each criterion if more than one PR was
   needed.
 - **Tests cover the behavior** where practical. The PR description names the
@@ -92,8 +92,8 @@ Example footer for a PR description:
 ```markdown
 ### Done Means
 
-- Acceptance criteria: all boxes ticked in
-  stories/0x00b.show-bitcoin-beta-for-active-portfolio.md
+- Acceptance criteria: all boxes ticked in story issue
+  https://github.com/data-cartel/moneymentum/issues/315
 - Tests: src/beta_handler.rs::beta_handler_returns_active_weighted_beta,
   frontend/src/**tests**/BetaCard.test.tsx
 - Validation: run `cd frontend && bun run dev`, connect testnet wallet with a

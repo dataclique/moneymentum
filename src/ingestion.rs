@@ -914,12 +914,14 @@ mod tests {
     #[traced_test]
     #[tokio::test]
     async fn recover_with_no_running_runs_is_a_noop() {
+        let log_offset = crate::capture_log_offset();
         let (store, projection) = ingestion_store().await;
 
         let recovered = recover_abandoned_runs(&store, &projection).await.unwrap();
 
         assert_eq!(recovered, 0);
-        assert!(!logs_contain_at(
+        assert!(!crate::logs_contain_at_since(
+            log_offset,
             Level::WARN,
             &["abandoned ingestion runs on startup"]
         ));

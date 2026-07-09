@@ -10,11 +10,46 @@ Stories link to their per-feature acceptance criteria in
 [stories/](./stories/README.md). Engineering work (refactors, migrations,
 internal foundations) lives in the same folder under a "Dev" sub-heading when a
 written contract is warranted, otherwise as a standalone GitHub issue -- see
-[contributions.md](./contributions.md) for the split.
+[CONTRIBUTING.md](./CONTRIBUTING.md) for the split.
 
 Numeric story IDs (`001`, `018`, etc.) reflect creation order, not
 implementation priority. Priority is defined by this roadmap's theme order and
 the order within each theme.
+
+---
+
+## Dev: event-sourced persistence foundation
+
+Give the toolkit durable, auditable state via
+[event-sorcery](https://github.com/ST0X-Technology/event-sorcery): portfolios
+(target streams that enable auto-rebalancing), the ingestion lifecycle, and the
+tradable market universe. Each domain is an event-sourced aggregate so history
+is a first-class artifact for later performance attribution and prediction, and
+the design stays forward-compatible with multiple instruments and venues.
+Design: [adrs/0001](./adrs/0001-event-sorcery-persistence-foundation.md).
+
+- [ ] Adopt the event-sorcery event-store stack (sqlx 0.9, apalis 1.0-rc) --
+      [#363](https://github.com/data-cartel/moneymentum/issues/363) /
+      [#361](https://github.com/data-cartel/moneymentum/pull/361)
+- [x] Event-source portfolios, ingestion runs, and the market universe --
+      [#364](https://github.com/data-cartel/moneymentum/issues/364) /
+      [#362](https://github.com/data-cartel/moneymentum/pull/362)
+- [x] Enqueue the ingestion job atomically with the Started event --
+      [#404](https://github.com/dataclique/moneymentum/issues/404) /
+      [#406](https://github.com/dataclique/moneymentum/pull/406)
+
+---
+
+## Dev: tower-native HTTP foundation
+
+Bring the backend HTTP layer onto the tower middleware ecosystem the rest of the
+Rust stack already uses, so the apalis job queue and every HTTP cross-cutting
+concern -- instrumentation, timeouts, rate limiting, auth -- share one
+middleware vocabulary instead of being reimplemented per framework. Resolving
+this early keeps new handlers from accumulating against a framework outside the
+stack's ecosystem, and unifies HTTP observability with the rest of the service.
+
+- [ ] Bring the HTTP layer onto the tower middleware ecosystem -- #397 / #119
 
 ---
 
@@ -102,6 +137,12 @@ the next user-facing priority; it runs in parallel to the Dev track above.
 - [ ] [Serve The App From A Domain](./stories/0x009.serve-app-from-domain.md)
 - [x] [Clear stale switch-to-configuration lock blocking deploys](https://github.com/dataclique/moneymentum/issues/394)
       ([#395](https://github.com/dataclique/moneymentum/pull/395))
+- [x] [Bridge the stale per-service binary through deploy activation](https://github.com/dataclique/moneymentum/issues/421)
+      ([#423](https://github.com/dataclique/moneymentum/pull/423))
+- [x] [Restore the applied migration #407 rewrote so the binary starts](https://github.com/dataclique/moneymentum/issues/426)
+      ([#427](https://github.com/dataclique/moneymentum/pull/427))
+- [ ] [Remove the markets_refresh_token deploy bridge from service configs](https://github.com/dataclique/moneymentum/issues/425)
+- [ ] [Deploy the service binary, unit, and config atomically](https://github.com/dataclique/moneymentum/issues/422)
 - [x] [Address #377 review follow-ups](https://github.com/dataclique/moneymentum/issues/392)
       ([#393](https://github.com/dataclique/moneymentum/pull/393))
 
@@ -229,13 +270,13 @@ primitives.
 
 ## Completed: Backend foundation and portfolio beta
 
-Rust backend with Rocket, Polars, and SQLite-backed ingestion runs/job queue.
+Rust backend with Axum, Polars, and SQLite-backed ingestion runs/job queue.
 Ingestion pipeline fetches OHLCV and funding rates from Hyperliquid, stores as
 CSV. Beta calculation computes rolling covariance/variance against BTC. Deployed
 to DigitalOcean via NixOS + deploy-rs.
 
 - [x] Cargo workspace + Nix flake + CI/CD
-- [x] Rocket HTTP server with health check
+- [x] Axum HTTP server with health check
 - [x] Ingestion run ledger + Apalis job queue (SQLite)
 - [x] Hyperliquid OHLCV ingestion (15m, 1h, 1d candles)
 - [x] Funding rate ingestion

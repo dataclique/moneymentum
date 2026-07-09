@@ -236,7 +236,7 @@ Revenue comes from portfolio managers (PMs) managing other people's money.
 
 | Purpose   | Crate                                            |
 | --------- | ------------------------------------------------ |
-| API       | rocket                                           |
+| API       | axum                                             |
 | Analytics | polars, linfa                                    |
 | State     | SQLite ingestion runs, Apalis job queue          |
 | EVM       | alloy                                            |

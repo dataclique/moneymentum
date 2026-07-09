@@ -23,7 +23,7 @@ use crate::candle::{Candle, CandleError, candles_to_dataframe};
 use crate::dataframe::{self, DataFrameError};
 use crate::finance::{self, Market, Symbol};
 use crate::funding::{self, FundingError, FundingRate};
-use crate::market_metadata::{MarketMetadata, MarketsLedger};
+use crate::market_metadata::MarketMetadata;
 use crate::timeframe::Timeframe;
 
 /// Maximum number of data points returned by Hyperliquid's historical data endpoints.
@@ -72,39 +72,6 @@ pub(crate) trait Hyperliquid: Send + Sync {
         market: &Market,
         start: DateTime<Utc>,
     ) -> Result<Vec<FundingRate>, HyperliquidError>;
-}
-
-pub(crate) const HYPERLIQUID_TESTNET_BASE_URL: &str = "https://api.hyperliquid-testnet.xyz";
-
-/// Mainnet and testnet Hyperliquid info clients for markets refresh and ingestion.
-pub(crate) struct HyperliquidClients {
-    pub(crate) mainnet: Arc<dyn Hyperliquid>,
-    pub(crate) testnet: Arc<dyn Hyperliquid>,
-}
-
-impl HyperliquidClients {
-    pub(crate) async fn from_config(
-        mainnet_base_url: Option<&Url>,
-        testnet_base_url: Option<&Url>,
-        max_retries: usize,
-    ) -> Result<Self, HyperliquidError> {
-        let mainnet = Arc::new(HyperliquidClient::new(mainnet_base_url, max_retries).await?)
-            as Arc<dyn Hyperliquid>;
-        let testnet_url = match testnet_base_url {
-            Some(url) => url.clone(),
-            None => Url::parse(HYPERLIQUID_TESTNET_BASE_URL)?,
-        };
-        let testnet = Arc::new(HyperliquidClient::new(Some(&testnet_url), max_retries).await?)
-            as Arc<dyn Hyperliquid>;
-        Ok(Self { mainnet, testnet })
-    }
-
-    pub(crate) fn for_ledger(&self, ledger: MarketsLedger) -> &dyn Hyperliquid {
-        match ledger {
-            MarketsLedger::Mainnet => self.mainnet.as_ref(),
-            MarketsLedger::Testnet => self.testnet.as_ref(),
-        }
-    }
 }
 
 pub(crate) struct HyperliquidClient {

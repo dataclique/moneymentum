@@ -14,7 +14,7 @@ Moneymentum makes those exposures legible and adjustable.
   cross-account leverage, staged trade preview, execution against Hyperliquid
   perps.
 - **Frontend prototype** at `/prototype`: design reference for the target UI.
-- **Backend** (active development): Rust + Rocket API, Polars analytics,
+- **Backend** (active development): Rust + Axum API, Polars analytics,
   SQLite-backed ingestion runs and job queue. Ingests Hyperliquid
   open-high-low-close-volume (OHLCV) and funding rates; computes rolling beta to
   BTC and serves per-asset factor scores via `GET /factors/<timeframe>`.
@@ -25,13 +25,13 @@ See [ROADMAP.md](./ROADMAP.md) for what's next.
 
 ## Documentation
 
-| Doc                                    | Purpose                                            |
-| -------------------------------------- | -------------------------------------------------- |
-| [SPEC.md](./SPEC.md)                   | Product vision and target architecture             |
-| [ROADMAP.md](./ROADMAP.md)             | Themed stories ordered by priority                 |
-| [stories/](./stories/README.md)        | User and dev stories with acceptance tests         |
-| [contributions.md](./contributions.md) | Extreme Programming (XP) workflow for contributors |
-| [AGENTS.md](./AGENTS.md)               | Per-repo rules for AI coding agents                |
+| Doc                                  | Purpose                                            |
+| ------------------------------------ | -------------------------------------------------- |
+| [SPEC.md](./SPEC.md)                 | Product vision and target architecture             |
+| [ROADMAP.md](./ROADMAP.md)           | Themed stories ordered by priority                 |
+| [stories/](./stories/README.md)      | User and dev stories with acceptance tests         |
+| [CONTRIBUTING.md](./CONTRIBUTING.md) | Extreme Programming (XP) workflow for contributors |
+| [AGENTS.md](./AGENTS.md)             | Per-repo rules for AI coding agents                |
 
 ## Quick start
 

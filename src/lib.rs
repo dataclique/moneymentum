@@ -21,7 +21,6 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use apalis::prelude::{Data, Monitor, WorkerBuilder};
-use apalis_sqlite::SqliteStorage;
 use axum::Json;
 use axum::Router;
 use axum::extract::{Path as AxumPath, Query, State};

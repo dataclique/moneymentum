@@ -13,7 +13,6 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use apalis::prelude::Data;
 use chrono::{DateTime, Utc};
 use event_sorcery::{
     Column, DomainEvent, EventSourced, Job, JobQueue, Label, Projection, ProjectionError,

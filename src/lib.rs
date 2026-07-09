@@ -12,6 +12,7 @@ mod portfolio;
 mod portfolio_comparison;
 mod readonly_portfolio;
 mod screener;
+mod simulation;
 mod timeframe;
 mod venue;
 
@@ -201,6 +202,21 @@ fn post_portfolio_compare(
     portfolio_comparison::compare_portfolios(&body.into_inner())
         .map(Json)
         .map_err(|_| Status::BadRequest)
+}
+
+#[post("/portfolio/simulate", data = "<body>")]
+async fn post_portfolio_simulate(
+    config: &State<Config>,
+    body: Json<simulation::SimulationRequest>,
+) -> Result<Json<simulation::SimulationResponse>, Status> {
+    match simulation::simulate(&config.data_dir, &body).await {
+        Ok(response) => Ok(Json(response)),
+        Err(factors::ReturnsError::NoData { .. }) => Err(Status::NotFound),
+        Err(err) => {
+            error!(error = %err, "failed to simulate portfolio");
+            Err(Status::InternalServerError)
+        }
+    }
 }
 
 #[post("/ingest")]
@@ -798,6 +814,44 @@ fn spawn_ingestion_scheduler(
     });
 }
 
+struct EventSourcedStores {
+    portfolio_store: Arc<Store<Portfolio>>,
+    portfolio_projection: Arc<Projection<Portfolio>>,
+    ingestion_store: Arc<Store<IngestionRun>>,
+    ingestion_projection: Arc<Projection<IngestionRun>>,
+    market_catalog: Arc<Store<MarketCatalog>>,
+    market_catalog_projection: Arc<Projection<MarketCatalog>>,
+    market_enablement: Arc<Store<MarketEnablement>>,
+    market_enablement_projection: Arc<Projection<MarketEnablement>>,
+}
+
+async fn build_event_sourced_stores(
+    pool: SqlitePool,
+) -> Result<EventSourcedStores, Box<dyn std::error::Error + Send + Sync>> {
+    let (portfolio_store, portfolio_projection) =
+        StoreBuilder::<Portfolio>::new(pool.clone()).build().await?;
+    let (ingestion_store, ingestion_projection) = StoreBuilder::<IngestionRun>::new(pool.clone())
+        .build()
+        .await?;
+    let (market_catalog, market_catalog_projection) =
+        StoreBuilder::<MarketCatalog>::new(pool.clone())
+            .build()
+            .await?;
+    let (market_enablement, market_enablement_projection) =
+        StoreBuilder::<MarketEnablement>::new(pool).build().await?;
+    debug!("event-sourced stores ready");
+    Ok(EventSourcedStores {
+        portfolio_store,
+        portfolio_projection,
+        ingestion_store,
+        ingestion_projection,
+        market_catalog,
+        market_catalog_projection,
+        market_enablement,
+        market_enablement_projection,
+    })
+}
+
 /// Build and configure the Rocket HTTP server for the moneymentum backend.
 ///
 /// # Errors
@@ -832,23 +886,16 @@ pub async fn rocket(
     migrations.set_ignore_missing(true).run(&pool).await?;
     debug!(count = migrations.iter().count(), "migrations applied");
 
-    // One Store + Projection per event-sourced aggregate, built once here and
-    // shared via Rocket state. `build()` reconciles the schema registry (clearing
-    // stale snapshots on a SCHEMA_VERSION bump) and auto-wires the projection.
-    let (portfolio_store, portfolio_projection) =
-        StoreBuilder::<Portfolio>::new(pool.clone()).build().await?;
-    let (ingestion_store, ingestion_projection) = StoreBuilder::<IngestionRun>::new(pool.clone())
-        .build()
-        .await?;
-    let (market_catalog, market_catalog_projection) =
-        StoreBuilder::<MarketCatalog>::new(pool.clone())
-            .build()
-            .await?;
-    let (market_enablement, market_enablement_projection) =
-        StoreBuilder::<MarketEnablement>::new(pool.clone())
-            .build()
-            .await?;
-    debug!("event-sourced stores ready");
+    let EventSourcedStores {
+        portfolio_store,
+        portfolio_projection,
+        ingestion_store,
+        ingestion_projection,
+        market_catalog,
+        market_catalog_projection,
+        market_enablement,
+        market_enablement_projection,
+    } = build_event_sourced_stores(pool.clone()).await?;
 
     // Abandon any run left Running by a crash before we accept /ingest, so the
     // one-running slot can never stay wedged across a restart (issue #339).
@@ -920,6 +967,7 @@ pub async fn rocket(
                 post_portfolio_archive,
                 post_screener,
                 post_portfolio_compare,
+                post_portfolio_simulate,
                 start_ingestion,
                 get_ingestion_status,
                 post_market_disable,
@@ -982,7 +1030,8 @@ mod tests {
                 get_candles,
                 get_factors,
                 post_screener,
-                post_portfolio_compare
+                post_portfolio_compare,
+                post_portfolio_simulate
             ],
         )
     }
@@ -1580,6 +1629,44 @@ mod tests {
                 .abs()
                 < 1e-9
         );
+    }
+
+    #[test]
+    fn post_portfolio_simulate_returns_404_when_no_data() {
+        let data_dir = TempDir::new().unwrap();
+        let client = Client::tracked(test_rocket(data_dir.path())).unwrap();
+        let response = client
+            .post("/portfolio/simulate")
+            .header(rocket::http::ContentType::JSON)
+            .body(r#"{"current":{"BTC":1.0},"staged":{"BTC":1.0}}"#)
+            .dispatch();
+
+        assert_eq!(response.status(), Status::NotFound);
+    }
+
+    #[test]
+    fn post_portfolio_simulate_projects_current_and_staged_beta() {
+        let data_dir = TempDir::new().unwrap();
+        std::fs::copy(
+            std::path::Path::new("fixtures/ohlcv_1d_beta.csv"),
+            data_dir.path().join("ohlcv_1d.csv"),
+        )
+        .unwrap();
+
+        let client = Client::tracked(test_rocket(data_dir.path())).unwrap();
+        let response = client
+            .post("/portfolio/simulate")
+            .header(rocket::http::ContentType::JSON)
+            .body(r#"{"current":{"BTC":1.0},"staged":{"BTC":0.6,"ETH":-0.4}}"#)
+            .dispatch();
+
+        assert_eq!(response.status(), Status::Ok);
+        let body: serde_json::Value =
+            serde_json::from_str(&response.into_string().unwrap()).unwrap();
+        let current = body["current"]["beta"].as_f64().unwrap();
+        let staged = body["staged"]["beta"].as_f64().unwrap();
+        assert!((current - 1.0).abs() < 1e-10);
+        assert!((staged - 0.592_091_722_3).abs() < 1e-10);
     }
 
     #[test]

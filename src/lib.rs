@@ -850,6 +850,57 @@ fn spawn_ingestion_scheduler(
     });
 }
 
+async fn connect_database_pool(
+    database_url: &str,
+) -> Result<SqlitePool, Box<dyn std::error::Error + Send + Sync>> {
+    let database_options = SqliteConnectOptions::from_str(database_url)?
+        .journal_mode(SqliteJournalMode::Wal)
+        .busy_timeout(std::time::Duration::from_secs(5));
+    let pool = SqlitePool::connect_with(database_options).await?;
+    debug!("database connected");
+
+    // We own the apalis `Jobs`/`Workers` tables as consumer migrations rather
+    // than calling apalis-sqlite's own migrator, which would compete with ours
+    // over the shared `_sqlx_migrations` table. `ignore_missing` tolerates the
+    // apalis-sql 0.7 migration records left in databases provisioned before the
+    // upgrade, so those rows do not fail the migrator.
+    let mut migrations = sqlx::migrate!("./migrations");
+    migrations.set_ignore_missing(true).run(&pool).await?;
+    debug!(count = migrations.iter().count(), "migrations applied");
+
+    Ok(pool)
+}
+
+fn mount_api_routes(rocket: Rocket<rocket::Build>) -> Rocket<rocket::Build> {
+    rocket.mount(
+        "/",
+        routes![
+            health,
+            get_candles,
+            get_factors,
+            post_portfolio_create,
+            post_portfolio_target,
+            get_portfolio,
+            list_portfolios,
+            post_portfolio_rename,
+            post_portfolio_archive,
+            post_screener,
+            post_portfolio_compare,
+            post_portfolio_simulate,
+            post_risk,
+            start_ingestion,
+            get_ingestion_status,
+            post_market_disable,
+            post_market_enable,
+            get_markets,
+            get_markets_leverage,
+            post_beta,
+            post_portfolio_readonly_btc,
+            post_portfolio_exposure
+        ],
+    )
+}
+
 /// Build and configure the Rocket HTTP server for the moneymentum backend.
 ///
 /// # Errors
@@ -869,20 +920,7 @@ pub async fn rocket(
         ..RocketConfig::default()
     };
 
-    let database_options = SqliteConnectOptions::from_str(&config.database_url)?
-        .journal_mode(SqliteJournalMode::Wal)
-        .busy_timeout(std::time::Duration::from_secs(5));
-    let pool = SqlitePool::connect_with(database_options).await?;
-    debug!("database connected");
-
-    // We own the apalis `Jobs`/`Workers` tables as consumer migrations rather
-    // than calling apalis-sqlite's own migrator, which would compete with ours
-    // over the shared `_sqlx_migrations` table. `ignore_missing` tolerates the
-    // apalis-sql 0.7 migration records left in databases provisioned before the
-    // upgrade, so those rows do not fail the migrator.
-    let mut migrations = sqlx::migrate!("./migrations");
-    migrations.set_ignore_missing(true).run(&pool).await?;
-    debug!(count = migrations.iter().count(), "migrations applied");
+    let pool = connect_database_pool(&config.database_url).await?;
 
     // One Store + Projection per event-sourced aggregate, built once here and
     // shared via Rocket state. `build()` reconciles the schema registry (clearing
@@ -947,44 +985,28 @@ pub async fn rocket(
     debug!("ingestion scheduler started");
 
     info!(port = config.port, "moneymentum ready");
-    Ok(rocket::custom(rocket_config)
-        .manage(config)
-        .manage(pool)
-        .manage(apalis_pool)
-        .manage(portfolio_store)
-        .manage(portfolio_projection)
-        .manage(ingestion_store)
-        .manage(ingestion_projection)
-        .manage(market_enablement)
-        .manage(market_enablement_projection)
-        .manage(market_catalog_projection)
-        .mount(
-            "/",
-            routes![
-                health,
-                get_candles,
-                get_factors,
-                post_portfolio_create,
-                post_portfolio_target,
-                get_portfolio,
-                list_portfolios,
-                post_portfolio_rename,
-                post_portfolio_archive,
-                post_screener,
-                post_portfolio_compare,
-                post_portfolio_simulate,
-                post_risk,
-                start_ingestion,
-                get_ingestion_status,
-                post_market_disable,
-                post_market_enable,
-                get_markets,
-                get_markets_leverage,
-                post_beta,
-                post_portfolio_readonly_btc,
-                post_portfolio_exposure
-            ],
-        ))
+    Ok(mount_api_routes(
+        rocket::custom(rocket_config)
+            .manage(config)
+            .manage(pool)
+            .manage(apalis_pool)
+            .manage(portfolio_store)
+            .manage(portfolio_projection)
+            .manage(ingestion_store)
+            .manage(ingestion_projection)
+            .manage(market_enablement)
+            .manage(market_enablement_projection)
+            .manage(market_catalog_projection),
+    ))
+}
+
+/// Byte offset into the shared `tracing_test` buffer at the start of a test.
+///
+/// Capture this before exercising code when parallel tests might append unrelated
+/// log lines to the same global buffer.
+#[cfg(test)]
+pub(crate) fn capture_log_offset() -> usize {
+    tracing_test::internal::global_buf().lock().unwrap().len()
 }
 
 /// Asserts that a log line at the given level contains all snippets.
@@ -992,9 +1014,19 @@ pub async fn rocket(
 /// Use with `tracing_test::traced_test` to verify observability.
 #[cfg(test)]
 pub(crate) fn logs_contain_at(level: tracing::Level, snippets: &[&str]) -> bool {
+    logs_contain_at_since(0, level, snippets)
+}
+
+/// Like [`logs_contain_at`], but only inspects log bytes appended after `since`.
+#[cfg(test)]
+pub(crate) fn logs_contain_at_since(
+    since: usize,
+    level: tracing::Level,
+    snippets: &[&str],
+) -> bool {
     let logs = {
         let buf = tracing_test::internal::global_buf().lock().unwrap();
-        String::from_utf8_lossy(&buf).into_owned()
+        String::from_utf8_lossy(&buf[since..]).into_owned()
     };
 
     let level_str = match level {
@@ -1722,6 +1754,28 @@ mod tests {
             body["drawdown"]["peakToTroughPeriods"].as_u64().is_some(),
             "peakToTroughPeriods is an integer"
         );
+
+        let correlation_rows = body["correlation"]["matrix"]
+            .as_array()
+            .expect("correlation matrix is an array of rows");
+        assert_eq!(correlation_rows.len(), 2);
+        assert_eq!(
+            body["correlation"]["matrix"][0][0].as_f64(),
+            Some(1.0),
+            "correlation diagonal is exactly 1"
+        );
+        assert!(
+            body["correlation"]["shrinkageIntensity"].as_f64().is_some(),
+            "shrinkageIntensity is a number"
+        );
+
+        for bets_key in ["meucci", "stressedMeucci", "inverseHerfindahl"] {
+            let count = body["effectiveBets"][bets_key].as_f64().unwrap_or(f64::NAN);
+            assert!(
+                (1.0 - 1e-9..=2.0 + 1e-9).contains(&count),
+                "effectiveBets.{bets_key} must be a number within [1, 2], got {count}"
+            );
+        }
     }
 
     #[test]

@@ -12,38 +12,11 @@ let
 
   enabledServices = lib.filterAttrs (_: v: v.enabled) services;
 
-  mkMarketsRefreshService =
-    {
-      description,
-      readyMarker,
-      port,
-      runtimeTokenPath,
-    }:
-    {
-      inherit description;
-      unitConfig.ConditionPathExists = [
-        readyMarker
-        runtimeTokenPath
-      ];
-      serviceConfig = {
-        Type = "oneshot";
-        DynamicUser = true;
-        LoadCredential = "markets_refresh_token:${runtimeTokenPath}";
-        ExecStart = pkgs.writeShellScript "markets-refresh-${builtins.baseNameOf runtimeTokenPath}" ''
-          ${pkgs.curl}/bin/curl -sSf --max-time 120 -X POST \
-            -H "X-Markets-Refresh-Token: $(<"$CREDENTIALS_DIRECTORY/markets_refresh_token")" \
-            http://127.0.0.1:${toString port}/hyperliquid/markets/refresh
-        '';
-      };
-    };
-
   mkService =
     name: cfg:
     let
       path = "/nix/var/nix/profiles/per-service/${name}/bin/${cfg.bin}";
       configFile = ./config/${name}.toml;
-      runtimeDir = "/run/moneymentum/${name}";
-      runtimeTokenPath = "${runtimeDir}/markets-refresh-token";
     in
     {
       description = "moneymentum ${cfg.bin} (${name})";
@@ -61,13 +34,10 @@ let
       serviceConfig = {
         User = "moneymentum";
         Group = "warehouse";
-        ExecStart = "${path} --config ${configFile} --markets-refresh-token-publish-path ${runtimeTokenPath}";
+        ExecStart = "${path} --config ${configFile}";
         Restart = "always";
         RestartSec = 5;
-        ReadWritePaths = [
-          cfg.dataDir
-          runtimeDir
-        ];
+        ReadWritePaths = [ cfg.dataDir ];
       };
     };
 
@@ -277,12 +247,8 @@ in
   systemd.tmpfiles.rules =
     let
       dataDirs = lib.mapAttrsToList (_: cfg: cfg.dataDir) enabledServices;
-      runtimeDirs = lib.mapAttrsToList (
-        name: _: "d /run/moneymentum/${name} 0770 moneymentum warehouse -"
-      ) enabledServices;
     in
     map (dir: "d ${dir} 0770 moneymentum warehouse -") dataDirs
-    ++ runtimeDirs
     ++ [ "d /var/lib/moneymentum/frontend 0755 root root -" ];
 
   system.activationScripts.moneymentum-init.text = "mkdir -p /run/moneymentum";

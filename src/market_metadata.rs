@@ -10,9 +10,10 @@
 
 use std::collections::BTreeSet;
 
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use event_sorcery::{Projection, ProjectionError, SendError, Store};
-use tracing::info;
+use serde::{Deserialize, Serialize};
+use tracing::{debug, info};
 
 use crate::finance::{Market, Symbol};
 use crate::hyperliquid::{Hyperliquid, HyperliquidError};
@@ -26,6 +27,23 @@ pub(crate) struct MarketMetadata {
     pub(crate) symbol: Market,
     pub(crate) max_leverage: u32,
     pub(crate) asset_index: u32,
+}
+
+/// One market's max leverage, as served to clients.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct LeverageLimit {
+    pub(crate) symbol: Symbol,
+    pub(crate) max_leverage: u32,
+}
+
+/// A venue's per-market leverage limits plus the time the universe behind them
+/// was last observed, so clients can reason about freshness.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct LeverageLimits {
+    pub(crate) limits: Vec<LeverageLimit>,
+    pub(crate) fetched_at: DateTime<Utc>,
 }
 
 /// Why refreshing the market universe fails.
@@ -107,12 +125,39 @@ pub(crate) async fn tradable_markets(
     Ok(tradable)
 }
 
+/// A venue's per-market max-leverage limits, read straight from the catalog
+/// snapshot. Unlike [`tradable_markets`], operator disable flags do not apply:
+/// leverage is venue metadata a client may need for any position it holds.
+/// `None` when the venue has never been observed.
+pub(crate) async fn leverage_limits(
+    venue: VenueRef,
+    catalog_projection: &Projection<MarketCatalog>,
+) -> Result<Option<LeverageLimits>, ProjectionError<MarketCatalog>> {
+    let Some(catalog) = catalog_projection.load(&venue).await? else {
+        return Ok(None);
+    };
+
+    let limits: Vec<LeverageLimit> = catalog
+        .markets()
+        .iter()
+        .map(|market| LeverageLimit {
+            symbol: market.symbol().clone(),
+            max_leverage: market.max_leverage(),
+        })
+        .collect();
+    debug!(venue = %venue, markets = limits.len(), "leverage limits read");
+    Ok(Some(LeverageLimits {
+        limits,
+        fetched_at: catalog.observed_at(),
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
 
     use async_trait::async_trait;
-    use chrono::{DateTime, Utc};
+    use chrono::{DateTime, TimeZone, Utc};
     use sqlx::sqlite::SqlitePoolOptions;
     use tracing::Level;
     use tracing_test::traced_test;
@@ -122,6 +167,7 @@ mod tests {
     use super::*;
     use crate::candle::Candle;
     use crate::funding::FundingRate;
+    use crate::market_catalog::{CatalogMarket, MarketCatalogCommand};
     use crate::market_enablement::MarketEnablementCommand;
     use crate::timeframe::Timeframe;
 
@@ -265,5 +311,135 @@ mod tests {
             Level::INFO,
             &["markets metadata refreshed"]
         ));
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn leverage_limits_reports_every_listed_market_ignoring_disables() {
+        let (catalog, catalog_projection, enablement, enablement_projection) =
+            market_stores().await;
+        let client = StubClient {
+            metadata: vec![metadata("BTC", 50, 0), metadata("ETH", 25, 1)],
+        };
+        refresh_markets(
+            &client,
+            &catalog,
+            &catalog_projection,
+            &enablement_projection,
+        )
+        .await
+        .unwrap();
+
+        // Disabling a market removes it from the tradable set but not from the
+        // leverage limits -- leverage is venue metadata, not a trading decision.
+        enablement
+            .send(
+                &MarketId::new(VenueRef::Hyperliquid, Symbol::from_raw("BTC")),
+                MarketEnablementCommand::Disable { reason: None },
+            )
+            .await
+            .unwrap();
+
+        let limits = leverage_limits(VenueRef::Hyperliquid, &catalog_projection)
+            .await
+            .unwrap()
+            .unwrap();
+
+        let catalog = catalog_projection
+            .load(&VenueRef::Hyperliquid)
+            .await
+            .unwrap()
+            .unwrap();
+
+        let mut by_symbol: Vec<(&str, u32)> = limits
+            .limits
+            .iter()
+            .map(|limit| (limit.symbol.as_str(), limit.max_leverage))
+            .collect();
+        by_symbol.sort_unstable();
+        assert_eq!(by_symbol, vec![("BTC", 50), ("ETH", 25)]);
+        assert_eq!(limits.fetched_at, catalog.observed_at());
+        assert!(crate::logs_contain_at(
+            Level::DEBUG,
+            &["leverage limits read", "markets=2"]
+        ));
+    }
+
+    #[tokio::test]
+    async fn leverage_limits_reflects_latest_catalog_observation_time() {
+        let (catalog, catalog_projection, _enablement, _enablement_projection) =
+            market_stores().await;
+        let first_observed = Utc.with_ymd_and_hms(2026, 3, 15, 12, 0, 0).unwrap();
+        let second_observed = Utc.with_ymd_and_hms(2026, 3, 16, 8, 30, 0).unwrap();
+
+        catalog
+            .send(
+                &VenueRef::Hyperliquid,
+                MarketCatalogCommand::RecordUniverse {
+                    markets: vec![CatalogMarket::new(Symbol::from_raw("BTC"), 50)],
+                    observed_at: first_observed,
+                },
+            )
+            .await
+            .unwrap();
+
+        let first_limits = leverage_limits(VenueRef::Hyperliquid, &catalog_projection)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(first_limits.fetched_at, first_observed);
+        assert_eq!(first_limits.limits.len(), 1);
+        assert_eq!(first_limits.limits[0].max_leverage, 50);
+
+        catalog
+            .send(
+                &VenueRef::Hyperliquid,
+                MarketCatalogCommand::RecordUniverse {
+                    markets: vec![CatalogMarket::new(Symbol::from_raw("ETH"), 40)],
+                    observed_at: second_observed,
+                },
+            )
+            .await
+            .unwrap();
+
+        let latest_limits = leverage_limits(VenueRef::Hyperliquid, &catalog_projection)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(latest_limits.fetched_at, second_observed);
+        assert_eq!(latest_limits.limits.len(), 1);
+        assert_eq!(latest_limits.limits[0].symbol.as_str(), "ETH");
+        assert_eq!(latest_limits.limits[0].max_leverage, 40);
+    }
+
+    #[test]
+    fn leverage_limits_serialize_with_camel_case_fields() {
+        let limits = LeverageLimits {
+            limits: vec![LeverageLimit {
+                symbol: Symbol::from_raw("BTC"),
+                max_leverage: 50,
+            }],
+            fetched_at: Utc.with_ymd_and_hms(2026, 3, 15, 12, 0, 0).unwrap(),
+        };
+
+        let json = serde_json::to_value(&limits).unwrap();
+        assert_eq!(json["limits"][0]["symbol"], "BTC");
+        assert_eq!(json["limits"][0]["maxLeverage"], 50);
+        assert_eq!(json["fetchedAt"], "2026-03-15T12:00:00Z");
+
+        let roundtrip: LeverageLimits = serde_json::from_value(json).unwrap();
+        assert_eq!(roundtrip, limits);
+    }
+
+    #[tokio::test]
+    async fn leverage_limits_returns_none_for_an_unobserved_venue() {
+        let (_catalog, catalog_projection, _enablement, _enablement_projection) =
+            market_stores().await;
+
+        let limits = leverage_limits(VenueRef::Hyperliquid, &catalog_projection)
+            .await
+            .unwrap();
+
+        assert!(limits.is_none());
     }
 }

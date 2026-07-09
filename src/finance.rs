@@ -66,10 +66,6 @@ impl CcxtSymbol {
     pub(crate) fn as_str(&self) -> &str {
         &self.0
     }
-
-    pub(crate) fn into_string(self) -> String {
-        self.0
-    }
 }
 
 impl std::fmt::Display for CcxtSymbol {

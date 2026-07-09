@@ -218,9 +218,8 @@ impl Hyperliquid for HyperliquidClient {
                     low,
                     close,
                     volume,
-                    // CCXT perpetual format: BASE/USDC:USDC
-                    symbol: finance::hyperliquid_swap_ccxt_symbol(market.as_str()).into_string(),
-                    ticker: Symbol::from_raw(market.as_str()),
+                    market: finance::hyperliquid_swap_ccxt_symbol(market.as_str()),
+                    symbol: Symbol::from_raw(market.as_str()),
                 })
             })
             .collect();
@@ -489,8 +488,8 @@ mod tests {
                     low: 41000.0,
                     close: 42500.0,
                     volume: 1000.0,
-                    symbol: "BTC/USDC:USDC".to_string(),
-                    ticker: Symbol::from_raw("BTC"),
+                    market: finance::hyperliquid_swap_ccxt_symbol("BTC"),
+                    symbol: Symbol::from_raw("BTC"),
                 }],
                 funding_rates: vec![FundingRate {
                     timestamp: Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),

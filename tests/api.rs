@@ -9,6 +9,7 @@
 )]
 
 use std::net::{Ipv4Addr, SocketAddr};
+use std::time::Duration;
 
 use moneymentum::{Config, app};
 use reqwest::StatusCode;
@@ -62,11 +63,42 @@ async fn mount_funding_mock(server: &MockServer) {
         .await;
 }
 
+async fn mount_failing_candle_mock(server: &MockServer) {
+    Mock::given(method("POST"))
+        .and(path("/info"))
+        .and(body_partial_json(json!({"type": "candleSnapshot"})))
+        .respond_with(ResponseTemplate::new(500))
+        .mount(server)
+        .await;
+}
+
+async fn mount_failing_funding_mock(server: &MockServer) {
+    Mock::given(method("POST"))
+        .and(path("/info"))
+        .and(body_partial_json(json!({"type": "fundingHistory"})))
+        .respond_with(ResponseTemplate::new(500))
+        .mount(server)
+        .await;
+}
+
+async fn mount_failing_ingestion_mocks(server: &MockServer) {
+    mount_meta_mock(server).await;
+    mount_failing_candle_mock(server).await;
+    mount_failing_funding_mock(server).await;
+}
+
+async fn mount_successful_ingestion_mocks(server: &MockServer) {
+    mount_meta_mock(server).await;
+    mount_candle_mock(server).await;
+    mount_funding_mock(server).await;
+}
+
 /// A moneymentum backend bound to an ephemeral port, exercised end-to-end over
 /// real HTTP exactly as an external consumer would.
 struct TestApp {
     base_url: String,
     http: reqwest::Client,
+    server: tokio::task::JoinHandle<()>,
 }
 
 impl TestApp {
@@ -85,9 +117,22 @@ impl TestApp {
             .await
             .unwrap()
     }
+
+    async fn shutdown(self) {
+        self.server.abort();
+        let _ = self.server.await;
+    }
 }
 
 async fn spawn_test_app(mock_server: &MockServer, data_dir: &TempDir) -> TestApp {
+    spawn_test_app_with_retries(mock_server, data_dir, 2).await
+}
+
+async fn spawn_test_app_with_retries(
+    mock_server: &MockServer,
+    data_dir: &TempDir,
+    max_retries: usize,
+) -> TestApp {
     let database_path = data_dir.path().join("moneymentum-test.db");
     let toml_str = format!(
         r#"
@@ -97,8 +142,7 @@ async fn spawn_test_app(mock_server: &MockServer, data_dir: &TempDir) -> TestApp
         hyperliquid_base_url = "{}"
         log_level = "debug"
         max_concurrent_requests = 3
-        max_retries = 2
-        ingestion_schedule = "0 0 * * * *"
+        max_retries = {max_retries}
         "#,
         data_dir.path().display(),
         database_path.display(),
@@ -111,48 +155,71 @@ async fn spawn_test_app(mock_server: &MockServer, data_dir: &TempDir) -> TestApp
         .await
         .unwrap();
     let base_url = format!("http://{}", listener.local_addr().unwrap());
-    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
 
     TestApp {
         base_url,
         http: reqwest::Client::new(),
+        server,
     }
+}
+
+async fn ingestion_status_body(app: &TestApp) -> String {
+    app.get("/ingestion/status").await.text().await.unwrap()
 }
 
 async fn poll_for_status(app: &TestApp, status: &str, max_polls: usize, interval_ms: u64) -> bool {
     for _ in 0..max_polls {
-        let body = app.get("/ingestion/status").await.text().await.unwrap();
-        if body.contains(status) {
+        if ingestion_status_body(app).await.contains(status) {
             return true;
         }
-        tokio::time::sleep(std::time::Duration::from_millis(interval_ms)).await;
+        tokio::time::sleep(Duration::from_millis(interval_ms)).await;
     }
     false
 }
 
-// Temporarily skipped: fails due to OneWeek timeframe overflow when using a
-// 5000-entry window; see https://github.com/dataclique/moneymentum/issues/64.
-#[ignore = "OneWeek timeframe window overflows when requesting 5000 candles (see issue #64)"]
 #[tokio::test(flavor = "multi_thread")]
-async fn ingest_and_query_candles() {
+async fn ingestion_status_is_idle_on_fresh_start() {
     let mock_server = MockServer::start().await;
     mount_meta_mock(&mock_server).await;
-    mount_candle_mock(&mock_server).await;
-    mount_funding_mock(&mock_server).await;
 
     let data_dir = TempDir::new().unwrap();
     let app = spawn_test_app(&mock_server, &data_dir).await;
 
-    let ingest_response = app.post("/ingest").await;
-    assert_eq!(ingest_response.status(), StatusCode::ACCEPTED);
+    let response = app.get("/ingestion/status").await;
+    assert!(response.status().is_success());
 
-    let completed = poll_for_status(&app, "Completed", 100, 50).await;
+    let body = response.text().await.unwrap();
+    assert_eq!(body, "null");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn manual_ingest_endpoint_is_not_exposed() {
+    let mock_server = MockServer::start().await;
+    mount_meta_mock(&mock_server).await;
+
+    let data_dir = TempDir::new().unwrap();
+    let app = spawn_test_app(&mock_server, &data_dir).await;
+
+    let response = app.post("/ingest").await;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn scheduled_ingestion_completes_and_candles_are_queryable() {
+    let mock_server = MockServer::start().await;
+    mount_successful_ingestion_mocks(&mock_server).await;
+
+    let data_dir = TempDir::new().unwrap();
+    let app = spawn_test_app(&mock_server, &data_dir).await;
+
+    let completed = poll_for_status(&app, "Completed", 60, 200).await;
     if !completed {
-        let body = app.get("/ingestion/status").await.text().await.unwrap();
+        let body = ingestion_status_body(&app).await;
         if body.contains("Failed") {
-            panic!("ingestion failed: {body}");
+            panic!("scheduled ingestion failed: {body}");
         }
-        panic!("ingestion did not complete within timeout, last status: {body}");
+        panic!("scheduled ingestion did not complete within timeout, last status: {body}");
     }
 
     let candles_response = app.get("/candles/1h").await;
@@ -181,36 +248,41 @@ async fn ingest_and_query_candles() {
     );
 }
 
-/// After a previous failed ingestion, restarting should show "Running" status,
-/// not the old "Failed" status.
+/// After a failed scheduled run, the next scheduler tick must surface `Running`
+/// (or `Completed`) rather than leaving the latest status stuck on `Failed`.
 #[tokio::test(flavor = "multi_thread")]
-async fn status_shows_running_after_restart_from_failed() {
+async fn status_advances_after_failed_scheduled_run() {
     let mock_server = MockServer::start().await;
-
-    // First run: mock returns error to cause failure
-    mount_meta_mock(&mock_server).await;
-    Mock::given(method("POST"))
-        .and(path("/info"))
-        .and(body_partial_json(json!({"type": "candleSnapshot"})))
-        .respond_with(ResponseTemplate::new(500))
-        .mount(&mock_server)
-        .await;
+    mount_failing_ingestion_mocks(&mock_server).await;
 
     let data_dir = TempDir::new().unwrap();
-    let app = spawn_test_app(&mock_server, &data_dir).await;
+    let app = spawn_test_app_with_retries(&mock_server, &data_dir, 0).await;
 
-    // Trigger first ingestion (will fail)
-    app.post("/ingest").await;
+    let failed = poll_for_status(&app, "Failed", 40, 100).await;
+    assert!(
+        failed,
+        "first scheduled ingestion should fail, last status: {}",
+        ingestion_status_body(&app).await
+    );
 
-    // Wait for failure (retries take ~12s with exponential backoff)
-    let failed = poll_for_status(&app, "Failed", 200, 100).await;
-    assert!(failed, "first ingestion should fail");
-
-    // Set up successful mock for second run
     mock_server.reset().await;
-    mount_meta_mock(&mock_server).await;
+    mount_successful_ingestion_mocks(&mock_server).await;
 
-    // Make candle fetch slow so we can check Running status
+    let advanced = poll_for_status(&app, "Running", 60, 200).await
+        || poll_for_status(&app, "Completed", 60, 200).await;
+
+    assert!(
+        advanced,
+        "status should advance after a failed run, last status: {}",
+        ingestion_status_body(&app).await
+    );
+}
+
+/// A backend restart abandons any in-flight run so schedulers can enqueue again.
+#[tokio::test(flavor = "multi_thread")]
+async fn restart_abandons_running_ingestion_and_scheduler_recovers() {
+    let mock_server = MockServer::start().await;
+    mount_meta_mock(&mock_server).await;
     Mock::given(method("POST"))
         .and(path("/info"))
         .and(body_partial_json(json!({"type": "candleSnapshot"})))
@@ -228,22 +300,29 @@ async fn status_shows_running_after_restart_from_failed() {
                     "v": "1000.0",
                     "n": 500
                 }]))
-                .set_delay(std::time::Duration::from_millis(500)),
+                .set_delay(Duration::from_secs(30)),
         )
         .mount(&mock_server)
         .await;
     mount_funding_mock(&mock_server).await;
 
-    // Trigger second ingestion
-    let ingest_response = app.post("/ingest").await;
-    assert_eq!(ingest_response.status(), StatusCode::ACCEPTED);
+    let data_dir = TempDir::new().unwrap();
+    let app = spawn_test_app(&mock_server, &data_dir).await;
 
-    // Poll for Running or Completed status
-    let saw_running = poll_for_status(&app, "Running", 50, 100).await
-        || poll_for_status(&app, "Completed", 50, 100).await;
+    let running = poll_for_status(&app, "Running", 60, 200).await;
+    assert!(running, "scheduler should enqueue a run");
 
+    app.shutdown().await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    mock_server.reset().await;
+    mount_successful_ingestion_mocks(&mock_server).await;
+
+    let restarted = spawn_test_app(&mock_server, &data_dir).await;
+    let completed = poll_for_status(&restarted, "Completed", 60, 200).await;
     assert!(
-        saw_running,
-        "status should transition to Running (or Completed) after restart from Failed"
+        completed,
+        "restarted backend should complete ingestion after abandoning the wedged run, last status: {}",
+        ingestion_status_body(&restarted).await
     );
 }

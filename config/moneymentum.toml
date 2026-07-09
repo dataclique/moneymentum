@@ -4,12 +4,3 @@ database_url = "sqlite:///mnt/data/prod/moneymentum.db?mode=rwc"
 log_level = "info"
 max_concurrent_requests = 3
 max_retries = 5
-
-# Deploy bridge: the per-service profile still runs the pre-#417 binary during
-# system activation, and that binary refuses to start unless the token is set
-# here (its --markets-refresh-token-publish-path flag no longer exists in the
-# new unit). The current binary ignores this key. On the stale binary the
-# value authenticates POST /hyperliquid/markets/refresh, so it is random
-# rather than guessable. Removal after the first green deploy is tracked in
-# https://github.com/dataclique/moneymentum/issues/425.
-markets_refresh_token = "159751662c02956417382903adf492b0a8af10c04f9e6fb6"

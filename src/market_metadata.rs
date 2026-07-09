@@ -94,7 +94,15 @@ pub(crate) async fn refresh_markets(
         enablement_projection,
     )
     .await?;
-    info!(markets = fetched.len(), "markets metadata refreshed");
+    let observed_at = catalog_projection
+        .load(&VenueRef::Hyperliquid)
+        .await?
+        .map(|catalog| catalog.observed_at());
+    info!(
+        markets = fetched.len(),
+        observed_at = ?observed_at,
+        "markets metadata refreshed"
+    );
     Ok(tradable)
 }
 

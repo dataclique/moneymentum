@@ -127,6 +127,7 @@ impl EventSourced for MarketEnablement {
     const AGGREGATE_TYPE: &'static str = "MarketEnablement";
     const PROJECTION: Table = Table("market_enablement_view");
     const SCHEMA_VERSION: u64 = 1;
+    const SNAPSHOT_SIZE: usize = 1;
 
     fn originate(event: &MarketEnablementEvent) -> Option<Self> {
         match event {
@@ -196,7 +197,10 @@ pub(crate) const ENABLEMENT_STATUS: Column = Column("status");
 
 #[cfg(test)]
 mod tests {
-    use event_sorcery::{LifecycleError, TestHarness};
+    use std::sync::Arc;
+
+    use event_sorcery::{LifecycleError, StoreBuilder, TestHarness};
+    use sqlx::sqlite::SqlitePoolOptions;
 
     use super::*;
 
@@ -274,5 +278,97 @@ mod tests {
             error,
             LifecycleError::Apply(MarketEnablementError::AlreadyEnabled)
         ));
+    }
+
+    #[tokio::test]
+    async fn enablement_view_status_column_filters_disabled_markets() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect(":memory:")
+            .await
+            .unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        let (store, projection) = StoreBuilder::<MarketEnablement>::new(pool.clone())
+            .build()
+            .await
+            .unwrap();
+
+        let btc_id = MarketId::new(VenueRef::Hyperliquid, Symbol::from_raw("BTC"));
+        let eth_id = MarketId::new(VenueRef::Hyperliquid, Symbol::from_raw("ETH"));
+
+        store
+            .send(
+                &btc_id,
+                MarketEnablementCommand::Disable {
+                    reason: Some("maintenance".to_string()),
+                },
+            )
+            .await
+            .unwrap();
+        store
+            .send(&eth_id, MarketEnablementCommand::Disable { reason: None })
+            .await
+            .unwrap();
+        store
+            .send(&eth_id, MarketEnablementCommand::Enable)
+            .await
+            .unwrap();
+
+        let disabled = projection
+            .filter(ENABLEMENT_STATUS, &MarketStatus::Disabled)
+            .await
+            .unwrap();
+        assert_eq!(disabled.len(), 1);
+        assert_eq!(disabled[0].0, btc_id);
+    }
+
+    #[tokio::test]
+    async fn enablement_snapshot_persists_the_latest_status() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect(":memory:")
+            .await
+            .unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        let store = Arc::new(
+            StoreBuilder::<MarketEnablement>::new(pool.clone())
+                .build()
+                .await
+                .unwrap()
+                .0,
+        );
+
+        let market_id = MarketId::new(VenueRef::Hyperliquid, Symbol::from_raw("BTC"));
+        store
+            .send(
+                &market_id,
+                MarketEnablementCommand::Disable { reason: None },
+            )
+            .await
+            .unwrap();
+        store
+            .send(&market_id, MarketEnablementCommand::Enable)
+            .await
+            .unwrap();
+        store
+            .send(
+                &market_id,
+                MarketEnablementCommand::Disable {
+                    reason: Some("delisting soon".to_string()),
+                },
+            )
+            .await
+            .unwrap();
+
+        let payload: String = sqlx::query_scalar(
+            "SELECT payload FROM snapshots
+             WHERE aggregate_type = 'MarketEnablement' AND aggregate_id = ?1",
+        )
+        .bind(market_id.to_string())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let snapshot: serde_json::Value = serde_json::from_str(&payload).unwrap();
+        assert_eq!(snapshot["Live"]["status"], "Disabled");
     }
 }

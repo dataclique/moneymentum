@@ -25,13 +25,13 @@ See [ROADMAP.md](./ROADMAP.md) for what's next.
 
 ## Documentation
 
-| Doc                                    | Purpose                                            |
-| -------------------------------------- | -------------------------------------------------- |
-| [SPEC.md](./SPEC.md)                   | Product vision and target architecture             |
-| [ROADMAP.md](./ROADMAP.md)             | Themed stories ordered by priority                 |
-| [stories/](./stories/README.md)        | User and dev stories with acceptance tests         |
-| [contributions.md](./contributions.md) | Extreme Programming (XP) workflow for contributors |
-| [AGENTS.md](./AGENTS.md)               | Per-repo rules for AI coding agents                |
+| Doc                                  | Purpose                                            |
+| ------------------------------------ | -------------------------------------------------- |
+| [SPEC.md](./SPEC.md)                 | Product vision and target architecture             |
+| [ROADMAP.md](./ROADMAP.md)           | Themed stories ordered by priority                 |
+| [stories/](./stories/README.md)      | User and dev stories with acceptance tests         |
+| [CONTRIBUTING.md](./CONTRIBUTING.md) | Extreme Programming (XP) workflow for contributors |
+| [AGENTS.md](./AGENTS.md)             | Per-repo rules for AI coding agents                |
 
 ## Quick start
 

@@ -44,6 +44,7 @@ authors = ["Data Clique Software Design FZCO"]
 
 [dependencies]
 apalis = "=1.0.0-rc.9"
+apalis-cron = "=1.0.0-rc.8"
 apalis-sqlite = "=1.0.0-rc.8"
 async-trait = "0.1.89"
 axum = "0.8.9"
@@ -51,6 +52,7 @@ backon = "1.6.0"
 bitcoin = "0.32.8"
 chrono = { version = "0.4.43", features = ["serde"] }
 clap = { version = "4.5.57", features = ["derive", "env"] }
+cron = "=0.16.0"
 derive = { path = "crates/derive" }
 event-sorcery = { git = "https://github.com/ST0X-Technology/event-sorcery", tag = "0.2.0-rc2", version = "0.1.0" }
 futures = "0.3.31"

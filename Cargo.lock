@@ -7409,6 +7409,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "wallet"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "tokio",
+ "tracing",
+ "tracing-test",
+ "wallet",
+]
+
+[[package]]
 name = "want"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

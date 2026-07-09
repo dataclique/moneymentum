@@ -28,12 +28,12 @@ is a first-class artifact for later performance attribution and prediction, and
 the design stays forward-compatible with multiple instruments and venues.
 Design: [adrs/0001](./adrs/0001-event-sorcery-persistence-foundation.md).
 
-- [ ] Adopt the event-sorcery event-store stack (sqlx 0.9, apalis 1.0-rc) --
-      [#363](https://github.com/data-cartel/moneymentum/issues/363) /
-      [#361](https://github.com/data-cartel/moneymentum/pull/361)
+- [x] Adopt the event-sorcery event-store stack (sqlx 0.9, apalis 1.0-rc) --
+      [#363](https://github.com/dataclique/moneymentum/issues/363) /
+      [#361](https://github.com/dataclique/moneymentum/pull/361)
 - [x] Event-source portfolios, ingestion runs, and the market universe --
-      [#364](https://github.com/data-cartel/moneymentum/issues/364) /
-      [#362](https://github.com/data-cartel/moneymentum/pull/362)
+      [#364](https://github.com/dataclique/moneymentum/issues/364) /
+      [#362](https://github.com/dataclique/moneymentum/pull/362)
 - [x] Enqueue the ingestion job atomically with the Started event --
       [#404](https://github.com/dataclique/moneymentum/issues/404) /
       [#406](https://github.com/dataclique/moneymentum/pull/406)
@@ -55,7 +55,22 @@ middleware vocabulary instead of being reimplemented per framework. Resolving
 this early keeps new handlers from accumulating against a framework outside the
 stack's ecosystem, and unifies HTTP observability with the rest of the service.
 
-- [ ] Bring the HTTP layer onto the tower middleware ecosystem -- #397 / #119
+- [x] Bring the HTTP layer onto the tower middleware ecosystem --
+      [#397](https://github.com/dataclique/moneymentum/issues/397) /
+      [#119](https://github.com/dataclique/moneymentum/pull/119)
+
+---
+
+## Dev: chain-agnostic signing for execution
+
+Decouple transaction signing from browser-held keys so execution code can target
+backend custody without rewriting call sites. Consumers constrain on
+[`Wallet`](./crates/wallet/src/lib.rs) and swap in chain-specific backends as
+they land.
+
+- [x] Add a chain-agnostic `Wallet` trait and mock --
+      [#398](https://github.com/dataclique/moneymentum/issues/398) /
+      [#120](https://github.com/dataclique/moneymentum/pull/120)
 
 ---
 

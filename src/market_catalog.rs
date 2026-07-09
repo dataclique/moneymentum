@@ -41,11 +41,17 @@ impl CatalogMarket {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct MarketCatalog {
     markets: Vec<CatalogMarket>,
+    observed_at: DateTime<Utc>,
 }
 
 impl MarketCatalog {
     pub(crate) fn markets(&self) -> &[CatalogMarket] {
         &self.markets
+    }
+
+    /// When the venue universe behind this snapshot was last observed.
+    pub(crate) fn observed_at(&self) -> DateTime<Utc> {
+        self.observed_at
     }
 }
 
@@ -116,13 +122,17 @@ impl EventSourced for MarketCatalog {
 
     const AGGREGATE_TYPE: &'static str = "MarketCatalog";
     const PROJECTION: Table = Table("market_catalog_view");
-    const SCHEMA_VERSION: u64 = 1;
+    const SCHEMA_VERSION: u64 = 2;
     const SNAPSHOT_SIZE: usize = 1;
 
     fn originate(event: &MarketCatalogEvent) -> Option<Self> {
-        let MarketCatalogEvent::VenueUniverseObserved { markets, .. } = event;
+        let MarketCatalogEvent::VenueUniverseObserved {
+            markets,
+            observed_at,
+        } = event;
         Some(Self {
             markets: markets.clone(),
+            observed_at: *observed_at,
         })
     }
 
@@ -130,9 +140,13 @@ impl EventSourced for MarketCatalog {
         _entity: &Self,
         event: &MarketCatalogEvent,
     ) -> Result<Option<Self>, MarketCatalogError> {
-        let MarketCatalogEvent::VenueUniverseObserved { markets, .. } = event;
+        let MarketCatalogEvent::VenueUniverseObserved {
+            markets,
+            observed_at,
+        } = event;
         Ok(Some(Self {
             markets: markets.clone(),
+            observed_at: *observed_at,
         }))
     }
 
@@ -172,8 +186,9 @@ impl EventSourced for MarketCatalog {
 
 #[cfg(test)]
 mod tests {
-    use chrono::TimeZone;
-    use event_sorcery::{LifecycleError, TestHarness, replay};
+    use chrono::{TimeZone, Utc};
+    use event_sorcery::{LifecycleError, StoreBuilder, TestHarness, replay};
+    use sqlx::sqlite::SqlitePoolOptions;
 
     use super::*;
 
@@ -218,6 +233,78 @@ mod tests {
             catalog.markets(),
             &[CatalogMarket::new(Symbol::from_raw("SOL"), 20)]
         );
+    }
+
+    #[test]
+    fn replay_exposes_the_latest_observation_time() {
+        let catalog = replay::<MarketCatalog>(vec![
+            MarketCatalogEvent::VenueUniverseObserved {
+                markets: vec![CatalogMarket::new(Symbol::from_raw("BTC"), 50)],
+                observed_at: observed_at(1),
+            },
+            MarketCatalogEvent::VenueUniverseObserved {
+                markets: vec![CatalogMarket::new(Symbol::from_raw("ETH"), 25)],
+                observed_at: observed_at(2),
+            },
+        ])
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(catalog.observed_at(), observed_at(2));
+    }
+
+    #[tokio::test]
+    async fn catalog_snapshot_persists_the_latest_universe() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect(":memory:")
+            .await
+            .unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        let (store, projection) = StoreBuilder::<MarketCatalog>::new(pool.clone())
+            .build()
+            .await
+            .unwrap();
+
+        store
+            .send(
+                &VenueRef::Hyperliquid,
+                MarketCatalogCommand::RecordUniverse {
+                    markets: vec![CatalogMarket::new(Symbol::from_raw("BTC"), 50)],
+                    observed_at: observed_at(1),
+                },
+            )
+            .await
+            .unwrap();
+        store
+            .send(
+                &VenueRef::Hyperliquid,
+                MarketCatalogCommand::RecordUniverse {
+                    markets: vec![CatalogMarket::new(Symbol::from_raw("ETH"), 25)],
+                    observed_at: observed_at(2),
+                },
+            )
+            .await
+            .unwrap();
+
+        let catalog = projection
+            .load(&VenueRef::Hyperliquid)
+            .await
+            .unwrap()
+            .expect("catalog projection should exist");
+        assert_eq!(catalog.markets().len(), 1);
+        assert_eq!(catalog.observed_at(), observed_at(2));
+
+        let payload: String = sqlx::query_scalar(
+            "SELECT payload FROM snapshots
+             WHERE aggregate_type = 'MarketCatalog' AND aggregate_id = 'hyperliquid'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let snapshot: serde_json::Value = serde_json::from_str(&payload).unwrap();
+        assert_eq!(snapshot["Live"]["observed_at"], "2026-01-02T00:00:00Z");
+        assert_eq!(snapshot["Live"]["markets"][0]["symbol"], "ETH");
     }
 
     #[tokio::test]

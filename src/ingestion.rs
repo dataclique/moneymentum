@@ -13,14 +13,15 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use apalis::prelude::{Data, TaskSink};
-use apalis_sqlite::{SqlitePool, SqliteStorage};
+use apalis::prelude::Data;
 use chrono::{DateTime, Utc};
 use event_sorcery::{
-    Column, DomainEvent, EventSourced, JobQueue, Nil, Projection, ProjectionError, SendError,
-    Store, Table,
+    Column, DomainEvent, EventSourced, Job, JobQueue, Label, Projection, ProjectionError,
+    SendError, Store, Table,
 };
+use futures::stream::{self, StreamExt};
 use serde::{Deserialize, Serialize};
+use sqlx::{AssertSqlSafe, SqlitePool};
 use thiserror::Error;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
@@ -186,6 +187,7 @@ impl DomainEvent for IngestionRunEvent {
 #[derive(Debug, Clone)]
 pub(crate) enum IngestionRunCommand {
     Start {
+        run_id: IngestionRunId,
         started_at: DateTime<Utc>,
     },
     Complete {
@@ -218,7 +220,7 @@ impl EventSourced for IngestionRun {
     type Event = IngestionRunEvent;
     type Command = IngestionRunCommand;
     type Error = IngestionRunError;
-    type Jobs = Nil;
+    type Jobs = event_sorcery::jobs![IngestionJob];
     type Materialized = Table;
 
     const AGGREGATE_TYPE: &'static str = "IngestionRun";
@@ -259,10 +261,15 @@ impl EventSourced for IngestionRun {
 
     fn initialize(
         command: IngestionRunCommand,
-        _jobs: &mut JobQueue<Self::Jobs>,
+        jobs: &mut JobQueue<Self::Jobs>,
     ) -> Result<Vec<IngestionRunEvent>, IngestionRunError> {
         match command {
-            IngestionRunCommand::Start { started_at } => {
+            IngestionRunCommand::Start { run_id, started_at } => {
+                // Enqueue the ingestion job on the same handle the framework
+                // flushes inside the event-commit transaction, so the job is
+                // queued iff the `Started` event commits -- there is no window
+                // where a run is Running with no job behind it (issue #404).
+                jobs.push(IngestionJob::new(run_id));
                 Ok(vec![IngestionRunEvent::Started { started_at }])
             }
             IngestionRunCommand::Complete { .. }
@@ -319,12 +326,34 @@ impl IngestionJob {
     pub(crate) fn new(run_id: IngestionRunId) -> Self {
         Self { run_id }
     }
+}
 
-    pub(crate) async fn run(
-        self,
-        store: Data<Arc<Store<IngestionRun>>>,
-        services: Data<Arc<IngestionServices>>,
-    ) -> Result<(), SendError<IngestionRun>> {
+/// Everything the ingestion worker needs to drive a run to a terminal state:
+/// the run's own event store (to load state and record completion or failure)
+/// and the fetch/catalog services that do the ingestion work. Built once at
+/// startup and shared as the worker's [`Job::Input`].
+pub(crate) struct IngestionJobContext {
+    pub(crate) run_store: Arc<Store<IngestionRun>>,
+    pub(crate) run_projection: Arc<Projection<IngestionRun>>,
+    pub(crate) services: IngestionServices,
+}
+
+impl Job for IngestionJob {
+    type Input = IngestionJobContext;
+    type Output = ();
+    type Error = SendError<IngestionRun>;
+
+    const WORKER_NAME: &'static str = "ingestion";
+    const KIND: &'static str = "ingestion";
+
+    fn label(&self) -> Label {
+        Label::new(format!("ingestion:{}", self.run_id))
+    }
+
+    async fn perform(&self, context: &IngestionJobContext) -> Result<(), SendError<IngestionRun>> {
+        let store = &context.run_store;
+        let services = &context.services;
+
         // A run abandoned by startup recovery must not resurrect: skip the work
         // and leave its terminal state untouched.
         match store.load(&self.run_id).await {
@@ -339,6 +368,51 @@ impl IngestionJob {
                 error!(error = %err, run_id = %self.run_id, "failed to load ingestion run");
                 return Err(err);
             }
+        }
+
+        // Both concurrent `create_run` losers and winners enqueue a job atomically
+        // with `Start`. The aggregate can still read Running for a loser until its
+        // `Abandon` commits, so verify this run_id is the projection's sole winner
+        // before any ingestion I/O.
+        let holds_slot = match holds_one_running_slot(&context.run_projection, &self.run_id).await {
+            Ok(holds_slot) => holds_slot,
+            Err(err) => {
+                error!(
+                    error = %err,
+                    run_id = %self.run_id,
+                    "failed to verify the one-running slot"
+                );
+                return retry_ingestion_job(store, &self.run_id).await;
+            }
+        };
+        if !holds_slot {
+            match store.load(&self.run_id).await {
+                Ok(Some(run)) if run.status == IngestionRunStatus::Running => {
+                    store
+                        .send(
+                            &self.run_id,
+                            IngestionRunCommand::Abandon {
+                                reason: LOST_RACE_REASON.to_string(),
+                                reconciled_at: Utc::now(),
+                            },
+                        )
+                        .await?;
+                }
+                Ok(_) => {}
+                Err(err) => {
+                    error!(
+                        error = %err,
+                        run_id = %self.run_id,
+                        "failed to load ingestion run before abandoning race loser"
+                    );
+                    return Err(err);
+                }
+            }
+            warn!(
+                run_id = %self.run_id,
+                "skipping ingestion for a run that lost the one-running race"
+            );
+            return Ok(());
         }
 
         let candle_ingester = CandleIngester::new(
@@ -365,7 +439,7 @@ impl IngestionJob {
                 // The run stays Running until this commits; surface a
                 // terminalization failure so the worker retries instead of
                 // leaving the slot wedged until the next startup reconcile.
-                if let Err(err) = complete_run(&store, &self.run_id, last_record).await {
+                if let Err(err) = complete_run(store, &self.run_id, last_record).await {
                     error!(error = %err, run_id = %self.run_id, "failed to record ingestion completion");
                     return Err(err);
                 }
@@ -375,7 +449,7 @@ impl IngestionJob {
                 error!(error = %err, run_id = %self.run_id, "ingestion failed");
                 // If we cannot even record the failure the run stays Running;
                 // surface it so the worker retries rather than wedging the slot.
-                if let Err(record_err) = fail_run(&store, &self.run_id, &err.to_string()).await {
+                if let Err(record_err) = fail_run(store, &self.run_id, &err.to_string()).await {
                     error!(
                         error = %record_err,
                         run_id = %self.run_id,
@@ -429,8 +503,6 @@ pub(crate) enum IngestionError {
     Send(#[from] SendError<IngestionRun>),
     #[error(transparent)]
     Projection(#[from] ProjectionError<IngestionRun>),
-    #[error("failed to queue ingestion job")]
-    Queue,
 }
 
 pub(crate) struct IngestionServices {
@@ -460,7 +532,13 @@ pub(crate) async fn create_run(
     let started_at = Utc::now();
     let run_id = IngestionRunId::new(started_at);
     store
-        .send(&run_id, IngestionRunCommand::Start { started_at })
+        .send(
+            &run_id,
+            IngestionRunCommand::Start {
+                run_id: run_id.clone(),
+                started_at,
+            },
+        )
         .await?;
 
     // The pre-send projection read is not atomic with the Start, so two callers
@@ -505,27 +583,38 @@ pub(crate) async fn recover_abandoned_runs(
     let running = running_runs(projection).await?;
     let reconciled_at = Utc::now();
 
-    let mut recovered = 0u64;
-    let mut first_error = None;
-    for (run_id, _) in &running {
-        // Abandon each run independently: one failed write must not block
-        // recovery of the rest, since this completes before /ingest is served.
-        if let Err(err) = store
-            .send(
-                run_id,
-                IngestionRunCommand::Abandon {
-                    reason: ABANDONED_RUN_REASON.to_string(),
-                    reconciled_at,
-                },
-            )
-            .await
-        {
-            error!(error = %err, run_id = %run_id, "failed to abandon a running ingestion run");
-            first_error.get_or_insert(err);
-            continue;
-        }
-        recovered += 1;
-    }
+    // Abandon each run independently: one failed write must not block recovery
+    // of the rest, since this completes before /ingest is served.
+    let (recovered, first_error) = stream::iter(running.iter())
+        .fold(
+            (0u64, None::<SendError<IngestionRun>>),
+            |(recovered, first_error), (run_id, _)| {
+                let run_id = run_id.clone();
+                async move {
+                    match store
+                        .send(
+                            &run_id,
+                            IngestionRunCommand::Abandon {
+                                reason: ABANDONED_RUN_REASON.to_string(),
+                                reconciled_at,
+                            },
+                        )
+                        .await
+                    {
+                        Ok(()) => (recovered + 1, first_error),
+                        Err(err) => {
+                            error!(
+                                error = %err,
+                                run_id = %run_id,
+                                "failed to abandon a running ingestion run"
+                            );
+                            (recovered, first_error.or(Some(err)))
+                        }
+                    }
+                }
+            },
+        )
+        .await;
 
     if let Some(err) = first_error {
         return Err(IngestionError::Send(err));
@@ -540,15 +629,49 @@ pub(crate) async fn recover_abandoned_runs(
     Ok(recovered)
 }
 
+/// Materialized-view payload shape for a live [`IngestionRun`].
+#[derive(Deserialize)]
+struct LiveIngestionRunView {
+    #[serde(rename = "Live")]
+    live: IngestionRun,
+}
+
 /// The status of the most recently started run, or `None` if none exist.
+///
+/// Reads a single view row ordered by [`IngestionRunId`] (microsecond start,
+/// then nonce), matching the old `ORDER BY started_at DESC LIMIT 1` ledger
+/// query without loading every run into memory.
 pub(crate) async fn latest_status(
-    projection: &Projection<IngestionRun>,
+    pool: &SqlitePool,
 ) -> Result<Option<IngestionRunStatus>, IngestionError> {
-    let runs = projection.load_all().await?;
-    Ok(runs
-        .into_iter()
-        .max_by(|(left_id, _), (right_id, _)| left_id.cmp(right_id))
-        .map(|(_, run)| run.status))
+    let Table(table) = IngestionRun::PROJECTION;
+    let micros_substr_start = INGESTION_RUN_ID_PREFIX.len() + 1;
+    let query = format!(
+        "SELECT view_id, payload FROM {table}
+         ORDER BY
+           CAST(substr(view_id, {micros_substr_start},
+             instr(substr(view_id, {micros_substr_start}), '-') - 1) AS INTEGER) DESC,
+           view_id DESC
+         LIMIT 1"
+    );
+
+    let row: Option<(String, String)> = sqlx::query_as(AssertSqlSafe(query))
+        .fetch_optional(pool)
+        .await
+        .map_err(|err| IngestionError::Projection(ProjectionError::from(err)))?;
+
+    let Some((view_id, payload)) = row else {
+        return Ok(None);
+    };
+
+    let view: LiveIngestionRunView = serde_json::from_str(&payload).map_err(|source| {
+        IngestionError::Projection(ProjectionError::Serde {
+            aggregate_id: view_id.clone(),
+            source,
+        })
+    })?;
+
+    Ok(Some(view.live.status))
 }
 
 async fn running_runs(
@@ -556,6 +679,37 @@ async fn running_runs(
 ) -> Result<Vec<(IngestionRunId, IngestionRun)>, ProjectionError<IngestionRun>> {
     projection
         .filter(RUN_STATUS, &IngestionRunStatus::Running)
+        .await
+}
+
+async fn holds_one_running_slot(
+    projection: &Projection<IngestionRun>,
+    run_id: &IngestionRunId,
+) -> Result<bool, ProjectionError<IngestionRun>> {
+    Ok(matches!(
+        running_runs(projection).await?.as_slice(),
+        [(winner, _)] if winner == run_id
+    ))
+}
+
+async fn retry_ingestion_job(
+    store: &Store<IngestionRun>,
+    run_id: &IngestionRunId,
+) -> Result<(), SendError<IngestionRun>> {
+    let Some(run) = store.load(run_id).await? else {
+        return Ok(());
+    };
+    if run.status != IngestionRunStatus::Running {
+        return Ok(());
+    }
+    store
+        .send(
+            run_id,
+            IngestionRunCommand::Start {
+                run_id: run_id.clone(),
+                started_at: run.started_at,
+            },
+        )
         .await
 }
 
@@ -597,37 +751,15 @@ pub(crate) async fn fail_run(
     Ok(())
 }
 
-/// Opens an ingestion run and enqueues its job, recording the run as failed if
-/// the enqueue itself fails. Shared by the `/ingest` handler and the scheduler.
-pub(crate) async fn enqueue_run(
-    store: &Store<IngestionRun>,
-    projection: &Projection<IngestionRun>,
-    apalis_pool: &SqlitePool,
-) -> Result<IngestionRunId, IngestionError> {
-    let run_id = create_run(store, projection).await?;
-
-    let mut job_queue = SqliteStorage::<IngestionJob, (), ()>::new(apalis_pool);
-    if let Err(err) = job_queue.push(IngestionJob::new(run_id.clone())).await {
-        error!(error = %err, "failed to queue ingestion job");
-        if let Err(record_err) = fail_run(store, &run_id, "failed to queue ingestion job").await {
-            error!(error = %record_err, "failed to record ingestion queue failure");
-        }
-        return Err(IngestionError::Queue);
-    }
-
-    Ok(run_id)
-}
-
 /// Runs one scheduled ingestion attempt. An already-running run is the normal
 /// skip-this-tick case, not a failure; genuine failures increment a consecutive
 /// counter and warn so an operator can spot a wedged scheduler.
 pub(crate) async fn trigger_scheduled_ingestion(
     store: &Store<IngestionRun>,
     projection: &Projection<IngestionRun>,
-    apalis_pool: &SqlitePool,
     consecutive_failures: &AtomicU32,
 ) {
-    match enqueue_run(store, projection, apalis_pool).await {
+    match create_run(store, projection).await {
         Ok(run_id) => {
             consecutive_failures.store(0, Ordering::Relaxed);
             debug!(run_id = %run_id, "scheduled ingestion run enqueued");
@@ -649,10 +781,11 @@ mod tests {
     use chrono::{DateTime, TimeZone, Utc};
     use rust_decimal_macros::dec;
     use sqlx::SqlitePool;
+    use std::sync::atomic::{AtomicU32, Ordering};
     use tracing::Level;
     use tracing_test::traced_test;
 
-    use event_sorcery::{LifecycleError, StoreBuilder, TestHarness, replay};
+    use event_sorcery::{Job, LifecycleError, StoreBuilder, TestHarness, replay};
 
     use super::*;
     use crate::candle::Candle;
@@ -663,11 +796,30 @@ mod tests {
     use crate::market_metadata::MarketMetadata;
     use crate::timeframe::Timeframe;
 
-    struct MockHyperliquid;
+    struct MockHyperliquid {
+        fetch_market_metadata_calls: Option<Arc<AtomicU32>>,
+    }
+
+    impl MockHyperliquid {
+        fn without_call_counter() -> Self {
+            Self {
+                fetch_market_metadata_calls: None,
+            }
+        }
+
+        fn with_call_counter(fetch_market_metadata_calls: Arc<AtomicU32>) -> Self {
+            Self {
+                fetch_market_metadata_calls: Some(fetch_market_metadata_calls),
+            }
+        }
+    }
 
     #[async_trait]
     impl Hyperliquid for MockHyperliquid {
         async fn fetch_market_metadata(&self) -> Result<Vec<MarketMetadata>, HyperliquidError> {
+            if let Some(fetch_market_metadata_calls) = &self.fetch_market_metadata_calls {
+                fetch_market_metadata_calls.fetch_add(1, Ordering::SeqCst);
+            }
             Ok(vec![MarketMetadata {
                 symbol: Market::new("BTC".into()),
                 max_leverage: 50,
@@ -707,6 +859,12 @@ mod tests {
     }
 
     async fn test_services() -> IngestionServices {
+        test_services_with_hyperliquid(Arc::new(MockHyperliquid::without_call_counter())).await
+    }
+
+    async fn test_services_with_hyperliquid(
+        hyperliquid: Arc<dyn Hyperliquid>,
+    ) -> IngestionServices {
         let pool = SqlitePool::connect(":memory:").await.unwrap();
         sqlx::migrate!("./migrations").run(&pool).await.unwrap();
         let (market_catalog, market_catalog_projection) =
@@ -721,7 +879,7 @@ mod tests {
                 .unwrap();
 
         IngestionServices {
-            hyperliquid: Arc::new(MockHyperliquid),
+            hyperliquid,
             data_dir: std::env::temp_dir(),
             max_concurrent_requests: 10,
             market_catalog,
@@ -730,13 +888,30 @@ mod tests {
         }
     }
 
-    async fn ingestion_store() -> (Arc<Store<IngestionRun>>, Arc<Projection<IngestionRun>>) {
+    fn job_context(
+        store: &Arc<Store<IngestionRun>>,
+        projection: &Arc<Projection<IngestionRun>>,
+        services: IngestionServices,
+    ) -> IngestionJobContext {
+        IngestionJobContext {
+            run_store: Arc::clone(store),
+            run_projection: Arc::clone(projection),
+            services,
+        }
+    }
+
+    async fn ingestion_store() -> (
+        Arc<Store<IngestionRun>>,
+        Arc<Projection<IngestionRun>>,
+        SqlitePool,
+    ) {
         let pool = SqlitePool::connect(":memory:").await.unwrap();
         sqlx::migrate!("./migrations").run(&pool).await.unwrap();
-        StoreBuilder::<IngestionRun>::new(pool)
+        let (store, projection) = StoreBuilder::<IngestionRun>::new(pool.clone())
             .build()
             .await
-            .unwrap()
+            .unwrap();
+        (store, projection, pool)
     }
 
     fn instant() -> DateTime<Utc> {
@@ -815,10 +990,10 @@ mod tests {
     #[traced_test]
     #[tokio::test]
     async fn create_run_starts_a_running_run_and_logs() {
-        let (store, projection) = ingestion_store().await;
+        let (store, projection, pool) = ingestion_store().await;
 
         let run_id = create_run(&store, &projection).await.unwrap();
-        let status = latest_status(&projection).await.unwrap();
+        let status = latest_status(&pool).await.unwrap();
 
         assert_eq!(status, Some(IngestionRunStatus::Running));
         let run_id = run_id.to_string();
@@ -859,7 +1034,7 @@ mod tests {
 
     #[tokio::test]
     async fn latest_status_prefers_the_latest_run_id_when_microseconds_match() {
-        let (store, projection) = ingestion_store().await;
+        let (store, _projection, pool) = ingestion_store().await;
         let shared_start = Utc.with_ymd_and_hms(2026, 1, 2, 3, 4, 5).unwrap();
         let shared_micros = shared_start.timestamp_micros();
         let first_id: IngestionRunId =
@@ -875,6 +1050,7 @@ mod tests {
             .send(
                 &first_id,
                 IngestionRunCommand::Start {
+                    run_id: first_id.clone(),
                     started_at: shared_start,
                 },
             )
@@ -894,13 +1070,14 @@ mod tests {
             .send(
                 &second_id,
                 IngestionRunCommand::Start {
+                    run_id: second_id.clone(),
                     started_at: shared_start,
                 },
             )
             .await
             .unwrap();
 
-        let status = latest_status(&projection).await.unwrap();
+        let status = latest_status(&pool).await.unwrap();
 
         assert_eq!(status, Some(IngestionRunStatus::Running));
     }
@@ -911,7 +1088,7 @@ mod tests {
         // The sequential case: the projection already reflects the first run, so
         // the pre-send guard rejects. The concurrent race is covered by
         // `concurrent_create_run_admits_exactly_one`.
-        let (store, projection) = ingestion_store().await;
+        let (store, projection, _pool) = ingestion_store().await;
 
         create_run(&store, &projection).await.unwrap();
         let duplicate = create_run(&store, &projection).await;
@@ -922,11 +1099,11 @@ mod tests {
     #[traced_test]
     #[tokio::test]
     async fn recover_abandons_running_runs_and_logs() {
-        let (store, projection) = ingestion_store().await;
+        let (store, projection, pool) = ingestion_store().await;
 
         create_run(&store, &projection).await.unwrap();
         let recovered = recover_abandoned_runs(&store, &projection).await.unwrap();
-        let status = latest_status(&projection).await.unwrap();
+        let status = latest_status(&pool).await.unwrap();
 
         assert_eq!(recovered, 1);
         assert_eq!(status, Some(IngestionRunStatus::Abandoned));
@@ -939,19 +1116,15 @@ mod tests {
     #[traced_test]
     #[tokio::test]
     async fn stale_job_for_recovered_run_does_not_execute() {
-        let (store, projection) = ingestion_store().await;
+        let (store, projection, pool) = ingestion_store().await;
         let run_id = create_run(&store, &projection).await.unwrap();
         recover_abandoned_runs(&store, &projection).await.unwrap();
         let job = IngestionJob::new(run_id.clone());
+        let context = job_context(&store, &projection, test_services().await);
 
-        job.run(
-            Data::new(Arc::clone(&store)),
-            Data::new(Arc::new(test_services().await)),
-        )
-        .await
-        .unwrap();
+        job.perform(&context).await.unwrap();
 
-        let status = latest_status(&projection).await.unwrap();
+        let status = latest_status(&pool).await.unwrap();
 
         assert_eq!(status, Some(IngestionRunStatus::Abandoned));
         let run_id = run_id.to_string();
@@ -964,18 +1137,14 @@ mod tests {
     #[traced_test]
     #[tokio::test]
     async fn job_completes_a_running_run_and_logs() {
-        let (store, projection) = ingestion_store().await;
+        let (store, projection, pool) = ingestion_store().await;
         let run_id = create_run(&store, &projection).await.unwrap();
         let job = IngestionJob::new(run_id.clone());
+        let context = job_context(&store, &projection, test_services().await);
 
-        job.run(
-            Data::new(Arc::clone(&store)),
-            Data::new(Arc::new(test_services().await)),
-        )
-        .await
-        .unwrap();
+        job.perform(&context).await.unwrap();
 
-        let status = latest_status(&projection).await.unwrap();
+        let status = latest_status(&pool).await.unwrap();
 
         assert_eq!(status, Some(IngestionRunStatus::Completed));
         let run_id = run_id.to_string();
@@ -1056,7 +1225,7 @@ mod tests {
     #[traced_test]
     #[tokio::test]
     async fn recover_with_no_running_runs_is_a_noop() {
-        let (store, projection) = ingestion_store().await;
+        let (store, projection, _pool) = ingestion_store().await;
 
         let recovered = recover_abandoned_runs(&store, &projection).await.unwrap();
 
@@ -1070,7 +1239,7 @@ mod tests {
     #[traced_test]
     #[tokio::test]
     async fn concurrent_create_run_admits_exactly_one() {
-        let (store, projection) = ingestion_store().await;
+        let (store, projection, _pool) = ingestion_store().await;
 
         // Two callers race create_run on the same store. The one-running
         // invariant must admit exactly one and reject the loser with
@@ -1099,19 +1268,13 @@ mod tests {
         );
     }
 
-    #[traced_test]
     #[tokio::test]
     async fn scheduled_ingestion_skips_when_a_run_is_already_active() {
         let (store, projection) = ingestion_store().await;
-        // The push is never reached on the already-running path, so an
-        // unmigrated apalis pool is sufficient.
-        let apalis_pool = apalis_sqlite::SqlitePool::connect(":memory:")
-            .await
-            .unwrap();
         let consecutive_failures = AtomicU32::new(3);
 
         create_run(&store, &projection).await.unwrap();
-        trigger_scheduled_ingestion(&store, &projection, &apalis_pool, &consecutive_failures).await;
+        trigger_scheduled_ingestion(&store, &projection, &consecutive_failures).await;
 
         assert_eq!(
             consecutive_failures.load(Ordering::Relaxed),
@@ -1126,24 +1289,92 @@ mod tests {
 
     #[traced_test]
     #[tokio::test]
-    async fn scheduled_ingestion_warns_and_counts_consecutive_failures() {
-        let (store, projection) = ingestion_store().await;
-        // A closed apalis pool makes every enqueue's push fail -- the failure
-        // path under test. create_run/fail_run use the separate event store, so
-        // each tick still opens a run and marks it failed, freeing the next tick.
-        let apalis_pool = apalis_sqlite::SqlitePool::connect(":memory:")
+    async fn race_loser_job_skips_ingestion_before_winner_runs() {
+        let fetch_market_metadata_calls = Arc::new(AtomicU32::new(0));
+        let (store, projection, _pool) = ingestion_store().await;
+        let services = test_services_with_hyperliquid(Arc::new(
+            MockHyperliquid::with_call_counter(Arc::clone(&fetch_market_metadata_calls)),
+        ))
+        .await;
+        let context = job_context(&store, &projection, services);
+
+        // Simulate the post-Start race window: both streams committed `Start`
+        // (and enqueued jobs) but the partial unique index left only one winner
+        // in the projection.
+        let shared_start = instant();
+        let shared_micros = shared_start.timestamp_micros();
+        let first_id: IngestionRunId =
+            format!("ingestion-{shared_micros}-00000000000000000000000000000001")
+                .parse()
+                .unwrap();
+        let second_id: IngestionRunId =
+            format!("ingestion-{shared_micros}-00000000000000000000000000000002")
+                .parse()
+                .unwrap();
+
+        store
+            .send(
+                &first_id,
+                IngestionRunCommand::Start {
+                    run_id: first_id.clone(),
+                    started_at: shared_start,
+                },
+            )
             .await
             .unwrap();
-        apalis_pool.close().await;
-        let consecutive_failures = AtomicU32::new(0);
+        store
+            .send(
+                &second_id,
+                IngestionRunCommand::Start {
+                    run_id: second_id.clone(),
+                    started_at: shared_start,
+                },
+            )
+            .await
+            .unwrap();
 
-        trigger_scheduled_ingestion(&store, &projection, &apalis_pool, &consecutive_failures).await;
-        trigger_scheduled_ingestion(&store, &projection, &apalis_pool, &consecutive_failures).await;
+        let running = running_runs(&projection).await.unwrap();
+        assert_eq!(running.len(), 1, "projection must admit exactly one winner");
+        let winner_id = running[0].0.clone();
+        let loser_id = if winner_id == first_id {
+            second_id
+        } else {
+            first_id
+        };
 
-        assert_eq!(consecutive_failures.load(Ordering::Relaxed), 2);
+        // Run the loser's job first -- the ordering that previously duplicated work.
+        IngestionJob::new(loser_id.clone())
+            .perform(&context)
+            .await
+            .unwrap();
+        IngestionJob::new(winner_id.clone())
+            .perform(&context)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            fetch_market_metadata_calls.load(Ordering::SeqCst),
+            1,
+            "only the projection winner may execute ingestion"
+        );
+
+        let loser = store.load(&loser_id).await.unwrap().unwrap();
+        let winner = store.load(&winner_id).await.unwrap().unwrap();
+        assert_eq!(loser.status, IngestionRunStatus::Abandoned);
+        assert_eq!(winner.status, IngestionRunStatus::Completed);
+
+        let loser_id = loser_id.to_string();
         assert!(logs_contain_at(
             Level::WARN,
-            &["scheduled ingestion run failed", "consecutive=2"]
+            &[
+                "skipping ingestion for a run that lost the one-running race",
+                loser_id.as_str()
+            ]
+        ));
+        let winner_id = winner_id.to_string();
+        assert!(logs_contain_at(
+            Level::INFO,
+            &["ingestion complete", winner_id.as_str()]
         ));
     }
 }

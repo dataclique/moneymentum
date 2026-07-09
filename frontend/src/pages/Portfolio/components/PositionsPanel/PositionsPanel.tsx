@@ -19,7 +19,8 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Switch } from "@/components/ui/switch"
 import type { OrderSide } from "@/hooks/useTrading"
 import { useWallet } from "@/hooks/useWallet"
-import { WalletHeader } from "@/components/wallet-header"
+import { WalletInlineConnect } from "./WalletInlineConnect"
+import { WalletInlinePinUnlock } from "./WalletInlinePinUnlock"
 import { cn } from "@/lib/cn"
 
 import { useFactorScores } from "../../hooks/useFactorScores"
@@ -31,7 +32,6 @@ import {
   buildAllSymbolRows,
   resolveAllSymbolClick,
 } from "./allSymbolRowModel"
-import { allSymbolsColumns } from "./allSymbolsColumns"
 import { PositionsPanelAlerts } from "./PositionsPanelAlerts"
 import {
   displayPosition,
@@ -97,7 +97,7 @@ interface PositionsPanelProps {
 }
 
 export const PositionsPanel = (props: PositionsPanelProps): JSX.Element => {
-  const { isConnected } = useWallet()
+  const { isConnected, isLocked } = useWallet()
   const factorScoresQuery = useFactorScores()
   const [panelView, setPanelView] =
     createSignal<PositionsPanelView>("portfolio")
@@ -362,12 +362,9 @@ export const PositionsPanel = (props: PositionsPanelProps): JSX.Element => {
               <Show
                 when={isConnected()}
                 fallback={
-                  <div class="h-full flex flex-col items-center justify-center gap-3 p-4 text-center text-muted-foreground text-[11px]">
-                    <p class="max-w-[260px]">
-                      Connect your wallet to view and rebalance positions.
-                    </p>
-                    <WalletHeader />
-                  </div>
+                  <Show when={isLocked()} fallback={<WalletInlineConnect />}>
+                    <WalletInlinePinUnlock />
+                  </Show>
                 }
               >
                 <div class="flex-1 min-h-0 overflow-auto scrollbar-hide">
@@ -406,8 +403,8 @@ export const PositionsPanel = (props: PositionsPanelProps): JSX.Element => {
         >
           <div class="flex-1 min-h-0">
             <AllSymbolsDataTable
-              columns={allSymbolsColumns}
               data={allSymbolRows}
+              visibleMetricColumns={visibleMetricColumns()}
               targetPortfolio={props.targetPortfolio}
               deletedArchive={props.deletedArchive}
               fundingIsLoading={props.fundingIsLoading}

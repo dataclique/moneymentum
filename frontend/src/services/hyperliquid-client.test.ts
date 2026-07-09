@@ -338,11 +338,7 @@ describe("HyperliquidClient", () => {
     const client = new HyperliquidClient(credentials, "mainnet")
     const result = await client.rebalancePositions(actions)
 
-    expect(mockExchange.setLeverage).toHaveBeenCalledWith(
-      5,
-      "BTC/USDC:USDC",
-      undefined,
-    )
+    expect(mockExchange.setLeverage).toHaveBeenCalledWith(5, "BTC/USDC:USDC")
 
     expect(mockExchange.createOrdersWs).toHaveBeenCalledTimes(2)
     expect(mockExchange.fetchPositions).toHaveBeenCalledTimes(1)
@@ -676,47 +672,6 @@ describe("HyperliquidClient", () => {
     expect(mockExchange.fetchPositions).toHaveBeenCalledWith()
   })
 
-  it("includes vaultAddress in leverage and order params", async () => {
-    const vaultCreds: WalletCredentials = {
-      ...credentials,
-      vaultAddress: "0xVault",
-    }
-
-    const actions: RebalanceAction[] = [
-      {
-        kind: "rebalance",
-        symbol: "BTC/USDC:USDC",
-        signedNotionalDelta: 50,
-        leverage: 3,
-        leverageChanged: true,
-      },
-    ]
-
-    mockExchange.fetchTickers.mockResolvedValue({
-      "BTC/USDC:USDC": { last: 50_000 },
-    })
-
-    mockExchange.fetchPositions.mockResolvedValue([])
-    mockExchange.createOrdersWs.mockResolvedValue([
-      { status: "closed", info: {} },
-    ])
-
-    const client = new HyperliquidClient(vaultCreds, "mainnet")
-    await client.rebalancePositions(actions)
-
-    expect(mockExchange.setLeverage).toHaveBeenCalledWith(3, "BTC/USDC:USDC", {
-      vaultAddress: "0xVault",
-    })
-
-    expect(mockExchange.createOrdersWs).toHaveBeenCalledWith(
-      expect.arrayContaining([
-        expect.objectContaining({
-          params: expect.objectContaining({ vaultAddress: "0xVault" }),
-        }),
-      ]),
-    )
-  })
-
   it("batches preciseRebalance close with other reductions then opens in phase two", async () => {
     mockExchange.fetchTickers.mockResolvedValue({
       "BTC/USDC:USDC": { last: 50_000 },
@@ -754,17 +709,23 @@ describe("HyperliquidClient", () => {
     expect(result).toHaveLength(2)
 
     const firstCall = mockExchange.createOrdersWs.mock.calls[0][0]
-    expect(firstCall[0]).toMatchObject({
+    expect(firstCall[0]).toEqual({
+      symbol: "BTC/USDC:USDC",
+      type: "market",
       side: "sell",
       amount: 11 / 50_000,
-      params: expect.objectContaining({ reduceOnly: true }),
+      price: 50_000,
+      params: { reduceOnly: true },
     })
 
     const secondCall = mockExchange.createOrdersWs.mock.calls[1][0]
-    expect(secondCall[0]).toMatchObject({
+    expect(secondCall[0]).toEqual({
+      symbol: "BTC/USDC:USDC",
+      type: "market",
       side: "buy",
       amount: 13 / 50_000,
-      params: expect.not.objectContaining({ reduceOnly: true }),
+      price: 50_000,
+      params: {},
     })
   })
 

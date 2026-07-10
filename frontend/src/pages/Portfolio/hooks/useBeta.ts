@@ -14,7 +14,7 @@ const STALE_BETA_DATA_THRESHOLD_HOURS = 24
 const symbolToTicker = (symbol: string): string =>
   symbol.includes("/") ? (symbol.split("/")[0] ?? symbol) : symbol
 
-const weightsFromPortfolio = (
+export const weightsFromPortfolio = (
   portfolio: Record<string, PortfolioInterface | undefined>,
   portfolioTotalNotional: number,
   readonlyPositions: ReadonlyBetaPosition[],
@@ -57,7 +57,7 @@ const weightsFromPortfolio = (
   return signedWeights
 }
 
-const queryKeyFromWeights = (weights: Record<string, number>): string =>
+export const queryKeyFromWeights = (weights: Record<string, number>): string =>
   Object.entries(weights)
     .sort(([leftTicker], [rightTicker]) =>
       leftTicker.localeCompare(rightTicker),

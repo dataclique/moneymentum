@@ -233,7 +233,10 @@ Portfolio risk assessment beyond beta and crash-specific simulations.
       number of bets shipped
       ([#349](https://github.com/data-cartel/moneymentum/issues/349) /
       [#350](https://github.com/data-cartel/moneymentum/pull/350)); Monte Carlo
-      metrics and the frontend pending
+      metrics and stress tests pending
+- [x] Portfolio risk panel wired to `POST /risk` --
+      [#351](https://github.com/data-cartel/moneymentum/issues/351) /
+      [#352](https://github.com/data-cartel/moneymentum/pull/352)
 
 ---
 

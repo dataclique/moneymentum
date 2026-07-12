@@ -6,7 +6,7 @@ use apalis::prelude::Data;
 use chrono::Utc;
 use cron::Schedule;
 use event_sorcery::{EventSourced, Projection, ProjectionError, SendError, Store};
-use futures::stream::{self, StreamExt};
+use futures::stream::{self, StreamExt, TryStreamExt};
 use serde::Deserialize;
 use sqlx::{AssertSqlSafe, SqlitePool};
 use thiserror::Error;
@@ -237,9 +237,13 @@ struct LiveIngestionRunView {
 
 /// The status of the most recently started run, or `None` if none exist.
 ///
-/// Reads a single view row ordered by [`IngestionRunId`] (microsecond start,
-/// then nonce), matching the old `ORDER BY started_at DESC LIMIT 1` ledger
-/// query without loading every run into memory.
+/// Reads view rows ordered by [`IngestionRunId`] (microsecond start, then
+/// nonce), matching the old `ORDER BY started_at DESC LIMIT 1` ledger query.
+/// The cursor stops at the first live row, so at most the poisoned prefix is
+/// scanned: a one-running race leaves the loser's row as a `Failed` lifecycle
+/// payload (its dropped `Started` projection write means the `Abandoned` event
+/// cannot originate a view state), and such rows carry no run status to
+/// report.
 pub(crate) async fn latest_status(
     pool: &SqlitePool,
 ) -> Result<Option<IngestionRunStatus>, IngestionError> {
@@ -250,27 +254,28 @@ pub(crate) async fn latest_status(
          ORDER BY
            CAST(substr(view_id, {micros_substr_start},
              instr(substr(view_id, {micros_substr_start}), '-') - 1) AS INTEGER) DESC,
-           view_id DESC
-         LIMIT 1"
+           view_id DESC"
     );
 
-    let row: Option<(String, String)> = sqlx::query_as(AssertSqlSafe(query))
-        .fetch_optional(pool)
+    let mut rows = sqlx::query_as::<_, (String, String)>(AssertSqlSafe(query)).fetch(pool);
+    while let Some((view_id, payload)) = rows
+        .try_next()
         .await
-        .map_err(|err| IngestionError::Projection(ProjectionError::from(err)))?;
+        .map_err(|err| IngestionError::Projection(ProjectionError::from(err)))?
+    {
+        match serde_json::from_str::<LiveIngestionRunView>(&payload) {
+            Ok(view) => return Ok(Some(view.live.status)),
+            Err(error) => {
+                warn!(
+                    aggregate_id = %view_id,
+                    error = %error,
+                    "skipping non-live ingestion run view row"
+                );
+            }
+        }
+    }
 
-    let Some((view_id, payload)) = row else {
-        return Ok(None);
-    };
-
-    let view: LiveIngestionRunView = serde_json::from_str(&payload).map_err(|source| {
-        IngestionError::Projection(ProjectionError::Serde {
-            aggregate_id: view_id.clone(),
-            source,
-        })
-    })?;
-
-    Ok(Some(view.live.status))
+    Ok(None)
 }
 
 #[cfg(test)]
@@ -493,6 +498,65 @@ mod tests {
             Level::DEBUG,
             &["lost the one-running race", "abandoned the orphan run"]
         ));
+    }
+
+    /// The one-running race leaves the loser's view row as a `Failed`
+    /// lifecycle payload: its `Started` projection write is dropped by the
+    /// unique-index backstop, so the later `Abandoned` event cannot originate
+    /// a view state. The latest-status query must skip such poisoned rows
+    /// instead of failing the status endpoint whenever a race loser happens to
+    /// sort newest.
+    #[traced_test]
+    #[tokio::test]
+    async fn latest_status_skips_race_loser_view_rows() {
+        let (store, projection, pool) = ingestion_store().await;
+
+        let _ = tokio::join!(
+            create_run(
+                &store,
+                &projection,
+                IngestionWork::candles(Timeframe::OneHour)
+            ),
+            create_run(
+                &store,
+                &projection,
+                IngestionWork::candles(Timeframe::OneHour)
+            ),
+        );
+
+        let rows: Vec<(String, String)> =
+            sqlx::query_as("SELECT view_id, payload FROM ingestion_run_view")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        let poisoned = rows
+            .iter()
+            .find(|(_, payload)| !payload.contains("\"Live\""))
+            .expect("the race loser must leave a non-live view row");
+
+        // Whether the poisoned row sorts newest depends on race timing; pin the
+        // deterministic case by inserting the observed poisoned payload under a
+        // run id that always sorts newest.
+        sqlx::query(
+            "INSERT INTO ingestion_run_view (view_id, version, payload) VALUES (?1, 1, ?2)",
+        )
+        .bind("ingestion-9999999999999999-ffffffffffffffffffffffffffffffff")
+        .bind(poisoned.1.clone())
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let status = latest_status(&pool).await.unwrap();
+
+        assert_eq!(
+            status,
+            Some(IngestionRunStatus::Running),
+            "latest_status must skip poisoned rows and report the winner"
+        );
+        assert!(
+            logs_contain_at(Level::WARN, &["skipping non-live ingestion run view row"]),
+            "each skipped poisoned row must be logged"
+        );
     }
 
     #[tokio::test]

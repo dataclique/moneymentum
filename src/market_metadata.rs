@@ -563,6 +563,7 @@ mod tests {
                     symbol: Market::new(name.clone()),
                     max_leverage: u32::try_from(position).unwrap() % 100 + 1,
                     asset_index: u32::try_from(position).unwrap(),
+                    only_isolated: false,
                 })
                 .collect();
             let refreshed_at = Utc.with_ymd_and_hms(2026, 7, 11, 0, 0, 0).unwrap();

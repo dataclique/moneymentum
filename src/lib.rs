@@ -1995,6 +1995,7 @@ mod tests {
             symbol: finance::Market::new(symbol.to_string()),
             max_leverage,
             asset_index,
+            only_isolated: false,
         }
     }
 

@@ -302,6 +302,7 @@
             deployNixos
             deployService
             deployServer
+            deployStaged
             deployFrontend
             ;
 

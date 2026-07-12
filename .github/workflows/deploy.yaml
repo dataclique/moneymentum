@@ -83,8 +83,12 @@ jobs:
           bun install --frozen-lockfile
           bun run build
 
-      - name: Deploy system and backend
-        run: nix run .#deployServer
+      # Staged rollout: system profile, then staging, then a health-and-markets
+      # gate against staging -- production only deploys after staging proves
+      # the new binary. A staging failure leaves production on its previous
+      # generation.
+      - name: Deploy staged (system, staging, gate, production)
+        run: nix run .#deployStaged
 
       - name: Deploy frontend
         run: nix run .#deployFrontend

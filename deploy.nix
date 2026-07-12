@@ -133,6 +133,27 @@ in
         done
       '';
 
+      # Health-and-markets verification against the freshly deployed staging
+      # instance: migrations applied to a real database, the binary serving, and
+      # the live Hyperliquid fetch working from the host's IP.
+      stagingGateScript = ''
+        echo "==> Verifying staging"
+        staging_ok=""
+        for delay in 2 4 8 16 32 32; do
+          if curl -sSf --max-time 20 "http://$host_ip:8080/api/health" >/dev/null &&
+            curl -sSf --max-time 30 "http://$host_ip:8080/api/hyperliquid/markets?network=mainnet" >/dev/null; then
+            staging_ok=1
+            break
+          fi
+          echo "staging not healthy yet; retrying in ''${delay}s"
+          sleep "$delay"
+        done
+        if [ -z "$staging_ok" ]; then
+          echo "ERROR: staging failed verification" >&2
+          exit 1
+        fi
+      '';
+
     in
     {
       deployNixos = pkgs.writeShellApplication {
@@ -189,24 +210,35 @@ in
           echo "==> Deploying staging"
           deploy ${deployFlags} --hostname "$host_ip" ''${ssh_flag:+"$ssh_flag"} .#moneymentum.staging
 
-          echo "==> Verifying staging before touching production"
-          staging_ok=""
-          for delay in 2 4 8 16 32 32; do
-            if curl -sSf --max-time 20 "http://$host_ip:8080/api/health" >/dev/null &&
-              curl -sSf --max-time 30 "http://$host_ip:8080/api/hyperliquid/markets?network=mainnet" >/dev/null; then
-              staging_ok=1
-              break
-            fi
-            echo "staging not healthy yet; retrying in ''${delay}s"
-            sleep "$delay"
-          done
-          if [ -z "$staging_ok" ]; then
-            echo "ERROR: staging failed verification -- production deploy aborted" >&2
-            exit 1
-          fi
+          ${stagingGateScript}
 
           echo "==> Staging verified; deploying production"
           deploy ${deployFlags} --hostname "$host_ip" ''${ssh_flag:+"$ssh_flag"} .#moneymentum.moneymentum
+        '';
+      };
+
+      # Pull-request gate: deploy the PR's binary to staging and verify it, so
+      # a reviewer knows the change survives a real deploy BEFORE merging. Only
+      # the staging service profile is deployed -- an unmerged PR must not
+      # reshape shared host config, so the system profile stays whatever master
+      # last activated and system-level changes are verified by deployStaged at
+      # merge time.
+      deployStagingVerify = pkgs.writeShellApplication {
+        name = "deploy-staging-verify";
+        runtimeInputs = deployInputs ++ [
+          pkgs.openssh
+          pkgs.curl
+        ];
+        text = ''
+          ${deployPreamble}
+          ${preflightScript}
+
+          echo "==> Deploying this revision to staging"
+          deploy ${deployFlags} --hostname "$host_ip" ''${ssh_flag:+"$ssh_flag"} .#moneymentum.staging
+
+          ${stagingGateScript}
+
+          echo "==> Staging verified"
         '';
       };
 

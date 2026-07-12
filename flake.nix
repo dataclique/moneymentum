@@ -303,6 +303,7 @@
             deployService
             deployServer
             deployStaged
+            deployStagingVerify
             deployFrontend
             ;
 

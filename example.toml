@@ -11,12 +11,6 @@ log_level = "debug"
 max_concurrent_requests = 3
 max_retries = 5
 
-# Optional overrides for the Hyperliquid API endpoints, used by tests to point
-# the backend at mock servers. When omitted, the official mainnet and testnet
-# deployments are used.
-# hyperliquid_base_url = "https://api.hyperliquid.xyz"
-# hyperliquid_testnet_base_url = "https://api.hyperliquid-testnet.xyz"
-
 markets_refresh_token = "local-markets-refresh-token"
 
 # Derive (Lyra) options integration.

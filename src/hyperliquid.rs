@@ -120,6 +120,9 @@ pub(crate) trait Hyperliquid: Send + Sync {
 
 pub(crate) struct HyperliquidClient {
     info: InfoClient,
+    /// Timeout-bounded HTTP client shared across raw info requests, so each
+    /// fetch reuses pooled connections instead of paying TCP/TLS setup.
+    http: reqwest::Client,
     max_retries: usize,
 }
 
@@ -134,12 +137,21 @@ impl HyperliquidClient {
                 .trim_end_matches('/')
                 .clone_into(&mut info.http_client.base_url);
         }
+        // Bound each attempt so a hung upstream cannot stall startup or the
+        // markets endpoint indefinitely (matches the frontend's 10s guard).
+        let http = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .build()?;
         debug!(
             base_url = %info.http_client.base_url,
             max_retries,
             "hyperliquid client ready"
         );
-        Ok(Self { info, max_retries })
+        Ok(Self {
+            info,
+            http,
+            max_retries,
+        })
     }
 }
 
@@ -167,13 +179,9 @@ impl Hyperliquid for HyperliquidClient {
         }
 
         let url = format!("{}/info", self.info.http_client.base_url);
-        // Bound each attempt so a hung upstream cannot stall startup or the
-        // markets endpoint indefinitely (matches the frontend's 10s guard).
-        let http = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(10))
-            .build()?;
         let raw = (|| async {
-            http.post(&url)
+            self.http
+                .post(&url)
                 .json(&MetaRequest {
                     request_type: "meta",
                 })

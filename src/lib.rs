@@ -41,7 +41,7 @@ use thiserror::Error;
 use tracing::{debug, error};
 use tracing_subscriber::EnvFilter;
 
-use crate::hyperliquid::{Hyperliquid, HyperliquidClient};
+use crate::hyperliquid::{Hyperliquid, HyperliquidClients, HyperliquidNetwork};
 use finance::Symbol;
 use ingestion::{
     IngestionJob, IngestionJobContext, IngestionRun, IngestionRunStatus, IngestionServices,
@@ -86,6 +86,7 @@ pub struct Config {
     data_dir: PathBuf,
     database_url: String,
     hyperliquid_base_url: Option<url::Url>,
+    hyperliquid_testnet_base_url: Option<url::Url>,
     log_level: LogLevel,
     max_concurrent_requests: usize,
     max_retries: usize,
@@ -123,6 +124,7 @@ pub enum ConfigError {
 pub(crate) struct AppState {
     config: Config,
     database_pool: SqlitePool,
+    hyperliquid_clients: HyperliquidClients,
     portfolio_store: Arc<Store<Portfolio>>,
     portfolio_projection: Arc<Projection<Portfolio>>,
     market_enablement: Arc<Store<MarketEnablement>>,
@@ -668,6 +670,41 @@ async fn get_markets_leverage(
     }
 }
 
+#[derive(Debug, Deserialize)]
+struct HyperliquidMarketsQuery {
+    network: HyperliquidNetwork,
+}
+
+/// Serves the Hyperliquid perp universe in the ccxt-style shape the frontend
+/// trading client consumes. Fetched live from the exchange on every request:
+/// the asset indexes in the response route orders, so they must always match
+/// the exchange's current universe rather than a cached observation.
+async fn get_hyperliquid_markets(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<HyperliquidMarketsQuery>,
+) -> Result<Json<market_metadata::MarketsApiResponse>, StatusCode> {
+    let network = query.network;
+    let metadata = state
+        .hyperliquid_clients
+        .for_network(network)
+        .fetch_market_metadata()
+        .await
+        .map_err(|err| {
+            error!(error = %err, ?network, "failed to fetch hyperliquid markets");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+    debug!(
+        markets = metadata.len(),
+        ?network,
+        "hyperliquid markets served"
+    );
+    Ok(Json(market_metadata::markets_api_response(
+        &metadata,
+        chrono::Utc::now(),
+    )))
+}
+
 fn parse_market_id(venue: &str, symbol: &str) -> Result<MarketId, ApiError> {
     let venue = VenueRef::from_str(venue).map_err(|_| bad_request("unknown venue"))?;
     Ok(MarketId::new(venue, Symbol::from_raw(symbol)))
@@ -835,9 +872,13 @@ pub async fn app(config: Config) -> Result<Router, Box<dyn std::error::Error + S
     let apalis_pool = apalis_sqlite::SqlitePool::connect_with(apalis_options).await?;
     debug!("apalis storage pool connected");
 
-    let hyperliquid: Arc<dyn Hyperliquid> = Arc::new(
-        HyperliquidClient::new(config.hyperliquid_base_url.as_ref(), config.max_retries).await?,
-    );
+    let hyperliquid_clients = HyperliquidClients::from_config(
+        config.hyperliquid_base_url.as_ref(),
+        config.hyperliquid_testnet_base_url.as_ref(),
+        config.max_retries,
+    )
+    .await?;
+    let hyperliquid: Arc<dyn Hyperliquid> = Arc::clone(&hyperliquid_clients.mainnet);
     let services = IngestionServices {
         hyperliquid,
         data_dir: config.data_dir.clone(),
@@ -865,6 +906,7 @@ pub async fn app(config: Config) -> Result<Router, Box<dyn std::error::Error + S
     let state = Arc::new(AppState {
         config,
         database_pool: pool,
+        hyperliquid_clients,
         portfolio_store,
         portfolio_projection,
         market_enablement,
@@ -893,6 +935,7 @@ fn build_router(state: Arc<AppState>) -> Router {
         .route("/portfolio/{id}/target", post(post_portfolio_target))
         .route("/portfolio/{id}/rename", post(post_portfolio_rename))
         .route("/portfolio/{id}/archive", post(post_portfolio_archive))
+        .route("/hyperliquid/markets", get(get_hyperliquid_markets))
         .route("/markets/{venue}", get(get_markets))
         .route("/markets/{venue}/leverage", get(get_markets_leverage))
         .route(
@@ -976,6 +1019,7 @@ mod tests {
             data_dir: data_dir.to_path_buf(),
             database_url: format!("sqlite://{}?mode=rwc", data_dir.join("test.db").display()),
             hyperliquid_base_url: None,
+            hyperliquid_testnet_base_url: None,
             log_level: LogLevel::Info,
             max_concurrent_requests: 3,
             max_retries: 5,
@@ -1013,9 +1057,18 @@ mod tests {
                 .await
                 .unwrap();
 
+        let hyperliquid_clients = HyperliquidClients::from_config(
+            config.hyperliquid_base_url.as_ref(),
+            config.hyperliquid_testnet_base_url.as_ref(),
+            config.max_retries,
+        )
+        .await
+        .unwrap();
+
         let router = build_router(Arc::new(AppState {
             config,
             database_pool: pool,
+            hyperliquid_clients,
             portfolio_store,
             portfolio_projection,
             market_enablement,

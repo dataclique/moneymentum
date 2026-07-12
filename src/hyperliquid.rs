@@ -53,6 +53,50 @@ pub(crate) enum HyperliquidError {
     Polars(#[from] polars::prelude::PolarsError),
 }
 
+pub(crate) const HYPERLIQUID_TESTNET_BASE_URL: &str = "https://api.hyperliquid-testnet.xyz";
+
+/// Hyperliquid deployment a request targets, as selected by the frontend
+/// wallet's network mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum HyperliquidNetwork {
+    Mainnet,
+    Testnet,
+}
+
+/// Mainnet and testnet Hyperliquid info clients, so the markets endpoint can
+/// serve whichever deployment the frontend wallet targets while ingestion
+/// keeps using mainnet.
+pub(crate) struct HyperliquidClients {
+    pub(crate) mainnet: Arc<dyn Hyperliquid>,
+    pub(crate) testnet: Arc<dyn Hyperliquid>,
+}
+
+impl HyperliquidClients {
+    pub(crate) async fn from_config(
+        mainnet_base_url: Option<&Url>,
+        testnet_base_url: Option<&Url>,
+        max_retries: usize,
+    ) -> Result<Self, HyperliquidError> {
+        let mainnet = Arc::new(HyperliquidClient::new(mainnet_base_url, max_retries).await?)
+            as Arc<dyn Hyperliquid>;
+        let testnet_url = match testnet_base_url {
+            Some(url) => url.clone(),
+            None => Url::parse(HYPERLIQUID_TESTNET_BASE_URL)?,
+        };
+        let testnet = Arc::new(HyperliquidClient::new(Some(&testnet_url), max_retries).await?)
+            as Arc<dyn Hyperliquid>;
+        Ok(Self { mainnet, testnet })
+    }
+
+    pub(crate) fn for_network(&self, network: HyperliquidNetwork) -> &dyn Hyperliquid {
+        match network {
+            HyperliquidNetwork::Mainnet => self.mainnet.as_ref(),
+            HyperliquidNetwork::Testnet => self.testnet.as_ref(),
+        }
+    }
+}
+
 /// Abstraction over Hyperliquid's market data API.
 ///
 /// Enables testing with mock implementations.

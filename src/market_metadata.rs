@@ -15,7 +15,7 @@ use event_sorcery::{Projection, ProjectionError, SendError, Store};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info};
 
-use crate::finance::{Market, Symbol};
+use crate::finance::{self, CcxtSymbol, Market, Symbol};
 use crate::hyperliquid::{Hyperliquid, HyperliquidError};
 use crate::market_catalog::{CatalogMarket, MarketCatalog, MarketCatalogCommand};
 use crate::market_enablement::{ENABLEMENT_STATUS, MarketEnablement, MarketId, MarketStatus};
@@ -44,6 +44,56 @@ pub(crate) struct LeverageLimit {
 pub(crate) struct LeverageLimits {
     pub(crate) limits: Vec<LeverageLimit>,
     pub(crate) fetched_at: DateTime<Utc>,
+}
+
+/// One market's leverage limit and Hyperliquid asset index, in the ccxt-style
+/// shape the frontend trading client consumes. The asset index routes orders,
+/// so it must always reflect the exchange's current universe.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct LeverageLimitEntry {
+    pub(crate) symbol: CcxtSymbol,
+    pub(crate) max_leverage: u32,
+    pub(crate) asset_index: u32,
+}
+
+/// The `GET /hyperliquid/markets` response: the perp universe in the exact
+/// shape `fetchHyperliquidMarkets` in the frontend expects (ccxt symbols,
+/// camelCase keys).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct MarketsApiResponse {
+    pub(crate) tickers: Vec<CcxtSymbol>,
+    pub(crate) leverage_limits: Vec<LeverageLimitEntry>,
+    pub(crate) refreshed_at: DateTime<Utc>,
+}
+
+/// Builds the markets API response from freshly fetched exchange metadata,
+/// with tickers and leverage limits sorted by ccxt symbol.
+pub(crate) fn markets_api_response(
+    metadata: &[MarketMetadata],
+    refreshed_at: DateTime<Utc>,
+) -> MarketsApiResponse {
+    let mut leverage_limits: Vec<LeverageLimitEntry> = metadata
+        .iter()
+        .map(|market| LeverageLimitEntry {
+            symbol: finance::hyperliquid_swap_ccxt_symbol(market.symbol.as_str()),
+            max_leverage: market.max_leverage,
+            asset_index: market.asset_index,
+        })
+        .collect();
+    leverage_limits.sort_unstable_by(|left, right| left.symbol.cmp(&right.symbol));
+
+    let tickers = leverage_limits
+        .iter()
+        .map(|entry| entry.symbol.clone())
+        .collect();
+
+    MarketsApiResponse {
+        tickers,
+        leverage_limits,
+        refreshed_at,
+    }
 }
 
 /// Why refreshing the market universe fails.
@@ -449,5 +499,48 @@ mod tests {
             .unwrap();
 
         assert!(limits.is_none());
+    }
+
+    #[test]
+    fn markets_api_response_maps_metadata_to_sorted_ccxt_symbols() {
+        let refreshed_at = Utc.with_ymd_and_hms(2026, 7, 11, 12, 0, 0).unwrap();
+        let response = markets_api_response(
+            &[
+                metadata("kPEPE", 10, 2),
+                metadata("BTC", 50, 0),
+                metadata("ETH", 25, 1),
+            ],
+            refreshed_at,
+        );
+
+        let tickers: Vec<&str> = response.tickers.iter().map(CcxtSymbol::as_str).collect();
+        assert_eq!(
+            tickers,
+            vec!["BTC/USDC:USDC", "ETH/USDC:USDC", "KPEPE/USDC:USDC"]
+        );
+
+        assert_eq!(response.leverage_limits.len(), 3);
+        assert_eq!(response.leverage_limits[0].symbol.as_str(), "BTC/USDC:USDC");
+        assert_eq!(response.leverage_limits[0].max_leverage, 50);
+        assert_eq!(response.leverage_limits[0].asset_index, 0);
+        assert_eq!(
+            response.leverage_limits[2].symbol.as_str(),
+            "KPEPE/USDC:USDC"
+        );
+        assert_eq!(response.leverage_limits[2].asset_index, 2);
+        assert_eq!(response.refreshed_at, refreshed_at);
+    }
+
+    #[test]
+    fn markets_api_response_serializes_with_camel_case_fields() {
+        let refreshed_at = Utc.with_ymd_and_hms(2026, 7, 11, 12, 0, 0).unwrap();
+        let response = markets_api_response(&[metadata("BTC", 50, 7)], refreshed_at);
+
+        let json = serde_json::to_value(&response).unwrap();
+        assert_eq!(json["tickers"][0], "BTC/USDC:USDC");
+        assert_eq!(json["leverageLimits"][0]["symbol"], "BTC/USDC:USDC");
+        assert_eq!(json["leverageLimits"][0]["maxLeverage"], 50);
+        assert_eq!(json["leverageLimits"][0]["assetIndex"], 7);
+        assert_eq!(json["refreshedAt"], "2026-07-11T12:00:00Z");
     }
 }

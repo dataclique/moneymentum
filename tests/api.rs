@@ -133,6 +133,15 @@ async fn spawn_test_app_with_retries(
     data_dir: &TempDir,
     max_retries: usize,
 ) -> TestApp {
+    spawn_test_app_with_networks(mock_server, mock_server, data_dir, max_retries).await
+}
+
+async fn spawn_test_app_with_networks(
+    mainnet_server: &MockServer,
+    testnet_server: &MockServer,
+    data_dir: &TempDir,
+    max_retries: usize,
+) -> TestApp {
     let database_path = data_dir.path().join("moneymentum-test.db");
     let toml_str = format!(
         r#"
@@ -140,13 +149,15 @@ async fn spawn_test_app_with_retries(
         data_dir = "{}"
         database_url = "sqlite://{}?mode=rwc"
         hyperliquid_base_url = "{}"
+        hyperliquid_testnet_base_url = "{}"
         log_level = "debug"
         max_concurrent_requests = 3
         max_retries = {max_retries}
         "#,
         data_dir.path().display(),
         database_path.display(),
-        mock_server.uri()
+        mainnet_server.uri(),
+        testnet_server.uri()
     );
     let config: Config = toml::from_str(&toml_str).unwrap();
     let router = app(config).await.unwrap();
@@ -324,5 +335,82 @@ async fn restart_abandons_running_ingestion_and_scheduler_recovers() {
         completed,
         "restarted backend should complete ingestion after abandoning the wedged run, last status: {}",
         ingestion_status_body(&restarted).await
+    );
+}
+
+async fn mount_meta_mock_with_universe(server: &MockServer, universe: serde_json::Value) {
+    Mock::given(method("POST"))
+        .and(path("/info"))
+        .and(body_partial_json(json!({"type": "meta"})))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "universe": universe })))
+        .mount(server)
+        .await;
+}
+
+/// The frontend's `fetchHyperliquidMarkets` consumes this response verbatim:
+/// ccxt-style tickers, camelCase leverage limits carrying the asset index that
+/// routes orders, and a refresh timestamp.
+#[tokio::test(flavor = "multi_thread")]
+async fn hyperliquid_markets_serves_the_universe_in_ccxt_format() {
+    let mock_server = MockServer::start().await;
+    mount_meta_mock_with_universe(
+        &mock_server,
+        json!([
+            {"name": "ETH", "szDecimals": 4, "maxLeverage": 25},
+            {"name": "DELISTED", "szDecimals": 2, "maxLeverage": 3, "isDelisted": true},
+            {"name": "BTC", "szDecimals": 8, "maxLeverage": 50}
+        ]),
+    )
+    .await;
+
+    let data_dir = TempDir::new().unwrap();
+    let app = spawn_test_app(&mock_server, &data_dir).await;
+
+    let response = app.get("/hyperliquid/markets?network=mainnet").await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(
+        body["tickers"],
+        json!(["BTC/USDC:USDC", "ETH/USDC:USDC"]),
+        "tickers should be sorted ccxt symbols excluding delisted assets: {body}"
+    );
+    assert_eq!(
+        body["leverageLimits"],
+        json!([
+            {"symbol": "BTC/USDC:USDC", "maxLeverage": 50, "assetIndex": 2},
+            {"symbol": "ETH/USDC:USDC", "maxLeverage": 25, "assetIndex": 0}
+        ]),
+        "leverage limits should keep positional asset indexes: {body}"
+    );
+    assert!(
+        body["refreshedAt"].is_string(),
+        "refreshedAt should be a timestamp: {body}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn hyperliquid_markets_serves_the_testnet_universe() {
+    let mainnet_server = MockServer::start().await;
+    mount_meta_mock(&mainnet_server).await;
+
+    let testnet_server = MockServer::start().await;
+    mount_meta_mock_with_universe(
+        &testnet_server,
+        json!([{"name": "SOL", "szDecimals": 2, "maxLeverage": 20}]),
+    )
+    .await;
+
+    let data_dir = TempDir::new().unwrap();
+    let app = spawn_test_app_with_networks(&mainnet_server, &testnet_server, &data_dir, 2).await;
+
+    let response = app.get("/hyperliquid/markets?network=testnet").await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(
+        body["tickers"],
+        json!(["SOL/USDC:USDC"]),
+        "testnet query should serve the testnet universe: {body}"
     );
 }

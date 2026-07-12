@@ -1846,6 +1846,80 @@ mod tests {
         assert_eq!(snapshot_version, 0);
     }
 
+    /// Version of `migrations/20260618073806_per_work_ingestion_running_slot.sql`.
+    const RUNNING_SLOT_MIGRATION_VERSION: i64 = 20_260_618_073_806;
+
+    async fn insert_ingestion_run_row(
+        pool: &SqlitePool,
+        view_id: &str,
+        status: &str,
+        schedule_key: &str,
+    ) -> Result<sqlx::sqlite::SqliteQueryResult, sqlx::Error> {
+        let payload = serde_json::json!({
+            "Live": {
+                "status": status,
+                "started_at": "2026-07-01T00:00:00Z",
+                "schedule_key": schedule_key,
+            }
+        })
+        .to_string();
+        sqlx::query("INSERT INTO ingestion_run_view (view_id, version, payload) VALUES (?1, 1, ?2)")
+            .bind(view_id.to_string())
+            .bind(payload)
+            .execute(pool)
+            .await
+    }
+
+    /// Prod regression: SQLite refuses `ALTER TABLE ... ADD COLUMN ... STORED`
+    /// on a table that already has rows, so a migration adding a stored
+    /// generated column passes on every fresh database (CI, dev) and crashes
+    /// the binary on any database with recorded ingestion runs. Reproduces the
+    /// prod path: migrate to the pre-existing state, record a run, then apply
+    /// the remaining migrations.
+    #[tokio::test]
+    async fn running_slot_migration_applies_to_a_populated_database() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect(":memory:")
+            .await
+            .unwrap();
+
+        let mut up_to_previous = sqlx::migrate!("./migrations");
+        up_to_previous.migrations = up_to_previous
+            .migrations
+            .iter()
+            .filter(|migration| migration.version < RUNNING_SLOT_MIGRATION_VERSION)
+            .cloned()
+            .collect::<Vec<_>>()
+            .into();
+        up_to_previous.run(&pool).await.unwrap();
+
+        insert_ingestion_run_row(&pool, "ingestion-1", "Completed", "1h")
+            .await
+            .unwrap();
+
+        let migrated = sqlx::migrate!("./migrations").run(&pool).await;
+        assert!(
+            migrated.is_ok(),
+            "migrations must apply to a database with recorded runs: {migrated:?}"
+        );
+
+        // The rescoped index must still admit one Running row per schedule key.
+        insert_ingestion_run_row(&pool, "ingestion-2", "Running", "15m")
+            .await
+            .unwrap();
+        insert_ingestion_run_row(&pool, "ingestion-3", "Running", "1h")
+            .await
+            .unwrap();
+
+        let second_running_for_key =
+            insert_ingestion_run_row(&pool, "ingestion-4", "Running", "15m").await;
+        assert!(
+            second_running_for_key.is_err(),
+            "a second Running row for the same schedule key must violate the unique index"
+        );
+    }
+
     /// Serves a fixed universe, standing in for one Hyperliquid deployment.
     struct StubHyperliquid {
         universe: Vec<market_metadata::MarketMetadata>,

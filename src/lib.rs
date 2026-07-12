@@ -1014,6 +1014,18 @@ mod tests {
     /// tests exercise the real route wiring and shared state, not a hand-rolled
     /// subset.
     async fn test_harness(data_dir: &std::path::Path) -> TestHarness {
+        let hyperliquid_clients = HyperliquidClients::from_config(None, None, 5)
+            .await
+            .unwrap();
+        test_harness_with_markets(data_dir, hyperliquid_clients).await
+    }
+
+    /// Same harness with injected Hyperliquid clients, so markets-endpoint tests
+    /// stub the exchange instead of reaching the real deployments.
+    async fn test_harness_with_markets(
+        data_dir: &std::path::Path,
+        hyperliquid_clients: HyperliquidClients,
+    ) -> TestHarness {
         let config = Config {
             port: 0,
             data_dir: data_dir.to_path_buf(),
@@ -1056,14 +1068,6 @@ mod tests {
                 .build()
                 .await
                 .unwrap();
-
-        let hyperliquid_clients = HyperliquidClients::from_config(
-            config.hyperliquid_base_url.as_ref(),
-            config.hyperliquid_testnet_base_url.as_ref(),
-            config.max_retries,
-        )
-        .await
-        .unwrap();
 
         let router = build_router(Arc::new(AppState {
             config,
@@ -1840,5 +1844,186 @@ mod tests {
 
         assert_eq!(last_sequence, 7);
         assert_eq!(snapshot_version, 0);
+    }
+
+    /// Serves a fixed universe, standing in for one Hyperliquid deployment.
+    struct StubHyperliquid {
+        universe: Vec<market_metadata::MarketMetadata>,
+    }
+
+    #[async_trait::async_trait]
+    impl Hyperliquid for StubHyperliquid {
+        async fn fetch_market_metadata(
+            &self,
+        ) -> Result<Vec<market_metadata::MarketMetadata>, hyperliquid::HyperliquidError> {
+            Ok(self.universe.clone())
+        }
+
+        async fn fetch_candles(
+            &self,
+            _market: &finance::Market,
+            _timeframe: Timeframe,
+            _start: chrono::DateTime<Utc>,
+        ) -> Result<Vec<candle::Candle>, hyperliquid::HyperliquidError> {
+            Ok(vec![])
+        }
+
+        async fn fetch_funding_rates(
+            &self,
+            _market: &finance::Market,
+            _start: chrono::DateTime<Utc>,
+        ) -> Result<Vec<funding::FundingRate>, hyperliquid::HyperliquidError> {
+            Ok(vec![])
+        }
+    }
+
+    /// Fails every fetch, standing in for an unreachable exchange.
+    struct UnreachableHyperliquid;
+
+    #[async_trait::async_trait]
+    impl Hyperliquid for UnreachableHyperliquid {
+        async fn fetch_market_metadata(
+            &self,
+        ) -> Result<Vec<market_metadata::MarketMetadata>, hyperliquid::HyperliquidError> {
+            Err(hyperliquid::HyperliquidError::Url(
+                url::ParseError::EmptyHost,
+            ))
+        }
+
+        async fn fetch_candles(
+            &self,
+            _market: &finance::Market,
+            _timeframe: Timeframe,
+            _start: chrono::DateTime<Utc>,
+        ) -> Result<Vec<candle::Candle>, hyperliquid::HyperliquidError> {
+            Err(hyperliquid::HyperliquidError::Url(
+                url::ParseError::EmptyHost,
+            ))
+        }
+
+        async fn fetch_funding_rates(
+            &self,
+            _market: &finance::Market,
+            _start: chrono::DateTime<Utc>,
+        ) -> Result<Vec<funding::FundingRate>, hyperliquid::HyperliquidError> {
+            Err(hyperliquid::HyperliquidError::Url(
+                url::ParseError::EmptyHost,
+            ))
+        }
+    }
+
+    fn stub_market(
+        symbol: &str,
+        max_leverage: u32,
+        asset_index: u32,
+    ) -> market_metadata::MarketMetadata {
+        market_metadata::MarketMetadata {
+            symbol: finance::Market::new(symbol.to_string()),
+            max_leverage,
+            asset_index,
+        }
+    }
+
+    fn stub_hyperliquid_clients() -> HyperliquidClients {
+        HyperliquidClients {
+            mainnet: Arc::new(StubHyperliquid {
+                universe: vec![stub_market("BTC", 50, 0)],
+            }),
+            testnet: Arc::new(StubHyperliquid {
+                universe: vec![stub_market("SOL", 20, 0)],
+            }),
+        }
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn hyperliquid_markets_serves_the_mainnet_universe_and_logs() {
+        let data_dir = TempDir::new().unwrap();
+        let router = test_harness_with_markets(data_dir.path(), stub_hyperliquid_clients())
+            .await
+            .router;
+
+        let response = router
+            .oneshot(get_request("/hyperliquid/markets?network=mainnet"))
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: serde_json::Value = serde_json::from_str(&body_text(response).await).unwrap();
+        assert_eq!(body["tickers"], serde_json::json!(["BTC/USDC:USDC"]));
+        assert_eq!(body["leverageLimits"][0]["maxLeverage"], 50);
+        assert_eq!(body["leverageLimits"][0]["assetIndex"], 0);
+        assert!(
+            logs_contain_at(
+                tracing::Level::DEBUG,
+                &["hyperliquid markets served", "Mainnet"]
+            ),
+            "serving the universe must log the market count and network"
+        );
+    }
+
+    #[tokio::test]
+    async fn hyperliquid_markets_routes_testnet_queries_to_the_testnet_client() {
+        let data_dir = TempDir::new().unwrap();
+        let router = test_harness_with_markets(data_dir.path(), stub_hyperliquid_clients())
+            .await
+            .router;
+
+        let response = router
+            .oneshot(get_request("/hyperliquid/markets?network=testnet"))
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: serde_json::Value = serde_json::from_str(&body_text(response).await).unwrap();
+        assert_eq!(body["tickers"], serde_json::json!(["SOL/USDC:USDC"]));
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn hyperliquid_markets_maps_an_unreachable_exchange_to_500_and_logs() {
+        let data_dir = TempDir::new().unwrap();
+        let clients = HyperliquidClients {
+            mainnet: Arc::new(UnreachableHyperliquid),
+            testnet: Arc::new(UnreachableHyperliquid),
+        };
+        let router = test_harness_with_markets(data_dir.path(), clients)
+            .await
+            .router;
+
+        let response = router
+            .oneshot(get_request("/hyperliquid/markets?network=mainnet"))
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert!(
+            logs_contain_at(
+                tracing::Level::ERROR,
+                &["failed to fetch hyperliquid markets"]
+            ),
+            "an upstream failure must be logged at ERROR"
+        );
+    }
+
+    #[tokio::test]
+    async fn hyperliquid_markets_rejects_missing_or_unknown_networks() {
+        let data_dir = TempDir::new().unwrap();
+        let harness = test_harness_with_markets(data_dir.path(), stub_hyperliquid_clients()).await;
+
+        let missing = harness
+            .router
+            .clone()
+            .oneshot(get_request("/hyperliquid/markets"))
+            .await
+            .unwrap();
+        assert_eq!(missing.status(), StatusCode::BAD_REQUEST);
+
+        let unknown = harness
+            .router
+            .oneshot(get_request("/hyperliquid/markets?network=banana"))
+            .await
+            .unwrap();
+        assert_eq!(unknown.status(), StatusCode::BAD_REQUEST);
     }
 }

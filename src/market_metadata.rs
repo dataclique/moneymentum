@@ -216,6 +216,7 @@ mod tests {
 
     use async_trait::async_trait;
     use chrono::{DateTime, TimeZone, Utc};
+    use proptest::prelude::*;
     use sqlx::sqlite::SqlitePoolOptions;
     use tracing::Level;
     use tracing_test::traced_test;
@@ -542,5 +543,54 @@ mod tests {
         assert_eq!(json["leverageLimits"][0]["maxLeverage"], 50);
         assert_eq!(json["leverageLimits"][0]["assetIndex"], 7);
         assert_eq!(json["refreshedAt"], "2026-07-11T12:00:00Z");
+    }
+
+    proptest! {
+        /// Every fetched market must appear exactly once with its leverage and
+        /// asset index intact, tickers must mirror the leverage limits, and
+        /// both must come out sorted -- for any universe the exchange serves.
+        #[test]
+        fn markets_api_response_preserves_every_market_sorted(
+            names in prop::collection::hash_set("[A-Z]{2,8}", 1..40)
+        ) {
+            let universe: Vec<MarketMetadata> = names
+                .iter()
+                .enumerate()
+                .map(|(position, name)| MarketMetadata {
+                    symbol: Market::new(name.clone()),
+                    max_leverage: u32::try_from(position).unwrap() % 100 + 1,
+                    asset_index: u32::try_from(position).unwrap(),
+                })
+                .collect();
+            let refreshed_at = Utc.with_ymd_and_hms(2026, 7, 11, 0, 0, 0).unwrap();
+
+            let response = markets_api_response(&universe, refreshed_at);
+
+            prop_assert_eq!(response.leverage_limits.len(), universe.len());
+
+            let tickers: Vec<&str> = response.tickers.iter().map(CcxtSymbol::as_str).collect();
+            let limit_symbols: Vec<&str> = response
+                .leverage_limits
+                .iter()
+                .map(|entry| entry.symbol.as_str())
+                .collect();
+            prop_assert_eq!(&tickers, &limit_symbols);
+
+            let mut sorted_tickers = tickers.clone();
+            sorted_tickers.sort_unstable();
+            prop_assert_eq!(&tickers, &sorted_tickers);
+
+            for market in &universe {
+                let ccxt_symbol = finance::hyperliquid_swap_ccxt_symbol(market.symbol.as_str());
+                let entry = response
+                    .leverage_limits
+                    .iter()
+                    .find(|entry| entry.symbol == ccxt_symbol);
+                let entry = entry.expect("every fetched market must appear in the response");
+                prop_assert_eq!(entry.max_leverage, market.max_leverage);
+                prop_assert_eq!(entry.asset_index, market.asset_index);
+                prop_assert!(entry.symbol.as_str().ends_with("/USDC:USDC"));
+            }
+        }
     }
 }

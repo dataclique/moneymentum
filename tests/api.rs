@@ -414,15 +414,3 @@ async fn hyperliquid_markets_serves_the_testnet_universe() {
         "testnet query should serve the testnet universe: {body}"
     );
 }
-
-#[tokio::test(flavor = "multi_thread")]
-async fn hyperliquid_markets_rejects_an_unknown_network() {
-    let mock_server = MockServer::start().await;
-    mount_meta_mock(&mock_server).await;
-
-    let data_dir = TempDir::new().unwrap();
-    let app = spawn_test_app(&mock_server, &data_dir).await;
-
-    let response = app.get("/hyperliquid/markets?network=banana").await;
-    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-}

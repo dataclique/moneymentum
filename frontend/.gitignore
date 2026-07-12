@@ -27,3 +27,4 @@ dist-ssr
 test-results
 playwright-report
 .contract-data
+.eslintcache

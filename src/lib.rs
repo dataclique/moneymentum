@@ -41,7 +41,7 @@ use thiserror::Error;
 use tracing::{debug, error};
 use tracing_subscriber::EnvFilter;
 
-use crate::hyperliquid::{Hyperliquid, HyperliquidClient};
+use crate::hyperliquid::{Hyperliquid, HyperliquidClients, HyperliquidNetwork};
 use finance::Symbol;
 use ingestion::{
     IngestionJob, IngestionJobContext, IngestionRun, IngestionRunStatus, IngestionServices,
@@ -86,6 +86,7 @@ pub struct Config {
     data_dir: PathBuf,
     database_url: String,
     hyperliquid_base_url: Option<url::Url>,
+    hyperliquid_testnet_base_url: Option<url::Url>,
     log_level: LogLevel,
     max_concurrent_requests: usize,
     max_retries: usize,
@@ -123,6 +124,7 @@ pub enum ConfigError {
 pub(crate) struct AppState {
     config: Config,
     database_pool: SqlitePool,
+    hyperliquid_clients: HyperliquidClients,
     portfolio_store: Arc<Store<Portfolio>>,
     portfolio_projection: Arc<Projection<Portfolio>>,
     market_enablement: Arc<Store<MarketEnablement>>,
@@ -668,6 +670,41 @@ async fn get_markets_leverage(
     }
 }
 
+#[derive(Debug, Deserialize)]
+struct HyperliquidMarketsQuery {
+    network: HyperliquidNetwork,
+}
+
+/// Serves the Hyperliquid perp universe in the ccxt-style shape the frontend
+/// trading client consumes. Fetched live from the exchange on every request:
+/// the asset indexes in the response route orders, so they must always match
+/// the exchange's current universe rather than a cached observation.
+async fn get_hyperliquid_markets(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<HyperliquidMarketsQuery>,
+) -> Result<Json<market_metadata::MarketsApiResponse>, StatusCode> {
+    let network = query.network;
+    let metadata = state
+        .hyperliquid_clients
+        .for_network(network)
+        .fetch_market_metadata()
+        .await
+        .map_err(|err| {
+            error!(error = %err, ?network, "failed to fetch hyperliquid markets");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+    debug!(
+        markets = metadata.len(),
+        ?network,
+        "hyperliquid markets served"
+    );
+    Ok(Json(market_metadata::markets_api_response(
+        &metadata,
+        chrono::Utc::now(),
+    )))
+}
+
 fn parse_market_id(venue: &str, symbol: &str) -> Result<MarketId, ApiError> {
     let venue = VenueRef::from_str(venue).map_err(|_| bad_request("unknown venue"))?;
     Ok(MarketId::new(venue, Symbol::from_raw(symbol)))
@@ -835,9 +872,13 @@ pub async fn app(config: Config) -> Result<Router, Box<dyn std::error::Error + S
     let apalis_pool = apalis_sqlite::SqlitePool::connect_with(apalis_options).await?;
     debug!("apalis storage pool connected");
 
-    let hyperliquid: Arc<dyn Hyperliquid> = Arc::new(
-        HyperliquidClient::new(config.hyperliquid_base_url.as_ref(), config.max_retries).await?,
-    );
+    let hyperliquid_clients = HyperliquidClients::from_config(
+        config.hyperliquid_base_url.as_ref(),
+        config.hyperliquid_testnet_base_url.as_ref(),
+        config.max_retries,
+    )
+    .await?;
+    let hyperliquid: Arc<dyn Hyperliquid> = Arc::clone(&hyperliquid_clients.mainnet);
     let services = IngestionServices {
         hyperliquid,
         data_dir: config.data_dir.clone(),
@@ -865,6 +906,7 @@ pub async fn app(config: Config) -> Result<Router, Box<dyn std::error::Error + S
     let state = Arc::new(AppState {
         config,
         database_pool: pool,
+        hyperliquid_clients,
         portfolio_store,
         portfolio_projection,
         market_enablement,
@@ -893,6 +935,7 @@ fn build_router(state: Arc<AppState>) -> Router {
         .route("/portfolio/{id}/target", post(post_portfolio_target))
         .route("/portfolio/{id}/rename", post(post_portfolio_rename))
         .route("/portfolio/{id}/archive", post(post_portfolio_archive))
+        .route("/hyperliquid/markets", get(get_hyperliquid_markets))
         .route("/markets/{venue}", get(get_markets))
         .route("/markets/{venue}/leverage", get(get_markets_leverage))
         .route(
@@ -971,11 +1014,24 @@ mod tests {
     /// tests exercise the real route wiring and shared state, not a hand-rolled
     /// subset.
     async fn test_harness(data_dir: &std::path::Path) -> TestHarness {
+        let hyperliquid_clients = HyperliquidClients::from_config(None, None, 5)
+            .await
+            .unwrap();
+        test_harness_with_markets(data_dir, hyperliquid_clients).await
+    }
+
+    /// Same harness with injected Hyperliquid clients, so markets-endpoint tests
+    /// stub the exchange instead of reaching the real deployments.
+    async fn test_harness_with_markets(
+        data_dir: &std::path::Path,
+        hyperliquid_clients: HyperliquidClients,
+    ) -> TestHarness {
         let config = Config {
             port: 0,
             data_dir: data_dir.to_path_buf(),
             database_url: format!("sqlite://{}?mode=rwc", data_dir.join("test.db").display()),
             hyperliquid_base_url: None,
+            hyperliquid_testnet_base_url: None,
             log_level: LogLevel::Info,
             max_concurrent_requests: 3,
             max_retries: 5,
@@ -1016,6 +1072,7 @@ mod tests {
         let router = build_router(Arc::new(AppState {
             config,
             database_pool: pool,
+            hyperliquid_clients,
             portfolio_store,
             portfolio_projection,
             market_enablement,
@@ -1787,5 +1844,260 @@ mod tests {
 
         assert_eq!(last_sequence, 7);
         assert_eq!(snapshot_version, 0);
+    }
+
+    /// Version of `migrations/20260618073806_per_work_ingestion_running_slot.sql`.
+    const RUNNING_SLOT_MIGRATION_VERSION: i64 = 20_260_618_073_806;
+
+    async fn insert_ingestion_run_row(
+        pool: &SqlitePool,
+        view_id: &str,
+        status: &str,
+        schedule_key: &str,
+    ) -> Result<sqlx::sqlite::SqliteQueryResult, sqlx::Error> {
+        let payload = serde_json::json!({
+            "Live": {
+                "status": status,
+                "started_at": "2026-07-01T00:00:00Z",
+                "schedule_key": schedule_key,
+            }
+        })
+        .to_string();
+        sqlx::query("INSERT INTO ingestion_run_view (view_id, version, payload) VALUES (?1, 1, ?2)")
+            .bind(view_id.to_string())
+            .bind(payload)
+            .execute(pool)
+            .await
+    }
+
+    /// Prod regression: SQLite refuses `ALTER TABLE ... ADD COLUMN ... STORED`
+    /// on a table that already has rows, so a migration adding a stored
+    /// generated column passes on every fresh database (CI, dev) and crashes
+    /// the binary on any database with recorded ingestion runs. Reproduces the
+    /// prod path: migrate to the pre-existing state, record a run, then apply
+    /// the remaining migrations.
+    #[tokio::test]
+    async fn running_slot_migration_applies_to_a_populated_database() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect(":memory:")
+            .await
+            .unwrap();
+
+        let mut up_to_previous = sqlx::migrate!("./migrations");
+        up_to_previous.migrations = up_to_previous
+            .migrations
+            .iter()
+            .filter(|migration| migration.version < RUNNING_SLOT_MIGRATION_VERSION)
+            .cloned()
+            .collect::<Vec<_>>()
+            .into();
+        up_to_previous.run(&pool).await.unwrap();
+
+        insert_ingestion_run_row(&pool, "ingestion-1", "Completed", "1h")
+            .await
+            .unwrap();
+
+        let migrated = sqlx::migrate!("./migrations").run(&pool).await;
+        assert!(
+            migrated.is_ok(),
+            "migrations must apply to a database with recorded runs: {migrated:?}"
+        );
+
+        // The rescoped index must still admit one Running row per schedule key.
+        insert_ingestion_run_row(&pool, "ingestion-2", "Running", "15m")
+            .await
+            .unwrap();
+        insert_ingestion_run_row(&pool, "ingestion-3", "Running", "1h")
+            .await
+            .unwrap();
+
+        let second_running_for_key =
+            insert_ingestion_run_row(&pool, "ingestion-4", "Running", "15m").await;
+        assert!(
+            second_running_for_key.is_err(),
+            "a second Running row for the same schedule key must violate the unique index"
+        );
+    }
+
+    /// Serves a fixed universe, standing in for one Hyperliquid deployment.
+    struct StubHyperliquid {
+        universe: Vec<market_metadata::MarketMetadata>,
+    }
+
+    #[async_trait::async_trait]
+    impl Hyperliquid for StubHyperliquid {
+        async fn fetch_market_metadata(
+            &self,
+        ) -> Result<Vec<market_metadata::MarketMetadata>, hyperliquid::HyperliquidError> {
+            Ok(self.universe.clone())
+        }
+
+        async fn fetch_candles(
+            &self,
+            _market: &finance::Market,
+            _timeframe: Timeframe,
+            _start: chrono::DateTime<Utc>,
+        ) -> Result<Vec<candle::Candle>, hyperliquid::HyperliquidError> {
+            Ok(vec![])
+        }
+
+        async fn fetch_funding_rates(
+            &self,
+            _market: &finance::Market,
+            _start: chrono::DateTime<Utc>,
+        ) -> Result<Vec<funding::FundingRate>, hyperliquid::HyperliquidError> {
+            Ok(vec![])
+        }
+    }
+
+    /// Fails every fetch, standing in for an unreachable exchange.
+    struct UnreachableHyperliquid;
+
+    #[async_trait::async_trait]
+    impl Hyperliquid for UnreachableHyperliquid {
+        async fn fetch_market_metadata(
+            &self,
+        ) -> Result<Vec<market_metadata::MarketMetadata>, hyperliquid::HyperliquidError> {
+            Err(hyperliquid::HyperliquidError::Url(
+                url::ParseError::EmptyHost,
+            ))
+        }
+
+        async fn fetch_candles(
+            &self,
+            _market: &finance::Market,
+            _timeframe: Timeframe,
+            _start: chrono::DateTime<Utc>,
+        ) -> Result<Vec<candle::Candle>, hyperliquid::HyperliquidError> {
+            Err(hyperliquid::HyperliquidError::Url(
+                url::ParseError::EmptyHost,
+            ))
+        }
+
+        async fn fetch_funding_rates(
+            &self,
+            _market: &finance::Market,
+            _start: chrono::DateTime<Utc>,
+        ) -> Result<Vec<funding::FundingRate>, hyperliquid::HyperliquidError> {
+            Err(hyperliquid::HyperliquidError::Url(
+                url::ParseError::EmptyHost,
+            ))
+        }
+    }
+
+    fn stub_market(
+        symbol: &str,
+        max_leverage: u32,
+        asset_index: u32,
+    ) -> market_metadata::MarketMetadata {
+        market_metadata::MarketMetadata {
+            symbol: finance::Market::new(symbol.to_string()),
+            max_leverage,
+            asset_index,
+        }
+    }
+
+    fn stub_hyperliquid_clients() -> HyperliquidClients {
+        HyperliquidClients {
+            mainnet: Arc::new(StubHyperliquid {
+                universe: vec![stub_market("BTC", 50, 0)],
+            }),
+            testnet: Arc::new(StubHyperliquid {
+                universe: vec![stub_market("SOL", 20, 0)],
+            }),
+        }
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn hyperliquid_markets_serves_the_mainnet_universe_and_logs() {
+        let data_dir = TempDir::new().unwrap();
+        let router = test_harness_with_markets(data_dir.path(), stub_hyperliquid_clients())
+            .await
+            .router;
+
+        let response = router
+            .oneshot(get_request("/hyperliquid/markets?network=mainnet"))
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: serde_json::Value = serde_json::from_str(&body_text(response).await).unwrap();
+        assert_eq!(body["tickers"], serde_json::json!(["BTC/USDC:USDC"]));
+        assert_eq!(body["leverageLimits"][0]["maxLeverage"], 50);
+        assert_eq!(body["leverageLimits"][0]["assetIndex"], 0);
+        assert!(
+            logs_contain_at(
+                tracing::Level::DEBUG,
+                &["hyperliquid markets served", "Mainnet"]
+            ),
+            "serving the universe must log the market count and network"
+        );
+    }
+
+    #[tokio::test]
+    async fn hyperliquid_markets_routes_testnet_queries_to_the_testnet_client() {
+        let data_dir = TempDir::new().unwrap();
+        let router = test_harness_with_markets(data_dir.path(), stub_hyperliquid_clients())
+            .await
+            .router;
+
+        let response = router
+            .oneshot(get_request("/hyperliquid/markets?network=testnet"))
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: serde_json::Value = serde_json::from_str(&body_text(response).await).unwrap();
+        assert_eq!(body["tickers"], serde_json::json!(["SOL/USDC:USDC"]));
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn hyperliquid_markets_maps_an_unreachable_exchange_to_500_and_logs() {
+        let data_dir = TempDir::new().unwrap();
+        let clients = HyperliquidClients {
+            mainnet: Arc::new(UnreachableHyperliquid),
+            testnet: Arc::new(UnreachableHyperliquid),
+        };
+        let router = test_harness_with_markets(data_dir.path(), clients)
+            .await
+            .router;
+
+        let response = router
+            .oneshot(get_request("/hyperliquid/markets?network=mainnet"))
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert!(
+            logs_contain_at(
+                tracing::Level::ERROR,
+                &["failed to fetch hyperliquid markets"]
+            ),
+            "an upstream failure must be logged at ERROR"
+        );
+    }
+
+    #[tokio::test]
+    async fn hyperliquid_markets_rejects_missing_or_unknown_networks() {
+        let data_dir = TempDir::new().unwrap();
+        let harness = test_harness_with_markets(data_dir.path(), stub_hyperliquid_clients()).await;
+
+        let missing = harness
+            .router
+            .clone()
+            .oneshot(get_request("/hyperliquid/markets"))
+            .await
+            .unwrap();
+        assert_eq!(missing.status(), StatusCode::BAD_REQUEST);
+
+        let unknown = harness
+            .router
+            .oneshot(get_request("/hyperliquid/markets?network=banana"))
+            .await
+            .unwrap();
+        assert_eq!(unknown.status(), StatusCode::BAD_REQUEST);
     }
 }

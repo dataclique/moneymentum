@@ -212,26 +212,7 @@ in
   users.groups.warehouse = { };
   programs.bash.interactiveShellInit = "set -o vi";
 
-  systemd.services = lib.mapAttrs mkService enabledServices // {
-    moneymentum-ingest = {
-      description = "Trigger moneymentum data ingestion";
-      unitConfig.ConditionPathExists = "/run/moneymentum/moneymentum.ready";
-      serviceConfig = {
-        Type = "oneshot";
-        DynamicUser = true;
-        ExecStart = "${pkgs.curl}/bin/curl -sSf --max-time 300 -X POST http://127.0.0.1:8000/ingest";
-      };
-    };
-  };
-
-  systemd.timers.moneymentum-ingest = {
-    wantedBy = [ "timers.target" ];
-    timerConfig = {
-      OnBootSec = "5min";
-      OnUnitActiveSec = "6h";
-      Persistent = true;
-    };
-  };
+  systemd.services = lib.mapAttrs mkService enabledServices;
 
   systemd.tmpfiles.rules =
     let

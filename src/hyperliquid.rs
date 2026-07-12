@@ -53,6 +53,50 @@ pub(crate) enum HyperliquidError {
     Polars(#[from] polars::prelude::PolarsError),
 }
 
+pub(crate) const HYPERLIQUID_TESTNET_BASE_URL: &str = "https://api.hyperliquid-testnet.xyz";
+
+/// Hyperliquid deployment a request targets, as selected by the frontend
+/// wallet's network mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum HyperliquidNetwork {
+    Mainnet,
+    Testnet,
+}
+
+/// Mainnet and testnet Hyperliquid info clients, so the markets endpoint can
+/// serve whichever deployment the frontend wallet targets while ingestion
+/// keeps using mainnet.
+pub(crate) struct HyperliquidClients {
+    pub(crate) mainnet: Arc<dyn Hyperliquid>,
+    pub(crate) testnet: Arc<dyn Hyperliquid>,
+}
+
+impl HyperliquidClients {
+    pub(crate) async fn from_config(
+        mainnet_base_url: Option<&Url>,
+        testnet_base_url: Option<&Url>,
+        max_retries: usize,
+    ) -> Result<Self, HyperliquidError> {
+        let mainnet = Arc::new(HyperliquidClient::new(mainnet_base_url, max_retries).await?)
+            as Arc<dyn Hyperliquid>;
+        let testnet_url = match testnet_base_url {
+            Some(url) => url.clone(),
+            None => Url::parse(HYPERLIQUID_TESTNET_BASE_URL)?,
+        };
+        let testnet = Arc::new(HyperliquidClient::new(Some(&testnet_url), max_retries).await?)
+            as Arc<dyn Hyperliquid>;
+        Ok(Self { mainnet, testnet })
+    }
+
+    pub(crate) fn for_network(&self, network: HyperliquidNetwork) -> &dyn Hyperliquid {
+        match network {
+            HyperliquidNetwork::Mainnet => self.mainnet.as_ref(),
+            HyperliquidNetwork::Testnet => self.testnet.as_ref(),
+        }
+    }
+}
+
 /// Abstraction over Hyperliquid's market data API.
 ///
 /// Enables testing with mock implementations.
@@ -76,6 +120,9 @@ pub(crate) trait Hyperliquid: Send + Sync {
 
 pub(crate) struct HyperliquidClient {
     info: InfoClient,
+    /// Timeout-bounded HTTP client shared across raw info requests, so each
+    /// fetch reuses pooled connections instead of paying TCP/TLS setup.
+    http: reqwest::Client,
     max_retries: usize,
 }
 
@@ -90,12 +137,21 @@ impl HyperliquidClient {
                 .trim_end_matches('/')
                 .clone_into(&mut info.http_client.base_url);
         }
+        // Bound each attempt so a hung upstream cannot stall startup or the
+        // markets endpoint indefinitely (matches the frontend's 10s guard).
+        let http = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .build()?;
         debug!(
             base_url = %info.http_client.base_url,
             max_retries,
             "hyperliquid client ready"
         );
-        Ok(Self { info, max_retries })
+        Ok(Self {
+            info,
+            http,
+            max_retries,
+        })
     }
 }
 
@@ -125,13 +181,9 @@ impl Hyperliquid for HyperliquidClient {
         }
 
         let url = format!("{}/info", self.info.http_client.base_url);
-        // Bound each attempt so a hung upstream cannot stall startup or the
-        // markets endpoint indefinitely (matches the frontend's 10s guard).
-        let http = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(10))
-            .build()?;
         let raw = (|| async {
-            http.post(&url)
+            self.http
+                .post(&url)
                 .json(&MetaRequest {
                     request_type: "meta",
                 })

@@ -1855,9 +1855,14 @@ mod tests {
         status: &str,
         schedule_key: &str,
     ) -> Result<sqlx::sqlite::SqliteQueryResult, sqlx::Error> {
-        let payload = format!(
-            r#"{{"Live":{{"status":"{status}","started_at":"2026-07-01T00:00:00Z","schedule_key":"{schedule_key}"}}}}"#
-        );
+        let payload = serde_json::json!({
+            "Live": {
+                "status": status,
+                "started_at": "2026-07-01T00:00:00Z",
+                "schedule_key": schedule_key,
+            }
+        })
+        .to_string();
         sqlx::query("INSERT INTO ingestion_run_view (view_id, version, payload) VALUES (?1, 1, ?2)")
             .bind(view_id.to_string())
             .bind(payload)

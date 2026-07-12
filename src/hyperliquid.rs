@@ -176,6 +176,8 @@ impl Hyperliquid for HyperliquidClient {
             name: String,
             max_leverage: u32,
             is_delisted: Option<bool>,
+            /// Omitted for cross-capable markets; `true` when cross margin is forbidden.
+            only_isolated: Option<bool>,
         }
 
         let url = format!("{}/info", self.info.http_client.base_url);
@@ -213,6 +215,7 @@ impl Hyperliquid for HyperliquidClient {
                         max_leverage: asset.max_leverage,
                         asset_index: u32::try_from(asset_index)
                             .map_err(HyperliquidError::IntConversion)?,
+                        only_isolated: asset.only_isolated.unwrap_or(false),
                     })
                 },
             )
@@ -532,6 +535,7 @@ mod tests {
                     symbol: Market::new("BTC".to_string()),
                     max_leverage: 50,
                     asset_index: 0,
+                    only_isolated: false,
                 }],
                 candles: vec![Candle {
                     timestamp: Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),

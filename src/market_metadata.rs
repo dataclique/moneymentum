@@ -27,6 +27,8 @@ pub(crate) struct MarketMetadata {
     pub(crate) symbol: Market,
     pub(crate) max_leverage: u32,
     pub(crate) asset_index: u32,
+    /// `true` when the asset supports only isolated margin.
+    pub(crate) only_isolated: bool,
 }
 
 /// One market's max leverage, as served to clients.
@@ -235,6 +237,7 @@ mod tests {
             symbol: Market::new(symbol.to_string()),
             max_leverage,
             asset_index,
+            only_isolated: false,
         }
     }
 
@@ -560,6 +563,7 @@ mod tests {
                     symbol: Market::new(name.clone()),
                     max_leverage: u32::try_from(position).unwrap() % 100 + 1,
                     asset_index: u32::try_from(position).unwrap(),
+                    only_isolated: false,
                 })
                 .collect();
             let refreshed_at = Utc.with_ymd_and_hms(2026, 7, 11, 0, 0, 0).unwrap();

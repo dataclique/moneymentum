@@ -363,8 +363,10 @@ impl<H: ?Sized + Hyperliquid> CandleIngester<H> {
         // To always fetch the maximum available history per symbol, we ignore
         // existing data for the start time and request a 5000-candle window
         // ending at "now". Any overlap with existing data is handled by
-        // merge_and_deduplicate.
-        let start_for_all_markets = Utc::now() - timeframe.window_duration(MAX_HISTORY_ENTRIES);
+        // merge_and_deduplicate. Weekly windows of 5000 bars predate the Unix
+        // epoch, and the candle API takes startTime as u64 ms, so clamp there.
+        let start_for_all_markets = (Utc::now() - timeframe.window_duration(MAX_HISTORY_ENTRIES))
+            .max(DateTime::<Utc>::UNIX_EPOCH);
 
         let market_starts: Vec<(Market, DateTime<Utc>)> = markets
             .iter()
@@ -588,6 +590,60 @@ mod tests {
             self.fetch_funding_calls.fetch_add(1, Ordering::Relaxed);
             Ok(self.funding_rates.clone())
         }
+    }
+
+    struct StartCapturingHyperliquid {
+        captured_start_millis: std::sync::Mutex<Option<i64>>,
+    }
+
+    #[async_trait]
+    impl Hyperliquid for StartCapturingHyperliquid {
+        async fn fetch_market_metadata(&self) -> Result<Vec<MarketMetadata>, HyperliquidError> {
+            Ok(vec![])
+        }
+
+        async fn fetch_candles(
+            &self,
+            _market: &Market,
+            _timeframe: Timeframe,
+            start: DateTime<Utc>,
+        ) -> Result<Vec<Candle>, HyperliquidError> {
+            *self.captured_start_millis.lock().unwrap() = Some(start.timestamp_millis());
+            Ok(vec![])
+        }
+
+        async fn fetch_funding_rates(
+            &self,
+            _market: &Market,
+            _start: DateTime<Utc>,
+        ) -> Result<Vec<FundingRate>, HyperliquidError> {
+            Ok(vec![])
+        }
+    }
+
+    #[tokio::test]
+    async fn weekly_candle_ingest_clamps_pre_epoch_window_to_unix_epoch() {
+        let data_dir = TempDir::new().unwrap();
+        let mock = Arc::new(StartCapturingHyperliquid {
+            captured_start_millis: std::sync::Mutex::new(None),
+        });
+        let ingester = CandleIngester::new(Arc::clone(&mock), 1);
+
+        ingester
+            .ingest_with_markets(Timeframe::OneWeek, data_dir.path(), &btc_markets())
+            .await
+            .unwrap();
+
+        let start_millis = mock
+            .captured_start_millis
+            .lock()
+            .unwrap()
+            .expect("weekly ingest must call fetch_candles");
+        assert!(
+            start_millis >= 0,
+            "weekly window must be clamped to unix epoch so start_ms fits u64, got {start_millis}"
+        );
+        assert_eq!(start_millis, DateTime::<Utc>::UNIX_EPOCH.timestamp_millis());
     }
 
     #[traced_test]

@@ -113,6 +113,11 @@ pub(crate) enum RefreshError {
 
 /// Refreshes the Hyperliquid universe from the live exchange and returns the
 /// tradable markets: every listed market the operator has not disabled.
+///
+/// Returned [`Market`] values keep the exchange-native coin casing from the
+/// live fetch. Hyperliquid's candle and funding endpoints are case-sensitive
+/// (`kPEPE` succeeds; `KPEPE` returns HTTP 500), while [`Symbol`] uppercases
+/// for identity joins with operator disable decisions.
 pub(crate) async fn refresh_markets(
     client: &dyn Hyperliquid,
     catalog: &Store<MarketCatalog>,
@@ -140,12 +145,20 @@ pub(crate) async fn refresh_markets(
         )
         .await?;
 
-    let tradable = tradable_markets(
-        VenueRef::Hyperliquid,
-        catalog_projection,
-        enablement_projection,
-    )
-    .await?;
+    let disabled: BTreeSet<Symbol> = enablement_projection
+        .filter(ENABLEMENT_STATUS, &MarketStatus::Disabled)
+        .await?
+        .into_iter()
+        .filter(|(id, _)| id.venue() == VenueRef::Hyperliquid)
+        .map(|(id, _): (MarketId, MarketEnablement)| id.into_symbol())
+        .collect();
+
+    let tradable: Vec<Market> = fetched
+        .iter()
+        .filter(|market| !disabled.contains(&Symbol::from_raw(market.symbol.as_str())))
+        .map(|market| market.symbol.clone())
+        .collect();
+
     let observed_at = catalog_projection
         .load(&VenueRef::Hyperliquid)
         .await?
@@ -299,6 +312,35 @@ mod tests {
 
     fn symbols(markets: &[Market]) -> Vec<&str> {
         markets.iter().map(Market::as_str).collect()
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn refresh_preserves_exchange_native_market_casing() {
+        let (catalog, catalog_projection, _enablement, enablement_projection) =
+            market_stores().await;
+        let client = StubClient {
+            metadata: vec![
+                metadata("BTC", 50, 0),
+                metadata("kPEPE", 10, 1),
+                metadata("kSHIB", 5, 2),
+            ],
+        };
+
+        let tradable = refresh_markets(
+            &client,
+            &catalog,
+            &catalog_projection,
+            &enablement_projection,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(symbols(&tradable), vec!["BTC", "kPEPE", "kSHIB"]);
+        assert!(crate::logs_contain_at(
+            Level::INFO,
+            &["markets metadata refreshed"]
+        ));
     }
 
     #[traced_test]

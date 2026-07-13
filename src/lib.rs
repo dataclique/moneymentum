@@ -45,7 +45,8 @@ use crate::hyperliquid::{Hyperliquid, HyperliquidClients, HyperliquidNetwork};
 use finance::Symbol;
 use ingestion::{
     IngestionJob, IngestionJobContext, IngestionRun, IngestionRunStatus, IngestionServices,
-    IngestionWork, default_ingestion_schedules, trigger_scheduled_ingestion,
+    IngestionWork, create_runs_for_active_units, default_ingestion_schedules,
+    trigger_scheduled_ingestion,
 };
 use market_catalog::MarketCatalog;
 use market_enablement::{
@@ -127,6 +128,8 @@ pub(crate) struct AppState {
     hyperliquid_clients: HyperliquidClients,
     portfolio_store: Arc<Store<Portfolio>>,
     portfolio_projection: Arc<Projection<Portfolio>>,
+    ingestion_store: Arc<Store<IngestionRun>>,
+    ingestion_projection: Arc<Projection<IngestionRun>>,
     market_enablement: Arc<Store<MarketEnablement>>,
     market_enablement_projection: Arc<Projection<MarketEnablement>>,
     market_catalog_projection: Arc<Projection<MarketCatalog>>,
@@ -200,6 +203,24 @@ async fn post_screener(
         Err(err) => {
             error!(error = %err, "failed to screen perps");
             Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
+}
+
+/// Starts an on-demand ingestion pass for every idle active work unit.
+///
+/// Returns `202 Accepted` when at least one run was enqueued, `409 Conflict`
+/// when every unit already has a running run, and `500` on unexpected failures.
+async fn start_ingestion(State(state): State<Arc<AppState>>) -> StatusCode {
+    match create_runs_for_active_units(&state.ingestion_store, &state.ingestion_projection).await {
+        Ok(0) => StatusCode::CONFLICT,
+        Ok(enqueued) => {
+            debug!(enqueued, "manual ingestion runs enqueued");
+            StatusCode::ACCEPTED
+        }
+        Err(err) => {
+            error!(error = %err, "failed to start ingestion runs");
+            StatusCode::INTERNAL_SERVER_ERROR
         }
     }
 }
@@ -909,6 +930,8 @@ pub async fn app(config: Config) -> Result<Router, Box<dyn std::error::Error + S
         hyperliquid_clients,
         portfolio_store,
         portfolio_projection,
+        ingestion_store,
+        ingestion_projection,
         market_enablement,
         market_enablement_projection,
         market_catalog_projection,
@@ -924,6 +947,7 @@ fn build_router(state: Arc<AppState>) -> Router {
         .route("/candles/{timeframe}", get(get_candles))
         .route("/factors/{timeframe}", get(get_factors))
         .route("/screener/{timeframe}", post(post_screener))
+        .route("/ingest", post(start_ingestion))
         .route("/ingestion/status", get(get_ingestion_status))
         .route(
             "/portfolio",
@@ -1053,7 +1077,7 @@ mod tests {
             .build()
             .await
             .unwrap();
-        let (_ingestion_store, _ingestion_projection) =
+        let (ingestion_store, ingestion_projection) =
             StoreBuilder::<IngestionRun>::new(pool.clone())
                 .build()
                 .await
@@ -1075,6 +1099,8 @@ mod tests {
             hyperliquid_clients,
             portfolio_store,
             portfolio_projection,
+            ingestion_store,
+            ingestion_projection,
             market_enablement,
             market_enablement_projection,
             market_catalog_projection,
@@ -1497,6 +1523,23 @@ mod tests {
             payload.get("version").and_then(serde_json::Value::as_str),
             Some(env!("CARGO_PKG_VERSION"))
         );
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn post_ingest_accepts_then_conflicts_while_runs_are_active() {
+        let data_dir = TempDir::new().unwrap();
+        let router = test_router(data_dir.path()).await;
+
+        let accepted = router.clone().oneshot(post_empty("/ingest")).await.unwrap();
+        assert_eq!(accepted.status(), StatusCode::ACCEPTED);
+        assert!(logs_contain_at(
+            tracing::Level::DEBUG,
+            &["manual ingestion runs enqueued"]
+        ));
+
+        let conflicted = router.oneshot(post_empty("/ingest")).await.unwrap();
+        assert_eq!(conflicted.status(), StatusCode::CONFLICT);
     }
 
     #[tokio::test]

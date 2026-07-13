@@ -205,15 +205,42 @@ async fn ingestion_status_is_idle_on_fresh_start() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn manual_ingest_endpoint_is_not_exposed() {
+async fn manual_ingest_enqueues_and_completes() {
     let mock_server = MockServer::start().await;
-    mount_meta_mock(&mock_server).await;
+    mount_successful_ingestion_mocks(&mock_server).await;
 
     let data_dir = TempDir::new().unwrap();
     let app = spawn_test_app(&mock_server, &data_dir).await;
 
-    let response = app.post("/ingest").await;
-    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let ingest_response = app.post("/ingest").await;
+    assert_eq!(ingest_response.status(), StatusCode::ACCEPTED);
+
+    let completed = poll_for_status(&app, "Completed", 60, 200).await;
+    if !completed {
+        let body = ingestion_status_body(&app).await;
+        if body.contains("Failed") {
+            panic!("manual ingestion failed: {body}");
+        }
+        panic!("manual ingestion did not complete within timeout, last status: {body}");
+    }
+
+    let candles_response = app.get("/candles/1h").await;
+    assert_eq!(candles_response.status(), StatusCode::OK);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn manual_ingest_conflicts_when_every_unit_is_already_running() {
+    let mock_server = MockServer::start().await;
+    mount_successful_ingestion_mocks(&mock_server).await;
+
+    let data_dir = TempDir::new().unwrap();
+    let app = spawn_test_app(&mock_server, &data_dir).await;
+
+    let first = app.post("/ingest").await;
+    assert_eq!(first.status(), StatusCode::ACCEPTED);
+
+    let second = app.post("/ingest").await;
+    assert_eq!(second.status(), StatusCode::CONFLICT);
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -53,23 +53,56 @@ fn validate_production_schedule_definitions() -> Result<(), IngestionScheduleErr
     Ok(())
 }
 
+/// Work units that schedulers and `POST /ingest` enqueue in this build.
+///
+/// Production runs every candle timeframe plus funding. The `test-support`
+/// feature narrows that set so e2e tests avoid the OneWeek lookback overflow
+/// (issue #64) while still exercising the same enqueue path.
+pub(crate) fn active_ingestion_units() -> Vec<IngestionWork> {
+    #[cfg(feature = "test-support")]
+    {
+        IngestionWork::test_e2e_scheduled_units().into()
+    }
+    #[cfg(not(feature = "test-support"))]
+    {
+        IngestionWork::scheduled_units()
+    }
+}
+
 /// Built-in apalis-cron schedules for each candle timeframe and funding refresh.
 pub(crate) fn default_ingestion_schedules()
 -> Result<Vec<(IngestionWork, Schedule)>, IngestionScheduleError> {
     validate_production_schedule_definitions()?;
 
-    #[cfg(feature = "test-support")]
-    let units: Vec<IngestionWork> = IngestionWork::test_e2e_scheduled_units().into();
-    #[cfg(not(feature = "test-support"))]
-    let units = IngestionWork::scheduled_units();
-
-    units
+    active_ingestion_units()
         .into_iter()
         .map(|work| {
             let expression = work.default_cron_expression();
             Ok((work, Schedule::from_str(expression)?))
         })
         .collect()
+}
+
+/// Opens a run for every active work unit that is idle.
+///
+/// Returns how many runs were enqueued. `AlreadyRunning` for an individual unit
+/// is skipped so a partial busy set still starts the idle ones; only a genuine
+/// send/projection failure aborts the pass.
+pub(crate) async fn create_runs_for_active_units(
+    store: &Store<IngestionRun>,
+    projection: &Projection<IngestionRun>,
+) -> Result<usize, IngestionError> {
+    let mut enqueued = 0usize;
+
+    for work in active_ingestion_units() {
+        match create_run(store, projection, work).await {
+            Ok(_) => enqueued += 1,
+            Err(IngestionError::AlreadyRunning) => {}
+            Err(err) => return Err(err),
+        }
+    }
+
+    Ok(enqueued)
 }
 
 /// Opens a new ingestion run and enqueues its job atomically with the
@@ -290,8 +323,8 @@ mod tests {
     use tracing_test::traced_test;
 
     use super::{
-        IngestionError, create_run, latest_status, recover_abandoned_runs,
-        trigger_scheduled_ingestion,
+        IngestionError, active_ingestion_units, create_run, create_runs_for_active_units,
+        latest_status, recover_abandoned_runs, trigger_scheduled_ingestion,
     };
     use crate::ingestion::fixtures::{ingestion_store, instant};
     use crate::ingestion::run::{
@@ -574,6 +607,55 @@ mod tests {
 
         assert!(hourly.is_ok() && funding.is_ok());
         assert_eq!(running_runs(&projection).await.unwrap().len(), 2);
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn create_runs_for_active_units_enqueues_every_idle_unit() {
+        let (store, projection, _pool) = ingestion_store().await;
+
+        let enqueued = create_runs_for_active_units(&store, &projection)
+            .await
+            .unwrap();
+
+        assert_eq!(enqueued, active_ingestion_units().len());
+        assert_eq!(
+            running_runs(&projection).await.unwrap().len(),
+            active_ingestion_units().len()
+        );
+        assert!(logs_contain_at(Level::DEBUG, &["ingestion run created"]));
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn create_runs_for_active_units_skips_busy_units_and_starts_idle_ones() {
+        let (store, projection, _pool) = ingestion_store().await;
+        let units = active_ingestion_units();
+        let first = *units.first().expect("at least one active ingestion unit");
+
+        create_run(&store, &projection, first).await.unwrap();
+
+        let enqueued = create_runs_for_active_units(&store, &projection)
+            .await
+            .unwrap();
+
+        assert_eq!(enqueued, units.len() - 1);
+        assert_eq!(running_runs(&projection).await.unwrap().len(), units.len());
+        assert!(logs_contain_at(Level::DEBUG, &["ingestion run created"]));
+    }
+
+    #[tokio::test]
+    async fn create_runs_for_active_units_reports_zero_when_every_unit_is_busy() {
+        let (store, projection, _pool) = ingestion_store().await;
+        create_runs_for_active_units(&store, &projection)
+            .await
+            .unwrap();
+
+        let enqueued = create_runs_for_active_units(&store, &projection)
+            .await
+            .unwrap();
+
+        assert_eq!(enqueued, 0);
     }
 
     #[traced_test]

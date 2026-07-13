@@ -171,7 +171,8 @@ the next user-facing priority; it runs in parallel to the Dev track above.
 - [x] [systemd moneymentum-ingest timer curls the removed POST /ingest every six hours](https://github.com/dataclique/moneymentum/issues/430)
       ([#434](https://github.com/dataclique/moneymentum/pull/434))
 - [ ] cannot trigger a full on-demand ingestion after POST /ingest was removed
-      -- [#449](https://github.com/dataclique/moneymentum/issues/449)
+      -- [#449](https://github.com/dataclique/moneymentum/issues/449) /
+      [#451](https://github.com/dataclique/moneymentum/pull/451)
 - [ ] candle parquet backups stay a manual Telegram upload with no integrity
       check against prior dumps --
       [#450](https://github.com/dataclique/moneymentum/issues/450)

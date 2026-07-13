@@ -57,6 +57,9 @@ pub(crate) struct LeverageLimitEntry {
     pub(crate) symbol: CcxtSymbol,
     pub(crate) max_leverage: u32,
     pub(crate) asset_index: u32,
+    /// `true` when Hyperliquid forbids cross margin for this asset. Always a
+    /// boolean -- the frontend trading client treats it as required.
+    pub(crate) only_isolated: bool,
 }
 
 /// The `GET /hyperliquid/markets` response: the perp universe in the exact
@@ -82,6 +85,7 @@ pub(crate) fn markets_api_response(
             symbol: finance::hyperliquid_swap_ccxt_symbol(market.symbol.as_str()),
             max_leverage: market.max_leverage,
             asset_index: market.asset_index,
+            only_isolated: market.only_isolated,
         })
         .collect();
     leverage_limits.sort_unstable_by(|left, right| left.symbol.cmp(&right.symbol));
@@ -569,6 +573,7 @@ mod tests {
         assert_eq!(response.leverage_limits[0].symbol.as_str(), "BTC/USDC:USDC");
         assert_eq!(response.leverage_limits[0].max_leverage, 50);
         assert_eq!(response.leverage_limits[0].asset_index, 0);
+        assert!(!response.leverage_limits[0].only_isolated);
         assert_eq!(
             response.leverage_limits[2].symbol.as_str(),
             "KPEPE/USDC:USDC"
@@ -580,13 +585,22 @@ mod tests {
     #[test]
     fn markets_api_response_serializes_with_camel_case_fields() {
         let refreshed_at = Utc.with_ymd_and_hms(2026, 7, 11, 12, 0, 0).unwrap();
-        let response = markets_api_response(&[metadata("BTC", 50, 7)], refreshed_at);
+        let response = markets_api_response(
+            &[MarketMetadata {
+                symbol: Market::new("BANANA".to_string()),
+                max_leverage: 5,
+                asset_index: 7,
+                only_isolated: true,
+            }],
+            refreshed_at,
+        );
 
         let json = serde_json::to_value(&response).unwrap();
-        assert_eq!(json["tickers"][0], "BTC/USDC:USDC");
-        assert_eq!(json["leverageLimits"][0]["symbol"], "BTC/USDC:USDC");
-        assert_eq!(json["leverageLimits"][0]["maxLeverage"], 50);
+        assert_eq!(json["tickers"][0], "BANANA/USDC:USDC");
+        assert_eq!(json["leverageLimits"][0]["symbol"], "BANANA/USDC:USDC");
+        assert_eq!(json["leverageLimits"][0]["maxLeverage"], 5);
         assert_eq!(json["leverageLimits"][0]["assetIndex"], 7);
+        assert_eq!(json["leverageLimits"][0]["onlyIsolated"], true);
         assert_eq!(json["refreshedAt"], "2026-07-11T12:00:00Z");
     }
 

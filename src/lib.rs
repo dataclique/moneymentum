@@ -2071,6 +2071,7 @@ mod tests {
         assert_eq!(body["tickers"], serde_json::json!(["BTC/USDC:USDC"]));
         assert_eq!(body["leverageLimits"][0]["maxLeverage"], 50);
         assert_eq!(body["leverageLimits"][0]["assetIndex"], 0);
+        assert_eq!(body["leverageLimits"][0]["onlyIsolated"], false);
         assert!(
             logs_contain_at(
                 tracing::Level::DEBUG,

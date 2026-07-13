@@ -385,7 +385,8 @@ async fn hyperliquid_markets_serves_the_universe_in_ccxt_format() {
         json!([
             {"name": "ETH", "szDecimals": 4, "maxLeverage": 25},
             {"name": "DELISTED", "szDecimals": 2, "maxLeverage": 3, "isDelisted": true},
-            {"name": "BTC", "szDecimals": 8, "maxLeverage": 50}
+            {"name": "BTC", "szDecimals": 8, "maxLeverage": 50},
+            {"name": "BANANA", "szDecimals": 0, "maxLeverage": 5, "onlyIsolated": true}
         ]),
     )
     .await;
@@ -399,16 +400,32 @@ async fn hyperliquid_markets_serves_the_universe_in_ccxt_format() {
     let body: serde_json::Value = response.json().await.unwrap();
     assert_eq!(
         body["tickers"],
-        json!(["BTC/USDC:USDC", "ETH/USDC:USDC"]),
+        json!(["BANANA/USDC:USDC", "BTC/USDC:USDC", "ETH/USDC:USDC"]),
         "tickers should be sorted ccxt symbols excluding delisted assets: {body}"
     );
     assert_eq!(
         body["leverageLimits"],
         json!([
-            {"symbol": "BTC/USDC:USDC", "maxLeverage": 50, "assetIndex": 2},
-            {"symbol": "ETH/USDC:USDC", "maxLeverage": 25, "assetIndex": 0}
+            {
+                "symbol": "BANANA/USDC:USDC",
+                "maxLeverage": 5,
+                "assetIndex": 3,
+                "onlyIsolated": true
+            },
+            {
+                "symbol": "BTC/USDC:USDC",
+                "maxLeverage": 50,
+                "assetIndex": 2,
+                "onlyIsolated": false
+            },
+            {
+                "symbol": "ETH/USDC:USDC",
+                "maxLeverage": 25,
+                "assetIndex": 0,
+                "onlyIsolated": false
+            }
         ]),
-        "leverage limits should keep positional asset indexes: {body}"
+        "leverage limits should keep positional asset indexes and onlyIsolated: {body}"
     );
     assert!(
         body["refreshedAt"].is_string(),

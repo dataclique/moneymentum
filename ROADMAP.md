@@ -176,6 +176,9 @@ the next user-facing priority; it runs in parallel to the Dev track above.
 - [ ] candle parquet backups stay a manual Telegram upload with no integrity
       check against prior dumps --
       [#450](https://github.com/dataclique/moneymentum/issues/450)
+- [ ] scheduled candle ingestion re-fetches the full Hyperliquid history window
+      on every tick --
+      [#452](https://github.com/dataclique/moneymentum/issues/452)
 - [ ] [Remove the markets_refresh_token deploy bridge from service configs](https://github.com/dataclique/moneymentum/issues/425)
 - [ ] [Deploy the service binary, unit, and config atomically](https://github.com/dataclique/moneymentum/issues/422)
 - [x] [Address #377 review follow-ups](https://github.com/dataclique/moneymentum/issues/392)

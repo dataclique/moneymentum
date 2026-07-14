@@ -6,6 +6,8 @@
 //! schedule-key invariant is enforced by the per-work projection check plus a
 //! partial unique index; an unconditional startup reconciler abandons every
 //! still-running stream before schedulers start, so a crash can never wedge a slot.
+//! Operators trigger the same work units on demand with the `moneymentum-ingest`
+//! CLI (`cargo run --bin moneymentum-ingest -- --config config.toml`).
 //!
 //! Organized by concern:
 //! - [`run_id`]: opaque run identity and wire parsing.
@@ -26,8 +28,10 @@ pub(crate) mod fixtures;
 
 pub(crate) use job::{IngestionJob, IngestionJobContext};
 pub(crate) use orchestration::{
-    default_ingestion_schedules, latest_status, recover_abandoned_runs, trigger_scheduled_ingestion,
+    create_runs_for_active_units, default_ingestion_schedules, latest_status,
+    recover_abandoned_runs, trigger_scheduled_ingestion,
 };
-pub(crate) use run::{IngestionRun, IngestionRunStatus};
+pub(crate) use run::{IngestionRun, IngestionRunStatus, running_runs};
+pub(crate) use run_id::IngestionRunId;
 pub(crate) use services::IngestionServices;
 pub(crate) use work::IngestionWork;

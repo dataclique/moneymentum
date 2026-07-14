@@ -89,6 +89,10 @@ uuid = { version = "1.23.3", features = ["v4", "serde"] }
 [lints]
 workspace = true
 
+[[bin]]
+name = "moneymentum-ingest"
+path = "src/bin/moneymentum_ingest.rs"
+
 [features]
 # Forwards event-sorcery's test-support (TestHarness, FailureInjector, and the
 # 4-argument `work` job handler). The ingestion worker registers a

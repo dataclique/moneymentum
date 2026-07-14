@@ -5,6 +5,7 @@ mod finance;
 mod funding;
 mod hyperliquid;
 mod ingestion;
+mod local_ingest;
 mod market_catalog;
 mod market_enablement;
 mod market_metadata;
@@ -13,6 +14,8 @@ mod readonly_portfolio;
 mod screener;
 mod timeframe;
 mod venue;
+
+pub use local_ingest::run_local_ingest;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -737,7 +740,7 @@ fn classify_enablement_error(error: &SendError<MarketEnablement>, operation: &st
 /// library's shared retry/backoff/circuit-breaker policy: retries are exhausted
 /// before a terminal failure trips the breaker and stops the worker for a human
 /// to inspect.
-fn spawn_ingestion_worker(
+pub(crate) fn spawn_ingestion_worker(
     apalis_pool: apalis_sqlite::SqlitePool,
     context: Arc<IngestionJobContext>,
 ) {
@@ -956,9 +959,11 @@ fn build_router(state: Arc<AppState>) -> Router {
 #[error(
     "in-memory SQLite database_url is unsupported: the event store and the apalis worker open separate pools, and an in-memory URL gives each its own private database; use a file-backed database_url"
 )]
-struct InMemoryDatabaseUnsupported;
+pub(crate) struct InMemoryDatabaseUnsupported;
 
-fn ensure_shared_database(database_url: &str) -> Result<(), InMemoryDatabaseUnsupported> {
+pub(crate) fn ensure_shared_database(
+    database_url: &str,
+) -> Result<(), InMemoryDatabaseUnsupported> {
     let normalized = database_url.to_ascii_lowercase();
     if normalized.contains(":memory:") || normalized.contains("mode=memory") {
         return Err(InMemoryDatabaseUnsupported);
@@ -1053,11 +1058,6 @@ mod tests {
             .build()
             .await
             .unwrap();
-        let (_ingestion_store, _ingestion_projection) =
-            StoreBuilder::<IngestionRun>::new(pool.clone())
-                .build()
-                .await
-                .unwrap();
         let (market_catalog, market_catalog_projection) =
             StoreBuilder::<MarketCatalog>::new(pool.clone())
                 .build()
@@ -2028,6 +2028,7 @@ mod tests {
         assert_eq!(body["tickers"], serde_json::json!(["BTC/USDC:USDC"]));
         assert_eq!(body["leverageLimits"][0]["maxLeverage"], 50);
         assert_eq!(body["leverageLimits"][0]["assetIndex"], 0);
+        assert_eq!(body["leverageLimits"][0]["onlyIsolated"], false);
         assert!(
             logs_contain_at(
                 tracing::Level::DEBUG,

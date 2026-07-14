@@ -27,7 +27,7 @@ pub(crate) enum IngestionRunStatus {
 /// revive a finished run.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct IngestionRun {
-    pub(super) status: IngestionRunStatus,
+    pub(crate) status: IngestionRunStatus,
     pub(super) started_at: DateTime<Utc>,
     pub(super) schedule_key: String,
 }

@@ -175,24 +175,28 @@ async fn wait_for_local_ingest_completion(
 pub async fn run_local_ingest(config: Config) -> Result<(), LocalIngestError> {
     let runtime = bootstrap_local_ingest(&config).await?;
 
-    let started_run_ids =
-        create_runs_for_active_units(&runtime.ingestion_store, &runtime.ingestion_projection)
-            .await
-            .map_err(local_ingest_err)?;
+    let outcome =
+        create_runs_for_active_units(&runtime.ingestion_store, &runtime.ingestion_projection).await;
 
-    if started_run_ids.is_empty() {
-        return Err(LocalIngestError::NothingEnqueued);
+    if outcome.enqueued.is_empty() {
+        return Err(outcome
+            .error
+            .map_or_else(|| LocalIngestError::NothingEnqueued, local_ingest_err));
     }
 
     info!(
-        enqueued = started_run_ids.len(),
+        enqueued = outcome.enqueued.len(),
         "local ingestion runs enqueued; waiting for completion"
     );
 
-    wait_for_local_ingest_completion(&runtime, &started_run_ids).await?;
+    wait_for_local_ingest_completion(&runtime, &outcome.enqueued).await?;
+
+    if let Some(err) = outcome.error {
+        return Err(local_ingest_err(err));
+    }
 
     info!(
-        completed = started_run_ids.len(),
+        completed = outcome.enqueued.len(),
         "local ingestion finished"
     );
     Ok(())

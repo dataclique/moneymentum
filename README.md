@@ -10,9 +10,10 @@ Moneymentum makes those exposures legible and adjustable.
 
 ## Status
 
-- **Frontend rebalancer** (working, used daily): weight-based positions,
-  cross-account leverage, staged trade preview, execution against Hyperliquid
-  perps.
+- **DataClique landing** at `/`: company site with product and ecosystem links.
+- **Frontend rebalancer** at `/portfolio` (working, used daily): weight-based
+  positions, cross-account leverage, staged trade preview, execution against
+  Hyperliquid perps.
 - **Frontend prototype** at `/prototype`: design reference for the target UI.
 - **Backend** (active development): Rust + Axum API, Polars analytics,
   SQLite-backed ingestion runs and job queue. Ingests Hyperliquid

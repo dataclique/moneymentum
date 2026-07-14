@@ -110,14 +110,6 @@ impl TestApp {
             .unwrap()
     }
 
-    async fn post(&self, path: &str) -> reqwest::Response {
-        self.http
-            .post(format!("{}{path}", self.base_url))
-            .send()
-            .await
-            .unwrap()
-    }
-
     async fn shutdown(self) {
         self.server.abort();
         let _ = self.server.await;
@@ -205,42 +197,36 @@ async fn ingestion_status_is_idle_on_fresh_start() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn manual_ingest_enqueues_and_completes() {
+async fn local_ingest_writes_candles() {
     let mock_server = MockServer::start().await;
     mount_successful_ingestion_mocks(&mock_server).await;
 
     let data_dir = TempDir::new().unwrap();
-    let app = spawn_test_app(&mock_server, &data_dir).await;
+    let database_path = data_dir.path().join("moneymentum-test.db");
+    let toml_str = format!(
+        r#"
+        port = 0
+        data_dir = "{}"
+        database_url = "sqlite://{}?mode=rwc"
+        hyperliquid_base_url = "{}"
+        hyperliquid_testnet_base_url = "{}"
+        log_level = "debug"
+        max_concurrent_requests = 3
+        max_retries = 2
+        "#,
+        data_dir.path().display(),
+        database_path.display(),
+        mock_server.uri(),
+        mock_server.uri()
+    );
+    let config: Config = toml::from_str(&toml_str).unwrap();
+    moneymentum::run_local_ingest(config).await.unwrap();
 
-    let ingest_response = app.post("/ingest").await;
-    assert_eq!(ingest_response.status(), StatusCode::ACCEPTED);
-
-    let completed = poll_for_status(&app, "Completed", 60, 200).await;
-    if !completed {
-        let body = ingestion_status_body(&app).await;
-        if body.contains("Failed") {
-            panic!("manual ingestion failed: {body}");
-        }
-        panic!("manual ingestion did not complete within timeout, last status: {body}");
-    }
-
-    let candles_response = app.get("/candles/1h").await;
-    assert_eq!(candles_response.status(), StatusCode::OK);
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn manual_ingest_conflicts_when_every_unit_is_already_running() {
-    let mock_server = MockServer::start().await;
-    mount_successful_ingestion_mocks(&mock_server).await;
-
-    let data_dir = TempDir::new().unwrap();
-    let app = spawn_test_app(&mock_server, &data_dir).await;
-
-    let first = app.post("/ingest").await;
-    assert_eq!(first.status(), StatusCode::ACCEPTED);
-
-    let second = app.post("/ingest").await;
-    assert_eq!(second.status(), StatusCode::CONFLICT);
+    let candles_path = data_dir.path().join("ohlcv_1h.csv");
+    assert!(
+        candles_path.exists(),
+        "local ingest should write the 1h candle csv"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

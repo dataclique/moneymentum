@@ -5,6 +5,7 @@ mod finance;
 mod funding;
 mod hyperliquid;
 mod ingestion;
+mod local_ingest;
 mod market_catalog;
 mod market_enablement;
 mod market_metadata;
@@ -13,6 +14,8 @@ mod readonly_portfolio;
 mod screener;
 mod timeframe;
 mod venue;
+
+pub use local_ingest::{LocalIngestError, run_local_ingest};
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -45,8 +48,7 @@ use crate::hyperliquid::{Hyperliquid, HyperliquidClients, HyperliquidNetwork};
 use finance::Symbol;
 use ingestion::{
     IngestionJob, IngestionJobContext, IngestionRun, IngestionRunStatus, IngestionServices,
-    IngestionWork, create_runs_for_active_units, default_ingestion_schedules,
-    trigger_scheduled_ingestion,
+    IngestionWork, default_ingestion_schedules, trigger_scheduled_ingestion,
 };
 use market_catalog::MarketCatalog;
 use market_enablement::{
@@ -128,8 +130,6 @@ pub(crate) struct AppState {
     hyperliquid_clients: HyperliquidClients,
     portfolio_store: Arc<Store<Portfolio>>,
     portfolio_projection: Arc<Projection<Portfolio>>,
-    ingestion_store: Arc<Store<IngestionRun>>,
-    ingestion_projection: Arc<Projection<IngestionRun>>,
     market_enablement: Arc<Store<MarketEnablement>>,
     market_enablement_projection: Arc<Projection<MarketEnablement>>,
     market_catalog_projection: Arc<Projection<MarketCatalog>>,
@@ -203,24 +203,6 @@ async fn post_screener(
         Err(err) => {
             error!(error = %err, "failed to screen perps");
             Err(StatusCode::INTERNAL_SERVER_ERROR)
-        }
-    }
-}
-
-/// Starts an on-demand ingestion pass for every idle active work unit.
-///
-/// Returns `202 Accepted` when at least one run was enqueued, `409 Conflict`
-/// when every unit already has a running run, and `500` on unexpected failures.
-async fn start_ingestion(State(state): State<Arc<AppState>>) -> StatusCode {
-    match create_runs_for_active_units(&state.ingestion_store, &state.ingestion_projection).await {
-        Ok(0) => StatusCode::CONFLICT,
-        Ok(enqueued) => {
-            debug!(enqueued, "manual ingestion runs enqueued");
-            StatusCode::ACCEPTED
-        }
-        Err(err) => {
-            error!(error = %err, "failed to start ingestion runs");
-            StatusCode::INTERNAL_SERVER_ERROR
         }
     }
 }
@@ -758,7 +740,7 @@ fn classify_enablement_error(error: &SendError<MarketEnablement>, operation: &st
 /// library's shared retry/backoff/circuit-breaker policy: retries are exhausted
 /// before a terminal failure trips the breaker and stops the worker for a human
 /// to inspect.
-fn spawn_ingestion_worker(
+pub(crate) fn spawn_ingestion_worker(
     apalis_pool: apalis_sqlite::SqlitePool,
     context: Arc<IngestionJobContext>,
 ) {
@@ -930,8 +912,6 @@ pub async fn app(config: Config) -> Result<Router, Box<dyn std::error::Error + S
         hyperliquid_clients,
         portfolio_store,
         portfolio_projection,
-        ingestion_store,
-        ingestion_projection,
         market_enablement,
         market_enablement_projection,
         market_catalog_projection,
@@ -947,7 +927,6 @@ fn build_router(state: Arc<AppState>) -> Router {
         .route("/candles/{timeframe}", get(get_candles))
         .route("/factors/{timeframe}", get(get_factors))
         .route("/screener/{timeframe}", post(post_screener))
-        .route("/ingest", post(start_ingestion))
         .route("/ingestion/status", get(get_ingestion_status))
         .route(
             "/portfolio",
@@ -980,9 +959,11 @@ fn build_router(state: Arc<AppState>) -> Router {
 #[error(
     "in-memory SQLite database_url is unsupported: the event store and the apalis worker open separate pools, and an in-memory URL gives each its own private database; use a file-backed database_url"
 )]
-struct InMemoryDatabaseUnsupported;
+pub(crate) struct InMemoryDatabaseUnsupported;
 
-fn ensure_shared_database(database_url: &str) -> Result<(), InMemoryDatabaseUnsupported> {
+pub(crate) fn ensure_shared_database(
+    database_url: &str,
+) -> Result<(), InMemoryDatabaseUnsupported> {
     let normalized = database_url.to_ascii_lowercase();
     if normalized.contains(":memory:") || normalized.contains("mode=memory") {
         return Err(InMemoryDatabaseUnsupported);
@@ -1077,11 +1058,6 @@ mod tests {
             .build()
             .await
             .unwrap();
-        let (ingestion_store, ingestion_projection) =
-            StoreBuilder::<IngestionRun>::new(pool.clone())
-                .build()
-                .await
-                .unwrap();
         let (market_catalog, market_catalog_projection) =
             StoreBuilder::<MarketCatalog>::new(pool.clone())
                 .build()
@@ -1099,8 +1075,6 @@ mod tests {
             hyperliquid_clients,
             portfolio_store,
             portfolio_projection,
-            ingestion_store,
-            ingestion_projection,
             market_enablement,
             market_enablement_projection,
             market_catalog_projection,
@@ -1523,23 +1497,6 @@ mod tests {
             payload.get("version").and_then(serde_json::Value::as_str),
             Some(env!("CARGO_PKG_VERSION"))
         );
-    }
-
-    #[traced_test]
-    #[tokio::test]
-    async fn post_ingest_accepts_then_conflicts_while_runs_are_active() {
-        let data_dir = TempDir::new().unwrap();
-        let router = test_router(data_dir.path()).await;
-
-        let accepted = router.clone().oneshot(post_empty("/ingest")).await.unwrap();
-        assert_eq!(accepted.status(), StatusCode::ACCEPTED);
-        assert!(logs_contain_at(
-            tracing::Level::DEBUG,
-            &["manual ingestion runs enqueued"]
-        ));
-
-        let conflicted = router.oneshot(post_empty("/ingest")).await.unwrap();
-        assert_eq!(conflicted.status(), StatusCode::CONFLICT);
     }
 
     #[tokio::test]

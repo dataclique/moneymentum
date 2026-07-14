@@ -53,7 +53,7 @@ fn validate_production_schedule_definitions() -> Result<(), IngestionScheduleErr
     Ok(())
 }
 
-/// Work units that schedulers and `POST /ingest` enqueue in this build.
+/// Work units that schedulers and the local ingest CLI enqueue in this build.
 ///
 /// Production runs every candle timeframe plus funding. The `test-support`
 /// feature narrows that set so e2e tests avoid the OneWeek lookback overflow
@@ -85,18 +85,18 @@ pub(crate) fn default_ingestion_schedules()
 
 /// Opens a run for every active work unit that is idle.
 ///
-/// Returns how many runs were enqueued. `AlreadyRunning` for an individual unit
-/// is skipped so a partial busy set still starts the idle ones; only a genuine
-/// send/projection failure aborts the pass.
+/// Returns the run ids that were enqueued. `AlreadyRunning` for an individual
+/// unit is skipped so a partial busy set still starts the idle ones; only a
+/// genuine send/projection failure aborts the pass.
 pub(crate) async fn create_runs_for_active_units(
     store: &Store<IngestionRun>,
     projection: &Projection<IngestionRun>,
-) -> Result<usize, IngestionError> {
-    let mut enqueued = 0usize;
+) -> Result<Vec<IngestionRunId>, IngestionError> {
+    let mut enqueued = Vec::new();
 
     for work in active_ingestion_units() {
         match create_run(store, projection, work).await {
-            Ok(_) => enqueued += 1,
+            Ok(run_id) => enqueued.push(run_id),
             Err(IngestionError::AlreadyRunning) => {}
             Err(err) => return Err(err),
         }
@@ -618,7 +618,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(enqueued, active_ingestion_units().len());
+        assert_eq!(enqueued.len(), active_ingestion_units().len());
         assert_eq!(
             running_runs(&projection).await.unwrap().len(),
             active_ingestion_units().len()
@@ -639,7 +639,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(enqueued, units.len() - 1);
+        assert_eq!(enqueued.len(), units.len() - 1);
         assert_eq!(running_runs(&projection).await.unwrap().len(), units.len());
         assert!(logs_contain_at(Level::DEBUG, &["ingestion run created"]));
     }
@@ -655,7 +655,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(enqueued, 0);
+        assert!(enqueued.is_empty());
     }
 
     #[traced_test]

@@ -28,13 +28,32 @@ use crate::{ensure_shared_database, spawn_ingestion_worker};
 
 /// Why a local on-demand ingestion pass fails.
 #[derive(Debug, Error)]
-pub enum LocalIngestError {
+pub(crate) enum LocalIngestError {
     #[error("no idle ingestion units available; every unit already has a running run")]
     NothingEnqueued,
-    #[error("ingestion run {run_id} finished with status {status}, expected Completed")]
-    RunNotCompleted { run_id: String, status: String },
+    #[error("ingestion run {run_id} finished with status {status:?}, expected Completed")]
+    RunNotCompleted {
+        run_id: IngestionRunId,
+        status: Option<IngestionRunStatus>,
+    },
     #[error(transparent)]
     Other(#[from] Box<dyn std::error::Error + Send + Sync>),
+}
+
+/// Runs a full on-demand ingestion pass for every idle active work unit and
+/// waits until those runs finish.
+///
+/// Boots stores and an ingestion worker only -- no HTTP server, no cron. For the
+/// `moneymentum-ingest` CLI when the main backend is not running.
+///
+/// # Errors
+///
+/// Returns an error when bootstrap fails, every unit is already busy, or a
+/// started run does not complete successfully.
+pub async fn run_local_ingest(
+    config: Config,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    run_local_ingest_inner(config).await.map_err(Into::into)
 }
 
 fn local_ingest_err(
@@ -153,8 +172,8 @@ async fn wait_for_local_ingest_completion(
         let status = run.as_ref().map(|loaded| loaded.status);
         if status != Some(IngestionRunStatus::Completed) {
             return Err(LocalIngestError::RunNotCompleted {
-                run_id: run_id.to_string(),
-                status: format!("{status:?}"),
+                run_id: run_id.clone(),
+                status,
             });
         }
     }
@@ -162,17 +181,7 @@ async fn wait_for_local_ingest_completion(
     Ok(())
 }
 
-/// Runs a full on-demand ingestion pass for every idle active work unit and
-/// waits until those runs finish.
-///
-/// Boots stores and an ingestion worker only -- no HTTP server, no cron. For the
-/// `moneymentum-ingest` CLI when the main backend is not running.
-///
-/// # Errors
-///
-/// Returns [`LocalIngestError`] when bootstrap fails, every unit is already
-/// busy, or a started run does not complete successfully.
-pub async fn run_local_ingest(config: Config) -> Result<(), LocalIngestError> {
+async fn run_local_ingest_inner(config: Config) -> Result<(), LocalIngestError> {
     let runtime = bootstrap_local_ingest(&config).await?;
 
     let outcome =

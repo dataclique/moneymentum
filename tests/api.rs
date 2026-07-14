@@ -206,8 +206,8 @@ async fn local_ingest_writes_candles() {
     let toml_str = format!(
         r#"
         port = 0
-        data_dir = "{}"
-        database_url = "sqlite://{}?mode=rwc"
+        data_dir = '{}'
+        database_url = 'sqlite://{}?mode=rwc'
         hyperliquid_base_url = "{}"
         hyperliquid_testnet_base_url = "{}"
         log_level = "debug"

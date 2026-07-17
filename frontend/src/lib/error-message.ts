@@ -107,8 +107,13 @@ const messageForTag = (error: TaggedError): string | null => {
       const cause = "cause" in error ? error.cause : undefined
       return messageFromExchangeCause(cause) ?? EXCHANGE_REJECTED_MESSAGE
     }
-    case "WalletConnectError":
-      return "Failed to save wallet credentials. Please try again."
+    case "WalletConnectError": {
+      const cause = "cause" in error ? error.cause : undefined
+      if (hasTag(cause) && cause._tag === "RevokeAgentFailed") {
+        return messageForTag(cause)
+      }
+      return "Failed to connect Hyperliquid agent. Please try again."
+    }
     case "WalletUnlockError":
       return "Failed to unlock wallet. Please try again."
     case "WalletIncorrectPin":
@@ -117,6 +122,22 @@ const messageForTag = (error: TaggedError): string | null => {
       return "Failed to unlock wallet. Please try again."
     case "WalletSessionMissing":
       return "No saved wallet session found."
+    case "WalletAddressMissing":
+      return "No wallet address to copy."
+    case "ClipboardWriteFailed":
+      return "Failed to copy address. Check clipboard permissions."
+    case "WalletDisconnectFailed":
+      return "Failed to disconnect wallet. Please try again."
+    case "ReownWalletUnavailable":
+      return "Connect a wallet with Reown first."
+    case "ReownWalletRejected":
+      return "Wallet request was rejected."
+    case "ApproveAgentFailed":
+      return "Hyperliquid agent approval failed. Please try again."
+    case "RevokeAgentFailed":
+      return "Failed to revoke Hyperliquid agent. Please try again."
+    case "ReownModalOpenFailed":
+      return "Could not open wallet connect."
     default:
       return null
   }

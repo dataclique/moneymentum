@@ -2,11 +2,18 @@ import { render, screen, within } from "@solidjs/testing-library"
 import userEvent from "@testing-library/user-event"
 import { QueryClient, QueryClientProvider } from "@tanstack/solid-query"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import type { ParentProps } from "solid-js"
+import { createEffect, createSignal, type ParentProps } from "solid-js"
 
 import type { FactorScore } from "../../hooks/useFactorScores"
-import { PORTFOLIO_METRIC_COLUMNS_STORAGE_KEY } from "./portfolioMetricVisibility"
-import { PositionsPanel } from "./PositionsPanel"
+import { AllSymbolsPanel } from "../AllSymbolsPanel"
+import { PortfolioSettingsMenu } from "../PortfolioSettingsMenu"
+import {
+  PORTFOLIO_METRIC_COLUMNS_STORAGE_KEY,
+  readPortfolioMetricVisibility,
+  writePortfolioMetricVisibility,
+  type PortfolioMetricColumnId,
+  type PortfolioMetricVisibility,
+} from "./portfolioMetricVisibility"
 
 const useFactorScoresMock = vi.hoisted(() => vi.fn())
 
@@ -79,54 +86,49 @@ const createWrapper = () => {
   )
 }
 
-const renderPositionsPanel = () => {
+const AllSymbolsWithSettings = () => {
+  const [metricVisibility, setMetricVisibility] =
+    createSignal<PortfolioMetricVisibility>(readPortfolioMetricVisibility())
   const screenerSymbols = () => ["BTC/USDC:USDC", "ETH/USDC:USDC"]
 
-  return render(
-    () => (
-      <PositionsPanel
-        hasTotalWeightExceeded={false}
-        currentPortfolio={{}}
-        targetPortfolio={{}}
-        deletedArchive={{}}
-        errorsBySymbol={{}}
-        isLoading={false}
-        fundingIsLoading={false}
-        leverageLimitsIsLoading={false}
-        leverageLimitsMap={{}}
+  const setMetricColumnVisible = (
+    columnId: PortfolioMetricColumnId,
+    visible: boolean,
+  ) => {
+    setMetricVisibility(previous => ({
+      ...previous,
+      [columnId]: visible,
+    }))
+  }
+
+  // createEffect: mirror Portfolio page persistence for this harness
+  createEffect(() => {
+    writePortfolioMetricVisibility(metricVisibility())
+  })
+
+  return (
+    <>
+      <PortfolioSettingsMenu
         isPrecise={false}
         onPreciseChange={vi.fn()}
         isManualWeightEntry={false}
         onManualWeightEntryChange={vi.fn()}
+        metricVisibility={metricVisibility()}
+        onMetricVisibilityChange={setMetricColumnVisible}
+      />
+      <AllSymbolsPanel
+        screenerSymbols={screenerSymbols}
+        targetPortfolio={{}}
+        deletedArchive={{}}
+        fundingIsLoading={false}
+        fundingRatesByBaseSymbol={{ BTC: 0.00001, ETH: 0.00001 }}
+        metricVisibility={metricVisibility()}
         onRemove={vi.fn()}
         onUndoRemove={vi.fn()}
-        onSideChange={vi.fn()}
-        onLeverageChange={vi.fn()}
-        onNotionalChange={vi.fn()}
-        onWeightChange={vi.fn()}
-        fundingRatesByBaseSymbol={{ BTC: 0.00001, ETH: 0.00001 }}
-        targetTotalNotional={0}
-        symbolsBelowMinimum={[]}
-        symbolsDeltaBelowMinimum={[]}
-        targetAllocationPercent={0}
-        readonlyBtcRows={[]}
-        isReadonlyBtcLoading={false}
-        readonlyBtcError={null}
-        readonlyBtcValidationError={null}
-        onAddReadonlyBtcAddress={vi.fn(() => false)}
-        onRemoveReadonlyBtcAddress={vi.fn()}
-        onReadonlyBtcIncludeInBetaChange={vi.fn()}
-        screenerSymbols={screenerSymbols}
         onAddSymbol={vi.fn()}
       />
-    ),
-    { wrapper: createWrapper() },
+    </>
   )
-}
-
-const openAllSymbolsView = async (user: ReturnType<typeof userEvent.setup>) => {
-  await user.click(screen.getByRole("button", { name: "Show all symbols" }))
-  expect(screen.getByText("ALL SYMBOLS")).toBeInTheDocument()
 }
 
 const toggleMetricVisibility = async (
@@ -158,7 +160,7 @@ const allSymbolsTable = () => {
   }
 }
 
-describe("PositionsPanel all symbols metric visibility", () => {
+describe("AllSymbolsPanel metric visibility", () => {
   beforeEach(() => {
     localStorage.clear()
     useFactorScoresMock.mockReturnValue({
@@ -176,8 +178,7 @@ describe("PositionsPanel all symbols metric visibility", () => {
   it("keeps all symbols headers and row cells aligned when a metric is toggled", async () => {
     const user = userEvent.setup({ pointerEventsCheck: 2 })
 
-    renderPositionsPanel()
-    await openAllSymbolsView(user)
+    render(() => <AllSymbolsWithSettings />, { wrapper: createWrapper() })
 
     const { headerCells } = allSymbolsTable()
 

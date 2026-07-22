@@ -58,7 +58,8 @@ vi.mock("@/services/hyperliquid-client", async importOriginal => {
 })
 
 vi.mock("@/reown/evmAppKit", () => ({
-  getOrCreateEvmAppKit: () => null,
+  ensureEvmAppKit: async () => null,
+  prefetchEvmAppKit: () => undefined,
   readConnectedEip1193Provider: () => null,
 }))
 

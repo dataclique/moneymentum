@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { useWallet } from "@/hooks/useWallet"
 import type { StagedTradeItem } from "@/pages/Portfolio/hooks/usePortfolioState"
+import { prefetchEvmAppKit } from "@/reown/evmAppKit"
 import {
   normalizeWalletPinInput,
   WALLET_PIN_LENGTH,
@@ -303,6 +304,11 @@ export const StagedChangesPanel = (props: StagedChangesPanelProps) => {
             <Button
               size="sm"
               class="w-full h-8 text-[11px] gap-1"
+              onPointerEnter={() => {
+                if (connectionState() === "agentMissing") {
+                  prefetchEvmAppKit()
+                }
+              }}
               onClick={() => {
                 if (isPrimaryDisabled() || !props.onPrimaryAction) {
                   return

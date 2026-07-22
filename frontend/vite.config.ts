@@ -14,6 +14,59 @@ const dockviewSolidPart = path.resolve(
   "./src/lib/dockviewSolidPart.tsx",
 )
 
+/**
+ * `multicoin-address-validator` bootstraps Buffer via bare `global`, which is
+ * undefined in the browser. We cannot enable vite-plugin-node-polyfills'
+ * `globals.global` (it clashes with AppKit/lit-html's `var global =
+ * globalThis`), so rewrite only this package to use `globalThis`.
+ *
+ * The package is CJS (`module.exports`). It must stay in `optimizeDeps.include`
+ * so Vite/esbuild wraps a proper ESM default export for `import WAValidator
+ * from "..."`. Excluding it serves raw CJS and breaks that import.
+ */
+const rewriteBareGlobal = (code: string): string =>
+  code.replace(/(?<![.\w$])global(?![\w$])/g, "globalThis")
+
+const multicoinGlobalShimPlugin = {
+  name: "multicoin-global-shim",
+  transform(code: string, id: string) {
+    if (!id.includes(`${path.sep}multicoin-address-validator${path.sep}`)) {
+      return null
+    }
+
+    return {
+      code: rewriteBareGlobal(code),
+      map: null,
+    }
+  },
+}
+
+/** Same rewrite for the dep optimizer prebundle (dev). */
+const multicoinOptimizeDepsPlugin = {
+  name: "multicoin-global-optimize",
+  setup(build: {
+    onLoad: (
+      options: { filter: RegExp },
+      callback: (args: { path: string }) => Promise<{
+        contents: string
+        loader: "js"
+      }>,
+    ) => void
+  }) {
+    build.onLoad(
+      { filter: /node_modules[/\\]multicoin-address-validator[/\\].*\.js$/ },
+      async args => {
+        const { readFile } = await import("node:fs/promises")
+        const source = await readFile(args.path, "utf8")
+        return {
+          contents: rewriteBareGlobal(source),
+          loader: "js" as const,
+        }
+      },
+    )
+  },
+}
+
 // These WalletConnect utils ship ESM under dist/esm but only declare CJS
 // "main" in package.json. Vite then serves CJS as native ESM and named
 // imports like `toMiliseconds` fail at runtime.
@@ -54,6 +107,7 @@ export default defineConfig({
   base: "/",
   plugins: [
     dockviewSolidContextPlugin,
+    multicoinGlobalShimPlugin,
     solid(),
     tailwindcss(),
     // Buffer/process for ccxt. Keep `global` off so AppKit + lit-html can be
@@ -81,12 +135,16 @@ export default defineConfig({
       "viem/accounts",
       "viem/chains",
       "@nktkas/hyperliquid",
+      "multicoin-address-validator",
     ],
     exclude: [
       "@arminmajerie/dockview-solid",
       "@arminmajerie/dockview",
       "@arminmajerie/dockview-core",
     ],
+    esbuildOptions: {
+      plugins: [multicoinOptimizeDepsPlugin],
+    },
   },
   resolve: {
     alias: [

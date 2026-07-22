@@ -42,11 +42,12 @@ vi.mock("@/services/hyperliquid-client", () => ({
 }))
 
 vi.mock("@/reown/evmAppKit", () => ({
-  getOrCreateEvmAppKit: () => ({
+  ensureEvmAppKit: async () => ({
     disconnect: vi.fn(() => Promise.resolve()),
     getAddress: () => null,
     subscribeAccount: () => () => {},
   }),
+  prefetchEvmAppKit: () => undefined,
   readConnectedEip1193Provider: () => ({ request: vi.fn() }),
   readEvmAddressFromAccountState: () => null,
   readEvmWalletConnectedFromAccountState: () => false,

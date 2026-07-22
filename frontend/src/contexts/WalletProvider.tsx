@@ -35,10 +35,8 @@ import {
   revokeHyperliquidAgent,
 } from "@/services/hyperliquidAgent"
 import {
-  getOrCreateEvmAppKit,
+  ensureEvmAppKit,
   readConnectedEip1193Provider,
-  readEvmAddressFromAccountState,
-  readEvmWalletConnectedFromAccountState,
 } from "@/reown/evmAppKit"
 
 const credentialsFromSession = (
@@ -166,7 +164,7 @@ export const WalletProvider = (props: ParentProps) => {
     )
 
   /**
-   * PIN -> generate agent -> encrypt in memory -> approveAgent via Reown.
+   * Generate agent + encrypt with PIN, then Reown-signed approveAgent.
    * Persists the encrypted session only after approval succeeds.
    * On approve failure any leftover encrypted session is cleared.
    */
@@ -186,7 +184,10 @@ export const WalletProvider = (props: ParentProps) => {
         )
       }
 
-      const modal = getOrCreateEvmAppKit()
+      const modal = yield* Effect.tryPromise({
+        try: () => ensureEvmAppKit(),
+        catch: cause => new WalletConnectError({ cause }),
+      })
       const provider = modal ? readConnectedEip1193Provider(modal) : null
       if (!provider) {
         return yield* Effect.fail(
@@ -245,7 +246,10 @@ export const WalletProvider = (props: ParentProps) => {
         )
       }
 
-      const modal = getOrCreateEvmAppKit()
+      const modal = yield* Effect.tryPromise({
+        try: () => ensureEvmAppKit(),
+        catch: cause => new WalletConnectError({ cause }),
+      })
       const provider = modal ? readConnectedEip1193Provider(modal) : null
       if (!provider) {
         return yield* Effect.fail(
@@ -300,7 +304,10 @@ export const WalletProvider = (props: ParentProps) => {
       clearEncryptedSession()
       syncStoredSessionState()
 
-      const modal = getOrCreateEvmAppKit()
+      const modal = yield* Effect.tryPromise({
+        try: () => ensureEvmAppKit(),
+        catch: cause => new WalletDisconnectFailed({ cause }),
+      })
       if (!modal) {
         return
       }
@@ -333,33 +340,7 @@ export const WalletProvider = (props: ParentProps) => {
   onMount(() => {
     window.addEventListener("storage", handleStorageChange)
 
-    const modal = getOrCreateEvmAppKit()
-    let unsubscribeAccount: (() => void) | undefined
-
-    if (modal) {
-      const existingAddress = modal.getAddress("eip155")
-      if (existingAddress) {
-        setMainAddress(existingAddress)
-      }
-
-      unsubscribeAccount = modal.subscribeAccount(accountState => {
-        const nextAddress = readEvmAddressFromAccountState(accountState)
-        const connected =
-          readEvmWalletConnectedFromAccountState(accountState) ||
-          nextAddress !== null
-
-        if (connected && nextAddress) {
-          setMainAddress(nextAddress)
-          return
-        }
-
-        const stored = getStoredEncryptedSession()
-        setMainAddress(stored?.accountAddress ?? null)
-      }, "eip155")
-    }
-
     onCleanup(() => {
-      unsubscribeAccount?.()
       window.removeEventListener("storage", handleStorageChange)
     })
   })

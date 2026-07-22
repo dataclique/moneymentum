@@ -17,6 +17,7 @@ import { useWalletSettings, useSwitchNetwork } from "@/hooks/useTrading"
 import { useNetwork } from "@/hooks/useNetwork"
 import { useWallet } from "@/hooks/useWallet"
 import { getErrorMessage } from "@/lib/error-message"
+import { prefetchEvmAppKit } from "@/reown/evmAppKit"
 import { copyWalletAddressToClipboard } from "@/services/wallet"
 import { toast } from "solid-sonner"
 
@@ -54,6 +55,7 @@ export const WalletHeader = (props: WalletHeaderProps) => {
   } = useWallet()
   const [menuOpen, setMenuOpen] = createSignal(false)
   const [isRevokingAgent, setIsRevokingAgent] = createSignal(false)
+  const [isDisconnecting, setIsDisconnecting] = createSignal(false)
   const [showCopied, setShowCopied] = createSignal(false)
   let copiedTimeoutId: ReturnType<typeof setTimeout> | undefined
 
@@ -77,7 +79,6 @@ export const WalletHeader = (props: WalletHeaderProps) => {
 
     try {
       await switchNetworkMutation.mutateAsync(checked ? "testnet" : "mainnet")
-      props.handleNetworkSwitch?.()
     } catch (error) {
       console.error("Failed to toggle testnet/mainnet:", error)
       toast.error("Failed to toggle network. Please try again.")
@@ -87,7 +88,12 @@ export const WalletHeader = (props: WalletHeaderProps) => {
   }
 
   const onDisconnectClick = () => {
+    if (isDisconnecting() || isRevokingAgent()) {
+      return
+    }
+
     props.handleDisconnect?.()
+    setIsDisconnecting(true)
     void Effect.runPromise(
       disconnect().pipe(
         Effect.tap(() =>
@@ -101,6 +107,11 @@ export const WalletHeader = (props: WalletHeaderProps) => {
             toast.error(getErrorMessage(error))
           }),
         ),
+        Effect.ensuring(
+          Effect.sync(() => {
+            setIsDisconnecting(false)
+          }),
+        ),
       ),
     )
   }
@@ -108,6 +119,7 @@ export const WalletHeader = (props: WalletHeaderProps) => {
   const onRevokeAgentClick = () => {
     if (
       isRevokingAgent() ||
+      isDisconnecting() ||
       switchNetworkMutation.isPending ||
       isNetworkSwitching()
     ) {
@@ -145,6 +157,7 @@ export const WalletHeader = (props: WalletHeaderProps) => {
     isConnected() &&
     (hasStoredSession() || canTrade()) &&
     !isRevokingAgent() &&
+    !isDisconnecting() &&
     !switchNetworkMutation.isPending &&
     !isNetworkSwitching()
 
@@ -185,6 +198,9 @@ export const WalletHeader = (props: WalletHeaderProps) => {
           <DropdownMenuTrigger
             as="button"
             class={`${walletStatusClass} cursor-pointer transition-colors hover:border-foreground/50 hover:text-foreground`}
+            onPointerEnter={() => {
+              prefetchEvmAppKit()
+            }}
           >
             {currentAccountAddress()
               ? formatPublicKey(currentAccountAddress())
@@ -243,11 +259,15 @@ export const WalletHeader = (props: WalletHeaderProps) => {
                     <Button
                       type="button"
                       variant="outline"
-                      class="w-full"
+                      class="w-full transition-opacity"
+                      classList={{ "opacity-50": isRevokingAgent() }}
                       disabled={!canRevokeAgent()}
+                      onPointerEnter={() => {
+                        prefetchEvmAppKit()
+                      }}
                       onClick={onRevokeAgentClick}
                     >
-                      {isRevokingAgent() ? "Revoking..." : "Revoke Agent"}
+                      {isRevokingAgent() ? "Loading wallet..." : "Revoke Agent"}
                     </Button>
                   </TooltipTrigger>
                   <TooltipContent class="max-w-[240px] text-xs leading-snug">
@@ -259,9 +279,15 @@ export const WalletHeader = (props: WalletHeaderProps) => {
               <Button
                 type="button"
                 variant="outline"
+                class="transition-opacity"
+                classList={{ "opacity-50": isDisconnecting() }}
+                disabled={isDisconnecting() || isRevokingAgent()}
+                onPointerEnter={() => {
+                  prefetchEvmAppKit()
+                }}
                 onClick={onDisconnectClick}
               >
-                Disconnect
+                {isDisconnecting() ? "Loading wallet..." : "Disconnect"}
               </Button>
             </div>
           </DropdownMenuContent>

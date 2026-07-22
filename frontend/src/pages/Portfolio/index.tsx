@@ -10,6 +10,7 @@ import {
 } from "solid-js"
 import { ModeToggle } from "@/components/ui/mode-toggle"
 import { WalletHeader } from "@/components/wallet-header"
+import { WalletProvider } from "@/contexts/WalletProvider"
 import { cn } from "@/lib/cn"
 import { useDockviewPanelProviders } from "@/lib/dockviewPanelProviders"
 import { bindDockviewSolidOwner } from "@/lib/dockviewSolidOwner"
@@ -703,4 +704,10 @@ const PortfolioPage = () => {
   )
 }
 
-export default PortfolioPage
+const PortfolioRoute = () => (
+  <WalletProvider>
+    <PortfolioPage />
+  </WalletProvider>
+)
+
+export default PortfolioRoute

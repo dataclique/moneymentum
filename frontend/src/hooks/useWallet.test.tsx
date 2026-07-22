@@ -17,18 +17,20 @@ vi.mock("@/services/hyperliquid-client", () => ({
   },
 }))
 
-const mockGetOrCreateEvmAppKit = vi.fn(
-  () => null as null | { getAddress: () => null },
+const mockEnsureEvmAppKit = vi.fn(
+  async () => null as null | { getAddress: () => null },
 )
 const mockReadConnectedEip1193Provider = vi.fn(
   (): { request: ReturnType<typeof vi.fn> } | null => null,
 )
 
 vi.mock("@/reown/evmAppKit", () => ({
-  getOrCreateEvmAppKit: () => mockGetOrCreateEvmAppKit(),
+  ensureEvmAppKit: () => mockEnsureEvmAppKit(),
+  prefetchEvmAppKit: () => undefined,
   readConnectedEip1193Provider: () => mockReadConnectedEip1193Provider(),
   readEvmAddressFromAccountState: () => null,
   readEvmWalletConnectedFromAccountState: () => false,
+  readReownProjectId: () => "test-project-id",
 }))
 
 const mockApproveHyperliquidAgent = vi.fn(() => Effect.void)
@@ -92,7 +94,7 @@ describe("useWallet", () => {
   beforeEach(() => {
     ensureLocalStorage()
     localStorage.clear()
-    mockGetOrCreateEvmAppKit.mockReturnValue(null)
+    mockEnsureEvmAppKit.mockResolvedValue(null)
     mockReadConnectedEip1193Provider.mockReturnValue(null)
     mockApproveHyperliquidAgent.mockReturnValue(Effect.void)
   })
@@ -312,7 +314,7 @@ describe("useWallet", () => {
 
   it("does not persist an encrypted session when agent approval fails", async () => {
     const { result } = renderHook(() => useWallet(), { wrapper })
-    mockGetOrCreateEvmAppKit.mockReturnValue({ getAddress: () => null })
+    mockEnsureEvmAppKit.mockResolvedValue({ getAddress: () => null })
     mockReadConnectedEip1193Provider.mockReturnValue({ request: vi.fn() })
     mockApproveHyperliquidAgent.mockReturnValue(
       Effect.fail(new ApproveAgentFailed({ cause: new Error("rejected") })),
@@ -336,7 +338,7 @@ describe("useWallet", () => {
 
   it("persists the encrypted session only after agent approval succeeds", async () => {
     const { result } = renderHook(() => useWallet(), { wrapper })
-    mockGetOrCreateEvmAppKit.mockReturnValue({ getAddress: () => null })
+    mockEnsureEvmAppKit.mockResolvedValue({ getAddress: () => null })
     mockReadConnectedEip1193Provider.mockReturnValue({ request: vi.fn() })
     mockApproveHyperliquidAgent.mockReturnValue(Effect.void)
 

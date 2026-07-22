@@ -45,7 +45,8 @@ vi.mock("@/hooks/useWallet", () => ({
 }))
 
 vi.mock("@/reown/evmAppKit", () => ({
-  getOrCreateEvmAppKit: () => null,
+  ensureEvmAppKit: async () => null,
+  prefetchEvmAppKit: () => undefined,
   readEvmAddressFromAccountState: () => null,
   readEvmWalletConnectedFromAccountState: () => false,
   readReownProjectId: () => null,

@@ -1,21 +1,35 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import * as Effect from "effect/Effect"
-import { renderHook } from "@solidjs/testing-library"
+import { renderHook, waitFor } from "@solidjs/testing-library"
 import { useWallet } from "./useWallet"
 import { WalletProvider } from "@/contexts/WalletProvider"
 import type { ParentProps } from "solid-js"
 import { getErrorMessage } from "@/lib/error-message"
 import { ApproveAgentFailed } from "@/services/hyperliquidAgent"
 
-vi.mock("@/services/hyperliquid-client", () => ({
-  HyperliquidClient: class MockHyperliquidClient {
+vi.mock("@/services/hyperliquid-client", async importOriginal => {
+  const actual =
+    await importOriginal<typeof import("@/services/hyperliquid-client")>()
+  class MockHyperliquidClient {
     getBalance = vi.fn()
     getCurrentPositions = vi.fn()
     rebalancePositions = vi.fn()
     getNetworkMode = vi.fn()
     getWalletAddress = vi.fn()
-  },
-}))
+  }
+  return {
+    ...actual,
+    HyperliquidClient: MockHyperliquidClient,
+  }
+})
+
+vi.mock("@/services/hyperliquidClientLoader", async () => {
+  const clientModule = await import("@/services/hyperliquid-client")
+  return {
+    prefetchHyperliquidClientModule: () => undefined,
+    ensureHyperliquidClientModule: async () => clientModule,
+  }
+})
 
 const mockEnsureEvmAppKit = vi.fn(
   async () => null as null | { getAddress: () => null },
@@ -263,14 +277,16 @@ describe("useWallet", () => {
     expect(localStorage.getItem("hyperliquid-network")).toBe("mainnet")
   })
 
-  it("setMainAddress marks the wallet connected for read-only loads", () => {
+  it("setMainAddress marks the wallet connected for read-only loads", async () => {
     const { result } = renderHook(() => useWallet(), { wrapper })
 
     result.setMainAddress("0xMainFromReown")
     expect(result.mainAddress()).toBe("0xMainFromReown")
     expect(result.isConnected()).toBe(true)
     expect(result.canTrade()).toBe(false)
-    expect(result.client()).not.toBeNull()
+    await waitFor(() => {
+      expect(result.client()).not.toBeNull()
+    })
   })
 
   it("clears unlocked account A credentials when switching main address to account B", async () => {
@@ -293,7 +309,9 @@ describe("useWallet", () => {
     expect(result.canTrade()).toBe(false)
     expect(result.hasStoredSession()).toBe(false)
     expect(localStorage.getItem("hyperliquid-wallet")).toBeNull()
-    expect(result.client()).not.toBeNull()
+    await waitFor(() => {
+      expect(result.client()).not.toBeNull()
+    })
   })
 
   it("keeps the unlocked session when setMainAddress receives the same account", async () => {

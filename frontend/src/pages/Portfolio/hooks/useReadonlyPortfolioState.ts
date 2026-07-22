@@ -4,24 +4,37 @@ import { useQuery } from "@tanstack/solid-query"
 import type { NetworkMode } from "@/contexts/wallet-context"
 import type { OrderSide } from "@/hooks/useTrading"
 import { useWallet } from "@/hooks/useWallet"
-import { validateBitcoinAddress } from "./bitcoinAddress"
+import {
+  validateBitcoinAddress,
+  canonicalizeStoredBitcoinAddress,
+} from "./bitcoinAddress"
 
 const readonlyBtcStorageKey = (networkMode: NetworkMode): string =>
   `portfolio-readonly-btc-addresses:${networkMode}`
 
-const canonicalizeValidBitcoinAddress = (
+const canonicalizeStoredEntryAddress = (
   address: string,
   networkMode: NetworkMode,
 ): string | null => {
   const trimmedAddress = address.trim()
   if (trimmedAddress.length === 0) return null
 
-  const validation = validateBitcoinAddress(trimmedAddress, networkMode)
-  if (!validation.ok) return null
+  const lowercased = trimmedAddress.toLowerCase()
+  const looksLikeMainnet =
+    lowercased.startsWith("bc1") ||
+    trimmedAddress.startsWith("1") ||
+    trimmedAddress.startsWith("3")
+  const looksLikeTestnet =
+    lowercased.startsWith("tb1") || /^[mn2]/.test(trimmedAddress)
 
-  return validation.kind === "bech32"
-    ? trimmedAddress.toLowerCase()
-    : trimmedAddress
+  if (networkMode === "mainnet" && !looksLikeMainnet) {
+    return null
+  }
+  if (networkMode === "testnet" && !looksLikeTestnet) {
+    return null
+  }
+
+  return canonicalizeStoredBitcoinAddress(trimmedAddress)
 }
 
 interface ReadonlyBtcEntry {
@@ -94,7 +107,7 @@ const readEntriesFromStorage = (
         return typeof address === "string" && typeof includeInBeta === "boolean"
       })
       .flatMap(entry => {
-        const canonicalAddress = canonicalizeValidBitcoinAddress(
+        const canonicalAddress = canonicalizeStoredEntryAddress(
           entry.address,
           networkMode,
         )
@@ -215,13 +228,16 @@ export const useReadonlyPortfolioState = () => {
     }
   })
 
-  const addAddress = (rawAddress: string) => {
+  const addAddress = async (rawAddress: string): Promise<boolean> => {
     const normalizedAddress = rawAddress.trim()
     if (!normalizedAddress) {
       setValidationError(null)
       return false
     }
-    const validation = validateBitcoinAddress(normalizedAddress, networkMode())
+    const validation = await validateBitcoinAddress(
+      normalizedAddress,
+      networkMode(),
+    )
     if (!validation.ok) {
       console.warn(validation.error.message, {
         error: validation.error,

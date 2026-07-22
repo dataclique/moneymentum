@@ -31,15 +31,29 @@ vi.mock("solid-sonner", () => ({
   },
 }))
 
-vi.mock("@/services/hyperliquid-client", () => ({
-  HyperliquidClient: class MockHyperliquidClient {
+vi.mock("@/services/hyperliquid-client", async importOriginal => {
+  const actual =
+    await importOriginal<typeof import("@/services/hyperliquid-client")>()
+  class MockHyperliquidClient {
     getBalance = vi.fn()
     getCurrentPositions = vi.fn()
     rebalancePositions = vi.fn()
     getNetworkMode = vi.fn()
     getWalletAddress = vi.fn()
-  },
-}))
+  }
+  return {
+    ...actual,
+    HyperliquidClient: MockHyperliquidClient,
+  }
+})
+
+vi.mock("@/services/hyperliquidClientLoader", async () => {
+  const clientModule = await import("@/services/hyperliquid-client")
+  return {
+    prefetchHyperliquidClientModule: () => undefined,
+    ensureHyperliquidClientModule: async () => clientModule,
+  }
+})
 
 vi.mock("@/reown/evmAppKit", () => ({
   ensureEvmAppKit: async () => ({

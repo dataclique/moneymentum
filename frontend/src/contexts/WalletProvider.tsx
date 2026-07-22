@@ -24,16 +24,15 @@ import {
   WalletSessionMissing,
   type WalletUnlockFailure,
 } from "@/services/wallet"
-import { HyperliquidClient } from "@/services/hyperliquid-client"
+import type { HyperliquidClient } from "@/services/hyperliquid-client"
+import {
+  ensureHyperliquidClientModule,
+  prefetchHyperliquidClientModule,
+} from "@/services/hyperliquidClientLoader"
 import {
   decryptWalletPrivateKey,
   encryptWalletPrivateKey,
 } from "@/services/walletCredentialCrypto"
-import {
-  approveHyperliquidAgent,
-  generateHyperliquidAgent,
-  revokeHyperliquidAgent,
-} from "@/services/hyperliquidAgent"
 import {
   ensureEvmAppKit,
   readConnectedEip1193Provider,
@@ -85,6 +84,9 @@ const sameWalletAddress = (
   return left.toLowerCase() === right.toLowerCase()
 }
 
+type HyperliquidClientConstructor =
+  typeof import("@/services/hyperliquid-client").HyperliquidClient
+
 export const WalletProvider = (props: ParentProps) => {
   const storedSession = getStoredEncryptedSession()
   const [mainAddress, setMainAddressState] = createSignal<string | null>(
@@ -99,6 +101,8 @@ export const WalletProvider = (props: ParentProps) => {
   const [hasStoredSession, setHasStoredSession] = createSignal(
     storedSession !== null,
   )
+  const [HyperliquidClientClass, setHyperliquidClientClass] =
+    createSignal<HyperliquidClientConstructor | null>(null)
 
   const syncStoredSessionState = () => {
     setHasStoredSession(getStoredEncryptedSession() !== null)
@@ -110,10 +114,15 @@ export const WalletProvider = (props: ParentProps) => {
   )
   const canTrade = createMemo(() => credentials() !== null)
 
-  const client = createMemo(() => {
+  const client = createMemo((): HyperliquidClient | null => {
+    const Client = HyperliquidClientClass()
+    if (Client === null) {
+      return null
+    }
+
     const unlocked = credentials()
     if (unlocked) {
-      return new HyperliquidClient(unlocked, networkMode())
+      return new Client(unlocked, networkMode())
     }
 
     const address = mainAddress()
@@ -121,7 +130,7 @@ export const WalletProvider = (props: ParentProps) => {
       return null
     }
 
-    return new HyperliquidClient({ accountAddress: address }, networkMode())
+    return new Client({ accountAddress: address }, networkMode())
   })
 
   const setMainAddress = (address: string | null) => {
@@ -197,7 +206,12 @@ export const WalletProvider = (props: ParentProps) => {
         )
       }
 
-      const agent = generateHyperliquidAgent()
+      const agentModule = yield* Effect.tryPromise({
+        try: () => import("@/services/hyperliquidAgent"),
+        catch: cause => new WalletConnectError({ cause }),
+      })
+
+      const agent = agentModule.generateHyperliquidAgent()
       const pendingCredentials: WalletCredentials = {
         accountAddress: address,
         apiWalletAddress: agent.agentAddress,
@@ -210,7 +224,12 @@ export const WalletProvider = (props: ParentProps) => {
       })
 
       const approveResult = yield* Effect.either(
-        approveHyperliquidAgent(provider, address, agent.agentAddress, mode),
+        agentModule.approveHyperliquidAgent(
+          provider,
+          address,
+          agent.agentAddress,
+          mode,
+        ),
       )
 
       if (Either.isLeft(approveResult)) {
@@ -259,8 +278,13 @@ export const WalletProvider = (props: ParentProps) => {
         )
       }
 
+      const agentModule = yield* Effect.tryPromise({
+        try: () => import("@/services/hyperliquidAgent"),
+        catch: cause => new WalletConnectError({ cause }),
+      })
+
       const revokeResult = yield* Effect.either(
-        revokeHyperliquidAgent(provider, address, mode),
+        agentModule.revokeHyperliquidAgent(provider, address, mode),
       )
 
       if (Either.isLeft(revokeResult)) {
@@ -338,9 +362,35 @@ export const WalletProvider = (props: ParentProps) => {
   }
 
   onMount(() => {
+    // Defer CCXT until after the first paint so dockview/UI can render without
+    // competing with a ~500KB module download+eval on the same turn.
+    const startClientLoad = () => {
+      prefetchHyperliquidClientModule()
+      void ensureHyperliquidClientModule().then(clientModule => {
+        setHyperliquidClientClass(() => clientModule.HyperliquidClient)
+      })
+    }
+
+    let idleCallbackId: number | undefined
+    let timeoutId: ReturnType<typeof setTimeout> | undefined
+
+    if (typeof window.requestIdleCallback === "function") {
+      idleCallbackId = window.requestIdleCallback(startClientLoad, {
+        timeout: 2_000,
+      })
+    } else {
+      timeoutId = setTimeout(startClientLoad, 0)
+    }
+
     window.addEventListener("storage", handleStorageChange)
 
     onCleanup(() => {
+      if (idleCallbackId !== undefined) {
+        window.cancelIdleCallback(idleCallbackId)
+      }
+      if (timeoutId !== undefined) {
+        clearTimeout(timeoutId)
+      }
       window.removeEventListener("storage", handleStorageChange)
     })
   })

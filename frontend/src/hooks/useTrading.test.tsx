@@ -14,7 +14,7 @@ import {
   useWalletSettings,
   useSwitchNetwork,
 } from "./useTrading"
-import { millisecondsUntilNextUtcMidnight } from "@/services/hyperliquid-client"
+import { millisecondsUntilNextUtcMidnight } from "@/services/hyperliquid-markets"
 import { WalletProvider } from "@/contexts/WalletProvider"
 import { useWallet } from "@/hooks/useWallet"
 
@@ -54,6 +54,14 @@ vi.mock("@/services/hyperliquid-client", async importOriginal => {
       getNetworkMode = mockMethods.getNetworkMode
       getWalletAddress = mockMethods.getWalletAddress
     },
+  }
+})
+
+vi.mock("@/services/hyperliquidClientLoader", async () => {
+  const clientModule = await import("@/services/hyperliquid-client")
+  return {
+    prefetchHyperliquidClientModule: () => undefined,
+    ensureHyperliquidClientModule: async () => clientModule,
   }
 })
 

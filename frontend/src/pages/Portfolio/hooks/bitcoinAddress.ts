@@ -1,5 +1,3 @@
-import WAValidator from "multicoin-address-validator"
-
 import type { NetworkMode } from "@/contexts/wallet-context"
 
 export const INVALID_BITCOIN_ADDRESS_MESSAGE = "Invalid Bitcoin address"
@@ -24,6 +22,28 @@ export interface BitcoinAddressValidationError {
 export type BitcoinAddressValidationResult =
   | { ok: true; kind: BitcoinAddressKind }
   | { ok: false; error: BitcoinAddressValidationError }
+
+type BitcoinAddressValidator = {
+  validate: (
+    address: string,
+    currencyNameOrSymbol: string,
+    networkType?: "prod" | "testnet",
+  ) => boolean
+}
+
+let validatorLoadPromise: Promise<BitcoinAddressValidator> | null = null
+
+const loadBitcoinAddressValidator = (): Promise<BitcoinAddressValidator> => {
+  validatorLoadPromise ??= import("multicoin-address-validator").then(
+    module => module.default,
+  )
+  return validatorLoadPromise
+}
+
+/** Prefetch the multicoin validator chunk (e.g. when the BTC panel mounts). */
+export const prefetchBitcoinAddressValidator = (): void => {
+  void loadBitcoinAddressValidator()
+}
 
 const validatorNetwork = (network: NetworkMode): "prod" | "testnet" =>
   network === "mainnet" ? "prod" : "testnet"
@@ -60,23 +80,37 @@ const addressKind = (
   return "p2sh"
 }
 
-export const validateBitcoinAddress = (
+/**
+ * Canonicalize a previously validated stored address without loading the
+ * multicoin validator (bech32 is lowercased; other forms keep trim only).
+ */
+export const canonicalizeStoredBitcoinAddress = (address: string): string => {
+  const trimmedAddress = address.trim()
+  const lowercased = trimmedAddress.toLowerCase()
+  if (lowercased.startsWith("bc1") || lowercased.startsWith("tb1")) {
+    return lowercased
+  }
+  return trimmedAddress
+}
+
+export const validateBitcoinAddress = async (
   address: string,
   network: NetworkMode,
-): BitcoinAddressValidationResult => {
+): Promise<BitcoinAddressValidationResult> => {
   const normalizedAddress = address.trim()
   if (normalizedAddress.length === 0) {
     return invalid("empty", EMPTY_BITCOIN_ADDRESS_MESSAGE)
   }
 
-  const isValid = WAValidator.validate(
+  const validator = await loadBitcoinAddressValidator()
+  const isValid = validator.validate(
     normalizedAddress,
     "BTC",
     validatorNetwork(network),
   )
   if (!isValid) {
     const otherNetwork = oppositeNetwork(network)
-    const isValidOnOtherNetwork = WAValidator.validate(
+    const isValidOnOtherNetwork = validator.validate(
       normalizedAddress,
       "BTC",
       validatorNetwork(otherNetwork),

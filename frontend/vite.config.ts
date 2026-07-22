@@ -94,6 +94,15 @@ export default defineConfig({
         find: "@",
         replacement: path.resolve(__dirname, "./src"),
       },
+      // Import only the Hyperliquid exchange instead of the ccxt barrel, which
+      // statically pulls in all 100+ exchanges and defeats tree-shaking.
+      {
+        find: "ccxt/hyperliquid",
+        replacement: path.resolve(
+          __dirname,
+          "node_modules/ccxt/js/src/pro/hyperliquid.js",
+        ),
+      },
       {
         find: "node:net",
         replacement: netStub,

@@ -1,5 +1,5 @@
-import { type Order, type OrderRequest } from "ccxt"
-import { pro } from "ccxt"
+import type { Order, OrderRequest } from "ccxt"
+import hyperliquid from "ccxt/hyperliquid"
 import type { NetworkMode, WalletCredentials } from "@/contexts/wallet-context"
 import type { RebalanceAction } from "@/pages/Portfolio/hooks/portfolioRebalancer"
 
@@ -510,7 +510,7 @@ export class HyperliquidClient {
   ) {
     this.networkMode = networkMode
 
-    const HyperliquidClass = pro.hyperliquid as unknown as new (
+    const HyperliquidClass = hyperliquid as unknown as new (
       config: Record<string, unknown>,
     ) => HyperliquidExchange
 

@@ -238,6 +238,70 @@ describe("WalletHeader", () => {
       const toggle = screen.getByRole("switch")
       expect(toggle).not.toBeDisabled()
     })
+
+    it("calls handleNetworkSwitch after a successful network switch", async () => {
+      const user = userEvent.setup()
+      const handleNetworkSwitch = vi.fn()
+      mockSwitchNetworkMutateAsync.mockResolvedValue(undefined)
+      await seedEncryptedSession("0xTestAccountAddress")
+      mockUseWalletSettings.mockReturnValue({
+        data: () => ({
+          accountAddress: "0xTestAccountAddress",
+          isTestnet: true,
+        }),
+        isConnected: () => true,
+      })
+
+      render(
+        () => (
+          <WalletHeader
+            handleDisconnect={() => {}}
+            handleNetworkSwitch={handleNetworkSwitch}
+          />
+        ),
+        { wrapper: createWrapper() },
+      )
+
+      await user.click(screen.getByText("0xTest...ress"))
+      await user.click(screen.getByRole("switch"))
+
+      await waitFor(() => {
+        expect(mockSwitchNetworkMutateAsync).toHaveBeenCalledWith("mainnet")
+        expect(handleNetworkSwitch).toHaveBeenCalledTimes(1)
+      })
+    })
+
+    it("does not call handleNetworkSwitch when the network switch fails", async () => {
+      const user = userEvent.setup()
+      const handleNetworkSwitch = vi.fn()
+      mockSwitchNetworkMutateAsync.mockRejectedValue(new Error("switch failed"))
+      await seedEncryptedSession("0xTestAccountAddress")
+      mockUseWalletSettings.mockReturnValue({
+        data: () => ({
+          accountAddress: "0xTestAccountAddress",
+          isTestnet: true,
+        }),
+        isConnected: () => true,
+      })
+
+      render(
+        () => (
+          <WalletHeader
+            handleDisconnect={() => {}}
+            handleNetworkSwitch={handleNetworkSwitch}
+          />
+        ),
+        { wrapper: createWrapper() },
+      )
+
+      await user.click(screen.getByText("0xTest...ress"))
+      await user.click(screen.getByRole("switch"))
+
+      await waitFor(() => {
+        expect(mockSwitchNetworkMutateAsync).toHaveBeenCalledWith("mainnet")
+      })
+      expect(handleNetworkSwitch).not.toHaveBeenCalled()
+    })
   })
 
   describe("disconnected and locked states", () => {

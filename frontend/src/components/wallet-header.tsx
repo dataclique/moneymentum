@@ -79,6 +79,7 @@ export const WalletHeader = (props: WalletHeaderProps) => {
 
     try {
       await switchNetworkMutation.mutateAsync(checked ? "testnet" : "mainnet")
+      props.handleNetworkSwitch?.()
     } catch (error) {
       console.error("Failed to toggle testnet/mainnet:", error)
       toast.error("Failed to toggle network. Please try again.")

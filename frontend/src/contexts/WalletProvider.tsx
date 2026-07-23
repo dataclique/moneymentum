@@ -12,6 +12,7 @@ import {
   NETWORK_STORAGE_KEY,
   getStoredEncryptedSession,
   getStoredNetworkMode,
+  getStoredWalletAddresses,
   type EncryptedWalletSession,
   type NetworkMode,
   type WalletCredentials,
@@ -36,6 +37,8 @@ import {
 import {
   ensureEvmAppKit,
   readConnectedEip1193Provider,
+  readEvmAddressFromAccountState,
+  readEvmWalletConnectedFromAccountState,
 } from "@/reown/evmAppKit"
 
 const credentialsFromSession = (
@@ -384,6 +387,8 @@ export const WalletProvider = (props: ParentProps) => {
 
     let idleCallbackId: number | undefined
     let timeoutId: ReturnType<typeof setTimeout> | undefined
+    let unsubscribeAccount: (() => void) | undefined
+    let accountSubscriptionCancelled = false
 
     if (typeof window.requestIdleCallback === "function") {
       idleCallbackId = window.requestIdleCallback(startClientLoad, {
@@ -395,7 +400,34 @@ export const WalletProvider = (props: ParentProps) => {
 
     window.addEventListener("storage", handleStorageChange)
 
+    void ensureEvmAppKit()
+      .then(modal => {
+        if (accountSubscriptionCancelled || modal === null) {
+          return
+        }
+
+        unsubscribeAccount = modal.subscribeAccount(accountState => {
+          const nextAddress = readEvmAddressFromAccountState(accountState)
+          const connected =
+            readEvmWalletConnectedFromAccountState(accountState) ||
+            nextAddress !== null
+
+          if (connected && nextAddress !== null) {
+            setMainAddress(nextAddress)
+            return
+          }
+
+          const stored = getStoredWalletAddresses()
+          setMainAddress(stored?.accountAddress ?? null)
+        }, "eip155")
+      })
+      .catch((error: unknown) => {
+        console.error("Failed to subscribe to wallet account changes:", error)
+      })
+
     onCleanup(() => {
+      accountSubscriptionCancelled = true
+      unsubscribeAccount?.()
       if (idleCallbackId !== undefined) {
         window.cancelIdleCallback(idleCallbackId)
       }

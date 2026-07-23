@@ -78,22 +78,30 @@ const walletConnectEsm = (packageName: string): string =>
 
 /** Dockview panel portals use `render()` (detached root). Replace SolidPart so
  * panels inherit the app owner and keep WalletProvider / QueryClient context. */
+const toForwardSlash = (value: string): string => value.replaceAll("\\", "/")
+
 const dockviewSolidContextPlugin = {
   name: "dockview-solid-context",
   enforce: "pre" as const,
   resolveId(source: string, importer: string | undefined) {
-    if (!importer?.includes(`${path.sep}@arminmajerie${path.sep}dockview`)) {
+    if (importer === undefined) {
       return null
     }
 
+    const normalizedImporter = toForwardSlash(importer)
+    if (!normalizedImporter.includes("/@arminmajerie/dockview")) {
+      return null
+    }
+
+    const normalizedSource = toForwardSlash(source)
     const isRelativeSolid =
-      source === "../solid" ||
-      source === "../solid.jsx" ||
-      source === "./solid" ||
-      source === "./solid.jsx"
+      normalizedSource === "../solid" ||
+      normalizedSource === "../solid.jsx" ||
+      normalizedSource === "./solid" ||
+      normalizedSource === "./solid.jsx"
     const isAbsoluteSolid =
-      source.endsWith(`${path.sep}solid.jsx`) ||
-      source.endsWith(`${path.sep}solid`)
+      normalizedSource.endsWith("/solid.jsx") ||
+      normalizedSource.endsWith("/solid")
 
     if (isRelativeSolid || isAbsoluteSolid) {
       return dockviewSolidPart

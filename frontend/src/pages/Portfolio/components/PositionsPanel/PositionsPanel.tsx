@@ -64,7 +64,7 @@ interface PositionsPanelProps {
   isReadonlyBtcLoading: boolean
   readonlyBtcError: string | null
   readonlyBtcValidationError: string | null
-  onAddReadonlyBtcAddress: (address: string) => boolean
+  onAddReadonlyBtcAddress: (address: string) => boolean | Promise<boolean>
   onRemoveReadonlyBtcAddress: (address: string) => void
   onReadonlyBtcIncludeInBetaChange: (
     address: string,

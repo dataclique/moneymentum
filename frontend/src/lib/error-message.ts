@@ -138,6 +138,8 @@ const messageForTag = (error: TaggedError): string | null => {
       return "Failed to revoke Hyperliquid agent. Please try again."
     case "ReownModalOpenFailed":
       return "Could not open wallet connect."
+    case "BitcoinAddressValidatorLoadFailed":
+      return "Could not load Bitcoin address validation. Please try again."
     default:
       return null
   }

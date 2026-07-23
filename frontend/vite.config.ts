@@ -30,7 +30,7 @@ const rewriteBareGlobal = (code: string): string =>
 const multicoinGlobalShimPlugin = {
   name: "multicoin-global-shim",
   transform(code: string, id: string) {
-    if (!id.includes(`${path.sep}multicoin-address-validator${path.sep}`)) {
+    if (!/[/\\]multicoin-address-validator[/\\]/.test(id)) {
       return null
     }
 

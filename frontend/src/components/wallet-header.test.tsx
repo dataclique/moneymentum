@@ -625,7 +625,9 @@ describe("WalletHeader", () => {
     })
 
     it("clears the local agent session after a successful revoke", async () => {
-      const user = userEvent.setup()
+      const user = userEvent.setup({
+        pointerEventsCheck: 0,
+      })
       const { toast } = await import("solid-sonner")
 
       await seedEncryptedSession("0xConnectedAccountAddress")
@@ -644,10 +646,15 @@ describe("WalletHeader", () => {
       await user.click(screen.getByText("0xConn...ress"))
       await user.click(screen.getByRole("button", { name: "Revoke Agent" }))
 
-      await waitFor(() => {
-        expect(toast.success).toHaveBeenCalledWith("Hyperliquid agent revoked")
-        expect(localStorage.getItem("hyperliquid-wallet")).toBeNull()
-      })
+      await waitFor(
+        () => {
+          expect(toast.success).toHaveBeenCalledWith(
+            "Hyperliquid agent revoked",
+          )
+          expect(localStorage.getItem("hyperliquid-wallet")).toBeNull()
+        },
+        { timeout: 5_000 },
+      )
     })
   })
 

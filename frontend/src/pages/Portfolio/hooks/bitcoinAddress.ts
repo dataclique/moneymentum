@@ -1,3 +1,6 @@
+import * as Data from "effect/Data"
+import * as Effect from "effect/Effect"
+
 import type { NetworkMode } from "@/contexts/wallet-context"
 
 export const INVALID_BITCOIN_ADDRESS_MESSAGE = "Invalid Bitcoin address"
@@ -23,6 +26,12 @@ export type BitcoinAddressValidationResult =
   | { ok: true; kind: BitcoinAddressKind }
   | { ok: false; error: BitcoinAddressValidationError }
 
+export class BitcoinAddressValidatorLoadFailed extends Data.TaggedError(
+  "BitcoinAddressValidatorLoadFailed",
+)<{
+  readonly cause: unknown
+}> {}
+
 type BitcoinAddressValidator = {
   validate: (
     address: string,
@@ -33,19 +42,26 @@ type BitcoinAddressValidator = {
 
 let validatorLoadPromise: Promise<BitcoinAddressValidator> | null = null
 
-const loadBitcoinAddressValidator = (): Promise<BitcoinAddressValidator> => {
-  validatorLoadPromise ??= import("multicoin-address-validator")
-    .then(module => module.default)
-    .catch((error: unknown) => {
+const loadBitcoinAddressValidator = (): Effect.Effect<
+  BitcoinAddressValidator,
+  BitcoinAddressValidatorLoadFailed
+> =>
+  Effect.tryPromise({
+    try: () => {
+      validatorLoadPromise ??= import("multicoin-address-validator").then(
+        module => module.default,
+      )
+      return validatorLoadPromise
+    },
+    catch: cause => {
       validatorLoadPromise = null
-      throw error
-    })
-  return validatorLoadPromise
-}
+      return new BitcoinAddressValidatorLoadFailed({ cause })
+    },
+  })
 
 /** Prefetch the multicoin validator chunk (e.g. when the BTC panel mounts). */
 export const prefetchBitcoinAddressValidator = (): void => {
-  void loadBitcoinAddressValidator().catch(() => undefined)
+  void Effect.runPromise(loadBitcoinAddressValidator()).catch(() => undefined)
 }
 
 const validatorNetwork = (network: NetworkMode): "prod" | "testnet" =>
@@ -96,33 +112,37 @@ export const canonicalizeStoredBitcoinAddress = (address: string): string => {
   return trimmedAddress
 }
 
-export const validateBitcoinAddress = async (
+export const validateBitcoinAddress = (
   address: string,
   network: NetworkMode,
-): Promise<BitcoinAddressValidationResult> => {
-  const normalizedAddress = address.trim()
-  if (normalizedAddress.length === 0) {
-    return invalid("empty", EMPTY_BITCOIN_ADDRESS_MESSAGE)
-  }
+): Effect.Effect<
+  BitcoinAddressValidationResult,
+  BitcoinAddressValidatorLoadFailed
+> =>
+  Effect.gen(function* () {
+    const normalizedAddress = address.trim()
+    if (normalizedAddress.length === 0) {
+      return invalid("empty", EMPTY_BITCOIN_ADDRESS_MESSAGE)
+    }
 
-  const validator = await loadBitcoinAddressValidator()
-  const isValid = validator.validate(
-    normalizedAddress,
-    "BTC",
-    validatorNetwork(network),
-  )
-  if (!isValid) {
-    const otherNetwork = oppositeNetwork(network)
-    const isValidOnOtherNetwork = validator.validate(
+    const validator = yield* loadBitcoinAddressValidator()
+    const isValid = validator.validate(
       normalizedAddress,
       "BTC",
-      validatorNetwork(otherNetwork),
+      validatorNetwork(network),
     )
-    if (isValidOnOtherNetwork) {
-      return invalid("wrong_network", wrongNetworkMessage(otherNetwork))
+    if (!isValid) {
+      const otherNetwork = oppositeNetwork(network)
+      const isValidOnOtherNetwork = validator.validate(
+        normalizedAddress,
+        "BTC",
+        validatorNetwork(otherNetwork),
+      )
+      if (isValidOnOtherNetwork) {
+        return invalid("wrong_network", wrongNetworkMessage(otherNetwork))
+      }
+      return invalid("invalid")
     }
-    return invalid("invalid")
-  }
 
-  return { ok: true, kind: addressKind(normalizedAddress, network) }
-}
+    return { ok: true, kind: addressKind(normalizedAddress, network) }
+  })

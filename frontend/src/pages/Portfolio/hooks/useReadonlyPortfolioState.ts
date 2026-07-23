@@ -1,9 +1,12 @@
 import { createMemo, createSignal } from "solid-js"
 import { useQuery } from "@tanstack/solid-query"
+import * as Effect from "effect/Effect"
+import * as Either from "effect/Either"
 
 import type { NetworkMode } from "@/contexts/wallet-context"
 import type { OrderSide } from "@/hooks/useTrading"
 import { useWallet } from "@/hooks/useWallet"
+import { getErrorMessage } from "@/lib/error-message"
 import {
   validateBitcoinAddress,
   canonicalizeStoredBitcoinAddress,
@@ -234,10 +237,20 @@ export const useReadonlyPortfolioState = () => {
       setValidationError(null)
       return false
     }
-    const validation = await validateBitcoinAddress(
-      normalizedAddress,
-      networkMode(),
+    const validationOutcome = await Effect.runPromise(
+      Effect.either(validateBitcoinAddress(normalizedAddress, networkMode())),
     )
+    if (Either.isLeft(validationOutcome)) {
+      const loadErrorMessage = getErrorMessage(validationOutcome.left)
+      console.warn(loadErrorMessage, {
+        error: validationOutcome.left,
+        network: networkMode(),
+      })
+      setValidationError(loadErrorMessage)
+      return false
+    }
+
+    const validation = validationOutcome.right
     if (!validation.ok) {
       console.warn(validation.error.message, {
         error: validation.error,

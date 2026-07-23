@@ -323,22 +323,30 @@ export const WalletProvider = (props: ParentProps) => {
 
   const disconnect = (): Effect.Effect<void, WalletDisconnectFailed> =>
     Effect.gen(function* () {
-      const modal = yield* Effect.tryPromise({
-        try: () => ensureEvmAppKit(),
-        catch: cause => new WalletDisconnectFailed({ cause }),
-      })
-
-      if (modal) {
-        yield* Effect.tryPromise({
-          try: () => modal.disconnect("eip155"),
+      const remoteDisconnect = Effect.gen(function* () {
+        const modal = yield* Effect.tryPromise({
+          try: () => ensureEvmAppKit(),
           catch: cause => new WalletDisconnectFailed({ cause }),
         })
-      }
+
+        if (modal) {
+          yield* Effect.tryPromise({
+            try: () => modal.disconnect("eip155"),
+            catch: cause => new WalletDisconnectFailed({ cause }),
+          })
+        }
+      })
+
+      const remoteResult = yield* Effect.either(remoteDisconnect)
 
       setCredentials(null)
       setMainAddressState(null)
       clearEncryptedSession()
       syncStoredSessionState()
+
+      if (Either.isLeft(remoteResult)) {
+        return yield* Effect.fail(remoteResult.left)
+      }
     })
 
   const setNetworkMode = (mode: NetworkMode) => {

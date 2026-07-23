@@ -34,15 +34,18 @@ type BitcoinAddressValidator = {
 let validatorLoadPromise: Promise<BitcoinAddressValidator> | null = null
 
 const loadBitcoinAddressValidator = (): Promise<BitcoinAddressValidator> => {
-  validatorLoadPromise ??= import("multicoin-address-validator").then(
-    module => module.default,
-  )
+  validatorLoadPromise ??= import("multicoin-address-validator")
+    .then(module => module.default)
+    .catch((error: unknown) => {
+      validatorLoadPromise = null
+      throw error
+    })
   return validatorLoadPromise
 }
 
 /** Prefetch the multicoin validator chunk (e.g. when the BTC panel mounts). */
 export const prefetchBitcoinAddressValidator = (): void => {
-  void loadBitcoinAddressValidator()
+  void loadBitcoinAddressValidator().catch(() => undefined)
 }
 
 const validatorNetwork = (network: NetworkMode): "prod" | "testnet" =>

@@ -69,19 +69,26 @@ export const WalletInlineConnect = (): JSX.Element => {
 
     setIsOpening(true)
     void Effect.runPromise(
-      Effect.tryPromise({
-        try: async () => {
-          const modal = await ensureEvmAppKit()
-          if (!modal) {
-            throw new Error(
-              "Set VITE_REOWN_PROJECT_ID in .env to connect a wallet.",
-            )
-          }
+      Effect.gen(function* () {
+        const modal = yield* Effect.tryPromise({
+          try: () => ensureEvmAppKit(),
+          catch: cause => new ReownModalOpenFailed({ cause }),
+        })
+        if (!modal) {
+          return yield* Effect.fail(
+            new ReownModalOpenFailed({
+              cause: new Error(
+                "Set VITE_REOWN_PROJECT_ID in .env to connect a wallet.",
+              ),
+            }),
+          )
+        }
 
-          attachAccountListener(modal)
-          await modal.open({ view: "Connect", namespace: "eip155" })
-        },
-        catch: cause => new ReownModalOpenFailed({ cause }),
+        attachAccountListener(modal)
+        yield* Effect.tryPromise({
+          try: () => modal.open({ view: "Connect", namespace: "eip155" }),
+          catch: cause => new ReownModalOpenFailed({ cause }),
+        })
       }).pipe(
         Effect.catchAll(error =>
           Effect.sync(() => {

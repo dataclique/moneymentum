@@ -1,11 +1,20 @@
 import { For, Show, createMemo, createSignal, onMount } from "solid-js"
 import type { JSX } from "solid-js"
+import * as Data from "effect/Data"
+import * as Effect from "effect/Effect"
+import * as Either from "effect/Either"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Switch } from "@/components/ui/switch"
 
 import { prefetchBitcoinAddressValidator } from "../../hooks/bitcoinAddress"
 import type { ReadonlyBtcRow } from "../../hooks/useReadonlyPortfolioState"
+
+class ReadonlyBtcAddressAddFailed extends Data.TaggedError(
+  "ReadonlyBtcAddressAddFailed",
+)<{
+  readonly cause: unknown
+}> {}
 
 interface ReadonlyBtcPanelProps {
   rows: ReadonlyBtcRow[]
@@ -31,14 +40,26 @@ export const ReadonlyBtcPanel = (props: ReadonlyBtcPanelProps): JSX.Element => {
       return
     }
     setIsAddingAddress(true)
-    try {
-      const added = await props.onAddAddress(addressInput())
-      if (added) {
-        setAddressInput("")
-      }
-    } finally {
+
+    const addResult = await Effect.runPromise(
+      Effect.either(
+        Effect.tryPromise({
+          try: () => Promise.resolve(props.onAddAddress(addressInput())),
+          catch: cause => new ReadonlyBtcAddressAddFailed({ cause }),
+        }),
+      ),
+    )
+
+    if (Either.isLeft(addResult)) {
+      console.error("Failed to add readonly BTC address:", addResult.left)
       setIsAddingAddress(false)
+      return
     }
+
+    if (addResult.right) {
+      setAddressInput("")
+    }
+    setIsAddingAddress(false)
   }
 
   return (

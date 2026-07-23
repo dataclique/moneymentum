@@ -71,13 +71,21 @@ type PortfolioPanelId =
 
 type ClosablePanelId = "performance" | "factors" | "risk"
 
-type PanelCatalogEntry = {
-  id: PortfolioPanelId
-  title: string
-  component: string
-  tabComponent: string
-  closable: boolean
-}
+type PanelCatalogEntry =
+  | {
+      id: ClosablePanelId
+      title: string
+      component: string
+      tabComponent: string
+      closable: true
+    }
+  | {
+      id: Exclude<PortfolioPanelId, ClosablePanelId>
+      title: string
+      component: string
+      tabComponent: string
+      closable: false
+    }
 
 const panelCatalog: PanelCatalogEntry[] = [
   {
@@ -124,7 +132,12 @@ const panelCatalog: PanelCatalogEntry[] = [
   },
 ]
 
-const closablePanelIds: ClosablePanelId[] = ["performance", "factors", "risk"]
+const closablePanelIds: ClosablePanelId[] = panelCatalog
+  .filter(
+    (entry): entry is Extract<PanelCatalogEntry, { closable: true }> =>
+      entry.closable,
+  )
+  .map(entry => entry.id)
 
 const findPanelCatalogEntry = (
   panelId: string,

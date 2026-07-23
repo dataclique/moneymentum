@@ -584,6 +584,10 @@ const PortfolioPage = () => {
       position: { referencePanel: "factors", direction: "right" },
     })
 
+    if (layoutWidth < 100 || layoutHeight < 100) {
+      return
+    }
+
     window.setTimeout(() => {
       const leftWidth = Math.floor(layoutWidth * 0.48)
       const rightWidth = Math.max(layoutWidth - leftWidth, 1)
@@ -605,10 +609,6 @@ const PortfolioPage = () => {
 
   const handleReady = (event: DockviewReadyEvent) => {
     dockviewApi = event.api
-
-    if (containerWidth() < 100 || containerHeight() < 100) {
-      return
-    }
 
     const savedLayout = readPortfolioDockviewLayout()
     if (savedLayout !== null) {

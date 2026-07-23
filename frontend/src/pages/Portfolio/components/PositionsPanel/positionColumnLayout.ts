@@ -48,23 +48,16 @@ export const positionStickyRowBackgroundStyle = (
   status: PositionRowHighlight,
 ): { "background-color": string } => {
   if (status === "new") {
-    return {
-      "background-color":
-        "color-mix(in srgb, var(--background) 85%, #22c55e 15%)",
-    }
+    return { "background-color": "var(--position-sticky-bg-new)" }
   }
   if (status === "closing") {
-    return {
-      "background-color":
-        "color-mix(in srgb, var(--background) 85%, #ef4444 15%)",
-    }
+    return { "background-color": "var(--position-sticky-bg-closing)" }
   }
   return { "background-color": "var(--background)" }
 }
 
 export const positionStickyErrorBackgroundStyle = {
-  "background-color":
-    "color-mix(in srgb, var(--background) 85%, var(--destructive) 15%)",
+  "background-color": "var(--position-sticky-bg-error)",
 } as const
 
 export const positionStickyBodyClass = (

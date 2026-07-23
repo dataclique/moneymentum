@@ -3,11 +3,10 @@ import { Settings } from "lucide-solid"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
-  DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { Switch } from "@/components/ui/switch"
 import {
   PORTFOLIO_METRIC_COLUMN_LABELS,
   PORTFOLIO_METRIC_COLUMN_ORDER,
@@ -49,44 +48,35 @@ export const PortfolioSettingsMenu = (
       <Settings class="h-3.5 w-3.5" />
     </DropdownMenuTrigger>
     <DropdownMenuContent align="end">
-      <DropdownMenuItem
-        class="flex items-center justify-between gap-2"
+      <DropdownMenuCheckboxItem
+        checked={props.isPrecise}
         closeOnSelect={false}
+        onChange={value => {
+          props.onPreciseChange(value)
+        }}
       >
-        <span>Precise</span>
-        <Switch
-          checked={props.isPrecise}
-          onChange={value => {
-            props.onPreciseChange(value)
-          }}
-        />
-      </DropdownMenuItem>
-      <DropdownMenuItem
-        class="flex items-center justify-between gap-2"
+        Precise
+      </DropdownMenuCheckboxItem>
+      <DropdownMenuCheckboxItem
+        checked={props.isManualWeightEntry}
         closeOnSelect={false}
+        onChange={value => {
+          props.onManualWeightEntryChange(value)
+        }}
       >
-        <span>Manual weight entry</span>
-        <Switch
-          checked={props.isManualWeightEntry}
-          onChange={value => {
-            props.onManualWeightEntryChange(value)
-          }}
-        />
-      </DropdownMenuItem>
+        Manual weight entry
+      </DropdownMenuCheckboxItem>
       <For each={PORTFOLIO_METRIC_COLUMN_ORDER}>
         {columnId => (
-          <DropdownMenuItem
-            class="flex items-center justify-between gap-2"
+          <DropdownMenuCheckboxItem
+            checked={props.metricVisibility[columnId]}
             closeOnSelect={false}
+            onChange={value => {
+              props.onMetricVisibilityChange(columnId, value)
+            }}
           >
-            <span>{PORTFOLIO_METRIC_COLUMN_LABELS[columnId]}</span>
-            <Switch
-              checked={props.metricVisibility[columnId]}
-              onChange={value => {
-                props.onMetricVisibilityChange(columnId, value)
-              }}
-            />
-          </DropdownMenuItem>
+            {PORTFOLIO_METRIC_COLUMN_LABELS[columnId]}
+          </DropdownMenuCheckboxItem>
         )}
       </For>
     </DropdownMenuContent>

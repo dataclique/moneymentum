@@ -18,10 +18,11 @@ export const readReownProjectId = (): string | null => {
 
 /**
  * Starts loading AppKit in the background (e.g. on pointer enter). Safe to call
- * repeatedly; concurrent callers share one promise.
+ * repeatedly; concurrent callers share one promise. Prefetch failures are
+ * swallowed -- the click path surfaces errors via toast.
  */
 export const prefetchEvmAppKit = (): void => {
-  void ensureEvmAppKit()
+  void ensureEvmAppKit().catch(() => undefined)
 }
 
 /**
@@ -37,7 +38,10 @@ export const ensureEvmAppKit = (): Promise<AppKit | null> => {
     return appKitLoadPromise
   }
 
-  appKitLoadPromise = loadEvmAppKit()
+  appKitLoadPromise = loadEvmAppKit().catch((error: unknown) => {
+    appKitLoadPromise = null
+    throw error
+  })
   return appKitLoadPromise
 }
 

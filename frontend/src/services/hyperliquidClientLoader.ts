@@ -11,11 +11,16 @@ type HyperliquidClientModule = typeof import("@/services/hyperliquid-client")
 let loadPromise: Promise<HyperliquidClientModule> | null = null
 
 export const prefetchHyperliquidClientModule = (): void => {
-  void ensureHyperliquidClientModule()
+  void ensureHyperliquidClientModule().catch(() => undefined)
 }
 
 export const ensureHyperliquidClientModule =
   (): Promise<HyperliquidClientModule> => {
-    loadPromise ??= import("@/services/hyperliquid-client")
+    loadPromise ??= import("@/services/hyperliquid-client").catch(
+      (error: unknown) => {
+        loadPromise = null
+        throw error
+      },
+    )
     return loadPromise
   }

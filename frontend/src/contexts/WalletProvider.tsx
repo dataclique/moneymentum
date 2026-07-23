@@ -365,9 +365,13 @@ export const WalletProvider = (props: ParentProps) => {
     // competing with a ~500KB module download+eval on the same turn.
     const startClientLoad = () => {
       prefetchHyperliquidClientModule()
-      void ensureHyperliquidClientModule().then(clientModule => {
-        setHyperliquidClientClass(() => clientModule.HyperliquidClient)
-      })
+      void ensureHyperliquidClientModule()
+        .then(clientModule => {
+          setHyperliquidClientClass(() => clientModule.HyperliquidClient)
+        })
+        .catch((error: unknown) => {
+          console.error("Failed to load Hyperliquid client module:", error)
+        })
     }
 
     let idleCallbackId: number | undefined

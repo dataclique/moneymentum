@@ -1,5 +1,6 @@
 import type { Order, OrderRequest } from "ccxt"
 import hyperliquid from "ccxt/hyperliquid"
+import * as Effect from "effect/Effect"
 import type { NetworkMode, WalletCredentials } from "@/contexts/wallet-context"
 import type { RebalanceAction } from "@/pages/Portfolio/hooks/portfolioRebalancer"
 import {
@@ -1171,7 +1172,7 @@ export class HyperliquidClient {
     const allSymbols = [...new Set(actions.map(action => action.symbol))]
 
     const [backendMarkets, perpContexts] = await Promise.all([
-      fetchHyperliquidMarkets(this.networkMode),
+      Effect.runPromise(fetchHyperliquidMarkets(this.networkMode)),
       fetchPerpMarketContexts(this.networkMode),
     ])
 

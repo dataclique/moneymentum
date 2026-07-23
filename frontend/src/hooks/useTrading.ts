@@ -48,7 +48,8 @@ export const useHyperliquidMarkets = () => {
 
     return {
       queryKey: [...QUERY_KEYS.markets, network()],
-      queryFn: () => fetchHyperliquidMarkets(network()),
+      queryFn: ({ signal }) =>
+        Effect.runPromise(fetchHyperliquidMarkets(network(), signal)),
       staleTime: marketsCacheDurationMs,
       gcTime: marketsCacheDurationMs,
     }

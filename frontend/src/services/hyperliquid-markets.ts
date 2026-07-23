@@ -1,4 +1,12 @@
+import * as Effect from "effect/Effect"
+
 import type { NetworkMode } from "@/contexts/wallet-context"
+import {
+  fetchStreamChecked,
+  JsonParseError,
+  type HttpStatusError,
+  type NetworkError,
+} from "@/lib/http"
 
 export interface LeverageLimit {
   symbol: string
@@ -33,25 +41,39 @@ const parseCacheMaxAgeMs = (cacheControl: string | null): number | null => {
   return Number.isFinite(maxAgeSeconds) ? maxAgeSeconds * 1000 : null
 }
 
+const combinedAbortSignal = (signal?: AbortSignal): AbortSignal => {
+  const timeoutSignal = AbortSignal.timeout(HYPERLIQUID_REQUEST_TIMEOUT_MS)
+  return signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal
+}
+
 /**
  * Fetches the Hyperliquid markets catalog from the app API (no ccxt).
  */
-export const fetchHyperliquidMarkets = async (
+export const fetchHyperliquidMarkets = (
   network: NetworkMode,
-): Promise<HyperliquidMarketsResponse> => {
+  signal?: AbortSignal,
+): Effect.Effect<
+  HyperliquidMarketsResponse,
+  NetworkError | HttpStatusError | JsonParseError
+> => {
   const url = `${import.meta.env.BASE_URL}api/hyperliquid/markets?network=${network}`
-  const response = await fetch(url, {
+
+  return fetchStreamChecked(url, {
     cache: "no-store",
-    signal: AbortSignal.timeout(HYPERLIQUID_REQUEST_TIMEOUT_MS),
-  })
-  if (!response.ok) {
-    throw new Error(
-      `hyperliquid markets request failed: ${String(response.status)}`,
-    )
-  }
-  const markets = (await response.json()) as HyperliquidMarketsResponse
-  const marketsMaxAgeMs =
-    parseCacheMaxAgeMs(response.headers.get("cache-control")) ??
-    millisecondsUntilNextUtcMidnight()
-  return { ...markets, marketsMaxAgeMs }
+    signal: combinedAbortSignal(signal),
+  }).pipe(
+    Effect.flatMap(response =>
+      Effect.tryPromise({
+        try: () => response.json() as Promise<HyperliquidMarketsResponse>,
+        catch: cause => new JsonParseError({ cause }),
+      }).pipe(
+        Effect.map(markets => {
+          const marketsMaxAgeMs =
+            parseCacheMaxAgeMs(response.headers.get("cache-control")) ??
+            millisecondsUntilNextUtcMidnight()
+          return { ...markets, marketsMaxAgeMs }
+        }),
+      ),
+    ),
+  )
 }

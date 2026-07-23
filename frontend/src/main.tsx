@@ -5,7 +5,6 @@ import { lazy } from "solid-js"
 import { QueryClient, QueryClientProvider } from "@tanstack/solid-query"
 import { AppLayout, FullscreenLayout } from "./App"
 import { NetworkProvider } from "./contexts/NetworkContext"
-import { WalletProvider } from "./contexts/WalletProvider"
 import { ThemeProvider } from "./components/ui/theme-provider"
 import "./fonts.css"
 import "./index.css"
@@ -58,29 +57,27 @@ render(
     <QueryClientProvider client={queryClient}>
       <ThemeProvider defaultTheme="dark" storageKey="vite-ui-theme">
         <NetworkProvider>
-          <WalletProvider>
-            <Router>
-              <Route path="/" component={FullscreenLayout}>
-                <Route path="/" component={LandingPage} />
-              </Route>
-              <Route path="/prototype" component={FullscreenLayout}>
-                <Route path="/*" component={PrototypePage} />
-              </Route>
-              <Route path="/portfolio" component={AppLayout}>
-                <Route path="/" component={PortfolioPage} />
-              </Route>
-              <Route path="/dashboard" component={AppLayout}>
-                <Route path="/" component={MainPage} />
-              </Route>
-              <Route path="/token/:ticker" component={AppLayout}>
-                <Route path="/" component={TokenPage} />
-              </Route>
-              <Route path="/derive-options" component={AppLayout}>
-                <Route path="/" component={DeriveOptionsPage} />
-              </Route>
-              <Route path="*404" component={NotFound} />
-            </Router>
-          </WalletProvider>
+          <Router>
+            <Route path="/" component={FullscreenLayout}>
+              <Route path="/" component={LandingPage} />
+            </Route>
+            <Route path="/prototype" component={FullscreenLayout}>
+              <Route path="/*" component={PrototypePage} />
+            </Route>
+            <Route path="/portfolio" component={AppLayout}>
+              <Route path="/" component={PortfolioPage} />
+            </Route>
+            <Route path="/dashboard" component={AppLayout}>
+              <Route path="/" component={MainPage} />
+            </Route>
+            <Route path="/token/:ticker" component={AppLayout}>
+              <Route path="/" component={TokenPage} />
+            </Route>
+            <Route path="/derive-options" component={AppLayout}>
+              <Route path="/" component={DeriveOptionsPage} />
+            </Route>
+            <Route path="*404" component={NotFound} />
+          </Router>
         </NetworkProvider>
       </ThemeProvider>
     </QueryClientProvider>

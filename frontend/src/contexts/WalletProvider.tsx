@@ -12,6 +12,7 @@ import {
   NETWORK_STORAGE_KEY,
   getStoredEncryptedSession,
   getStoredNetworkMode,
+  getStoredWalletAddresses,
   type EncryptedWalletSession,
   type NetworkMode,
   type WalletCredentials,
@@ -24,18 +25,17 @@ import {
   WalletSessionMissing,
   type WalletUnlockFailure,
 } from "@/services/wallet"
-import { HyperliquidClient } from "@/services/hyperliquid-client"
+import type { HyperliquidClient } from "@/services/hyperliquid-client"
+import {
+  ensureHyperliquidClientModule,
+  prefetchHyperliquidClientModule,
+} from "@/services/hyperliquidClientLoader"
 import {
   decryptWalletPrivateKey,
   encryptWalletPrivateKey,
 } from "@/services/walletCredentialCrypto"
 import {
-  approveHyperliquidAgent,
-  generateHyperliquidAgent,
-  revokeHyperliquidAgent,
-} from "@/services/hyperliquidAgent"
-import {
-  getOrCreateEvmAppKit,
+  ensureEvmAppKit,
   readConnectedEip1193Provider,
   readEvmAddressFromAccountState,
   readEvmWalletConnectedFromAccountState,
@@ -87,6 +87,9 @@ const sameWalletAddress = (
   return left.toLowerCase() === right.toLowerCase()
 }
 
+type HyperliquidClientConstructor =
+  typeof import("@/services/hyperliquid-client").HyperliquidClient
+
 export const WalletProvider = (props: ParentProps) => {
   const storedSession = getStoredEncryptedSession()
   const [mainAddress, setMainAddressState] = createSignal<string | null>(
@@ -101,6 +104,8 @@ export const WalletProvider = (props: ParentProps) => {
   const [hasStoredSession, setHasStoredSession] = createSignal(
     storedSession !== null,
   )
+  const [HyperliquidClientClass, setHyperliquidClientClass] =
+    createSignal<HyperliquidClientConstructor | null>(null)
 
   const syncStoredSessionState = () => {
     setHasStoredSession(getStoredEncryptedSession() !== null)
@@ -112,10 +117,15 @@ export const WalletProvider = (props: ParentProps) => {
   )
   const canTrade = createMemo(() => credentials() !== null)
 
-  const client = createMemo(() => {
+  const client = createMemo((): HyperliquidClient | null => {
+    const Client = HyperliquidClientClass()
+    if (Client === null) {
+      return null
+    }
+
     const unlocked = credentials()
     if (unlocked) {
-      return new HyperliquidClient(unlocked, networkMode())
+      return new Client(unlocked, networkMode())
     }
 
     const address = mainAddress()
@@ -123,7 +133,7 @@ export const WalletProvider = (props: ParentProps) => {
       return null
     }
 
-    return new HyperliquidClient({ accountAddress: address }, networkMode())
+    return new Client({ accountAddress: address }, networkMode())
   })
 
   const setMainAddress = (address: string | null) => {
@@ -166,7 +176,7 @@ export const WalletProvider = (props: ParentProps) => {
     )
 
   /**
-   * PIN -> generate agent -> encrypt in memory -> approveAgent via Reown.
+   * Generate agent + encrypt with PIN, then Reown-signed approveAgent.
    * Persists the encrypted session only after approval succeeds.
    * On approve failure any leftover encrypted session is cleared.
    */
@@ -186,7 +196,10 @@ export const WalletProvider = (props: ParentProps) => {
         )
       }
 
-      const modal = getOrCreateEvmAppKit()
+      const modal = yield* Effect.tryPromise({
+        try: () => ensureEvmAppKit(),
+        catch: cause => new WalletConnectError({ cause }),
+      })
       const provider = modal ? readConnectedEip1193Provider(modal) : null
       if (!provider) {
         return yield* Effect.fail(
@@ -196,7 +209,12 @@ export const WalletProvider = (props: ParentProps) => {
         )
       }
 
-      const agent = generateHyperliquidAgent()
+      const agentModule = yield* Effect.tryPromise({
+        try: () => import("@/services/hyperliquidAgent"),
+        catch: cause => new WalletConnectError({ cause }),
+      })
+
+      const agent = agentModule.generateHyperliquidAgent()
       const pendingCredentials: WalletCredentials = {
         accountAddress: address,
         apiWalletAddress: agent.agentAddress,
@@ -209,7 +227,12 @@ export const WalletProvider = (props: ParentProps) => {
       })
 
       const approveResult = yield* Effect.either(
-        approveHyperliquidAgent(provider, address, agent.agentAddress, mode),
+        agentModule.approveHyperliquidAgent(
+          provider,
+          address,
+          agent.agentAddress,
+          mode,
+        ),
       )
 
       if (Either.isLeft(approveResult)) {
@@ -245,7 +268,10 @@ export const WalletProvider = (props: ParentProps) => {
         )
       }
 
-      const modal = getOrCreateEvmAppKit()
+      const modal = yield* Effect.tryPromise({
+        try: () => ensureEvmAppKit(),
+        catch: cause => new WalletConnectError({ cause }),
+      })
       const provider = modal ? readConnectedEip1193Provider(modal) : null
       if (!provider) {
         return yield* Effect.fail(
@@ -255,8 +281,13 @@ export const WalletProvider = (props: ParentProps) => {
         )
       }
 
+      const agentModule = yield* Effect.tryPromise({
+        try: () => import("@/services/hyperliquidAgent"),
+        catch: cause => new WalletConnectError({ cause }),
+      })
+
       const revokeResult = yield* Effect.either(
-        revokeHyperliquidAgent(provider, address, mode),
+        agentModule.revokeHyperliquidAgent(provider, address, mode),
       )
 
       if (Either.isLeft(revokeResult)) {
@@ -295,20 +326,30 @@ export const WalletProvider = (props: ParentProps) => {
 
   const disconnect = (): Effect.Effect<void, WalletDisconnectFailed> =>
     Effect.gen(function* () {
+      const remoteDisconnect = Effect.gen(function* () {
+        const modal = yield* Effect.tryPromise({
+          try: () => ensureEvmAppKit(),
+          catch: cause => new WalletDisconnectFailed({ cause }),
+        })
+
+        if (modal) {
+          yield* Effect.tryPromise({
+            try: () => modal.disconnect("eip155"),
+            catch: cause => new WalletDisconnectFailed({ cause }),
+          })
+        }
+      })
+
+      const remoteResult = yield* Effect.either(remoteDisconnect)
+
       setCredentials(null)
       setMainAddressState(null)
       clearEncryptedSession()
       syncStoredSessionState()
 
-      const modal = getOrCreateEvmAppKit()
-      if (!modal) {
-        return
+      if (Either.isLeft(remoteResult)) {
+        return yield* Effect.fail(remoteResult.left)
       }
-
-      yield* Effect.tryPromise({
-        try: () => modal.disconnect("eip155"),
-        catch: cause => new WalletDisconnectFailed({ cause }),
-      })
     })
 
   const setNetworkMode = (mode: NetworkMode) => {
@@ -331,35 +372,68 @@ export const WalletProvider = (props: ParentProps) => {
   }
 
   onMount(() => {
+    // Defer CCXT until after the first paint so dockview/UI can render without
+    // competing with a ~500KB module download+eval on the same turn.
+    const startClientLoad = () => {
+      prefetchHyperliquidClientModule()
+      void ensureHyperliquidClientModule()
+        .then(clientModule => {
+          setHyperliquidClientClass(() => clientModule.HyperliquidClient)
+        })
+        .catch((error: unknown) => {
+          console.error("Failed to load Hyperliquid client module:", error)
+        })
+    }
+
+    let idleCallbackId: number | undefined
+    let timeoutId: ReturnType<typeof setTimeout> | undefined
+    let unsubscribeAccount: (() => void) | undefined
+    let accountSubscriptionCancelled = false
+
+    if (typeof window.requestIdleCallback === "function") {
+      idleCallbackId = window.requestIdleCallback(startClientLoad, {
+        timeout: 2_000,
+      })
+    } else {
+      timeoutId = setTimeout(startClientLoad, 0)
+    }
+
     window.addEventListener("storage", handleStorageChange)
 
-    const modal = getOrCreateEvmAppKit()
-    let unsubscribeAccount: (() => void) | undefined
-
-    if (modal) {
-      const existingAddress = modal.getAddress("eip155")
-      if (existingAddress) {
-        setMainAddress(existingAddress)
-      }
-
-      unsubscribeAccount = modal.subscribeAccount(accountState => {
-        const nextAddress = readEvmAddressFromAccountState(accountState)
-        const connected =
-          readEvmWalletConnectedFromAccountState(accountState) ||
-          nextAddress !== null
-
-        if (connected && nextAddress) {
-          setMainAddress(nextAddress)
+    void ensureEvmAppKit()
+      .then(modal => {
+        if (accountSubscriptionCancelled || modal === null) {
           return
         }
 
-        const stored = getStoredEncryptedSession()
-        setMainAddress(stored?.accountAddress ?? null)
-      }, "eip155")
-    }
+        unsubscribeAccount = modal.subscribeAccount(accountState => {
+          const nextAddress = readEvmAddressFromAccountState(accountState)
+          const connected =
+            readEvmWalletConnectedFromAccountState(accountState) ||
+            nextAddress !== null
+
+          if (connected && nextAddress !== null) {
+            setMainAddress(nextAddress)
+            return
+          }
+
+          const stored = getStoredWalletAddresses()
+          setMainAddress(stored?.accountAddress ?? null)
+        }, "eip155")
+      })
+      .catch((error: unknown) => {
+        console.error("Failed to subscribe to wallet account changes:", error)
+      })
 
     onCleanup(() => {
+      accountSubscriptionCancelled = true
       unsubscribeAccount?.()
+      if (idleCallbackId !== undefined) {
+        window.cancelIdleCallback(idleCallbackId)
+      }
+      if (timeoutId !== undefined) {
+        clearTimeout(timeoutId)
+      }
       window.removeEventListener("storage", handleStorageChange)
     })
   })

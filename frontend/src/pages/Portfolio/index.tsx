@@ -1,35 +1,148 @@
-import { createSignal, createEffect, Show } from "solid-js"
-import { Skeleton } from "@/components/ui/skeleton"
-import { Slider } from "@/components/ui/slider"
+import {
+  createEffect,
+  createMemo,
+  createSignal,
+  For,
+  getOwner,
+  onCleanup,
+  onMount,
+  Show,
+} from "solid-js"
+import { ModeToggle } from "@/components/ui/mode-toggle"
+import { WalletHeader } from "@/components/wallet-header"
+import { WalletProvider } from "@/contexts/WalletProvider"
 import { cn } from "@/lib/cn"
+import { useDockviewPanelProviders } from "@/lib/dockviewPanelProviders"
+import { bindDockviewSolidOwner } from "@/lib/dockviewSolidOwner"
 import { useNetwork } from "@/hooks/useNetwork"
 import { useWallet } from "@/hooks/useWallet"
-import { WalletHeader } from "@/components/wallet-header"
-import { ModeToggle } from "@/components/ui/mode-toggle"
+import {
+  useHyperliquidFundingRates,
+  useHyperliquidTickers,
+} from "@/hooks/useTrading"
+import "@arminmajerie/dockview-solid/styles/dockview.css"
+import {
+  DockviewDefaultTab,
+  DockviewSolid,
+  type DockviewApi,
+  type DockviewReadyEvent,
+  type DockviewTheme,
+  type IDockviewHeaderActionsProps,
+  type IDockviewPanelHeaderProps,
+  type IDockviewPanelProps,
+} from "@arminmajerie/dockview-solid"
 
+import { AllSymbolsPanel } from "./components/AllSymbolsPanel"
+import { FactorsPanel } from "./components/FactorsPanel"
+import { PerformancePanel } from "./components/PerformancePanel"
+import { PortfolioSettingsMenu } from "./components/PortfolioSettingsMenu"
+import { PositionsPanel } from "./components/PositionsPanel/PositionsPanel"
+import {
+  readPortfolioMetricVisibility,
+  writePortfolioMetricVisibility,
+  type PortfolioMetricColumnId,
+  type PortfolioMetricVisibility,
+} from "./components/PositionsPanel/portfolioMetricVisibility"
+import { RiskPanel } from "./components/RiskPanel"
+import {
+  StagedChangesPanel,
+  type StagedConnectionState,
+} from "./components/StagedChangesPanel"
+import { WalletPinDialog } from "./components/WalletPinDialog"
+import { useBeta, type BetaBenchmark } from "./hooks/useBeta"
 import {
   usePortfolioState,
   writeManualWeightEntry,
   writePreciseToggle,
 } from "./hooks/usePortfolioState"
-import { useBeta, type BetaBenchmark } from "./hooks/useBeta"
 import {
-  useHyperliquidTickers,
-  useHyperliquidFundingRates,
-} from "@/hooks/useTrading"
-import { PositionsPanel } from "@/pages/Portfolio/components/PositionsPanel/PositionsPanel"
-import { PerformancePanel } from "@/pages/Portfolio/components/PerformancePanel"
-import {
-  StagedChangesPanel,
-  type StagedConnectionState,
-} from "@/pages/Portfolio/components/StagedChangesPanel"
-import { FactorsPanel } from "@/pages/Portfolio/components/FactorsPanel"
-import { RiskPanel } from "@/pages/Portfolio/components/RiskPanel"
-import { WalletPinDialog } from "@/pages/Portfolio/components/WalletPinDialog"
+  readPortfolioDockviewLayout,
+  writePortfolioDockviewLayout,
+} from "./portfolioLayoutStorage"
+import "./portfolio-dockview.css"
 
-const LEVERAGE_MIN = 0.001
-const LEVERAGE_MAX = 5
-const LEVERAGE_STEP = 0.1
+type PortfolioPanelId =
+  | "portfolio"
+  | "allSymbols"
+  | "performance"
+  | "staged"
+  | "factors"
+  | "risk"
+
+type ClosablePanelId = "performance" | "factors" | "risk"
+
+type PanelCatalogEntry =
+  | {
+      id: ClosablePanelId
+      title: string
+      component: string
+      tabComponent: string
+      closable: true
+    }
+  | {
+      id: Exclude<PortfolioPanelId, ClosablePanelId>
+      title: string
+      component: string
+      tabComponent: string
+      closable: false
+    }
+
+const panelCatalog: PanelCatalogEntry[] = [
+  {
+    id: "portfolio",
+    title: "PORTFOLIO",
+    component: "portfolio",
+    tabComponent: "portfolioTab",
+    closable: false,
+  },
+  {
+    id: "allSymbols",
+    title: "ALL SYMBOLS",
+    component: "allSymbols",
+    tabComponent: "lockedTab",
+    closable: false,
+  },
+  {
+    id: "performance",
+    title: "PERFORMANCE",
+    component: "performance",
+    tabComponent: "closableTab",
+    closable: true,
+  },
+  {
+    id: "staged",
+    title: "STAGED CHANGES",
+    component: "staged",
+    tabComponent: "lockedTab",
+    closable: false,
+  },
+  {
+    id: "factors",
+    title: "FACTORS",
+    component: "factors",
+    tabComponent: "closableTab",
+    closable: true,
+  },
+  {
+    id: "risk",
+    title: "RISK",
+    component: "risk",
+    tabComponent: "closableTab",
+    closable: true,
+  },
+]
+
+const closablePanelIds: ClosablePanelId[] = panelCatalog
+  .filter(
+    (entry): entry is Extract<PanelCatalogEntry, { closable: true }> =>
+      entry.closable,
+  )
+  .map(entry => entry.id)
+
+const findPanelCatalogEntry = (
+  panelId: string,
+): PanelCatalogEntry | undefined =>
+  panelCatalog.find(entry => entry.id === panelId)
 
 const bitcoinBetaBenchmark: BetaBenchmark = {
   symbol: "BTC",
@@ -38,12 +151,155 @@ const bitcoinBetaBenchmark: BetaBenchmark = {
   lookback: "365 calendar days",
 }
 
+/** App-token theme; avoids dockview-theme-dark (#1e1e1e) fighting --background. */
+const portfolioDockviewTheme: DockviewTheme = {
+  name: "portfolio",
+  className: "portfolio-dockview-theme",
+  gap: 4,
+}
+
+const useDockviewPanelTitle = (props: IDockviewPanelHeaderProps) => {
+  const [title, setTitle] = createSignal("")
+
+  // createEffect: sync the title signal with the imperative Dockview API
+  // subscription and dispose the listener on cleanup.
+  createEffect(() => {
+    const api = props.api
+    setTitle(api.title)
+    const disposable = api.onDidTitleChange(event => {
+      setTitle(event.title)
+    })
+    onCleanup(() => {
+      disposable.dispose()
+    })
+  })
+
+  return title
+}
+
+const LockedTab = (props: IDockviewPanelHeaderProps) => (
+  <DockviewDefaultTab {...props} hideClose />
+)
+
+const ClosableTab = (props: IDockviewPanelHeaderProps) => (
+  <DockviewDefaultTab {...props} />
+)
+
+const AddPanelMenu = (props: IDockviewHeaderActionsProps) => {
+  const [menuOpen, setMenuOpen] = createSignal(false)
+  let menuRef: HTMLDivElement | undefined
+
+  onMount(() => {
+    const handleDocumentClick = (event: MouseEvent) => {
+      if (!menuOpen()) {
+        return
+      }
+      if (menuRef && !menuRef.contains(event.target as Node)) {
+        setMenuOpen(false)
+      }
+    }
+
+    document.addEventListener("mousedown", handleDocumentClick)
+    onCleanup(() => {
+      document.removeEventListener("mousedown", handleDocumentClick)
+    })
+  })
+
+  const closedClosablePanelIds = () =>
+    closablePanelIds.filter(
+      panelId => props.containerApi.getPanel(panelId) === undefined,
+    )
+
+  const addPanel = (panelId: ClosablePanelId) => {
+    const config = findPanelCatalogEntry(panelId)
+    if (!config) {
+      return
+    }
+
+    const activePanel = props.activePanel
+    const position =
+      activePanel === undefined
+        ? undefined
+        : {
+            referencePanel: activePanel,
+            direction: "within" as const,
+          }
+
+    props.containerApi.addPanel({
+      id: config.id,
+      component: config.component,
+      tabComponent: config.tabComponent,
+      title: config.title,
+      position,
+    })
+
+    setMenuOpen(false)
+  }
+
+  return (
+    <div ref={menuRef} class="relative">
+      <button
+        type="button"
+        class="portfolio-dockview-add-button"
+        title="Add panel"
+        onClick={() => {
+          setMenuOpen(open => !open)
+        }}
+      >
+        +
+      </button>
+      <Show when={menuOpen()}>
+        <div class="portfolio-dockview-menu">
+          <Show
+            when={closedClosablePanelIds().length > 0}
+            fallback={
+              <div class="px-3 py-2 text-muted-foreground">All panels open</div>
+            }
+          >
+            <For each={closedClosablePanelIds()}>
+              {panelId => {
+                const config = findPanelCatalogEntry(panelId)
+                return (
+                  <button
+                    type="button"
+                    class="portfolio-dockview-menu-item"
+                    onClick={() => {
+                      addPanel(panelId)
+                    }}
+                  >
+                    {config?.title ?? panelId}
+                  </button>
+                )
+              }}
+            </For>
+          </Show>
+        </div>
+      </Show>
+    </div>
+  )
+}
+
 const PortfolioPage = () => {
+  const portfolioOwner = getOwner()
+  bindDockviewSolidOwner(portfolioOwner)
+  onCleanup(() => {
+    bindDockviewSolidOwner(null)
+  })
+
   const { isNetworkSwitching } = useNetwork()
   const { hasStoredSession, isLocked, canTrade, isConnected } = useWallet()
+  const DockviewProviders = useDockviewPanelProviders()
   const portfolio = usePortfolioState()
 
   const [pinDialogOpen, setPinDialogOpen] = createSignal(false)
+  const [metricVisibility, setMetricVisibility] =
+    createSignal<PortfolioMetricVisibility>(readPortfolioMetricVisibility())
+
+  let dockviewApi: DockviewApi | undefined
+  let dockviewContainer: HTMLDivElement | undefined
+  let layoutChangeDisposable: { dispose: () => void } | undefined
+  const [containerWidth, setContainerWidth] = createSignal(0)
+  const [containerHeight, setContainerHeight] = createSignal(0)
 
   const stagedConnectionState = (): StagedConnectionState => {
     if (!isConnected()) {
@@ -93,6 +349,12 @@ const PortfolioPage = () => {
   createEffect(() => {
     writeManualWeightEntry(portfolio.isManualWeightEntry)
   })
+
+  // createEffect: persist metric visibility when gear toggles change
+  createEffect(() => {
+    writePortfolioMetricVisibility(metricVisibility())
+  })
+
   const betaResult = useBeta(
     () => portfolio.targetPortfolio,
     () => portfolio.targetTotalNotional,
@@ -105,31 +367,296 @@ const PortfolioPage = () => {
   const screenerSymbols = () => tickersQuery.data ?? []
   const fundingRatesByBaseSymbol = () => fundingRatesQuery.data ?? {}
 
-  const [leverageInput, setLeverageInput] = createSignal(
-    portfolio.targetCrossAccountLeverage.toFixed(2),
+  const targetPositionCount = createMemo(
+    () => Object.keys(portfolio.targetPortfolio).length,
   )
 
-  const [isLeverageInputFocused, setIsLeverageInputFocused] =
-    createSignal(false)
+  const setMetricColumnVisible = (
+    columnId: PortfolioMetricColumnId,
+    visible: boolean,
+  ) => {
+    setMetricVisibility(previous => ({
+      ...previous,
+      [columnId]: visible,
+    }))
+  }
+
+  // createEffect: keep PORTFOLIO tab title count in sync
   createEffect(() => {
-    if (!isLeverageInputFocused()) {
-      setLeverageInput(portfolio.targetCrossAccountLeverage.toFixed(2))
-    }
+    const count = targetPositionCount()
+    dockviewApi?.getPanel("portfolio")?.api.setTitle(`PORTFOLIO (${count})`)
   })
 
-  const applyLeverageInput = (raw: string) => {
-    setLeverageInput(raw)
-    if (raw === "") return
-    const value = parseFloat(raw)
-    if (!Number.isNaN(value)) {
-      const clamped = Math.max(LEVERAGE_MIN, Math.min(LEVERAGE_MAX, value))
-      portfolio.handleCrossAccountLeverageChange(clamped)
+  onMount(() => {
+    const container = dockviewContainer
+    if (!container) {
+      return
     }
+
+    const resizeObserver = new ResizeObserver(() => {
+      setContainerWidth(container.offsetWidth)
+      setContainerHeight(container.offsetHeight)
+    })
+
+    resizeObserver.observe(container)
+    setContainerWidth(container.offsetWidth)
+    setContainerHeight(container.offsetHeight)
+
+    onCleanup(() => {
+      resizeObserver.disconnect()
+    })
+  })
+
+  const PortfolioTab = (props: IDockviewPanelHeaderProps) => {
+    const title = useDockviewPanelTitle(props)
+
+    return (
+      <DockviewProviders>
+        <div class="dv-default-tab portfolio-dockview-tab">
+          <span class="dv-default-tab-content portfolio-dockview-tab-title">
+            {title()}
+          </span>
+          <PortfolioSettingsMenu
+            isPrecise={portfolio.isPrecise}
+            onPreciseChange={value => {
+              portfolio.setIsPrecise(value)
+            }}
+            isManualWeightEntry={portfolio.isManualWeightEntry}
+            onManualWeightEntryChange={value => {
+              portfolio.setManualWeightEntry(value)
+            }}
+            metricVisibility={metricVisibility()}
+            onMetricVisibilityChange={setMetricColumnVisible}
+          />
+        </div>
+      </DockviewProviders>
+    )
   }
+
+  const panelComponents = {
+    portfolio: (_props: IDockviewPanelProps) => (
+      <DockviewProviders>
+        <div class="portfolio-dockview-panel-body">
+          <PositionsPanel
+            currentPortfolio={portfolio.currentPortfolio}
+            targetPortfolio={portfolio.targetPortfolio}
+            deletedArchive={portfolio.deletedArchive}
+            errorsBySymbol={portfolio.errorsBySymbol}
+            isLoading={portfolio.isPositionsLoading}
+            fundingIsLoading={fundingRatesQuery.isLoading}
+            leverageLimitsIsLoading={portfolio.isLeverageLimitsLoading}
+            leverageLimitsMap={portfolio.leverageLimitsMap}
+            _isRebalancing={portfolio.isRebalancing}
+            isPrecise={portfolio.isPrecise}
+            onRemove={portfolio.handleRemoveToken}
+            onUndoRemove={portfolio.handleUndoRemoveToken}
+            onSideChange={portfolio.handleSideChange}
+            onLeverageChange={portfolio.handleLeverageChange}
+            onNotionalChange={portfolio.handleNotionalChange}
+            onWeightChange={portfolio.handleWeightChange}
+            fundingRatesByBaseSymbol={fundingRatesByBaseSymbol()}
+            targetTotalNotional={portfolio.targetTotalNotional}
+            symbolsBelowMinimum={portfolio.symbolsBelowMinimum}
+            symbolsDeltaBelowMinimum={portfolio.symbolsDeltaBelowMinimum}
+            hasTotalWeightExceeded={portfolio.hasTotalWeightExceeded}
+            targetAllocationPercent={portfolio.targetAllocationPercent}
+            readonlyBtcRows={portfolio.readonlyBtcRows}
+            isReadonlyBtcLoading={portfolio.isReadonlyBtcLoading}
+            readonlyBtcError={portfolio.readonlyBtcError}
+            readonlyBtcValidationError={portfolio.readonlyBtcValidationError}
+            onAddReadonlyBtcAddress={portfolio.addReadonlyBtcAddress}
+            onRemoveReadonlyBtcAddress={portfolio.removeReadonlyBtcAddress}
+            onReadonlyBtcIncludeInBetaChange={
+              portfolio.setReadonlyBtcIncludeInBeta
+            }
+            metricVisibility={metricVisibility()}
+            isBalanceLoading={portfolio.isBalanceLoading}
+            targetCrossAccountLeverage={portfolio.targetCrossAccountLeverage}
+            onCrossAccountLeverageChange={
+              portfolio.handleCrossAccountLeverageChange
+            }
+          />
+        </div>
+      </DockviewProviders>
+    ),
+    allSymbols: (_props: IDockviewPanelProps) => (
+      <DockviewProviders>
+        <div class="portfolio-dockview-panel-body">
+          <AllSymbolsPanel
+            screenerSymbols={screenerSymbols}
+            targetPortfolio={portfolio.targetPortfolio}
+            deletedArchive={portfolio.deletedArchive}
+            fundingIsLoading={fundingRatesQuery.isLoading}
+            fundingRatesByBaseSymbol={fundingRatesByBaseSymbol()}
+            metricVisibility={metricVisibility()}
+            onRemove={portfolio.handleRemoveToken}
+            onUndoRemove={portfolio.handleUndoRemoveToken}
+            onAddSymbol={portfolio.handleAddToken}
+          />
+        </div>
+      </DockviewProviders>
+    ),
+    performance: (_props: IDockviewPanelProps) => (
+      <DockviewProviders>
+        <div class="portfolio-dockview-panel-body">
+          <PerformancePanel />
+        </div>
+      </DockviewProviders>
+    ),
+    staged: (_props: IDockviewPanelProps) => (
+      <DockviewProviders>
+        <div class="portfolio-dockview-panel-body">
+          <StagedChangesPanel
+            stagedTrades={portfolio.stagedTrades}
+            currentTotalNotional={portfolio.currentTotalNotional}
+            targetTotalNotional={portfolio.targetTotalNotional}
+            currentCrossAccountLeverage={portfolio.currentCrossAccountLeverage}
+            targetCrossAccountLeverage={portfolio.targetCrossAccountLeverage}
+            onPrimaryAction={handlePrimaryStagedAction}
+            onUnlocked={handleAgentUnlocked}
+            isRebalancing={portfolio.isRebalancing}
+            canSubmit={portfolio.canSubmit}
+            connectionState={stagedConnectionState()}
+            onClearAll={portfolio.handleResetToCurrent}
+          />
+        </div>
+      </DockviewProviders>
+    ),
+    factors: (_props: IDockviewPanelProps) => (
+      <DockviewProviders>
+        <div class="portfolio-dockview-panel-body">
+          <FactorsPanel
+            beta={betaResult.beta}
+            isBetaLoading={betaResult.isLoading}
+            betaError={betaResult.error}
+            excludedBetaSymbols={betaResult.excludedSymbols}
+            betaDataAgeHours={betaResult.dataAgeHours}
+            isBetaDataStale={betaResult.isDataStale}
+            betaMethodology={betaResult.methodology}
+          />
+        </div>
+      </DockviewProviders>
+    ),
+    risk: (_props: IDockviewPanelProps) => (
+      <DockviewProviders>
+        <div class="portfolio-dockview-panel-body">
+          <RiskPanel />
+        </div>
+      </DockviewProviders>
+    ),
+  }
+
+  const applyDefaultLayout = (api: DockviewApi) => {
+    const layoutWidth = containerWidth()
+    const layoutHeight = containerHeight()
+
+    const portfolioPanel = api.addPanel({
+      id: "portfolio",
+      component: "portfolio",
+      tabComponent: "portfolioTab",
+      title: `PORTFOLIO (${targetPositionCount()})`,
+    })
+
+    api.addPanel({
+      id: "allSymbols",
+      component: "allSymbols",
+      tabComponent: "lockedTab",
+      title: "ALL SYMBOLS",
+      position: { referencePanel: "portfolio", direction: "within" },
+    })
+
+    const performancePanel = api.addPanel({
+      id: "performance",
+      component: "performance",
+      tabComponent: "closableTab",
+      title: "PERFORMANCE",
+      position: { referencePanel: "portfolio", direction: "right" },
+    })
+
+    const stagedPanel = api.addPanel({
+      id: "staged",
+      component: "staged",
+      tabComponent: "lockedTab",
+      title: "STAGED CHANGES",
+      position: { referencePanel: "performance", direction: "below" },
+    })
+
+    const factorsPanel = api.addPanel({
+      id: "factors",
+      component: "factors",
+      tabComponent: "closableTab",
+      title: "FACTORS",
+      position: { referencePanel: "staged", direction: "right" },
+    })
+
+    api.addPanel({
+      id: "risk",
+      component: "risk",
+      tabComponent: "closableTab",
+      title: "RISK",
+      position: { referencePanel: "factors", direction: "right" },
+    })
+
+    if (layoutWidth < 100 || layoutHeight < 100) {
+      return
+    }
+
+    window.setTimeout(() => {
+      const leftWidth = Math.floor(layoutWidth * 0.48)
+      const rightWidth = Math.max(layoutWidth - leftWidth, 1)
+      const topHeight = Math.floor(layoutHeight * 0.45)
+      const bottomHeight = Math.max(layoutHeight - topHeight, 1)
+
+      portfolioPanel.group.api.setSize({ width: leftWidth })
+      performancePanel.group.api.setSize({ width: rightWidth })
+      performancePanel.api.setSize({ height: topHeight })
+      stagedPanel.group.api.setSize({
+        width: Math.floor(rightWidth * 0.4),
+        height: bottomHeight,
+      })
+      factorsPanel.group.api.setSize({
+        width: Math.floor(rightWidth * 0.25),
+      })
+    }, 0)
+  }
+
+  const handleReady = (event: DockviewReadyEvent) => {
+    dockviewApi = event.api
+
+    const hasRequiredPanels = (): boolean =>
+      (["portfolio", "allSymbols", "staged"] as const).every(
+        panelId => event.api.getPanel(panelId) !== undefined,
+      )
+
+    const savedLayout = readPortfolioDockviewLayout()
+    if (savedLayout !== null) {
+      try {
+        event.api.fromJSON(savedLayout)
+        if (!hasRequiredPanels()) {
+          event.api.clear()
+          applyDefaultLayout(event.api)
+        }
+      } catch {
+        event.api.clear()
+        applyDefaultLayout(event.api)
+      }
+    } else {
+      applyDefaultLayout(event.api)
+    }
+
+    const layoutChange = event.api.onDidLayoutChange(() => {
+      writePortfolioDockviewLayout(event.api.toJSON())
+    })
+    layoutChangeDisposable = layoutChange
+  }
+
+  onCleanup(() => {
+    layoutChangeDisposable?.dispose()
+  })
 
   return (
     <>
-      <header class="flex items-center justify-between px-3 py-1.5 border-b border-border shrink-0 bg-muted/30">
+      <header class="flex shrink-0 items-center justify-between border-b border-border bg-muted/30 px-3 py-1.5">
         <div class="flex items-center gap-5">
           <span class="font-semibold">Moneymentum</span>
           <div class="h-4 border-l border-border" />
@@ -162,7 +689,7 @@ const PortfolioPage = () => {
           <span class="font-mono text-red-400">coming soon...</span>
           <ModeToggle />
           <kbd
-            class="px-1.5 py-0.5 text-[10px] font-mono bg-muted rounded cursor-pointer hover:bg-muted/80"
+            class="cursor-pointer rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] hover:bg-muted/80"
             onClick={() => {
               alert("coming soon...")
             }}
@@ -171,160 +698,25 @@ const PortfolioPage = () => {
           </kbd>
         </div>
       </header>
+
       <div
+        ref={dockviewContainer}
         class={cn(
-          "flex flex-1 min-h-0 gap-1 p-1",
+          "portfolio-dockview-shell min-h-0 flex-1 p-1",
           isNetworkSwitching() && "pointer-events-none opacity-50",
         )}
       >
-        <div class="flex-1 min-w-0 flex gap-1 overflow-hidden">
-          <div class="shrink-0 flex-[0_0_780px] flex flex-col overflow-hidden min-h-0">
-            <div class="flex min-h-0 min-w-0 flex-1">
-              <PositionsPanel
-                currentPortfolio={portfolio.currentPortfolio}
-                targetPortfolio={portfolio.targetPortfolio}
-                deletedArchive={portfolio.deletedArchive}
-                errorsBySymbol={portfolio.errorsBySymbol}
-                isLoading={portfolio.isPositionsLoading}
-                fundingIsLoading={fundingRatesQuery.isLoading}
-                leverageLimitsIsLoading={portfolio.isLeverageLimitsLoading}
-                leverageLimitsMap={portfolio.leverageLimitsMap}
-                _isRebalancing={portfolio.isRebalancing}
-                isPrecise={portfolio.isPrecise}
-                onPreciseChange={value => {
-                  portfolio.setIsPrecise(value)
-                }}
-                isManualWeightEntry={portfolio.isManualWeightEntry}
-                onManualWeightEntryChange={value => {
-                  portfolio.setManualWeightEntry(value)
-                }}
-                onRemove={portfolio.handleRemoveToken}
-                onUndoRemove={portfolio.handleUndoRemoveToken}
-                onSideChange={portfolio.handleSideChange}
-                onLeverageChange={portfolio.handleLeverageChange}
-                onNotionalChange={portfolio.handleNotionalChange}
-                onWeightChange={portfolio.handleWeightChange}
-                fundingRatesByBaseSymbol={fundingRatesByBaseSymbol()}
-                targetTotalNotional={portfolio.targetTotalNotional}
-                symbolsBelowMinimum={portfolio.symbolsBelowMinimum}
-                symbolsDeltaBelowMinimum={portfolio.symbolsDeltaBelowMinimum}
-                hasTotalWeightExceeded={portfolio.hasTotalWeightExceeded}
-                targetAllocationPercent={portfolio.targetAllocationPercent}
-                readonlyBtcRows={portfolio.readonlyBtcRows}
-                isReadonlyBtcLoading={portfolio.isReadonlyBtcLoading}
-                readonlyBtcError={portfolio.readonlyBtcError}
-                readonlyBtcValidationError={
-                  portfolio.readonlyBtcValidationError
-                }
-                onAddReadonlyBtcAddress={portfolio.addReadonlyBtcAddress}
-                onRemoveReadonlyBtcAddress={portfolio.removeReadonlyBtcAddress}
-                onReadonlyBtcIncludeInBetaChange={
-                  portfolio.setReadonlyBtcIncludeInBeta
-                }
-                screenerSymbols={screenerSymbols}
-                onAddSymbol={portfolio.handleAddToken}
-              />
-            </div>
-            {/* <Show when={portfolio.blockingReasons.length > 0}>
-              <Card class="shrink-0">
-                <CardContent class="space-y-2 text-sm text-rose-400 py-3">
-                  <For each={portfolio.blockingReasons}>
-                    {reason => <p>{reason}</p>}
-                  </For>
-                </CardContent>
-              </Card>
-            </Show> */}
-
-            {/* Footer */}
-            <div class="sticky bottom-0 bg-background/80 backdrop-blur mt-auto">
-              <div class="text-[12px] border-t border-border pt-3 flex items-center">
-                <div class="flex items-center gap-3 flex-1">
-                  <span class="font-semibold text-muted-foreground whitespace-nowrap">
-                    Leverage
-                  </span>
-                  <Show
-                    when={!portfolio.isBalanceLoading}
-                    fallback={<Skeleton class="h-4 w-full" />}
-                  >
-                    <Slider
-                      value={[portfolio.targetCrossAccountLeverage]}
-                      onChange={([selectedLeverage]) => {
-                        portfolio.handleCrossAccountLeverageChange(
-                          selectedLeverage,
-                        )
-                      }}
-                      minValue={LEVERAGE_MIN}
-                      maxValue={LEVERAGE_MAX}
-                      step={LEVERAGE_STEP}
-                      class="flex-1"
-                    />
-                    <input
-                      type="number"
-                      value={leverageInput()}
-                      onFocus={() => setIsLeverageInputFocused(true)}
-                      onBlur={() => {
-                        setIsLeverageInputFocused(false)
-                        setLeverageInput(
-                          portfolio.targetCrossAccountLeverage.toFixed(2),
-                        )
-                      }}
-                      onInput={leverageInputChangeEvent => {
-                        applyLeverageInput(
-                          leverageInputChangeEvent.currentTarget.value,
-                        )
-                      }}
-                      min={LEVERAGE_MIN}
-                      max={LEVERAGE_MAX}
-                      step={LEVERAGE_STEP}
-                      class="w-16 rounded-md border border-border bg-transparent px-2 py-1 text-center font-medium [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
-                    />
-                    <span class="text-sm font-medium">x</span>
-                  </Show>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Right: Analysis panels (PERFORMANCE, STAGED, FACTORS, RISK) */}
-          <div class="flex flex-col gap-1 min-h-0 flex-1 min-w-0">
-            <PerformancePanel />
-            <div class="flex-1 flex gap-1 min-h-0">
-              <div class="flex flex-[0_0_40%] min-w-0">
-                <StagedChangesPanel
-                  stagedTrades={portfolio.stagedTrades}
-                  currentTotalNotional={portfolio.currentTotalNotional}
-                  targetTotalNotional={portfolio.targetTotalNotional}
-                  currentCrossAccountLeverage={
-                    portfolio.currentCrossAccountLeverage
-                  }
-                  targetCrossAccountLeverage={
-                    portfolio.targetCrossAccountLeverage
-                  }
-                  onPrimaryAction={handlePrimaryStagedAction}
-                  onUnlocked={handleAgentUnlocked}
-                  isRebalancing={portfolio.isRebalancing}
-                  canSubmit={portfolio.canSubmit}
-                  connectionState={stagedConnectionState()}
-                  onClearAll={portfolio.handleResetToCurrent}
-                />
-              </div>
-              <div class="flex-[0_0_25%] min-w-0">
-                <FactorsPanel
-                  beta={betaResult.beta}
-                  isBetaLoading={betaResult.isLoading}
-                  betaError={betaResult.error}
-                  excludedBetaSymbols={betaResult.excludedSymbols}
-                  betaDataAgeHours={betaResult.dataAgeHours}
-                  isBetaDataStale={betaResult.isDataStale}
-                  betaMethodology={betaResult.methodology}
-                />
-              </div>
-              <div class="flex-1 min-w-0">
-                <RiskPanel />
-              </div>
-            </div>
-          </div>
-        </div>
+        <DockviewSolid
+          theme={portfolioDockviewTheme}
+          components={panelComponents}
+          tabComponents={{
+            portfolioTab: PortfolioTab,
+            lockedTab: LockedTab,
+            closableTab: ClosableTab,
+          }}
+          rightHeaderActionsComponent={AddPanelMenu}
+          onReady={handleReady}
+        />
       </div>
 
       <WalletPinDialog
@@ -336,4 +728,10 @@ const PortfolioPage = () => {
   )
 }
 
-export default PortfolioPage
+const PortfolioRoute = () => (
+  <WalletProvider>
+    <PortfolioPage />
+  </WalletProvider>
+)
+
+export default PortfolioRoute

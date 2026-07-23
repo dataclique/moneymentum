@@ -101,7 +101,11 @@ shell-init quirks:
 nix develop --impure -c claude
 ```
 
-Agents must follow [AGENTS.md](./AGENTS.md).
+Agents must follow [AGENTS.md](./AGENTS.md). In particular, every `bun` /
+`cargo` / `sqlx` / `but` invocation from an agent shell must go through
+`nix develop --impure -c ...` -- do not run bare toolchain commands and fall
+back to Nix after they fail. Inside an already-active flake shell, bare
+toolchain commands are fine.
 
 ## Infrastructure
 

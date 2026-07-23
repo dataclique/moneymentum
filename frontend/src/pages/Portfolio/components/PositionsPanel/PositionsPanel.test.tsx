@@ -137,19 +137,11 @@ const toggleMetricVisibility = async (
   metricLabel: string,
 ) => {
   const menu = screen.getByRole("menu")
-  const metricLabelNode = within(menu).getByText(metricLabel)
-  const menuItem = metricLabelNode.closest('[role="menuitem"]')
-  if (!(menuItem instanceof HTMLElement)) {
-    throw new Error(`${metricLabel} settings row not found`)
-  }
+  const menuItem = within(menu).getByRole("menuitemcheckbox", {
+    name: metricLabel,
+  })
 
-  const switchInput = within(menuItem).getByRole("switch")
-  const switchControl = switchInput.nextElementSibling
-  if (!(switchControl instanceof HTMLElement)) {
-    throw new Error(`${metricLabel} switch control not found`)
-  }
-
-  await user.click(switchControl)
+  await user.click(menuItem)
 }
 
 const allSymbolsTable = () => {

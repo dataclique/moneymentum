@@ -623,10 +623,19 @@ const PortfolioPage = () => {
   const handleReady = (event: DockviewReadyEvent) => {
     dockviewApi = event.api
 
+    const hasRequiredPanels = (): boolean =>
+      (["portfolio", "allSymbols", "staged"] as const).every(
+        panelId => event.api.getPanel(panelId) !== undefined,
+      )
+
     const savedLayout = readPortfolioDockviewLayout()
     if (savedLayout !== null) {
       try {
         event.api.fromJSON(savedLayout)
+        if (!hasRequiredPanels()) {
+          event.api.clear()
+          applyDefaultLayout(event.api)
+        }
       } catch {
         event.api.clear()
         applyDefaultLayout(event.api)

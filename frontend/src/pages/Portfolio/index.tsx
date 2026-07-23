@@ -148,6 +148,8 @@ const portfolioDockviewTheme: DockviewTheme = {
 const useDockviewPanelTitle = (props: IDockviewPanelHeaderProps) => {
   const [title, setTitle] = createSignal("")
 
+  // createEffect: sync the title signal with the imperative Dockview API
+  // subscription and dispose the listener on cleanup.
   createEffect(() => {
     const api = props.api
     setTitle(api.title)

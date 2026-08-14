@@ -13,6 +13,7 @@ import {
 } from "@/services/hyperliquid-client"
 import * as Hyperliquid from "@/services/hyperliquid"
 import type { RebalanceAction } from "@/pages/Portfolio/hooks/portfolioRebalancer"
+import type { NetworkMode } from "@/contexts/wallet-context"
 
 export type {
   OrderSide,
@@ -33,8 +34,19 @@ const QUERY_KEYS = {
 const DATA_STALE_TIME_MS = 30_000
 
 export const useHyperliquidClient = () => {
-  const { client, credentials, networkMode, isConnected } = useWallet()
-  return { client, credentials, isConnected, networkMode }
+  const { client, credentials, mainAddress, networkMode, isConnected } =
+    useWallet()
+  const accountAddress = createMemo(
+    () => credentials()?.accountAddress ?? mainAddress(),
+  )
+
+  return {
+    client,
+    credentials,
+    accountAddress,
+    isConnected,
+    networkMode,
+  }
 }
 
 export const useHyperliquidMarkets = () => {
@@ -54,15 +66,11 @@ export const useHyperliquidMarkets = () => {
 }
 
 export const useHyperliquidBalance = () => {
-  const { client, credentials, networkMode, isConnected } =
+  const { client, accountAddress, networkMode, isConnected } =
     useHyperliquidClient()
 
   return useQuery(() => ({
-    queryKey: [
-      ...QUERY_KEYS.balance,
-      credentials()?.accountAddress,
-      networkMode(),
-    ],
+    queryKey: [...QUERY_KEYS.balance, accountAddress(), networkMode()],
     queryFn: () => Effect.runPromise(Hyperliquid.getBalance(client())),
     enabled: isConnected() && client() !== null,
     staleTime: Infinity,
@@ -70,51 +78,58 @@ export const useHyperliquidBalance = () => {
 }
 
 export interface AccountSummary {
+  accountAddress: string | null
+  networkMode: NetworkMode
   accountValue: number
-  totalNotionalPosition: number
-  withdrawable: number
-  crossAccountLeverage: number
+  totalNotionalPosition: number | null
+  withdrawable: number | null
+  crossAccountLeverage: number | null
 }
 
 export const useHyperliquidAccountSummary = () => {
-  const { client, credentials, networkMode, isConnected } =
+  const { client, accountAddress, networkMode, isConnected } =
     useHyperliquidClient()
 
   return useQuery(() => ({
-    queryKey: [
-      ...QUERY_KEYS.accountSummary,
-      credentials()?.accountAddress,
-      networkMode(),
-    ],
-    queryFn: (): Promise<AccountSummary> =>
-      Effect.runPromise(
+    queryKey: [...QUERY_KEYS.accountSummary, accountAddress(), networkMode()],
+    queryFn: (): Promise<AccountSummary> => {
+      const queriedAccountAddress = accountAddress()
+      const queriedNetworkMode = networkMode()
+
+      return Effect.runPromise(
         Hyperliquid.getAccountSummary(client()).pipe(
           Effect.map(summary => {
             const crossAccountLeverage =
-              summary.accountValue > 0
+              summary.accountValue > 0 &&
+              summary.totalNotionalPosition !== null
                 ? summary.totalNotionalPosition / summary.accountValue
-                : 0
-            return { ...summary, crossAccountLeverage }
+                : null
+            return {
+              ...summary,
+              accountAddress: queriedAccountAddress,
+              networkMode: queriedNetworkMode,
+              crossAccountLeverage,
+            }
           }),
         ),
-      ),
+      )
+    },
     enabled: isConnected() && client() !== null,
     staleTime: DATA_STALE_TIME_MS,
   }))
 }
 
 export const useHyperliquidPositions = () => {
-  const { client, credentials, networkMode, isConnected } =
+  const { client, accountAddress, networkMode, isConnected } =
     useHyperliquidClient()
 
   return useQuery(() => ({
-    queryKey: [
-      ...QUERY_KEYS.positions,
-      credentials()?.accountAddress,
-      networkMode(),
-    ],
-    queryFn: () =>
-      Effect.runPromise(
+    queryKey: [...QUERY_KEYS.positions, accountAddress(), networkMode()],
+    queryFn: () => {
+      const queriedAccountAddress = accountAddress()
+      const queriedNetworkMode = networkMode()
+
+      return Effect.runPromise(
         Hyperliquid.getCurrentPositions(client()).pipe(
           Effect.map(positions => {
             const totalNotional = positions.reduce(
@@ -122,6 +137,8 @@ export const useHyperliquidPositions = () => {
               0,
             )
             return {
+              accountAddress: queriedAccountAddress,
+              networkMode: queriedNetworkMode,
               positions: positions.map(pos => ({
                 ...pos,
                 percentage:
@@ -131,7 +148,8 @@ export const useHyperliquidPositions = () => {
             }
           }),
         ),
-      ),
+      )
+    },
     enabled: isConnected() && client() !== null,
     staleTime: DATA_STALE_TIME_MS,
   }))
@@ -199,7 +217,7 @@ export interface RebalanceParams {
 }
 
 export const useRebalanceHyperliquidPositions = () => {
-  const { client, credentials, networkMode } = useHyperliquidClient()
+  const { client, accountAddress, networkMode } = useHyperliquidClient()
   const queryClient = useQueryClient()
 
   return useMutation(() => ({
@@ -207,9 +225,12 @@ export const useRebalanceHyperliquidPositions = () => {
       Effect.runPromise(
         Hyperliquid.rebalancePositions(client(), params.actions),
       ),
-    onSuccess: () => {
-      const account = credentials()?.accountAddress
-      const network = networkMode()
+    onMutate: () => ({
+      account: accountAddress(),
+      network: networkMode(),
+    }),
+    onSuccess: (_orders, _params, submittedAccount) => {
+      const { account, network } = submittedAccount
       void queryClient.invalidateQueries({
         queryKey: [...QUERY_KEYS.positions, account, network],
       })
@@ -224,12 +245,12 @@ export const useRebalanceHyperliquidPositions = () => {
 }
 
 export const useWalletSettings = () => {
-  const { credentials, networkMode, isConnected } = useWallet()
+  const { credentials, mainAddress, networkMode, isConnected } = useWallet()
 
   const data = createMemo(() => {
     if (!isConnected()) return null
     return {
-      accountAddress: credentials()?.accountAddress ?? "",
+      accountAddress: credentials()?.accountAddress ?? mainAddress() ?? "",
       isTestnet: networkMode() === "testnet",
     }
   })

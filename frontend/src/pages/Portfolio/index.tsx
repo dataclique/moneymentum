@@ -2,7 +2,9 @@ import { createSignal, createEffect, Show } from "solid-js"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Slider } from "@/components/ui/slider"
 import { cn } from "@/lib/cn"
+import { getErrorMessage } from "@/lib/error-message"
 import { useNetwork } from "@/hooks/useNetwork"
+import { useWallet } from "@/hooks/useWallet"
 import { WalletHeader } from "@/components/wallet-header"
 import { ModeToggle } from "@/components/ui/mode-toggle"
 
@@ -18,9 +20,13 @@ import {
 } from "@/hooks/useTrading"
 import { PositionsPanel } from "@/pages/Portfolio/components/PositionsPanel/PositionsPanel"
 import { PerformancePanel } from "@/pages/Portfolio/components/PerformancePanel"
-import { StagedChangesPanel } from "@/pages/Portfolio/components/StagedChangesPanel"
+import {
+  StagedChangesPanel,
+  type StagedConnectionState,
+} from "@/pages/Portfolio/components/StagedChangesPanel"
 import { FactorsPanel } from "@/pages/Portfolio/components/FactorsPanel"
 import { RiskPanel } from "@/pages/Portfolio/components/RiskPanel"
+import { WalletPinDialog } from "@/pages/Portfolio/components/WalletPinDialog"
 
 const LEVERAGE_MIN = 0.001
 const LEVERAGE_MAX = 5
@@ -35,7 +41,56 @@ const bitcoinBetaBenchmark: BetaBenchmark = {
 
 const PortfolioPage = () => {
   const { isNetworkSwitching } = useNetwork()
+  const { hasStoredSession, isLocked, canTrade, isConnected } = useWallet()
   const portfolio = usePortfolioState()
+
+  const navText = (): string => {
+    if (portfolio.isBalanceLoading) return "Loading…"
+    if (portfolio.accountValueError) return "Unavailable"
+    if (portfolio.accountValue === null) return "—"
+    return `$${portfolio.accountValue.toFixed(2)}`
+  }
+
+  const [pinDialogOpen, setPinDialogOpen] = createSignal(false)
+
+  const stagedConnectionState = (): StagedConnectionState => {
+    if (!isConnected()) {
+      return "walletDisconnected"
+    }
+    if (!hasStoredSession()) {
+      return "agentMissing"
+    }
+    if (isLocked()) {
+      return "agentLocked"
+    }
+    return "ready"
+  }
+
+  const handlePrimaryStagedAction = () => {
+    switch (stagedConnectionState()) {
+      case "walletDisconnected":
+      case "agentLocked":
+        return
+      case "agentMissing":
+        setPinDialogOpen(true)
+        return
+      case "ready":
+        if (!canTrade()) {
+          return
+        }
+        portfolio.handleRebalancePositions()
+    }
+  }
+
+  const handleAgentUnlocked = () => {
+    if (!canTrade()) {
+      return
+    }
+    if (!portfolio.canSubmit) {
+      return
+    }
+    portfolio.handleRebalancePositions()
+  }
 
   // createEffect: persist precise toggle to localStorage when it changes
   createEffect(() => {
@@ -93,7 +148,16 @@ const PortfolioPage = () => {
           <div class="h-4 border-l border-border" />
           <div class="flex gap-1.5">
             <span class="text-muted-foreground">NAV</span>
-            <span class="font-mono">${portfolio.accountValue.toFixed(2)}</span>
+            <span
+              class="font-mono"
+              title={
+                portfolio.accountValueError
+                  ? getErrorMessage(portfolio.accountValueError)
+                  : undefined
+              }
+            >
+              {navText()}
+            </span>
           </div>
           <div class="flex gap-1.5">
             <span class="text-muted-foreground">Notional</span>
@@ -253,9 +317,11 @@ const PortfolioPage = () => {
                   targetCrossAccountLeverage={
                     portfolio.targetCrossAccountLeverage
                   }
-                  onRebalance={portfolio.handleRebalancePositions}
+                  onPrimaryAction={handlePrimaryStagedAction}
+                  onUnlocked={handleAgentUnlocked}
                   isRebalancing={portfolio.isRebalancing}
                   canSubmit={portfolio.canSubmit}
+                  connectionState={stagedConnectionState()}
                   onClearAll={portfolio.handleResetToCurrent}
                 />
               </div>
@@ -277,6 +343,12 @@ const PortfolioPage = () => {
           </div>
         </div>
       </div>
+
+      <WalletPinDialog
+        open={pinDialogOpen()}
+        mode="authorize"
+        onOpenChange={setPinDialogOpen}
+      />
     </>
   )
 }

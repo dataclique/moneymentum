@@ -39,8 +39,8 @@ export const getBalance = (
 
 export interface AccountSummary {
   accountValue: number
-  totalNotionalPosition: number
-  withdrawable: number
+  totalNotionalPosition: number | null
+  withdrawable: number | null
 }
 
 export const getAccountSummary = (

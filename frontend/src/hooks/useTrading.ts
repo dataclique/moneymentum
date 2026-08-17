@@ -10,9 +10,11 @@ import {
   type LeverageLimit,
   type OrderSide,
   type HyperliquidMarketsResponse,
+  type HyperliquidClient,
 } from "@/services/hyperliquid-client"
 import * as Hyperliquid from "@/services/hyperliquid"
 import type { RebalanceAction } from "@/pages/Portfolio/hooks/portfolioRebalancer"
+import type { NetworkMode } from "@/contexts/wallet-context"
 
 export type {
   OrderSide,
@@ -33,8 +35,26 @@ const QUERY_KEYS = {
 const DATA_STALE_TIME_MS = 30_000
 
 export const useHyperliquidClient = () => {
-  const { client, credentials, networkMode, isConnected } = useWallet()
-  return { client, credentials, isConnected, networkMode }
+  const {
+    client,
+    credentials,
+    mainAddress,
+    networkMode,
+    connectionGeneration,
+    isConnected,
+  } = useWallet()
+  const accountAddress = createMemo(
+    () => credentials()?.accountAddress ?? mainAddress(),
+  )
+
+  return {
+    client,
+    credentials,
+    accountAddress,
+    isConnected,
+    networkMode,
+    connectionGeneration,
+  }
 }
 
 export const useHyperliquidMarkets = () => {
@@ -54,87 +74,142 @@ export const useHyperliquidMarkets = () => {
 }
 
 export const useHyperliquidBalance = () => {
-  const { client, credentials, networkMode, isConnected } =
-    useHyperliquidClient()
+  const {
+    client,
+    accountAddress,
+    networkMode,
+    connectionGeneration,
+    isConnected,
+  } = useHyperliquidClient()
 
-  return useQuery(() => ({
-    queryKey: [
-      ...QUERY_KEYS.balance,
-      credentials()?.accountAddress,
-      networkMode(),
-    ],
-    queryFn: () => Effect.runPromise(Hyperliquid.getBalance(client())),
-    enabled: isConnected() && client() !== null,
-    staleTime: Infinity,
-  }))
+  return useQuery(() => {
+    const queriedClient = client()
+    const queriedAccountAddress = accountAddress()
+    const queriedNetworkMode = networkMode()
+    const queriedConnectionGeneration = connectionGeneration()
+
+    return {
+      queryKey: [
+        ...QUERY_KEYS.balance,
+        queriedAccountAddress,
+        queriedNetworkMode,
+        queriedConnectionGeneration,
+      ],
+      queryFn: () =>
+        Effect.runPromise(Hyperliquid.getBalance(queriedClient)),
+      enabled: isConnected() && queriedClient !== null,
+      staleTime: Infinity,
+    }
+  })
 }
 
 export interface AccountSummary {
+  accountAddress: string | null
+  networkMode: NetworkMode
+  connectionGeneration: number
   accountValue: number
-  totalNotionalPosition: number
-  withdrawable: number
-  crossAccountLeverage: number
+  totalNotionalPosition: number | null
+  withdrawable: number | null
+  crossAccountLeverage: number | null
 }
 
 export const useHyperliquidAccountSummary = () => {
-  const { client, credentials, networkMode, isConnected } =
-    useHyperliquidClient()
+  const {
+    client,
+    accountAddress,
+    networkMode,
+    connectionGeneration,
+    isConnected,
+  } = useHyperliquidClient()
 
-  return useQuery(() => ({
-    queryKey: [
-      ...QUERY_KEYS.accountSummary,
-      credentials()?.accountAddress,
-      networkMode(),
-    ],
-    queryFn: (): Promise<AccountSummary> =>
-      Effect.runPromise(
-        Hyperliquid.getAccountSummary(client()).pipe(
-          Effect.map(summary => {
-            const crossAccountLeverage =
-              summary.accountValue > 0
-                ? summary.totalNotionalPosition / summary.accountValue
-                : 0
-            return { ...summary, crossAccountLeverage }
-          }),
+  return useQuery(() => {
+    const queriedClient = client()
+    const queriedAccountAddress = accountAddress()
+    const queriedNetworkMode = networkMode()
+    const queriedConnectionGeneration = connectionGeneration()
+
+    return {
+      queryKey: [
+        ...QUERY_KEYS.accountSummary,
+        queriedAccountAddress,
+        queriedNetworkMode,
+        queriedConnectionGeneration,
+      ],
+      queryFn: (): Promise<AccountSummary> =>
+        Effect.runPromise(
+          Hyperliquid.getAccountSummary(queriedClient).pipe(
+            Effect.map(summary => {
+              const crossAccountLeverage =
+                summary.accountValue > 0 &&
+                summary.totalNotionalPosition !== null
+                  ? summary.totalNotionalPosition / summary.accountValue
+                  : null
+              return {
+                ...summary,
+                accountAddress: queriedAccountAddress,
+                networkMode: queriedNetworkMode,
+                connectionGeneration: queriedConnectionGeneration,
+                crossAccountLeverage,
+              }
+            }),
+          ),
         ),
-      ),
-    enabled: isConnected() && client() !== null,
-    staleTime: DATA_STALE_TIME_MS,
-  }))
+      enabled: isConnected() && queriedClient !== null,
+      staleTime: DATA_STALE_TIME_MS,
+    }
+  })
 }
 
 export const useHyperliquidPositions = () => {
-  const { client, credentials, networkMode, isConnected } =
-    useHyperliquidClient()
+  const {
+    client,
+    accountAddress,
+    networkMode,
+    connectionGeneration,
+    isConnected,
+  } = useHyperliquidClient()
 
-  return useQuery(() => ({
-    queryKey: [
-      ...QUERY_KEYS.positions,
-      credentials()?.accountAddress,
-      networkMode(),
-    ],
-    queryFn: () =>
-      Effect.runPromise(
-        Hyperliquid.getCurrentPositions(client()).pipe(
-          Effect.map(positions => {
-            const totalNotional = positions.reduce(
-              (sum, pos) => sum + pos.notional,
-              0,
-            )
-            return {
-              positions: positions.map(pos => ({
-                ...pos,
-                percentage:
-                  totalNotional > 0 ? (pos.notional / totalNotional) * 100 : 0,
-              })),
-              totalNotional,
-            }
-          }),
+  return useQuery(() => {
+    const queriedClient = client()
+    const queriedAccountAddress = accountAddress()
+    const queriedNetworkMode = networkMode()
+    const queriedConnectionGeneration = connectionGeneration()
+
+    return {
+      queryKey: [
+        ...QUERY_KEYS.positions,
+        queriedAccountAddress,
+        queriedNetworkMode,
+        queriedConnectionGeneration,
+      ],
+      queryFn: () =>
+        Effect.runPromise(
+          Hyperliquid.getCurrentPositions(queriedClient).pipe(
+            Effect.map(positions => {
+              const totalNotional = positions.reduce(
+                (sum, pos) => sum + pos.notional,
+                0,
+              )
+              return {
+                accountAddress: queriedAccountAddress,
+                networkMode: queriedNetworkMode,
+                connectionGeneration: queriedConnectionGeneration,
+                positions: positions.map(pos => ({
+                  ...pos,
+                  percentage:
+                    totalNotional > 0
+                      ? (pos.notional / totalNotional) * 100
+                      : 0,
+                })),
+                totalNotional,
+              }
+            }),
+          ),
         ),
-      ),
-    enabled: isConnected() && client() !== null,
-    staleTime: DATA_STALE_TIME_MS,
-  }))
+      enabled: isConnected() && queriedClient !== null,
+      staleTime: DATA_STALE_TIME_MS,
+    }
+  })
 }
 
 export const useHyperliquidTickers = () => {
@@ -198,29 +273,80 @@ export interface RebalanceParams {
   actions: RebalanceAction[]
 }
 
-export const useRebalanceHyperliquidPositions = () => {
-  const { client, credentials, networkMode } = useHyperliquidClient()
-  const queryClient = useQueryClient()
+interface SubmittedRebalance extends RebalanceParams {
+  client: HyperliquidClient | null
+  account: string | null
+  network: NetworkMode
+  connectionGeneration: number
+}
 
-  return useMutation(() => ({
-    mutationFn: (params: RebalanceParams) =>
+export const useRebalanceHyperliquidPositions = () => {
+  const {
+    client,
+    accountAddress,
+    networkMode,
+    connectionGeneration,
+  } = useHyperliquidClient()
+  const queryClient = useQueryClient()
+  const mutation = useMutation(() => ({
+    mutationFn: (submission: SubmittedRebalance) =>
       Effect.runPromise(
-        Hyperliquid.rebalancePositions(client(), params.actions),
+        Hyperliquid.rebalancePositions(
+          submission.client,
+          submission.actions,
+        ),
       ),
-    onSuccess: () => {
-      const account = credentials()?.accountAddress
-      const network = networkMode()
+    onSuccess: (_orders, submission) => {
+      const { account, network, connectionGeneration: generation } = submission
       void queryClient.invalidateQueries({
-        queryKey: [...QUERY_KEYS.positions, account, network],
+        queryKey: [...QUERY_KEYS.positions, account, network, generation],
       })
       void queryClient.invalidateQueries({
-        queryKey: [...QUERY_KEYS.balance, account, network],
+        queryKey: [...QUERY_KEYS.balance, account, network, generation],
       })
       void queryClient.invalidateQueries({
-        queryKey: [...QUERY_KEYS.accountSummary, account, network],
+        queryKey: [...QUERY_KEYS.accountSummary, account, network, generation],
       })
     },
   }))
+
+  const mutate = (
+    params: RebalanceParams,
+    options?: Parameters<typeof mutation.mutate>[1],
+  ) => {
+    mutation.mutate(
+      {
+        actions: params.actions,
+        client: client(),
+        account: accountAddress(),
+        network: networkMode(),
+        connectionGeneration: connectionGeneration(),
+      },
+      options,
+    )
+  }
+
+  return {
+    mutate,
+    get data() {
+      return mutation.data
+    },
+    get error() {
+      return mutation.error
+    },
+    get isError() {
+      return mutation.isError
+    },
+    get isPending() {
+      return mutation.isPending
+    },
+    get isSuccess() {
+      return mutation.isSuccess
+    },
+    get status() {
+      return mutation.status
+    },
+  }
 }
 
 export const useWalletSettings = () => {

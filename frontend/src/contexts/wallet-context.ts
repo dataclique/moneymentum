@@ -20,6 +20,8 @@ export interface WalletContextType {
   mainAddress: Accessor<string | null>
   credentials: Accessor<WalletCredentials | null>
   networkMode: Accessor<NetworkMode>
+  /** Monotonic wallet/client context revision for async result isolation. */
+  connectionGeneration: Accessor<number>
   /** True when a main address is available for read-only Hyperliquid queries. */
   isConnected: Accessor<boolean>
   /** True when an encrypted agent session exists but the private key is not in memory. */
@@ -137,5 +139,5 @@ export const getStoredNetworkMode = (): NetworkMode => {
   if (stored === "mainnet" || stored === "testnet") {
     return stored
   }
-  return "testnet"
+  return "mainnet"
 }

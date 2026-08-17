@@ -4,8 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/solid-query"
 import type { ParentProps } from "solid-js"
 
 import type { PortfolioInterface } from "./usePortfolioState"
-import { useBeta, type BetaBenchmark } from "./useBeta"
-import type { ReadonlyBetaPosition } from "./useReadonlyPortfolioState"
+import { useBeta, type BetaBenchmark, type ReadonlyBetaEntry } from "./useBeta"
 
 const createWrapper = () => {
   const queryClient = new QueryClient({
@@ -34,8 +33,6 @@ const targetPortfolio = (): Record<string, PortfolioInterface | undefined> => ({
     notional: 40,
   },
 })
-const targetTotalNotional = () => 100
-
 const bitcoinBetaBenchmark: BetaBenchmark = {
   symbol: "BTC",
   label: "BTC perpetual on Hyperliquid",
@@ -64,24 +61,17 @@ describe("useBeta", () => {
     vi.restoreAllMocks()
   })
 
-  it("includes readonly btc notional in beta weights when includeInBeta is true", async () => {
-    const readonlyPositions = (): ReadonlyBetaPosition[] => [
+  it("sends exchange positions and readonly btc as separate beta sources", async () => {
+    const readonlyEntries = (): ReadonlyBetaEntry[] => [
       {
-        symbol: "BTC",
-        side: "buy",
-        notionalUsd: 100,
+        address: "1BoatSLRHtKNngkdXEeobR76b53LETtpyT",
         includeInBeta: true,
       },
     ]
 
     const { result } = renderHook(
       () =>
-        useBeta(
-          targetPortfolio,
-          targetTotalNotional,
-          readonlyPositions,
-          () => bitcoinBetaBenchmark,
-        ),
+        useBeta(targetPortfolio, readonlyEntries, () => bitcoinBetaBenchmark),
       { wrapper: createWrapper() },
     )
 
@@ -89,31 +79,41 @@ describe("useBeta", () => {
       expect(result.beta).toBe(1.23)
     })
 
-    const callBody = JSON.parse(String(fetchMock.mock.lastCall?.[1]?.body)) as {
-      weights: Record<string, number>
-    }
-    expect(callBody.weights.BTC).toBeCloseTo(0.8, 6)
-    expect(callBody.weights.ETH).toBeCloseTo(0.2, 6)
+    const callBody = JSON.parse(String(fetchMock.mock.lastCall?.[1]?.body))
+    expect(callBody).toEqual({
+      positions: [
+        {
+          symbol: "BTC/USDC:USDC",
+          side: "buy",
+          notionalUsd: "60",
+        },
+        {
+          symbol: "ETH/USDC:USDC",
+          side: "buy",
+          notionalUsd: "40",
+        },
+      ],
+      readOnlyBtc: [
+        {
+          address: "1BoatSLRHtKNngkdXEeobR76b53LETtpyT",
+          includeInBeta: true,
+        },
+      ],
+      benchmark: "BTC",
+    })
   })
 
-  it("excludes readonly btc notional from beta weights when includeInBeta is false", async () => {
-    const readonlyPositions = (): ReadonlyBetaPosition[] => [
+  it("preserves excluded readonly btc entries for backend diagnostics", async () => {
+    const readonlyEntries = (): ReadonlyBetaEntry[] => [
       {
-        symbol: "BTC",
-        side: "buy",
-        notionalUsd: 100,
+        address: "1BoatSLRHtKNngkdXEeobR76b53LETtpyT",
         includeInBeta: false,
       },
     ]
 
     const { result } = renderHook(
       () =>
-        useBeta(
-          targetPortfolio,
-          targetTotalNotional,
-          readonlyPositions,
-          () => bitcoinBetaBenchmark,
-        ),
+        useBeta(targetPortfolio, readonlyEntries, () => bitcoinBetaBenchmark),
       { wrapper: createWrapper() },
     )
 
@@ -122,11 +122,66 @@ describe("useBeta", () => {
     })
 
     const callBody = JSON.parse(String(fetchMock.mock.lastCall?.[1]?.body)) as {
-      weights: Record<string, number>
+      readOnlyBtc: ReadonlyBetaEntry[]
     }
-    expect(callBody.weights.BTC).toBeCloseTo(0.6, 6)
-    expect(callBody.weights.ETH).toBeCloseTo(0.4, 6)
+    expect(callBody.readOnlyBtc).toEqual(readonlyEntries())
   })
+
+  it("recalculates beta on manual refresh", async () => {
+    const { result } = renderHook(
+      () =>
+        useBeta(
+          targetPortfolio,
+          () => [],
+          () => bitcoinBetaBenchmark,
+        ),
+      { wrapper: createWrapper() },
+    )
+
+    await waitFor(() => {
+      expect(result.beta).toBe(1.23)
+    })
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        beta: 2.34,
+        excluded_symbols: [],
+        effective_weights: { BTC: 1 },
+        data_age_hours: 0,
+      }),
+    })
+
+    result.refresh()
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(2)
+      expect(result.beta).toBe(2.34)
+    })
+  })
+
+  it.each(["missing_bitcoin_balance", "btc_price_unavailable"] as const)(
+    "surfaces the %s degraded reason",
+    async degradedReason => {
+      fetchMock.mockResolvedValue({
+        ok: false,
+        status: 503,
+        json: async () => ({ error: degradedReason }),
+      })
+
+      const { result } = renderHook(
+        () =>
+          useBeta(
+            targetPortfolio,
+            () => [],
+            () => bitcoinBetaBenchmark,
+          ),
+        { wrapper: createWrapper() },
+      )
+
+      await waitFor(() => {
+        expect(result.degradedReason).toBe(degradedReason)
+      })
+    },
+  )
 
   it("surfaces excluded symbols from the beta report", async () => {
     fetchMock.mockResolvedValueOnce({
@@ -143,7 +198,6 @@ describe("useBeta", () => {
       () =>
         useBeta(
           targetPortfolio,
-          targetTotalNotional,
           () => [],
           () => bitcoinBetaBenchmark,
         ),
@@ -172,7 +226,6 @@ describe("useBeta", () => {
       () =>
         useBeta(
           targetPortfolio,
-          targetTotalNotional,
           () => [],
           () => selectedBenchmark,
         ),
@@ -211,7 +264,6 @@ describe("useBeta", () => {
       () =>
         useBeta(
           targetPortfolio,
-          targetTotalNotional,
           () => [],
           () => bitcoinBetaBenchmark,
         ),
@@ -224,41 +276,5 @@ describe("useBeta", () => {
 
     expect(result.dataAgeHours).toBe(24)
     expect(result.isDataStale).toBe(false)
-  })
-
-  it("uses the selected benchmark for the request and methodology labels", async () => {
-    const selectedBenchmark: BetaBenchmark = {
-      symbol: "SPY",
-      label: "SPY ETF",
-      interval: "weekly log returns",
-      lookback: "52 calendar weeks",
-    }
-
-    const { result } = renderHook(
-      () =>
-        useBeta(
-          targetPortfolio,
-          targetTotalNotional,
-          () => [],
-          () => selectedBenchmark,
-        ),
-      { wrapper: createWrapper() },
-    )
-
-    await waitFor(() => {
-      expect(result.beta).toBe(1.23)
-    })
-
-    const callBody = JSON.parse(String(fetchMock.mock.lastCall?.[1]?.body)) as {
-      benchmark: string
-    }
-
-    expect(callBody.benchmark).toBe("SPY")
-    expect(result.methodology).toEqual({
-      exposureLabel: "B to SPY",
-      benchmark: "SPY ETF",
-      interval: "weekly log returns",
-      lookback: "52 calendar weeks",
-    })
   })
 })

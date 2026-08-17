@@ -76,6 +76,26 @@ cargo run -- --help # see CLI options
 Configuration is loaded from a TOML file modeled on
 [example.toml](./example.toml).
 
+### Operator diagnostics
+
+The stable local diagnostics path is
+`$HOME/.local/state/moneymentum/operator-diagnostics.log`. Runtime output must
+reach that path only through the `operator_diagnostics` binary:
+
+```bash
+set -o pipefail
+moneymentum --config <config-path> 2>&1 | operator_diagnostics
+```
+
+The writer treats every input byte as sensitive and persists one fixed message
+per invocation, `runtime output redacted before persistence`; it never decodes,
+copies, or exposes the volume of runtime bytes. The diagnostics directory and
+file are restricted to the operator account on Unix, and redirected paths are
+rejected. If input, path resolution, directory creation, file open, write, or
+flush fails, the writer returns an error rather than falling back to an
+unredacted file. Run Moneymentum directly in a terminal when transient error
+details are required.
+
 ### Pre-commit
 
 ```bash

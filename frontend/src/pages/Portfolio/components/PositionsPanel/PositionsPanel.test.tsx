@@ -114,6 +114,7 @@ const renderPositionsPanel = () => {
         readonlyBtcError={null}
         readonlyBtcValidationError={null}
         onAddReadonlyBtcAddress={vi.fn(() => false)}
+        onRefreshReadonlyBtc={vi.fn()}
         onRemoveReadonlyBtcAddress={vi.fn()}
         onReadonlyBtcIncludeInBetaChange={vi.fn()}
         screenerSymbols={screenerSymbols}

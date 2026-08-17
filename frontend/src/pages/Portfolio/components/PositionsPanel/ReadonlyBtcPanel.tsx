@@ -3,6 +3,13 @@ import type { JSX } from "solid-js"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Switch } from "@/components/ui/switch"
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
+import { Lock, RotateCw } from "lucide-solid"
 
 import type { ReadonlyBtcRow } from "../../hooks/useReadonlyPortfolioState"
 
@@ -12,6 +19,7 @@ interface ReadonlyBtcPanelProps {
   error: string | null
   validationError: string | null
   onAddAddress: (address: string) => boolean
+  onRefresh: () => void
   onRemoveAddress: (address: string) => void
   onIncludeInBetaChange: (address: string, includeInBeta: boolean) => void
 }
@@ -27,6 +35,15 @@ export const ReadonlyBtcPanel = (props: ReadonlyBtcPanelProps): JSX.Element => {
           READ-ONLY BTC ({rowCount()})
         </span>
         <div class="flex items-center gap-1">
+          <Button
+            variant="ghost"
+            size="sm"
+            class="h-7 px-2"
+            aria-label="Refresh read-only Bitcoin balances and beta"
+            onClick={props.onRefresh}
+          >
+            <RotateCw aria-hidden="true" class="size-3" />
+          </Button>
           <input
             type="text"
             value={addressInput()}
@@ -76,10 +93,22 @@ export const ReadonlyBtcPanel = (props: ReadonlyBtcPanelProps): JSX.Element => {
         <div class="max-h-[126px] overflow-y-auto pr-1 space-y-1">
           <For each={props.rows}>
             {row => (
-              <div class="grid grid-cols-[1fr_auto_auto_auto_auto] items-center gap-2 rounded border border-border/40 px-2 py-1 text-[11px]">
+              <div class="grid grid-cols-[1fr_auto_auto_auto_auto_auto] items-center gap-2 rounded border border-border/40 px-2 py-1 text-[11px] text-muted-foreground">
                 <span class="font-mono truncate" title={row.address}>
                   {row.address}
                 </span>
+                <TooltipProvider>
+                  <Tooltip openDelay={0}>
+                    <TooltipTrigger
+                      aria-label="Read-only — cannot trade"
+                      class="inline-flex items-center gap-1 rounded bg-muted px-1.5 py-0.5 text-[10px]"
+                    >
+                      <Lock aria-hidden="true" class="size-3" />
+                      <span>Read-only</span>
+                    </TooltipTrigger>
+                    <TooltipContent>Read-only — cannot trade</TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
                 <Show
                   when={!props.isLoading}
                   fallback={<Skeleton class="h-4 w-[108px] justify-self-end" />}

@@ -40,9 +40,18 @@ Design: [adrs/0001](./adrs/0001-event-sorcery-persistence-foundation.md).
 - [x] Serve per-market max leverage limits from the catalog --
       [#379](https://github.com/dataclique/moneymentum/issues/379) /
       [#380](https://github.com/dataclique/moneymentum/pull/380)
+- [x] K-prefixed Hyperliquid markets fail ingestion --
+      [#465](https://github.com/dataclique/moneymentum/issues/465) /
+      [#466](https://github.com/dataclique/moneymentum/pull/466)
 - [x] Schedule candle and funding ingestion on independent cadences --
       [#411](https://github.com/dataclique/moneymentum/issues/411) /
       [#412](https://github.com/dataclique/moneymentum/pull/412)
+- [x] Name the failing market in ingestion fetch errors --
+      [#431](https://github.com/dataclique/moneymentum/issues/431) /
+      [#435](https://github.com/dataclique/moneymentum/pull/435)
+- [x] A single market's failed fetch aborts the whole ingestion run and discards
+      its data -- [#432](https://github.com/dataclique/moneymentum/issues/432) /
+      [#460](https://github.com/dataclique/moneymentum/pull/460)
 
 ---
 
@@ -155,6 +164,7 @@ the next user-facing priority; it runs in parallel to the Dev track above.
 
 - [ ] [Keep The App Deployed And Reachable](./stories/0x008.keep-app-deployed-and-reachable.md)
 - [ ] [Verify Deployed Hyperliquid Long-Short Rebalancing](./stories/0x00a.verify-deployed-hyperliquid-long-short-rebalancing.md)
+- [ ] [Unified Hyperliquid accounts show zero NAV](https://github.com/dataclique/moneymentum/issues/463)
 - [ ] [Serve The App From A Domain](./stories/0x009.serve-app-from-domain.md)
 - [x] [Clear stale switch-to-configuration lock blocking deploys](https://github.com/dataclique/moneymentum/issues/394)
       ([#395](https://github.com/dataclique/moneymentum/pull/395))
@@ -164,12 +174,17 @@ the next user-facing priority; it runs in parallel to the Dev track above.
       ([#427](https://github.com/dataclique/moneymentum/pull/427))
 - [x] [running-slot migration cannot apply to a populated database, crash-looping the deployed backend](https://github.com/dataclique/moneymentum/issues/443)
       ([#444](https://github.com/dataclique/moneymentum/pull/444))
+- [ ] [known historical migration checksum prevents operator startup](https://github.com/dataclique/moneymentum/issues/462)
 - [x] [a race-loser ingestion run poisons the newest view row and breaks the status endpoint](https://github.com/dataclique/moneymentum/issues/445)
       ([#446](https://github.com/dataclique/moneymentum/pull/446))
 - [x] [frontend markets requests 404: GET /hyperliquid/markets no longer exists](https://github.com/dataclique/moneymentum/issues/429)
       ([#433](https://github.com/dataclique/moneymentum/pull/433))
 - [x] [systemd moneymentum-ingest timer curls the removed POST /ingest every six hours](https://github.com/dataclique/moneymentum/issues/430)
       ([#434](https://github.com/dataclique/moneymentum/pull/434))
+- [x] [frontend UI regressions ship unnoticed without visual test coverage](https://github.com/dataclique/moneymentum/issues/439)
+      ([#440](https://github.com/dataclique/moneymentum/pull/440))
+- [x] [no test spans the frontend and backend, so endpoint-contract drift reaches prod unnoticed](https://github.com/dataclique/moneymentum/issues/438)
+      ([#441](https://github.com/dataclique/moneymentum/pull/441))
 - [ ] [Remove the markets_refresh_token deploy bridge from service configs](https://github.com/dataclique/moneymentum/issues/425)
 - [ ] [Deploy the service binary, unit, and config atomically](https://github.com/dataclique/moneymentum/issues/422)
 - [x] [Address #377 review follow-ups](https://github.com/dataclique/moneymentum/issues/392)
@@ -185,7 +200,9 @@ See [SPEC.md](./SPEC.md) for the beta methodology and the `POST /beta` contract.
 
 - [x] [Show Bitcoin Beta For The Active Portfolio](./stories/0x00b.show-bitcoin-beta-for-active-portfolio.md)
 - [x] [Add Read-Only Bitcoin Addresses](./stories/0x00c.add-read-only-bitcoin-addresses.md)
-- [ ] [Include Read-Only Bitcoin Holdings In Beta](./stories/0x00d.include-read-only-bitcoin-holdings-in-beta.md)
+- [ ] [Include Read-Only Bitcoin Holdings In Beta](./stories/0x00d.include-read-only-bitcoin-holdings-in-beta.md) --
+      [#317](https://github.com/dataclique/moneymentum/issues/317)
+      ([#483](https://github.com/dataclique/moneymentum/pull/483))
 - [ ] [Target Ending Bitcoin Beta While Hedging](./stories/0x00e.target-ending-bitcoin-beta-while-hedging.md)
 - [x] Compute read-only BTC and USD amounts with exact decimals --
       [#220](https://github.com/dataclique/moneymentum/issues/220) /
@@ -297,6 +314,9 @@ primitives.
 - [x] Rebalancer integration: connect rebalancer logic to SolidJS signals/stores
 - [x] Tests & CI: migrate Vitest tests to SolidJS testing utilities, verify CI
       passes
+- [x] Fix repository-managed frontend startup --
+      [#464](https://github.com/dataclique/moneymentum/issues/464) /
+      [#469](https://github.com/dataclique/moneymentum/pull/469)
 
 ---
 
@@ -341,3 +361,6 @@ to DigitalOcean via NixOS + deploy-rs.
 - [x] Document and automate the issue-and-roadmap-per-PR rule --
       [#247](https://github.com/dataclique/moneymentum/issues/247) /
       [#248](https://github.com/dataclique/moneymentum/pull/248)
+- [x] Ship the pull request template and align AGENTS.md with it --
+      [#436](https://github.com/dataclique/moneymentum/issues/436) /
+      [#437](https://github.com/dataclique/moneymentum/pull/437)

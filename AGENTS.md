@@ -49,11 +49,12 @@ Run from `frontend/` directory:
 
 ```bash
 cd frontend
-bun run typecheck  # Type check only
-bun run lint       # Lint
-bun run test       # Run tests (vitest)
-bun run build      # Full build
-bun run dev        # Dev server (port 5173) - only when explicitly asked
+bun run typecheck      # Type check only
+bun run lint           # Lint
+bun run test           # Run tests (vitest)
+bun run test:contract  # Backend+frontend contract e2e (builds the Rust backend)
+bun run build          # Full build
+bun run dev            # Dev server (port 5173) - only when explicitly asked
 ```
 
 ### Backend (Rust)
@@ -129,21 +130,15 @@ mechanism. No prefixes like `feat:` or `fix:`.
 - Bad: `Add Effect library for functional HTTP error handling`
 - Bad: `Refactor API hooks to use Effect-based error handling`
 
-**Descriptions**: Two sections -- `## Why` and `## How`.
+**Descriptions**: Follow the repository template at
+[.github/PULL_REQUEST_TEMPLATE.md](./.github/PULL_REQUEST_TEMPLATE.md) -- two
+sections, `## Motivation` and `## Solution`.
 
-- **Why**: The problem or motivation. Why does this PR exist?
-- **How**: High-level approach. Explain the solution, not the file changes --
-  the diff tab handles that. No file paths, no bullet lists of changes.
-
-```
-## Why
-
-<1-3 sentences explaining the problem or motivation>
-
-## How
-
-<1-3 sentences explaining the approach and key decisions>
-```
+- **Motivation**: Why the change is needed. Link the issue/ADR it advances.
+  State the problem and the desired end state, not the diff.
+- **Solution**: How the PR solves it -- approach and key design decisions. One
+  line per bullet; detail belongs in the code or the linked issue. Note stack
+  relationships and any trade-offs or follow-ups.
 
 ### Every PR is tracked by an issue and the roadmap
 

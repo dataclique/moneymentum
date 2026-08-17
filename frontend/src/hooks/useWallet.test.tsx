@@ -124,7 +124,7 @@ describe("useWallet", () => {
     localStorage.clear()
   })
 
-  it("starts disconnected with default testnet mode", () => {
+  it("starts disconnected with default mainnet mode", () => {
     const { result } = renderHook(() => useWallet(), { wrapper })
 
     expect(result.credentials()).toBeNull()
@@ -132,7 +132,7 @@ describe("useWallet", () => {
     expect(result.isConnected()).toBe(false)
     expect(result.isLocked()).toBe(false)
     expect(result.canTrade()).toBe(false)
-    expect(result.networkMode()).toBe("testnet")
+    expect(result.networkMode()).toBe("mainnet")
   })
 
   it("does not auto-restore plaintext private keys from legacy storage", () => {
@@ -186,8 +186,15 @@ describe("useWallet", () => {
     expect(result.hasStoredSession()).toBe(false)
   })
 
-  it("reads network mode from localStorage", () => {
-    localStorage.setItem("hyperliquid-network", "mainnet")
+  it("uses explicitly stored testnet mode", () => {
+    localStorage.setItem("hyperliquid-network", "testnet")
+
+    const { result } = renderHook(() => useWallet(), { wrapper })
+    expect(result.networkMode()).toBe("testnet")
+  })
+
+  it("falls back to mainnet for an invalid stored network", () => {
+    localStorage.setItem("hyperliquid-network", "invalid")
 
     const { result } = renderHook(() => useWallet(), { wrapper })
     expect(result.networkMode()).toBe("mainnet")
@@ -592,6 +599,7 @@ describe("useWallet", () => {
     const { result } = renderHook(() => useWallet(), { wrapper })
     mockGetOrCreateEvmAppKit.mockReturnValue({ getAddress: () => null })
     mockReadConnectedEip1193Provider.mockReturnValue({ request: vi.fn() })
+    result.setNetworkMode("testnet")
 
     let finishApproval: (() => void) | undefined
     mockApproveHyperliquidAgent.mockReturnValue(

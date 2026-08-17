@@ -12,9 +12,11 @@ let
       in
       (craneLib.filterCargoSources path type)
       || base == "fixtures"
+      || base == "migration-fixtures"
       || base == "migrations"
       || base == "data_test"
       || (pkgs.lib.hasPrefix (toString ./fixtures) path)
+      || (pkgs.lib.hasPrefix (toString ./migration-fixtures) path)
       || (pkgs.lib.hasPrefix (toString ./migrations) path)
       || (pkgs.lib.hasPrefix (toString ./data_test) path);
   };

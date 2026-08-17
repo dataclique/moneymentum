@@ -4,11 +4,26 @@ import type { Order } from "ccxt"
 import type { WalletCredentials } from "@/contexts/wallet-context"
 import type { RebalanceAction } from "@/pages/Portfolio/hooks/portfolioRebalancer"
 
+const mockInfoMethods = vi.hoisted(() => ({
+  userAbstraction: vi.fn(),
+  spotClearinghouseState: vi.fn(),
+  spotMetaAndAssetCtxs: vi.fn(),
+}))
+
+vi.mock("@nktkas/hyperliquid", () => ({
+  HttpTransport: vi.fn(),
+  InfoClient: class MockInfoClient {
+    userAbstraction = mockInfoMethods.userAbstraction
+    spotClearinghouseState = mockInfoMethods.spotClearinghouseState
+    spotMetaAndAssetCtxs = mockInfoMethods.spotMetaAndAssetCtxs
+  },
+}))
+
 const mockExchange = {
   setSandboxMode: vi.fn(),
   options: {} as Record<string, unknown>,
   urls: {} as Record<string, string | Record<string, string>>,
-  walletAddress: "0xWallet",
+  walletAddress: "0x0000000000000000000000000000000000000001",
   markets: undefined as Record<string, unknown> | undefined,
   markets_by_id: undefined as Record<string, unknown[]> | undefined,
 
@@ -122,6 +137,13 @@ const stubBackendMarketsFetch = (
       }
 
       const body = JSON.parse(bodyText) as { type?: string }
+      if (body.type === "userAbstraction") {
+        return {
+          ok: true,
+          json: async () => "disabled",
+        } as Response
+      }
+
       if (body.type === "metaAndAssetCtxs") {
         return {
           ok: true,
@@ -182,7 +204,7 @@ const stubBackendMarketsFetch = (
 
 describe("HyperliquidClient", () => {
   const credentials: WalletCredentials = {
-    accountAddress: "0xAccount",
+    accountAddress: "0x0000000000000000000000000000000000000001",
     apiWalletAddress: "0xApiWallet",
     privateKey: "secret",
   }
@@ -190,6 +212,10 @@ describe("HyperliquidClient", () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.restoreAllMocks()
+    mockInfoMethods.userAbstraction.mockReset()
+    mockInfoMethods.spotClearinghouseState.mockReset()
+    mockInfoMethods.spotMetaAndAssetCtxs.mockReset()
+    mockInfoMethods.userAbstraction.mockResolvedValue("disabled")
 
     mockExchange.options = {}
     mockExchange.urls = {}
@@ -266,6 +292,408 @@ describe("HyperliquidClient", () => {
       totalNotionalPosition: 1500,
       withdrawable: 777.1,
     })
+  })
+
+  it("rejects a malformed standard account summary instead of returning NaN", async () => {
+    mockExchange.fetchBalance.mockResolvedValue({
+      total: { USDC: 123 },
+      info: {
+        marginSummary: { accountValue: "not-a-number", totalNtlPos: "1500" },
+        withdrawable: "777.1",
+      },
+    })
+
+    const client = new HyperliquidClient(credentials, "mainnet")
+
+    await expect(client.getAccountSummary()).rejects.toThrow(
+      "account value must be a finite number",
+    )
+  })
+
+  it("values unified-account spot balances for account summary", async () => {
+    mockExchange.fetchBalance.mockResolvedValue({
+      total: {},
+      info: {
+        marginSummary: { accountValue: "0.0", totalNtlPos: "0.0" },
+        withdrawable: "0.0",
+      },
+    })
+    mockInfoMethods.userAbstraction.mockResolvedValue("unifiedAccount")
+    mockInfoMethods.spotClearinghouseState.mockResolvedValue({
+      balances: [
+        {
+          coin: "USDC",
+          token: 0,
+          total: "1117.1409743",
+          hold: "0.0",
+          entryNtl: "0.0",
+        },
+        {
+          coin: "HYPE",
+          token: 150,
+          total: "0.00762535",
+          hold: "0.0",
+          entryNtl: "0.0",
+        },
+        {
+          coin: "MAX",
+          token: 734,
+          total: "262540.7147",
+          hold: "0.0",
+          entryNtl: "0.0",
+        },
+      ],
+    })
+    mockInfoMethods.spotMetaAndAssetCtxs.mockResolvedValue([
+      {
+        tokens: [
+          { name: "USDC", index: 0 },
+          { name: "HYPE", index: 150 },
+          { name: "MAX", index: 734 },
+        ],
+        universe: [
+          {
+            tokens: [150, 0],
+            name: "@107",
+            index: 107,
+            isCanonical: false,
+          },
+          {
+            tokens: [734, 0],
+            name: "@591",
+            index: 591,
+            isCanonical: false,
+          },
+        ],
+      },
+      Array.from({ length: 592 }, (_unused, marketIndex) => {
+        if (marketIndex === 107) return { markPx: "55.784" }
+        if (marketIndex === 591) return { markPx: "0.0000002" }
+        return { markPx: "1.0" }
+      }),
+    ])
+
+    const client = new HyperliquidClient(credentials, "mainnet")
+    const summary = await client.getAccountSummary()
+
+    expect(summary.accountValue).toBeCloseTo(1117.62, 2)
+    expect(summary.totalNotionalPosition).toBeNull()
+    expect(summary.withdrawable).toBeNull()
+  })
+
+  it("does not require a perp summary to value a unified account", async () => {
+    mockExchange.fetchBalance.mockRejectedValue(
+      new Error("perp account summary unavailable"),
+    )
+    mockInfoMethods.userAbstraction.mockResolvedValue("unifiedAccount")
+    mockInfoMethods.spotClearinghouseState.mockResolvedValue({
+      balances: [
+        {
+          coin: "USDC",
+          token: 0,
+          total: "25.5",
+          hold: "0.0",
+          entryNtl: "0.0",
+        },
+      ],
+    })
+    mockInfoMethods.spotMetaAndAssetCtxs.mockResolvedValue([
+      {
+        tokens: [{ name: "USDC", index: 0 }],
+        universe: [],
+      },
+      [],
+    ])
+
+    const client = new HyperliquidClient(credentials, "mainnet")
+    const summary = await client.getAccountSummary()
+
+    expect(summary).toEqual({
+      accountValue: 25.5,
+      totalNotionalPosition: null,
+      withdrawable: null,
+    })
+    expect(mockExchange.fetchBalance).not.toHaveBeenCalled()
+  })
+
+  it("rejects portfolio-margin valuation without a verified accounting contract", async () => {
+    mockExchange.fetchBalance.mockResolvedValue({
+      total: {},
+      info: {
+        marginSummary: { accountValue: "0.0", totalNtlPos: "0.0" },
+        withdrawable: "0.0",
+      },
+    })
+    mockInfoMethods.userAbstraction.mockResolvedValue("portfolioMargin")
+
+    const client = new HyperliquidClient(credentials, "mainnet")
+
+    await expect(client.getAccountSummary()).rejects.toThrow(
+      "Portfolio-margin account valuation is not supported",
+    )
+    expect(mockExchange.fetchBalance).not.toHaveBeenCalled()
+    expect(mockInfoMethods.spotClearinghouseState).not.toHaveBeenCalled()
+    expect(mockInfoMethods.spotMetaAndAssetCtxs).not.toHaveBeenCalled()
+  })
+
+  it("rejects an unsupported account-abstraction response", async () => {
+    mockInfoMethods.userAbstraction.mockResolvedValue("futureAccountMode")
+
+    const client = new HyperliquidClient(credentials, "mainnet")
+
+    await expect(client.getAccountSummary()).rejects.toThrow(
+      "Unsupported account-abstraction mode",
+    )
+    expect(mockExchange.fetchBalance).not.toHaveBeenCalled()
+  })
+
+  it("rejects an unpriceable unified-account balance", async () => {
+    mockExchange.fetchBalance.mockResolvedValue({
+      total: {},
+      info: {
+        marginSummary: { accountValue: "0.0", totalNtlPos: "0.0" },
+        withdrawable: "0.0",
+      },
+    })
+    mockInfoMethods.userAbstraction.mockResolvedValue("unifiedAccount")
+    mockInfoMethods.spotClearinghouseState.mockResolvedValue({
+      balances: [
+        {
+          coin: "UNPRICEABLE",
+          token: 999,
+          total: "1.0",
+          hold: "0.0",
+          entryNtl: "0.0",
+        },
+      ],
+    })
+    mockInfoMethods.spotMetaAndAssetCtxs.mockResolvedValue([
+      {
+        tokens: [
+          { name: "USDC", index: 0 },
+          { name: "UNPRICEABLE", index: 999 },
+        ],
+        universe: [],
+      },
+      [],
+    ])
+
+    const client = new HyperliquidClient(credentials, "mainnet")
+
+    await expect(client.getAccountSummary()).rejects.toThrow(
+      "No USDC valuation market for spot token UNPRICEABLE",
+    )
+  })
+
+  it("rejects a unified-account balance whose market context is null", async () => {
+    mockExchange.fetchBalance.mockResolvedValue({
+      total: {},
+      info: {
+        marginSummary: { accountValue: "0.0", totalNtlPos: "0.0" },
+        withdrawable: "0.0",
+      },
+    })
+    mockInfoMethods.userAbstraction.mockResolvedValue("unifiedAccount")
+    mockInfoMethods.spotClearinghouseState.mockResolvedValue({
+      balances: [
+        {
+          coin: "HYPE",
+          token: 150,
+          total: "1.0",
+          hold: "0.0",
+          entryNtl: "0.0",
+        },
+      ],
+    })
+    mockInfoMethods.spotMetaAndAssetCtxs.mockResolvedValue([
+      {
+        tokens: [
+          { name: "USDC", index: 0 },
+          { name: "HYPE", index: 150 },
+        ],
+        universe: [
+          {
+            tokens: [150, 0],
+            name: "@107",
+            index: 107,
+            isCanonical: false,
+          },
+        ],
+      },
+      Array.from({ length: 108 }, (_unused, marketIndex) =>
+        marketIndex === 107 ? null : { markPx: "1.0" },
+      ),
+    ])
+
+    const client = new HyperliquidClient(credentials, "mainnet")
+
+    await expect(client.getAccountSummary()).rejects.toThrow(
+      "No positive mark price for spot token HYPE",
+    )
+  })
+
+  it("rejects duplicate USDC valuation markets for one spot token", async () => {
+    mockInfoMethods.userAbstraction.mockResolvedValue("unifiedAccount")
+    mockInfoMethods.spotClearinghouseState.mockResolvedValue({
+      balances: [
+        {
+          coin: "HYPE",
+          token: 150,
+          total: "1.0",
+          hold: "0.0",
+          entryNtl: "0.0",
+        },
+      ],
+    })
+    mockInfoMethods.spotMetaAndAssetCtxs.mockResolvedValue([
+      {
+        tokens: [
+          { name: "USDC", index: 0 },
+          { name: "HYPE", index: 150 },
+        ],
+        universe: [
+          { tokens: [150, 0], name: "@107", index: 107 },
+          { tokens: [150, 0], name: "@108", index: 108 },
+        ],
+      },
+      Array.from({ length: 109 }, () => ({ markPx: "55.0" })),
+    ])
+
+    const client = new HyperliquidClient(credentials, "mainnet")
+
+    await expect(client.getAccountSummary()).rejects.toThrow(
+      "Multiple USDC valuation markets for spot token HYPE",
+    )
+  })
+
+  it("rejects a balance whose coin does not match token metadata", async () => {
+    mockInfoMethods.userAbstraction.mockResolvedValue("unifiedAccount")
+    mockInfoMethods.spotClearinghouseState.mockResolvedValue({
+      balances: [
+        {
+          coin: "HYPE",
+          token: 0,
+          total: "1.0",
+          hold: "0.0",
+          entryNtl: "0.0",
+        },
+      ],
+    })
+    mockInfoMethods.spotMetaAndAssetCtxs.mockResolvedValue([
+      { tokens: [{ name: "USDC", index: 0 }], universe: [] },
+      [],
+    ])
+
+    const client = new HyperliquidClient(credentials, "mainnet")
+
+    await expect(client.getAccountSummary()).rejects.toThrow(
+      "Spot balance HYPE does not match token metadata USDC",
+    )
+  })
+
+  it("rejects duplicate spot token indexes", async () => {
+    mockInfoMethods.userAbstraction.mockResolvedValue("unifiedAccount")
+    mockInfoMethods.spotClearinghouseState.mockResolvedValue({ balances: [] })
+    mockInfoMethods.spotMetaAndAssetCtxs.mockResolvedValue([
+      {
+        tokens: [
+          { name: "USDC", index: 0 },
+          { name: "HYPE", index: 0 },
+        ],
+        universe: [],
+      },
+      [],
+    ])
+
+    const client = new HyperliquidClient(credentials, "mainnet")
+
+    await expect(client.getAccountSummary()).rejects.toThrow(
+      "Duplicate spot token index 0",
+    )
+  })
+
+  it("rejects multiple USDC token definitions", async () => {
+    mockInfoMethods.userAbstraction.mockResolvedValue("unifiedAccount")
+    mockInfoMethods.spotClearinghouseState.mockResolvedValue({ balances: [] })
+    mockInfoMethods.spotMetaAndAssetCtxs.mockResolvedValue([
+      {
+        tokens: [
+          { name: "USDC", index: 0 },
+          { name: "USDC", index: 1 },
+        ],
+        universe: [],
+      },
+      [],
+    ])
+
+    const client = new HyperliquidClient(credentials, "mainnet")
+
+    await expect(client.getAccountSummary()).rejects.toThrow(
+      "Unified account valuation requires exactly one USDC token",
+    )
+  })
+
+  it("rejects duplicate unified-account balance rows", async () => {
+    mockInfoMethods.userAbstraction.mockResolvedValue("unifiedAccount")
+    mockInfoMethods.spotClearinghouseState.mockResolvedValue({
+      balances: [
+        {
+          coin: "HYPE",
+          token: 150,
+          total: "1.0",
+          hold: "0.0",
+          entryNtl: "0.0",
+        },
+        {
+          coin: "HYPE",
+          token: 150,
+          total: "2.0",
+          hold: "0.0",
+          entryNtl: "0.0",
+        },
+      ],
+    })
+    mockInfoMethods.spotMetaAndAssetCtxs.mockResolvedValue([
+      {
+        tokens: [
+          { name: "USDC", index: 0 },
+          { name: "HYPE", index: 150 },
+        ],
+        universe: [{ tokens: [150, 0], name: "@107", index: 107 }],
+      },
+      Array.from({ length: 108 }, () => ({ markPx: "55.0" })),
+    ])
+
+    const client = new HyperliquidClient(credentials, "mainnet")
+
+    await expect(client.getAccountSummary()).rejects.toThrow(
+      "Duplicate spot balance for token HYPE",
+    )
+  })
+
+  it("rejects negative unified-account balances", async () => {
+    mockInfoMethods.userAbstraction.mockResolvedValue("unifiedAccount")
+    mockInfoMethods.spotClearinghouseState.mockResolvedValue({
+      balances: [
+        {
+          coin: "USDC",
+          token: 0,
+          total: "-1.0",
+          hold: "0.0",
+          entryNtl: "0.0",
+        },
+      ],
+    })
+    mockInfoMethods.spotMetaAndAssetCtxs.mockResolvedValue([
+      { tokens: [{ name: "USDC", index: 0 }], universe: [] },
+      [],
+    ])
+
+    const client = new HyperliquidClient(credentials, "mainnet")
+
+    await expect(client.getAccountSummary()).rejects.toThrow(
+      "Spot balance for USDC must not be negative",
+    )
   })
 
   it("maps positions to buy/sell current positions", async () => {

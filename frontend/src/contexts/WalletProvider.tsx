@@ -1,6 +1,7 @@
 import {
   createSignal,
   createMemo,
+  batch,
   onMount,
   onCleanup,
   untrack,
@@ -107,11 +108,13 @@ export const WalletProvider = (props: ParentProps) => {
   const [hasStoredSession, setHasStoredSession] = createSignal(
     storedSession !== null,
   )
+  const [connectionGeneration, setConnectionGeneration] = createSignal(0)
   let walletContextRevision = 0
   let activeWalletOperation: symbol | null = null
 
   const markWalletContextChanged = () => {
     walletContextRevision += 1
+    setConnectionGeneration(previousGeneration => previousGeneration + 1)
   }
 
   const syncStoredSessionState = () => {
@@ -139,27 +142,30 @@ export const WalletProvider = (props: ParentProps) => {
   })
 
   const setMainAddress = (address: string | null) => {
-    if (!sameWalletAddress(mainAddress(), address)) {
-      markWalletContextChanged()
-    }
-
     // Reown account callbacks are not Solid tracked scopes; read unlocked
     // credentials without subscribing so mismatch invalidation still runs.
     const unlocked = untrack(() => credentials())
-    if (
-      unlocked !== null &&
-      !sameWalletAddress(unlocked.accountAddress, address)
-    ) {
-      setCredentials(null)
-    }
-
     const stored = getStoredEncryptedSession()
-    if (stored !== null && !sameWalletAddress(stored.accountAddress, address)) {
-      clearEncryptedSession()
-      syncStoredSessionState()
-    }
 
-    setMainAddressState(address)
+    batch(() => {
+      if (!sameWalletAddress(mainAddress(), address)) {
+        markWalletContextChanged()
+      }
+      if (
+        unlocked !== null &&
+        !sameWalletAddress(unlocked.accountAddress, address)
+      ) {
+        setCredentials(null)
+      }
+      if (
+        stored !== null &&
+        !sameWalletAddress(stored.accountAddress, address)
+      ) {
+        clearEncryptedSession()
+        syncStoredSessionState()
+      }
+      setMainAddressState(address)
+    })
   }
 
   const connect = (
@@ -182,11 +188,13 @@ export const WalletProvider = (props: ParentProps) => {
         }
 
         return Effect.sync(() => {
-          markWalletContextChanged()
           persistEncryptedSession(newCredentials, encrypted)
-          setMainAddressState(newCredentials.accountAddress)
-          setCredentials(newCredentials)
-          syncStoredSessionState()
+          batch(() => {
+            markWalletContextChanged()
+            setMainAddressState(newCredentials.accountAddress)
+            setCredentials(newCredentials)
+            syncStoredSessionState()
+          })
         })
       }),
       Effect.asVoid,
@@ -289,10 +297,12 @@ export const WalletProvider = (props: ParentProps) => {
         )
       }
 
-      markWalletContextChanged()
       persistEncryptedSession(pendingCredentials, encrypted)
-      syncStoredSessionState()
-      setCredentials(pendingCredentials)
+      batch(() => {
+        markWalletContextChanged()
+        syncStoredSessionState()
+        setCredentials(pendingCredentials)
+      })
     }).pipe(
       Effect.ensuring(
         Effect.sync(() => {
@@ -357,10 +367,12 @@ export const WalletProvider = (props: ParentProps) => {
         )
       }
 
-      markWalletContextChanged()
-      setCredentials(null)
       clearEncryptedSession()
-      syncStoredSessionState()
+      batch(() => {
+        markWalletContextChanged()
+        setCredentials(null)
+        syncStoredSessionState()
+      })
     }).pipe(
       Effect.ensuring(
         Effect.sync(() => {
@@ -391,9 +403,11 @@ export const WalletProvider = (props: ParentProps) => {
         }
 
         return Effect.sync(() => {
-          markWalletContextChanged()
-          setMainAddressState(session.accountAddress)
-          setCredentials(credentialsFromSession(session, privateKey))
+          batch(() => {
+            markWalletContextChanged()
+            setMainAddressState(session.accountAddress)
+            setCredentials(credentialsFromSession(session, privateKey))
+          })
         })
       }),
       Effect.asVoid,
@@ -427,11 +441,13 @@ export const WalletProvider = (props: ParentProps) => {
         return yield* Effect.fail(new WalletDisconnectContextChanged())
       }
 
-      markWalletContextChanged()
-      setCredentials(null)
-      setMainAddressState(null)
       clearEncryptedSession()
-      syncStoredSessionState()
+      batch(() => {
+        markWalletContextChanged()
+        setCredentials(null)
+        setMainAddressState(null)
+        syncStoredSessionState()
+      })
     }).pipe(
       Effect.ensuring(
         Effect.sync(() => {
@@ -444,11 +460,13 @@ export const WalletProvider = (props: ParentProps) => {
   }
 
   const setNetworkMode = (mode: NetworkMode) => {
-    if (networkMode() !== mode) {
-      markWalletContextChanged()
-    }
-    setNetworkModeState(mode)
     localStorage.setItem(NETWORK_STORAGE_KEY, mode)
+    batch(() => {
+      if (networkMode() !== mode) {
+        markWalletContextChanged()
+      }
+      setNetworkModeState(mode)
+    })
   }
 
   const handleStorageChange = (event: StorageEvent) => {
@@ -518,6 +536,7 @@ export const WalletProvider = (props: ParentProps) => {
         mainAddress,
         credentials,
         networkMode,
+        connectionGeneration,
         isConnected,
         isLocked,
         hasStoredSession,

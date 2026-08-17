@@ -2,6 +2,7 @@ import { createSignal, createEffect, Show } from "solid-js"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Slider } from "@/components/ui/slider"
 import { cn } from "@/lib/cn"
+import { getErrorMessage } from "@/lib/error-message"
 import { useNetwork } from "@/hooks/useNetwork"
 import { useWallet } from "@/hooks/useWallet"
 import { WalletHeader } from "@/components/wallet-header"
@@ -42,6 +43,13 @@ const PortfolioPage = () => {
   const { isNetworkSwitching } = useNetwork()
   const { hasStoredSession, isLocked, canTrade, isConnected } = useWallet()
   const portfolio = usePortfolioState()
+
+  const navText = (): string => {
+    if (portfolio.isBalanceLoading) return "Loading…"
+    if (portfolio.accountValueError) return "Unavailable"
+    if (portfolio.accountValue === null) return "—"
+    return `$${portfolio.accountValue.toFixed(2)}`
+  }
 
   const [pinDialogOpen, setPinDialogOpen] = createSignal(false)
 
@@ -95,10 +103,13 @@ const PortfolioPage = () => {
   })
   const betaResult = useBeta(
     () => portfolio.targetPortfolio,
-    () => portfolio.targetTotalNotional,
-    () => portfolio.readonlyBetaPositions,
+    () => portfolio.readonlyBtcRows,
     () => bitcoinBetaBenchmark,
   )
+  const refreshReadonlyBtc = () => {
+    portfolio.refreshReadonlyBtc()
+    betaResult.refresh()
+  }
 
   const tickersQuery = useHyperliquidTickers()
   const fundingRatesQuery = useHyperliquidFundingRates()
@@ -140,7 +151,16 @@ const PortfolioPage = () => {
           <div class="h-4 border-l border-border" />
           <div class="flex gap-1.5">
             <span class="text-muted-foreground">NAV</span>
-            <span class="font-mono">${portfolio.accountValue.toFixed(2)}</span>
+            <span
+              class="font-mono"
+              title={
+                portfolio.accountValueError
+                  ? getErrorMessage(portfolio.accountValueError)
+                  : undefined
+              }
+            >
+              {navText()}
+            </span>
           </div>
           <div class="flex gap-1.5">
             <span class="text-muted-foreground">Notional</span>
@@ -217,6 +237,7 @@ const PortfolioPage = () => {
                   portfolio.readonlyBtcValidationError
                 }
                 onAddReadonlyBtcAddress={portfolio.addReadonlyBtcAddress}
+                onRefreshReadonlyBtc={refreshReadonlyBtc}
                 onRemoveReadonlyBtcAddress={portfolio.removeReadonlyBtcAddress}
                 onReadonlyBtcIncludeInBetaChange={
                   portfolio.setReadonlyBtcIncludeInBeta
@@ -313,6 +334,7 @@ const PortfolioPage = () => {
                   beta={betaResult.beta}
                   isBetaLoading={betaResult.isLoading}
                   betaError={betaResult.error}
+                  betaDegradedReason={betaResult.degradedReason}
                   excludedBetaSymbols={betaResult.excludedSymbols}
                   betaDataAgeHours={betaResult.dataAgeHours}
                   isBetaDataStale={betaResult.isDataStale}

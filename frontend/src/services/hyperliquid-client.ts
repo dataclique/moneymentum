@@ -1,5 +1,7 @@
 import { type Order, type OrderRequest } from "ccxt"
 import { pro } from "ccxt"
+import Decimal from "decimal.js"
+import { HttpTransport, InfoClient } from "@nktkas/hyperliquid"
 import type { NetworkMode, WalletCredentials } from "@/contexts/wallet-context"
 import type { RebalanceAction } from "@/pages/Portfolio/hooks/portfolioRebalancer"
 
@@ -13,6 +15,46 @@ const hyperliquidInfoUrl = (network: NetworkMode): string =>
 
 const HYPERLIQUID_REQUEST_TIMEOUT_MS = 10_000
 const HYPERLIQUID_WATCH_ORDERS_TIMEOUT_MS = 10_000
+
+type AccountAbstractionMode =
+  | "unifiedAccount"
+  | "portfolioMargin"
+  | "disabled"
+  | "default"
+
+type SpotBalance = {
+  coin: string
+  token: number
+  total: Decimal
+}
+
+type SpotToken = {
+  name: string
+  index: number
+}
+
+type SpotMarket = {
+  tokens: readonly [baseToken: number, quoteToken: number]
+  index: number
+}
+
+type SpotMarketContext = {
+  markPrice: Decimal
+}
+
+type SpotValuationInputs = {
+  balances: SpotBalance[]
+  tokens: SpotToken[]
+  markets: SpotMarket[]
+  contexts: Array<SpotMarketContext | null>
+}
+
+class HyperliquidAccountStateError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = "HyperliquidAccountStateError"
+  }
+}
 
 type LeverageChangedAction = Extract<
   RebalanceAction,
@@ -502,6 +544,7 @@ export type HyperliquidClientCredentials = Pick<
 
 export class HyperliquidClient {
   private exchange: HyperliquidExchange
+  private infoClient: InfoClient
   private networkMode: NetworkMode
 
   constructor(
@@ -523,6 +566,12 @@ export class HyperliquidClient {
     }
 
     this.exchange = new HyperliquidClass(exchangeConfig)
+    this.infoClient = new InfoClient({
+      transport: new HttpTransport({
+        isTestnet: networkMode === "testnet",
+        timeout: HYPERLIQUID_REQUEST_TIMEOUT_MS,
+      }),
+    })
 
     if (networkMode === "testnet") {
       this.exchange.setSandboxMode(true)
@@ -614,30 +663,283 @@ export class HyperliquidClient {
 
   async getAccountSummary(): Promise<{
     accountValue: number
-    totalNotionalPosition: number
-    withdrawable: number
+    totalNotionalPosition: number | null
+    withdrawable: number | null
   }> {
+    const accountMode = await this.fetchAccountAbstractionMode()
+
+    if (accountMode === "portfolioMargin") {
+      throw new HyperliquidAccountStateError(
+        "Portfolio-margin account valuation is not supported",
+      )
+    }
+    if (accountMode === "unifiedAccount") {
+      return {
+        accountValue: await this.fetchUnifiedAccountValue(),
+        totalNotionalPosition: null,
+        withdrawable: null,
+      }
+    }
+
     const balance = await this.exchange.fetchBalance()
     const info = balance.info
-
-    let accountValue = 0
-    let totalNotionalPosition = 0
-    let withdrawable = 0
-
-    if (info?.marginSummary) {
-      const marginSummary = info.marginSummary as Record<string, unknown>
-      accountValue = this.parseNumericValue(marginSummary.accountValue, 0)
-      totalNotionalPosition = this.parseNumericValue(
-        marginSummary.totalNtlPos,
-        0,
+    if (
+      typeof info?.marginSummary !== "object" ||
+      info.marginSummary === null
+    ) {
+      throw new HyperliquidAccountStateError(
+        "Standard account summary is unavailable",
       )
     }
 
-    if (info?.withdrawable !== undefined) {
-      withdrawable = this.parseNumericValue(info.withdrawable, 0)
-    }
+    const marginSummary = info.marginSummary as Record<string, unknown>
+    const accountValue = this.parseFiniteNumber(
+      marginSummary.accountValue,
+      "account value",
+    )
+    const totalNotionalPosition = this.parseFiniteNumber(
+      marginSummary.totalNtlPos,
+      "total notional position",
+    )
+    const withdrawable = this.parseFiniteNumber(
+      info.withdrawable,
+      "withdrawable balance",
+    )
 
     return { accountValue, totalNotionalPosition, withdrawable }
+  }
+
+  private async fetchAccountAbstractionMode(): Promise<AccountAbstractionMode> {
+    const response: unknown = await this.infoClient.userAbstraction({
+      user: this.getInfoUserAddress(),
+    })
+
+    if (
+      response === "unifiedAccount" ||
+      response === "portfolioMargin" ||
+      response === "disabled" ||
+      response === "default"
+    ) {
+      return response
+    }
+
+    throw new HyperliquidAccountStateError(
+      "Unsupported account-abstraction mode",
+    )
+  }
+
+  /**
+   * Unified-account and portfolio-margin balances live in the spot
+   * clearinghouse state; individual perp DEX account states are not meaningful.
+   * https://hyperliquid.gitbook.io/hyperliquid-docs/trading/account-abstraction-modes
+   */
+  private async fetchUnifiedAccountValue(): Promise<number> {
+    const user = this.getInfoUserAddress()
+    const [spotState, [spotMeta, spotContexts]] = await Promise.all([
+      this.infoClient.spotClearinghouseState({ user }),
+      this.infoClient.spotMetaAndAssetCtxs(),
+    ])
+    const valuationInputs: SpotValuationInputs = {
+      balances: spotState.balances.map(balance => {
+        if (!("token" in balance)) {
+          throw new HyperliquidAccountStateError(
+            `Outcome-market balance valuation is not supported for ${balance.coin}`,
+          )
+        }
+
+        return {
+          coin: balance.coin,
+          token: this.parseNonnegativeInteger(
+            balance.token,
+            "spot balance token index",
+          ),
+          total: this.parseFiniteDecimal(balance.total, "spot balance"),
+        }
+      }),
+      tokens: spotMeta.tokens.map(token => ({
+        name: token.name,
+        index: this.parseNonnegativeInteger(
+          token.index,
+          "spot token index",
+        ),
+      })),
+      markets: spotMeta.universe.map(market => ({
+        tokens: [
+          this.parseNonnegativeInteger(
+            market.tokens[0],
+            "spot market base token index",
+          ),
+          this.parseNonnegativeInteger(
+            market.tokens[1],
+            "spot market quote token index",
+          ),
+        ],
+        index: this.parseNonnegativeInteger(
+          market.index,
+          "spot market index",
+        ),
+      })),
+      contexts: (
+        spotContexts as Array<(typeof spotContexts)[number] | null>
+      ).map(context =>
+        context
+          ? {
+              markPrice: this.parseFiniteDecimal(
+                context.markPx,
+                "spot mark price",
+              ),
+            }
+          : null,
+      ),
+    }
+    const accountValue = this.valueSpotBalancesInUsdc(valuationInputs)
+    const numericAccountValue = accountValue.toNumber()
+
+    if (!Number.isFinite(numericAccountValue)) {
+      throw new HyperliquidAccountStateError(
+        "Unified account value exceeds the supported numeric range",
+      )
+    }
+
+    return numericAccountValue
+  }
+
+  private getInfoUserAddress(): `0x${string}` {
+    const userAddress = this.getWalletAddress()
+    if (!/^0x[a-fA-F0-9]{40}$/.test(userAddress)) {
+      throw new HyperliquidAccountStateError(
+        "A valid wallet address is required for Hyperliquid account state",
+      )
+    }
+
+    return userAddress as `0x${string}`
+  }
+
+  private valueSpotBalancesInUsdc({
+    balances,
+    tokens,
+    markets,
+    contexts,
+  }: SpotValuationInputs): Decimal {
+    const usdcTokens = tokens.filter(token => token.name === "USDC")
+    if (usdcTokens.length !== 1) {
+      throw new HyperliquidAccountStateError(
+        "Unified account valuation requires exactly one USDC token",
+      )
+    }
+    const [usdcToken] = usdcTokens
+
+    const tokensByIndex = tokens.reduce((tokensByIndex, token) => {
+      if (tokensByIndex.has(token.index)) {
+        throw new HyperliquidAccountStateError(
+          `Duplicate spot token index ${token.index}`,
+        )
+      }
+      tokensByIndex.set(token.index, token)
+      return tokensByIndex
+    }, new Map<number, SpotToken>())
+    const seenBalanceTokens = new Set<number>()
+
+    return balances.reduce((accountValue, balance) => {
+      const token = tokensByIndex.get(balance.token)
+      if (!token) {
+        throw new HyperliquidAccountStateError(
+          `No metadata for spot token index ${balance.token}`,
+        )
+      }
+      if (balance.coin !== token.name) {
+        throw new HyperliquidAccountStateError(
+          `Spot balance ${balance.coin} does not match token metadata ${token.name}`,
+        )
+      }
+      if (seenBalanceTokens.has(balance.token)) {
+        throw new HyperliquidAccountStateError(
+          `Duplicate spot balance for token ${token.name}`,
+        )
+      }
+      seenBalanceTokens.add(balance.token)
+      if (balance.total.isNegative()) {
+        throw new HyperliquidAccountStateError(
+          `Spot balance for ${token.name} must not be negative`,
+        )
+      }
+      if (balance.total.isZero()) return accountValue
+      if (balance.token === usdcToken.index) {
+        return accountValue.plus(balance.total)
+      }
+
+      const valuationMarkets = markets.filter(
+        candidate =>
+          candidate.tokens[0] === balance.token &&
+          candidate.tokens[1] === usdcToken.index,
+      )
+      if (valuationMarkets.length === 0) {
+        throw new HyperliquidAccountStateError(
+          `No USDC valuation market for spot token ${token.name}`,
+        )
+      }
+      if (valuationMarkets.length > 1) {
+        throw new HyperliquidAccountStateError(
+          `Multiple USDC valuation markets for spot token ${token.name}`,
+        )
+      }
+      const [market] = valuationMarkets
+
+      const context = contexts[market.index]
+      if (!context?.markPrice.isPositive()) {
+        throw new HyperliquidAccountStateError(
+          `No positive mark price for spot token ${token.name}`,
+        )
+      }
+
+      return accountValue.plus(balance.total.times(context.markPrice))
+    }, new Decimal(0))
+  }
+
+  private parseNonnegativeInteger(value: unknown, field: string): number {
+    if (
+      typeof value !== "number" ||
+      !Number.isInteger(value) ||
+      value < 0
+    ) {
+      throw new HyperliquidAccountStateError(
+        `${field} must be a nonnegative integer`,
+      )
+    }
+
+    return value
+  }
+
+  private parseFiniteDecimal(value: unknown, field: string): Decimal {
+    if (typeof value !== "string" && typeof value !== "number") {
+      throw new HyperliquidAccountStateError(
+        `Unexpected ${field} payload shape`,
+      )
+    }
+
+    const decimal = new Decimal(value)
+    if (!decimal.isFinite()) {
+      throw new HyperliquidAccountStateError(`${field} must be finite`)
+    }
+
+    return decimal
+  }
+
+  private parseFiniteNumber(value: unknown, field: string): number {
+    const numericValue =
+      typeof value === "number"
+        ? value
+        : typeof value === "string" && value.trim() !== ""
+          ? Number(value)
+          : Number.NaN
+
+    if (!Number.isFinite(numericValue)) {
+      throw new HyperliquidAccountStateError(
+        `${field} must be a finite number`,
+      )
+    }
+
+    return numericValue
   }
 
   private parseNumericValue(value: unknown, fallback: number): number {

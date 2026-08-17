@@ -7,6 +7,7 @@ import { onMount } from "solid-js"
 import {
   useHyperliquidClient,
   useHyperliquidBalance,
+  useHyperliquidAccountSummary,
   useHyperliquidPositions,
   useHyperliquidTickers,
   useHyperliquidLeverageLimits,
@@ -25,6 +26,7 @@ const mockMethods = {
   getFundingRates: vi.fn(),
   getCurrentPositions: vi.fn(),
   rebalancePositions: vi.fn(),
+  recordRebalanceAccount: vi.fn(),
   getNetworkMode: vi.fn(),
   getWalletAddress: vi.fn(),
 }
@@ -46,11 +48,20 @@ vi.mock("@/services/hyperliquid-client", async importOriginal => {
   return {
     ...actual,
     HyperliquidClient: class MockHyperliquidClient {
-      getBalance = mockMethods.getBalance
-      getAccountSummary = mockMethods.getAccountSummary
-      getFundingRates = mockMethods.getFundingRates
-      getCurrentPositions = mockMethods.getCurrentPositions
-      rebalancePositions = mockMethods.rebalancePositions
+      private readonly accountAddress: string
+
+      constructor(credentials: { accountAddress: string }) {
+        this.accountAddress = credentials.accountAddress
+      }
+
+      getBalance = () => mockMethods.getBalance()
+      getAccountSummary = () => mockMethods.getAccountSummary()
+      getFundingRates = () => mockMethods.getFundingRates()
+      getCurrentPositions = () => mockMethods.getCurrentPositions()
+      rebalancePositions = (actions: unknown) => {
+        mockMethods.recordRebalanceAccount(this.accountAddress)
+        return mockMethods.rebalancePositions(actions)
+      }
       getNetworkMode = mockMethods.getNetworkMode
       getWalletAddress = mockMethods.getWalletAddress
     },
@@ -137,15 +148,15 @@ describe("useTrading hooks", () => {
   }
 
   beforeEach(() => {
-    vi.clearAllMocks()
+    vi.resetAllMocks()
     ensureLocalStorage()
     localStorage.clear()
     vi.stubGlobal(
       "fetch",
       vi.fn().mockImplementation(async input => {
         const url = String(input)
-        if (!url.includes("network=testnet")) {
-          throw new Error(`expected testnet markets fetch, got ${url}`)
+        if (!url.includes("network=mainnet")) {
+          throw new Error(`expected mainnet markets fetch, got ${url}`)
         }
         return {
           ok: true,
@@ -241,6 +252,168 @@ describe("useTrading hooks", () => {
     })
   })
 
+  describe("useHyperliquidAccountSummary", () => {
+    it("refetches a read-only Reown account when the address changes", async () => {
+      mockMethods.getAccountSummary
+        .mockResolvedValueOnce({
+          accountValue: 100,
+          totalNotionalPosition: null,
+          withdrawable: null,
+        })
+        .mockResolvedValueOnce({
+          accountValue: 200,
+          totalNotionalPosition: 0,
+          withdrawable: 200,
+        })
+
+      const { result } = renderHook(
+        () => ({
+          wallet: useWallet(),
+          accountSummary: useHyperliquidAccountSummary(),
+        }),
+        { wrapper: createWrapper() },
+      )
+
+      result.wallet.setMainAddress("0xFirstReadOnlyAccount")
+      await waitFor(() => {
+        expect(result.accountSummary.data?.accountValue).toBe(100)
+      })
+      expect(result.accountSummary.data?.crossAccountLeverage).toBeNull()
+
+      result.wallet.setMainAddress("0xSecondReadOnlyAccount")
+      await waitFor(() => {
+        expect(result.accountSummary.data?.accountValue).toBe(200)
+      })
+
+      expect(mockMethods.getAccountSummary).toHaveBeenCalledTimes(2)
+    })
+
+    it("ignores an old account summary that resolves after the active account", async () => {
+      let resolveFirstAccount: ((summary: {
+        accountValue: number
+        totalNotionalPosition: null
+        withdrawable: null
+      }) => void) | undefined
+      let resolveSecondAccount: typeof resolveFirstAccount
+      mockMethods.getAccountSummary
+        .mockImplementationOnce(
+          () =>
+            new Promise(resolve => {
+              resolveFirstAccount = resolve
+            }),
+        )
+        .mockImplementationOnce(
+          () =>
+            new Promise(resolve => {
+              resolveSecondAccount = resolve
+            }),
+        )
+
+      const { result } = renderHook(
+        () => ({
+          wallet: useWallet(),
+          accountSummary: useHyperliquidAccountSummary(),
+        }),
+        { wrapper: createWrapper() },
+      )
+
+      result.wallet.setMainAddress("0xFirstReadOnlyAccount")
+      await waitFor(() => {
+        expect(resolveFirstAccount).toBeDefined()
+      })
+
+      result.wallet.setMainAddress("0xSecondReadOnlyAccount")
+      await waitFor(() => {
+        expect(resolveSecondAccount).toBeDefined()
+      })
+      resolveSecondAccount?.({
+        accountValue: 200,
+        totalNotionalPosition: null,
+        withdrawable: null,
+      })
+      await waitFor(() => {
+        expect(result.accountSummary.data?.accountValue).toBe(200)
+      })
+
+      resolveFirstAccount?.({
+        accountValue: 100,
+        totalNotionalPosition: null,
+        withdrawable: null,
+      })
+      await Promise.resolve()
+
+      expect(result.accountSummary.data?.accountValue).toBe(200)
+    })
+
+    it("rejects an old summary after reconnecting the same account", async () => {
+      let resolveFirstConnection:
+        | ((summary: {
+            accountValue: number
+            totalNotionalPosition: null
+            withdrawable: null
+          }) => void)
+        | undefined
+      let resolveSecondConnection: typeof resolveFirstConnection
+      mockMethods.getAccountSummary
+        .mockImplementationOnce(
+          () =>
+            new Promise(resolve => {
+              resolveFirstConnection = resolve
+            }),
+        )
+        .mockImplementationOnce(
+          () =>
+            new Promise(resolve => {
+              resolveSecondConnection = resolve
+            }),
+        )
+
+      const { result } = renderHook(
+        () => ({
+          wallet: useWallet(),
+          accountSummary: useHyperliquidAccountSummary(),
+        }),
+        { wrapper: createWrapper() },
+      )
+
+      result.wallet.setMainAddress("0xSameReadOnlyAccount")
+      await waitFor(() => {
+        expect(resolveFirstConnection).toBeDefined()
+      })
+
+      result.wallet.setMainAddress(null)
+      await waitFor(() => {
+        expect(result.wallet.isConnected()).toBe(false)
+      })
+      result.wallet.setMainAddress("0xSameReadOnlyAccount")
+      await waitFor(() => {
+        expect(resolveSecondConnection).toBeDefined()
+      })
+
+      resolveSecondConnection?.({
+        accountValue: 200,
+        totalNotionalPosition: null,
+        withdrawable: null,
+      })
+      await waitFor(() => {
+        expect(result.accountSummary.data?.accountValue).toBe(200)
+      })
+      const activeGeneration = result.wallet.connectionGeneration()
+
+      resolveFirstConnection?.({
+        accountValue: 100,
+        totalNotionalPosition: null,
+        withdrawable: null,
+      })
+      await Promise.resolve()
+
+      expect(result.accountSummary.data?.accountValue).toBe(200)
+      expect(result.accountSummary.data?.connectionGeneration).toBe(
+        activeGeneration,
+      )
+    })
+  })
+
   describe("useHyperliquidPositions", () => {
     it("does not fetch when wallet not connected", () => {
       const { result } = renderHook(() => useHyperliquidPositions(), {
@@ -297,6 +470,161 @@ describe("useTrading hooks", () => {
       expect(result.positions.data?.positions[0].percentage).toBe(50)
       expect(result.positions.data?.positions[1].percentage).toBe(50)
     })
+
+    it("ignores old positions that resolve after the active account", async () => {
+      type Position = {
+        symbol: string
+        side: "buy"
+        notional: number
+        entryPrice: number
+        unrealizedPnl: number
+        leverage: number
+      }
+      let resolveFirstAccount: ((positions: Position[]) => void) | undefined
+      let resolveSecondAccount: typeof resolveFirstAccount
+      mockMethods.getCurrentPositions
+        .mockImplementationOnce(
+          () =>
+            new Promise(resolve => {
+              resolveFirstAccount = resolve
+            }),
+        )
+        .mockImplementationOnce(
+          () =>
+            new Promise(resolve => {
+              resolveSecondAccount = resolve
+            }),
+        )
+
+      const { result } = renderHook(
+        () => ({
+          wallet: useWallet(),
+          positions: useHyperliquidPositions(),
+        }),
+        { wrapper: createWrapper() },
+      )
+
+      result.wallet.setMainAddress("0xFirstReadOnlyAccount")
+      await waitFor(() => {
+        expect(resolveFirstAccount).toBeDefined()
+      })
+
+      result.wallet.setMainAddress("0xSecondReadOnlyAccount")
+      await waitFor(() => {
+        expect(resolveSecondAccount).toBeDefined()
+      })
+      resolveSecondAccount?.([
+        {
+          symbol: "SOL/USDC:USDC",
+          side: "buy",
+          notional: 200,
+          entryPrice: 100,
+          unrealizedPnl: 2,
+          leverage: 1,
+        },
+      ])
+      await waitFor(() => {
+        expect(result.positions.data?.accountAddress).toBe(
+          "0xSecondReadOnlyAccount",
+        )
+      })
+
+      resolveFirstAccount?.([
+        {
+          symbol: "BTC/USDC:USDC",
+          side: "buy",
+          notional: 100,
+          entryPrice: 50_000,
+          unrealizedPnl: 1,
+          leverage: 1,
+        },
+      ])
+      await Promise.resolve()
+
+      expect(result.positions.data?.accountAddress).toBe(
+        "0xSecondReadOnlyAccount",
+      )
+      expect(result.positions.data?.positions[0]?.symbol).toBe("SOL/USDC:USDC")
+    })
+
+    it("rejects old positions after reconnecting the same account", async () => {
+      type Position = {
+        symbol: string
+        side: "buy"
+        notional: number
+        entryPrice: number
+        unrealizedPnl: number
+        leverage: number
+      }
+      let resolveFirstConnection: ((positions: Position[]) => void) | undefined
+      let resolveSecondConnection: typeof resolveFirstConnection
+      mockMethods.getCurrentPositions
+        .mockImplementationOnce(
+          () =>
+            new Promise(resolve => {
+              resolveFirstConnection = resolve
+            }),
+        )
+        .mockImplementationOnce(
+          () =>
+            new Promise(resolve => {
+              resolveSecondConnection = resolve
+            }),
+        )
+
+      const { result } = renderHook(
+        () => ({
+          wallet: useWallet(),
+          positions: useHyperliquidPositions(),
+        }),
+        { wrapper: createWrapper() },
+      )
+
+      result.wallet.setMainAddress("0xSameReadOnlyAccount")
+      await waitFor(() => {
+        expect(resolveFirstConnection).toBeDefined()
+      })
+      result.wallet.setMainAddress(null)
+      await waitFor(() => {
+        expect(result.wallet.isConnected()).toBe(false)
+      })
+      result.wallet.setMainAddress("0xSameReadOnlyAccount")
+      await waitFor(() => {
+        expect(resolveSecondConnection).toBeDefined()
+      })
+
+      resolveSecondConnection?.([
+        {
+          symbol: "SOL/USDC:USDC",
+          side: "buy",
+          notional: 200,
+          entryPrice: 100,
+          unrealizedPnl: 2,
+          leverage: 1,
+        },
+      ])
+      await waitFor(() => {
+        expect(result.positions.data?.positions[0]?.symbol).toBe(
+          "SOL/USDC:USDC",
+        )
+      })
+      const activeGeneration = result.wallet.connectionGeneration()
+
+      resolveFirstConnection?.([
+        {
+          symbol: "BTC/USDC:USDC",
+          side: "buy",
+          notional: 100,
+          entryPrice: 50_000,
+          unrealizedPnl: 1,
+          leverage: 1,
+        },
+      ])
+      await Promise.resolve()
+
+      expect(result.positions.data?.positions[0]?.symbol).toBe("SOL/USDC:USDC")
+      expect(result.positions.data?.connectionGeneration).toBe(activeGeneration)
+    })
   })
 
   describe("useHyperliquidTickers", () => {
@@ -315,7 +643,7 @@ describe("useTrading hooks", () => {
         "SOL/USDC:USDC",
       ])
       expect(global.fetch).toHaveBeenCalledWith(
-        "/api/hyperliquid/markets?network=testnet",
+        "/api/hyperliquid/markets?network=mainnet",
         expect.objectContaining({
           cache: "no-store",
           signal: expect.any(AbortSignal),
@@ -413,6 +741,200 @@ describe("useTrading hooks", () => {
 
       expect(result.rebalance.data).toHaveLength(1)
       expect(result.rebalance.data?.[0].status).toBe("filled")
+    })
+
+    it("refreshes the submitted account after the wallet switches in flight", async () => {
+      mockMethods.getCurrentPositions
+        .mockResolvedValueOnce([
+          {
+            symbol: "BTC/USDC:USDC",
+            side: "buy",
+            notional: 100,
+            entryPrice: 50_000,
+            unrealizedPnl: 1,
+            leverage: 1,
+          },
+        ])
+        .mockResolvedValueOnce([
+          {
+            symbol: "SOL/USDC:USDC",
+            side: "buy",
+            notional: 200,
+            entryPrice: 100,
+            unrealizedPnl: 2,
+            leverage: 1,
+          },
+        ])
+        .mockResolvedValueOnce([
+          {
+            symbol: "BTC/USDC:USDC",
+            side: "buy",
+            notional: 150,
+            entryPrice: 50_000,
+            unrealizedPnl: 3,
+            leverage: 1,
+          },
+        ])
+      let resolveRebalance:
+        | ((orders: Array<{
+            symbol: string
+            side: "buy"
+            status: "filled"
+          }>) => void)
+        | undefined
+      mockMethods.rebalancePositions.mockImplementation(
+        () =>
+          new Promise(resolve => {
+            resolveRebalance = resolve
+          }),
+      )
+
+      const { result } = renderHook(
+        () => ({
+          wallet: useWallet(),
+          positions: useHyperliquidPositions(),
+          rebalance: useRebalanceHyperliquidPositions(),
+        }),
+        {
+          wrapper: createConnectedWrapper({
+            accountAddress: "0xFirstSubmittedAccount",
+            apiWalletAddress: "0xTestApiWallet",
+            privateKey: "0xTestSecret",
+          }),
+        },
+      )
+      await waitUntilWalletConnected(() => result.wallet.isConnected())
+      await waitFor(() => {
+        expect(result.positions.data?.positions[0]?.notional).toBe(100)
+      })
+
+      result.rebalance.mutate({ actions: [] })
+      await waitFor(() => {
+        expect(resolveRebalance).toBeDefined()
+      })
+
+      result.wallet.setMainAddress("0xSecondActiveAccount")
+      await waitFor(() => {
+        expect(result.positions.data?.positions[0]?.symbol).toBe(
+          "SOL/USDC:USDC",
+        )
+      })
+
+      resolveRebalance?.([
+        {
+          symbol: "BTC/USDC:USDC",
+          side: "buy",
+          status: "filled",
+        },
+      ])
+      await waitFor(() => {
+        expect(result.rebalance.isSuccess).toBe(true)
+      })
+      expect(mockMethods.getCurrentPositions).toHaveBeenCalledTimes(2)
+
+      result.wallet.setMainAddress("0xFirstSubmittedAccount")
+      await waitFor(() => {
+        expect(result.positions.data?.positions[0]?.notional).toBe(150)
+      })
+      expect(mockMethods.getCurrentPositions).toHaveBeenCalledTimes(3)
+    })
+
+    it("does not invalidate a later connection to the same account", async () => {
+      mockMethods.getCurrentPositions
+        .mockResolvedValueOnce([
+          {
+            symbol: "BTC/USDC:USDC",
+            side: "buy",
+            notional: 100,
+            entryPrice: 50_000,
+            unrealizedPnl: 1,
+            leverage: 1,
+          },
+        ])
+        .mockResolvedValueOnce([
+          {
+            symbol: "SOL/USDC:USDC",
+            side: "buy",
+            notional: 200,
+            entryPrice: 100,
+            unrealizedPnl: 2,
+            leverage: 1,
+          },
+        ])
+        .mockResolvedValueOnce([
+          {
+            symbol: "BTC/USDC:USDC",
+            side: "buy",
+            notional: 300,
+            entryPrice: 50_000,
+            unrealizedPnl: 3,
+            leverage: 1,
+          },
+        ])
+      let resolveRebalance:
+        | ((orders: Array<{
+            symbol: string
+            side: "buy"
+            status: "filled"
+          }>) => void)
+        | undefined
+      mockMethods.rebalancePositions.mockImplementation(
+        () =>
+          new Promise(resolve => {
+            resolveRebalance = resolve
+          }),
+      )
+
+      const { result } = renderHook(
+        () => ({
+          wallet: useWallet(),
+          positions: useHyperliquidPositions(),
+          rebalance: useRebalanceHyperliquidPositions(),
+        }),
+        {
+          wrapper: createConnectedWrapper({
+            accountAddress: "0xSameSubmittedAccount",
+            apiWalletAddress: "0xTestApiWallet",
+            privateKey: "0xTestSecret",
+          }),
+        },
+      )
+      await waitUntilWalletConnected(() => result.wallet.isConnected())
+      await waitFor(() => {
+        expect(result.positions.data?.positions[0]?.notional).toBe(100)
+      })
+
+      result.rebalance.mutate({ actions: [] })
+      await waitFor(() => {
+        expect(resolveRebalance).toBeDefined()
+      })
+      expect(mockMethods.recordRebalanceAccount).toHaveBeenCalledWith(
+        "0xSameSubmittedAccount",
+      )
+
+      result.wallet.setMainAddress(null)
+      await waitFor(() => {
+        expect(result.wallet.isConnected()).toBe(false)
+      })
+      result.wallet.setMainAddress("0xSameSubmittedAccount")
+      await waitFor(() => {
+        expect(result.positions.data?.positions[0]?.notional).toBe(200)
+      })
+
+      resolveRebalance?.([
+        {
+          symbol: "BTC/USDC:USDC",
+          side: "buy",
+          status: "filled",
+        },
+      ])
+      await waitFor(() => {
+        expect(result.rebalance.isSuccess).toBe(true)
+      })
+      await Promise.resolve()
+
+      expect(mockMethods.getCurrentPositions).toHaveBeenCalledTimes(2)
+      expect(result.positions.data?.positions[0]?.notional).toBe(200)
     })
 
     it("calls rebalancePositions with only the actions array (no separate precise arg)", async () => {

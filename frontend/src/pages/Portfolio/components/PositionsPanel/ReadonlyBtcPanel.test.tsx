@@ -17,6 +17,7 @@ describe("ReadonlyBtcPanel", () => {
         error={null}
         validationError={INVALID_BITCOIN_ADDRESS_MESSAGE}
         onAddAddress={addAddress}
+        onRefresh={vi.fn()}
         onRemoveAddress={vi.fn()}
         onIncludeInBetaChange={vi.fn()}
       />
@@ -33,6 +34,63 @@ describe("ReadonlyBtcPanel", () => {
     expect(addAddress).toHaveBeenCalledWith("not-a-btc-address")
   })
 
+  it("marks holdings as read-only and explains they cannot trade", () => {
+    const address = "1BoatSLRHtKNngkdXEeobR76b53LETtpyT"
+
+    render(() => (
+      <ReadonlyBtcPanel
+        rows={[
+          {
+            address,
+            includeInBeta: true,
+            quantityBtc: 0.5,
+            notionalUsd: 50_000,
+          },
+        ]}
+        isLoading={false}
+        error={null}
+        validationError={null}
+        onAddAddress={vi.fn()}
+        onRefresh={vi.fn()}
+        onRemoveAddress={vi.fn()}
+        onIncludeInBetaChange={vi.fn()}
+      />
+    ))
+
+    const readOnlyIndicator = screen.getByLabelText("Read-only — cannot trade")
+    expect(readOnlyIndicator).toHaveTextContent("Read-only")
+    expect(readOnlyIndicator.querySelector("svg")).not.toBeNull()
+    expect(screen.getByText(address).parentElement).toHaveClass(
+      "text-muted-foreground",
+    )
+  })
+
+  it("requests a fresh balance and beta calculation", async () => {
+    const user = userEvent.setup()
+    const refresh = vi.fn()
+
+    render(() => (
+      <ReadonlyBtcPanel
+        rows={[]}
+        isLoading={false}
+        error={null}
+        validationError={null}
+        onAddAddress={vi.fn()}
+        onRefresh={refresh}
+        onRemoveAddress={vi.fn()}
+        onIncludeInBetaChange={vi.fn()}
+      />
+    ))
+
+    await user.click(
+      screen.getByRole("button", {
+        name: "Refresh read-only Bitcoin balances and beta",
+      }),
+    )
+
+    expect(refresh).toHaveBeenCalledOnce()
+  })
+
   it("shows validation and exposure fetch errors together", () => {
     render(() => (
       <ReadonlyBtcPanel
@@ -41,6 +99,7 @@ describe("ReadonlyBtcPanel", () => {
         error="readonly exposure request failed"
         validationError={INVALID_BITCOIN_ADDRESS_MESSAGE}
         onAddAddress={vi.fn()}
+        onRefresh={vi.fn()}
         onRemoveAddress={vi.fn()}
         onIncludeInBetaChange={vi.fn()}
       />

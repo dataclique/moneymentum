@@ -103,7 +103,26 @@ const calcLeverage = (totalNotional: number, accountValue: number): number => {
 }
 
 export const usePortfolioState = () => {
-  const { isConnected } = useWallet()
+  const {
+    isConnected,
+    credentials,
+    mainAddress,
+    networkMode,
+    connectionGeneration,
+  } = useWallet()
+  const accountIdentity = (
+    accountAddress: string | null,
+    accountNetworkMode: "mainnet" | "testnet",
+  ): string | null =>
+    accountAddress === null
+      ? null
+      : `${accountNetworkMode}:${accountAddress.toLowerCase()}`
+  const activeAccountIdentity = createMemo(() =>
+    accountIdentity(
+      credentials()?.accountAddress ?? mainAddress(),
+      networkMode(),
+    ),
+  )
 
   const [isPrecise, setPreciseSignal] = createSignal(
     initialPreciseFromStorage(),
@@ -148,10 +167,22 @@ export const usePortfolioState = () => {
   const [positionsLoadedFromExchange, setPositionsLoadedFromExchange] =
     createSignal(false)
 
-  // Track previous connection state for disconnect cleanup
+  // Track previous connection and account state for context-specific cleanup.
   let wasConnected = isConnected()
+  let observedAccountIdentity: string | null = null
+  let observedConnectionGeneration = connectionGeneration()
+  let activeRebalanceOperation: symbol | null = null
+
+  const clearRebalanceUiForOperation = (operation: symbol) => {
+    if (activeRebalanceOperation !== operation) return
+
+    activeRebalanceOperation = null
+    setIsRebalancingUi(false)
+  }
 
   const handleDisconnect = () => {
+    activeRebalanceOperation = null
+    setIsRebalancingUi(false)
     batch(() => {
       setCurrentPortfolio(reconcile({}))
       setTargetPortfolio(reconcile({}))
@@ -285,17 +316,85 @@ export const usePortfolioState = () => {
     })
   })
 
+  // createEffect: an account, network, or connection-generation change
+  // invalidates every derived portfolio.
+  createEffect(() => {
+    const currentAccountIdentity = activeAccountIdentity()
+    const currentConnectionGeneration = connectionGeneration()
+    const previousAccountIdentity = observedAccountIdentity
+    const previousConnectionGeneration = observedConnectionGeneration
+    observedAccountIdentity = currentAccountIdentity
+    observedConnectionGeneration = currentConnectionGeneration
+
+    if (
+      previousAccountIdentity === currentAccountIdentity &&
+      previousConnectionGeneration === currentConnectionGeneration
+    ) {
+      return
+    }
+
+    if (
+      previousAccountIdentity === null ||
+      currentAccountIdentity === null
+    ) {
+      return
+    }
+
+    resetPortfolioStateForNetworkChange()
+  })
+
+  // A missing or failed summary is not a financial zero. Keep calculations and
+  // rebalance controls closed until the current account has a trusted NAV.
+  const accountValue = createMemo<number | null>(() => {
+    const accountSummary = accountSummaryQuery.data
+    if (
+      !accountSummary ||
+      accountSummaryQuery.error ||
+      accountSummary.connectionGeneration !== connectionGeneration() ||
+      accountIdentity(
+        accountSummary.accountAddress,
+        accountSummary.networkMode,
+      ) !== activeAccountIdentity() ||
+      !Number.isFinite(accountSummary.accountValue)
+    ) {
+      return null
+    }
+
+    return accountSummary.accountValue
+  })
+  const trustedAccountValue = (): number | null => {
+    const currentAccountValue = accountValue()
+    if (accountSummaryQuery.error !== null) {
+      return null
+    }
+    if (
+      currentAccountValue === null ||
+      !Number.isFinite(currentAccountValue) ||
+      currentAccountValue <= 0
+    ) {
+      return null
+    }
+
+    return currentAccountValue
+  }
+
   // Keep displayed target leverage in sync with planned target notional.
   createEffect(() => {
+    const currentAccountValue = trustedAccountValue()
+    if (currentAccountValue === null) return
+
     setTargetCrossAccountLeverage(
-      calcLeverage(targetTotalNotional(), accountValue()),
+      calcLeverage(targetTotalNotional(), currentAccountValue),
     )
   })
 
   // Keep displayed current leverage in sync with current notional on the exchange.
   createEffect(() => {
+    const currentAccountValue = trustedAccountValue()
+    if (currentAccountValue === null) return
+
     setCurrentCrossAccountLeverage(
-      calcLeverage(currentTotalNotional(), accountValue()),
+      calcLeverage(currentTotalNotional(), currentAccountValue),
     )
   })
 
@@ -312,18 +411,16 @@ export const usePortfolioState = () => {
     handleDisconnect()
   })
 
-  // Derive accountValue from account summary
-  const accountValue = createMemo(
-    () => accountSummaryQuery.data?.accountValue ?? 0,
-  )
-
   // Compute targetNotional = accountValue * targetCrossAccountLeverage (used for percentage calculations)
-  const targetNotional = createMemo(() =>
-    new Decimal(accountValue())
+  const targetNotional = createMemo<number | null>(() => {
+    const currentAccountValue = trustedAccountValue()
+    if (currentAccountValue === null) return null
+
+    return new Decimal(currentAccountValue)
       .mul(targetCrossAccountLeverage())
       .toDecimalPlaces(2, Decimal.ROUND_HALF_UP)
-      .toNumber(),
-  )
+      .toNumber()
+  })
 
   const readonlyPortfolio = useReadonlyPortfolioState()
 
@@ -338,9 +435,18 @@ export const usePortfolioState = () => {
   const finalizeRebalance = async (
     orders: OrderResult[],
     actions: RebalanceAction[],
+    submittedAccountIdentity: string,
+    submittedConnectionGeneration: number,
+    rebalanceOperation: symbol,
   ) => {
+    if (
+      activeAccountIdentity() !== submittedAccountIdentity ||
+      connectionGeneration() !== submittedConnectionGeneration
+    ) {
+      return
+    }
     if (orders.length === 0) {
-      setIsRebalancingUi(false)
+      clearRebalanceUiForOperation(rebalanceOperation)
       return
     }
 
@@ -351,7 +457,16 @@ export const usePortfolioState = () => {
       ])
 
       const positionsData = positionsRefetch.data
-      if (!positionsData?.positions) {
+      if (
+        !positionsData?.positions ||
+        activeAccountIdentity() !== submittedAccountIdentity ||
+        connectionGeneration() !== submittedConnectionGeneration ||
+        positionsData.connectionGeneration !== submittedConnectionGeneration ||
+        accountIdentity(
+          positionsData.accountAddress,
+          positionsData.networkMode,
+        ) !== submittedAccountIdentity
+      ) {
         return
       }
 
@@ -390,7 +505,7 @@ export const usePortfolioState = () => {
         )
       }
     } finally {
-      setIsRebalancingUi(false)
+      clearRebalanceUiForOperation(rebalanceOperation)
     }
   }
 
@@ -401,11 +516,20 @@ export const usePortfolioState = () => {
     }
     const positionsData = positionsQuery.data
     const isPositionsLoading = positionsQuery.isLoading
-    if (isPositionsLoading || !positionsData?.positions) {
+    if (
+      isPositionsLoading ||
+      !positionsData?.positions ||
+      positionsData.connectionGeneration !== connectionGeneration() ||
+      accountIdentity(
+        positionsData.accountAddress,
+        positionsData.networkMode,
+      ) !== activeAccountIdentity()
+    ) {
       return
     }
     // Wait for accountValue to be loaded so we can calculate correct percentages
-    if (accountValue() <= 0) {
+    const currentAccountValue = trustedAccountValue()
+    if (currentAccountValue === null) {
       return
     }
 
@@ -419,7 +543,7 @@ export const usePortfolioState = () => {
     setTargetPortfolio(reconcile(structuredClone(map)))
 
     // Calculate leverage from the formula: leverage = totalNotional / accountValue
-    const initialLeverage = calcLeverage(totalNotional, accountValue())
+    const initialLeverage = calcLeverage(totalNotional, currentAccountValue)
     setTargetTotalNotional(totalNotional)
     setTargetCrossAccountLeverage(initialLeverage)
     setCurrentCrossAccountLeverage(initialLeverage)
@@ -610,7 +734,10 @@ export const usePortfolioState = () => {
   // When leverage changes: totalNotional = leverage * accountValue
   // Weights stay fixed, notionals are recalculated from weights and new total
   const handleCrossAccountLeverageChange = (newLeverage: number) => {
-    const newTotal = accountValue() * newLeverage
+    const currentAccountValue = trustedAccountValue()
+    if (currentAccountValue === null) return
+
+    const newTotal = currentAccountValue * newLeverage
     const oldTotal = targetTotalNotional()
 
     if (oldTotal === 0) {
@@ -651,7 +778,15 @@ export const usePortfolioState = () => {
   }
 
   const handleRebalancePositions = () => {
-    if (isRebalancingUi() || rebalancePositionsMutation.isPending) {
+    const submittedAccountIdentity = activeAccountIdentity()
+    const submittedConnectionGeneration = connectionGeneration()
+    if (
+      submittedAccountIdentity === null ||
+      trustedAccountValue() === null ||
+      !canSubmit() ||
+      isRebalancingUi() ||
+      rebalancePositionsMutation.isPending
+    ) {
       return
     }
 
@@ -661,19 +796,33 @@ export const usePortfolioState = () => {
       isPrecise(),
     )
 
+    const rebalanceOperation = Symbol("rebalance")
+    activeRebalanceOperation = rebalanceOperation
     setIsRebalancingUi(true)
     rebalancePositionsMutation.mutate(apiPayload, {
       onSettled: (data, error) => {
+        if (
+          activeAccountIdentity() !== submittedAccountIdentity ||
+          connectionGeneration() !== submittedConnectionGeneration
+        ) {
+          return
+        }
         if (error || !data) {
           if (error) {
             console.error("rebalance failed", getExchangeErrorDetail(error))
             toast.error(getErrorMessage(error))
           }
-          setIsRebalancingUi(false)
+          clearRebalanceUiForOperation(rebalanceOperation)
           return
         }
 
-        void finalizeRebalance(data, apiPayload.actions)
+        void finalizeRebalance(
+          data,
+          apiPayload.actions,
+          submittedAccountIdentity,
+          submittedConnectionGeneration,
+          rebalanceOperation,
+        )
       },
     })
   }
@@ -684,6 +833,8 @@ export const usePortfolioState = () => {
       0
 
     return (
+      trustedAccountValue() !== null &&
+      positionsLoadedFromExchange() &&
       isPortfolioValid &&
       !hasPositionsBelowMinimum() &&
       (isPrecise() || !hasSymbolsDeltaBelowMinimum()) &&
@@ -692,6 +843,7 @@ export const usePortfolioState = () => {
   }
 
   const resetPortfolioStateForNetworkChange = () => {
+    activeRebalanceOperation = null
     batch(() => {
       setCurrentPortfolio(reconcile({}))
       setTargetPortfolio(reconcile({}))
@@ -710,6 +862,9 @@ export const usePortfolioState = () => {
   return {
     get accountValue() {
       return accountValue()
+    },
+    get accountValueError() {
+      return accountSummaryQuery.error ?? null
     },
     get targetCrossAccountLeverage() {
       return targetCrossAccountLeverage()

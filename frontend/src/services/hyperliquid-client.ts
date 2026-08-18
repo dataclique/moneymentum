@@ -749,17 +749,35 @@ export class HyperliquidClient {
 
         return {
           coin: balance.coin,
-          token: balance.token,
+          token: this.parseNonnegativeInteger(
+            balance.token,
+            "spot balance token index",
+          ),
           total: this.parseFiniteDecimal(balance.total, "spot balance"),
         }
       }),
       tokens: spotMeta.tokens.map(token => ({
         name: token.name,
-        index: token.index,
+        index: this.parseNonnegativeInteger(
+          token.index,
+          "spot token index",
+        ),
       })),
       markets: spotMeta.universe.map(market => ({
-        tokens: market.tokens,
-        index: market.index,
+        tokens: [
+          this.parseNonnegativeInteger(
+            market.tokens[0],
+            "spot market base token index",
+          ),
+          this.parseNonnegativeInteger(
+            market.tokens[1],
+            "spot market quote token index",
+          ),
+        ],
+        index: this.parseNonnegativeInteger(
+          market.index,
+          "spot market index",
+        ),
       })),
       contexts: (
         spotContexts as Array<(typeof spotContexts)[number] | null>
@@ -803,26 +821,51 @@ export class HyperliquidClient {
     markets,
     contexts,
   }: SpotValuationInputs): Decimal {
-    const usdcToken = tokens.find(token => token.name === "USDC")
-    if (!usdcToken) {
+    const usdcTokens = tokens.filter(token => token.name === "USDC")
+    if (usdcTokens.length !== 1) {
       throw new HyperliquidAccountStateError(
-        "USDC token metadata is required for unified account valuation",
+        "Unified account valuation requires exactly one USDC token",
       )
     }
+    const [usdcToken] = usdcTokens
 
-    const tokensByIndex = new Map(tokens.map(token => [token.index, token]))
+    const tokensByIndex = tokens.reduce((tokensByIndex, token) => {
+      if (tokensByIndex.has(token.index)) {
+        throw new HyperliquidAccountStateError(
+          `Duplicate spot token index ${token.index}`,
+        )
+      }
+      tokensByIndex.set(token.index, token)
+      return tokensByIndex
+    }, new Map<number, SpotToken>())
+    const seenBalanceTokens = new Set<number>()
 
     return balances.reduce((accountValue, balance) => {
-      if (balance.total.isZero()) return accountValue
-      if (balance.token === usdcToken.index) {
-        return accountValue.plus(balance.total)
-      }
-
       const token = tokensByIndex.get(balance.token)
       if (!token) {
         throw new HyperliquidAccountStateError(
           `No metadata for spot token index ${balance.token}`,
         )
+      }
+      if (balance.coin !== token.name) {
+        throw new HyperliquidAccountStateError(
+          `Spot balance ${balance.coin} does not match token metadata ${token.name}`,
+        )
+      }
+      if (seenBalanceTokens.has(balance.token)) {
+        throw new HyperliquidAccountStateError(
+          `Duplicate spot balance for token ${token.name}`,
+        )
+      }
+      seenBalanceTokens.add(balance.token)
+      if (balance.total.isNegative()) {
+        throw new HyperliquidAccountStateError(
+          `Spot balance for ${token.name} must not be negative`,
+        )
+      }
+      if (balance.total.isZero()) return accountValue
+      if (balance.token === usdcToken.index) {
+        return accountValue.plus(balance.total)
       }
 
       const valuationMarkets = markets.filter(
@@ -851,6 +894,20 @@ export class HyperliquidClient {
 
       return accountValue.plus(balance.total.times(context.markPrice))
     }, new Decimal(0))
+  }
+
+  private parseNonnegativeInteger(value: unknown, field: string): number {
+    if (
+      typeof value !== "number" ||
+      !Number.isInteger(value) ||
+      value < 0
+    ) {
+      throw new HyperliquidAccountStateError(
+        `${field} must be a nonnegative integer`,
+      )
+    }
+
+    return value
   }
 
   private parseFiniteDecimal(value: unknown, field: string): Decimal {

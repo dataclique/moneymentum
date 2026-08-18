@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { renderHook, waitFor } from "@solidjs/testing-library"
 import { QueryClient, QueryClientProvider } from "@tanstack/solid-query"
-import { createSignal, type ParentProps } from "solid-js"
+import { createSignal, untrack, type ParentProps } from "solid-js"
 
 import { MIN_USD, usePortfolioState } from "./usePortfolioState"
 import {
@@ -18,18 +18,34 @@ vi.mock("@/hooks/useTrading", () => ({
   useRebalanceHyperliquidPositions: vi.fn(),
 }))
 
-const [mockMainAddress, setMockMainAddress] = createSignal<string | null>(
+const [mockMainAddress, setMockMainAddressState] = createSignal<string | null>(
   "0xFirstAccount",
 )
-const [mockNetworkMode, setMockNetworkMode] = createSignal<
+const [mockNetworkMode, setMockNetworkModeState] = createSignal<
   "mainnet" | "testnet"
 >("testnet")
+const [mockConnectionGeneration, setMockConnectionGeneration] = createSignal(0)
+
+const setMockMainAddress = (address: string | null) => {
+  if (untrack(mockMainAddress) !== address) {
+    setMockConnectionGeneration(previousGeneration => previousGeneration + 1)
+  }
+  setMockMainAddressState(address)
+}
+
+const setMockNetworkMode = (networkMode: "mainnet" | "testnet") => {
+  if (untrack(mockNetworkMode) !== networkMode) {
+    setMockConnectionGeneration(previousGeneration => previousGeneration + 1)
+  }
+  setMockNetworkModeState(networkMode)
+}
 
 vi.mock("@/hooks/useWallet", () => ({
   useWallet: vi.fn(() => ({
     credentials: () => null,
     mainAddress: mockMainAddress,
     networkMode: mockNetworkMode,
+    connectionGeneration: mockConnectionGeneration,
     isConnected: () => mockMainAddress() !== null,
   })),
 }))
@@ -80,6 +96,9 @@ describe("usePortfolioState", () => {
   const exchangePositions = {
     accountAddress: "0xFirstAccount",
     networkMode: "testnet" as const,
+    get connectionGeneration() {
+      return untrack(mockConnectionGeneration)
+    },
     positions: [
       {
         symbol: "BTC/USDC:USDC",
@@ -112,6 +131,9 @@ describe("usePortfolioState", () => {
       data: {
         accountAddress: "0xFirstAccount",
         networkMode: "testnet",
+        get connectionGeneration() {
+          return untrack(mockConnectionGeneration)
+        },
         accountValue: 1000,
         totalNotionalPosition: 1000,
         withdrawable: 500,
@@ -126,6 +148,9 @@ describe("usePortfolioState", () => {
       data: {
         accountAddress: "0xFirstAccount",
         networkMode: "testnet",
+        get connectionGeneration() {
+          return untrack(mockConnectionGeneration)
+        },
         accountValue: 1000,
         totalNotionalPosition: 1000,
         withdrawable: 500,
@@ -189,6 +214,33 @@ describe("usePortfolioState", () => {
     expect(mutate).not.toHaveBeenCalled()
   })
 
+  it.each([Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY])(
+    "rejects non-finite account value %s",
+    accountValue => {
+      vi.mocked(useHyperliquidAccountSummary).mockReturnValue({
+        data: {
+          accountAddress: "0xFirstAccount",
+          networkMode: "testnet",
+          connectionGeneration: untrack(mockConnectionGeneration),
+          accountValue,
+          totalNotionalPosition: 1000,
+          withdrawable: 500,
+          crossAccountLeverage: 1,
+        },
+        isLoading: false,
+        error: null,
+        refetch: refetchAccountSummary,
+      } as ReturnType<typeof useHyperliquidAccountSummary>)
+
+      const { result } = renderHook(() => usePortfolioState(), {
+        wrapper: createWrapper(),
+      })
+
+      expect(result.accountValue).toBeNull()
+      expect(result.canSubmit).toBe(false)
+    },
+  )
+
   it("exports MIN_USD", () => {
     expect(MIN_USD).toBe(11)
   })
@@ -213,6 +265,7 @@ describe("usePortfolioState", () => {
     const [accountSummary, setAccountSummary] = createSignal({
       accountAddress: "0xFirstAccount",
       networkMode: "testnet" as const,
+      connectionGeneration: untrack(mockConnectionGeneration),
       accountValue: 1000,
       totalNotionalPosition: 1000,
       withdrawable: 500,
@@ -259,6 +312,7 @@ describe("usePortfolioState", () => {
     setAccountSummary({
       accountAddress: "0xSecondAccount",
       networkMode: "testnet",
+      connectionGeneration: untrack(mockConnectionGeneration),
       accountValue: 200,
       totalNotionalPosition: 200,
       withdrawable: 100,
@@ -267,6 +321,92 @@ describe("usePortfolioState", () => {
     setPositions({
       accountAddress: "0xSecondAccount",
       networkMode: "testnet",
+      connectionGeneration: untrack(mockConnectionGeneration),
+      positions: [
+        {
+          symbol: "SOL/USDC:USDC",
+          side: "buy",
+          leverage: 1,
+          notional: 200,
+          percentage: 100,
+        },
+      ],
+      totalNotional: 200,
+    })
+
+    await waitFor(() => {
+      expect(Object.keys(result.currentPortfolio)).toEqual(["SOL/USDC:USDC"])
+      expect(Object.keys(result.targetPortfolio)).toEqual(["SOL/USDC:USDC"])
+    })
+    expect(result.accountValue).toBe(200)
+    expect(result.currentTotalNotional).toBe(200)
+  })
+
+  it("reinitializes portfolio state when the connection generation changes", async () => {
+    const initialGeneration = untrack(mockConnectionGeneration)
+    const [accountSummary, setAccountSummary] = createSignal({
+      accountAddress: "0xFirstAccount",
+      networkMode: "testnet" as const,
+      connectionGeneration: initialGeneration,
+      accountValue: 1000,
+      totalNotionalPosition: 1000,
+      withdrawable: 500,
+      crossAccountLeverage: 1,
+    })
+    const [positions, setPositions] = createSignal({
+      ...exchangePositions,
+      connectionGeneration: initialGeneration,
+    })
+    vi.mocked(useHyperliquidAccountSummary).mockReturnValue({
+      get data() {
+        return accountSummary()
+      },
+      get error() {
+        return null
+      },
+      isLoading: false,
+      refetch: refetchAccountSummary,
+    } as ReturnType<typeof useHyperliquidAccountSummary>)
+    vi.mocked(useHyperliquidPositions).mockReturnValue({
+      get data() {
+        return positions()
+      },
+      isLoading: false,
+      refetch: refetchPositions,
+    } as ReturnType<typeof useHyperliquidPositions>)
+
+    const { result } = renderHook(() => usePortfolioState(), {
+      wrapper: createWrapper(),
+    })
+    await waitFor(() => {
+      expect(Object.keys(result.currentPortfolio)).toEqual([
+        "BTC/USDC:USDC",
+        "ETH/USDC:USDC",
+      ])
+    })
+
+    setMockConnectionGeneration(initialGeneration + 1)
+
+    await waitFor(() => {
+      expect(Object.keys(result.currentPortfolio)).toEqual([])
+      expect(Object.keys(result.targetPortfolio)).toEqual([])
+      expect(result.accountValue).toBeNull()
+      expect(result.canSubmit).toBe(false)
+    })
+
+    setAccountSummary({
+      accountAddress: "0xFirstAccount",
+      networkMode: "testnet",
+      connectionGeneration: initialGeneration + 1,
+      accountValue: 200,
+      totalNotionalPosition: 200,
+      withdrawable: 100,
+      crossAccountLeverage: 1,
+    })
+    setPositions({
+      accountAddress: "0xFirstAccount",
+      networkMode: "testnet",
+      connectionGeneration: initialGeneration + 1,
       positions: [
         {
           symbol: "SOL/USDC:USDC",
@@ -357,6 +497,49 @@ describe("usePortfolioState", () => {
 
     expect(refetchPositions).not.toHaveBeenCalled()
     expect(result.targetPortfolio).toEqual(portfolioBeforeOldSettlement)
+  })
+
+  it("does not let an old settlement clear a newer rebalance", async () => {
+    const settlements: Array<
+      ((orders: typeof settledOrders, error: Error | null) => void) | undefined
+    > = []
+    mutate.mockImplementation((_payload, options) => {
+      settlements.push(options?.onSettled)
+    })
+
+    const { result } = renderHook(() => usePortfolioState(), {
+      wrapper: createWrapper(),
+    })
+    await waitFor(() => {
+      expect(Object.keys(result.currentPortfolio)).toHaveLength(2)
+    })
+
+    result.handleSideChange("BTC/USDC:USDC", "sell")
+    result.handleRebalancePositions()
+    expect(result.isRebalancing).toBe(true)
+    expect(settlements).toHaveLength(1)
+
+    setMockMainAddress(null)
+    await waitFor(() => {
+      expect(result.isRebalancing).toBe(false)
+    })
+    setMockMainAddress("0xFirstAccount")
+    await waitFor(() => {
+      expect(Object.keys(result.currentPortfolio)).toHaveLength(2)
+    })
+
+    result.handleSideChange("BTC/USDC:USDC", "sell")
+    result.handleRebalancePositions()
+    expect(result.isRebalancing).toBe(true)
+    expect(settlements).toHaveLength(2)
+
+    settlements[0]?.(settledOrders, null)
+    expect(result.isRebalancing).toBe(true)
+
+    settlements[1]?.(settledOrders, null)
+    await waitFor(() => {
+      expect(result.isRebalancing).toBe(false)
+    })
   })
 
   it("adds and removes token in target portfolio", async () => {

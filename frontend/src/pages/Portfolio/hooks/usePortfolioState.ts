@@ -103,7 +103,13 @@ const calcLeverage = (totalNotional: number, accountValue: number): number => {
 }
 
 export const usePortfolioState = () => {
-  const { isConnected, credentials, mainAddress, networkMode } = useWallet()
+  const {
+    isConnected,
+    credentials,
+    mainAddress,
+    networkMode,
+    connectionGeneration,
+  } = useWallet()
   const accountIdentity = (
     accountAddress: string | null,
     accountNetworkMode: "mainnet" | "testnet",
@@ -160,14 +166,23 @@ export const usePortfolioState = () => {
 
   const [positionsLoadedFromExchange, setPositionsLoadedFromExchange] =
     createSignal(false)
-  const [accountConnectionGeneration, setAccountConnectionGeneration] =
-    createSignal(0)
 
   // Track previous connection and account state for context-specific cleanup.
   let wasConnected = isConnected()
   let observedAccountIdentity: string | null = null
+  let observedConnectionGeneration = connectionGeneration()
+  let activeRebalanceOperation: symbol | null = null
+
+  const clearRebalanceUiForOperation = (operation: symbol) => {
+    if (activeRebalanceOperation !== operation) return
+
+    activeRebalanceOperation = null
+    setIsRebalancingUi(false)
+  }
 
   const handleDisconnect = () => {
+    activeRebalanceOperation = null
+    setIsRebalancingUi(false)
     batch(() => {
       setCurrentPortfolio(reconcile({}))
       setTargetPortfolio(reconcile({}))
@@ -301,17 +316,22 @@ export const usePortfolioState = () => {
     })
   })
 
-  // createEffect: an account or network switch invalidates every derived portfolio.
+  // createEffect: an account, network, or connection-generation change
+  // invalidates every derived portfolio.
   createEffect(() => {
     const currentAccountIdentity = activeAccountIdentity()
+    const currentConnectionGeneration = connectionGeneration()
     const previousAccountIdentity = observedAccountIdentity
+    const previousConnectionGeneration = observedConnectionGeneration
     observedAccountIdentity = currentAccountIdentity
+    observedConnectionGeneration = currentConnectionGeneration
 
-    if (previousAccountIdentity === currentAccountIdentity) {
+    if (
+      previousAccountIdentity === currentAccountIdentity &&
+      previousConnectionGeneration === currentConnectionGeneration
+    ) {
       return
     }
-
-    setAccountConnectionGeneration(previousGeneration => previousGeneration + 1)
 
     if (
       previousAccountIdentity === null ||
@@ -329,10 +349,13 @@ export const usePortfolioState = () => {
     const accountSummary = accountSummaryQuery.data
     if (
       !accountSummary ||
+      accountSummaryQuery.error ||
+      accountSummary.connectionGeneration !== connectionGeneration() ||
       accountIdentity(
         accountSummary.accountAddress,
         accountSummary.networkMode,
-      ) !== activeAccountIdentity()
+      ) !== activeAccountIdentity() ||
+      !Number.isFinite(accountSummary.accountValue)
     ) {
       return null
     }
@@ -414,13 +437,16 @@ export const usePortfolioState = () => {
     actions: RebalanceAction[],
     submittedAccountIdentity: string,
     submittedConnectionGeneration: number,
+    rebalanceOperation: symbol,
   ) => {
     if (
-      orders.length === 0 ||
       activeAccountIdentity() !== submittedAccountIdentity ||
-      accountConnectionGeneration() !== submittedConnectionGeneration
+      connectionGeneration() !== submittedConnectionGeneration
     ) {
-      setIsRebalancingUi(false)
+      return
+    }
+    if (orders.length === 0) {
+      clearRebalanceUiForOperation(rebalanceOperation)
       return
     }
 
@@ -434,7 +460,8 @@ export const usePortfolioState = () => {
       if (
         !positionsData?.positions ||
         activeAccountIdentity() !== submittedAccountIdentity ||
-        accountConnectionGeneration() !== submittedConnectionGeneration ||
+        connectionGeneration() !== submittedConnectionGeneration ||
+        positionsData.connectionGeneration !== submittedConnectionGeneration ||
         accountIdentity(
           positionsData.accountAddress,
           positionsData.networkMode,
@@ -478,7 +505,7 @@ export const usePortfolioState = () => {
         )
       }
     } finally {
-      setIsRebalancingUi(false)
+      clearRebalanceUiForOperation(rebalanceOperation)
     }
   }
 
@@ -492,6 +519,7 @@ export const usePortfolioState = () => {
     if (
       isPositionsLoading ||
       !positionsData?.positions ||
+      positionsData.connectionGeneration !== connectionGeneration() ||
       accountIdentity(
         positionsData.accountAddress,
         positionsData.networkMode,
@@ -751,7 +779,7 @@ export const usePortfolioState = () => {
 
   const handleRebalancePositions = () => {
     const submittedAccountIdentity = activeAccountIdentity()
-    const submittedConnectionGeneration = accountConnectionGeneration()
+    const submittedConnectionGeneration = connectionGeneration()
     if (
       submittedAccountIdentity === null ||
       trustedAccountValue() === null ||
@@ -768,14 +796,15 @@ export const usePortfolioState = () => {
       isPrecise(),
     )
 
+    const rebalanceOperation = Symbol("rebalance")
+    activeRebalanceOperation = rebalanceOperation
     setIsRebalancingUi(true)
     rebalancePositionsMutation.mutate(apiPayload, {
       onSettled: (data, error) => {
         if (
           activeAccountIdentity() !== submittedAccountIdentity ||
-          accountConnectionGeneration() !== submittedConnectionGeneration
+          connectionGeneration() !== submittedConnectionGeneration
         ) {
-          setIsRebalancingUi(false)
           return
         }
         if (error || !data) {
@@ -783,7 +812,7 @@ export const usePortfolioState = () => {
             console.error("rebalance failed", getExchangeErrorDetail(error))
             toast.error(getErrorMessage(error))
           }
-          setIsRebalancingUi(false)
+          clearRebalanceUiForOperation(rebalanceOperation)
           return
         }
 
@@ -792,6 +821,7 @@ export const usePortfolioState = () => {
           apiPayload.actions,
           submittedAccountIdentity,
           submittedConnectionGeneration,
+          rebalanceOperation,
         )
       },
     })
@@ -813,6 +843,7 @@ export const usePortfolioState = () => {
   }
 
   const resetPortfolioStateForNetworkChange = () => {
+    activeRebalanceOperation = null
     batch(() => {
       setCurrentPortfolio(reconcile({}))
       setTargetPortfolio(reconcile({}))

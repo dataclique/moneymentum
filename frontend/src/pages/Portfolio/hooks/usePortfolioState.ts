@@ -6,18 +6,29 @@ import {
   untrack,
 } from "solid-js"
 import Decimal from "decimal.js"
+import * as Effect from "effect/Effect"
 import {
   useHyperliquidAccountSummary,
   useHyperliquidPositions,
   useHyperliquidLeverageLimits,
   useRebalanceHyperliquidPositions,
+  useRebalanceDerivePositions,
+  useDeriveBalance,
+  useDeriveAccountSnapshot,
+  useDeriveSessionCredentials,
   type OrderSide,
   type OrderResult,
 } from "@/hooks/useTrading"
+import { fetchDeriveTickers } from "@/services/derive-client"
 import {
-  buildApiPayload,
+  captureStagedPortfolioOverlay,
+  deriveActionsToOrderRequests,
   diffPortfolios,
+  mergeExchangeTargetWithStagedOverlay,
+  mergePortfolioMaps,
+  portfolioMapFromDerivePositions,
   portfolioMapFromExchangePositions,
+  syncDeletedArchiveWithCurrent,
   targetAndArchiveAfterRebalance,
   type RebalanceAction,
 } from "./portfolioRebalancer"
@@ -77,20 +88,55 @@ const MAX_CROSS_ACCOUNT_LEVERAGE = 5
 const DEFAULT_CROSS_ACCOUNT_LEVERAGE = 1
 const POSITION_CLOSE_EPSILON = 0.01
 
-export interface PortfolioInterface {
+export type PortfolioPositionKind = "perp" | "option"
+export type PortfolioVenue = "hyperliquid" | "derive"
+
+/** Hyperliquid or Derive perp row in the unified portfolio model. */
+export interface PerpPortfolioPosition {
+  kind: "perp"
+  venue: PortfolioVenue
   symbol: string
   side: OrderSide
   leverage: number
   notional: number
 }
 
+/**
+ * Derive option row. Notional is premium USD (`contracts * mark` at fetch /
+ * `contracts * limit` when staging); contracts are derived at order time as
+ * `notional / price`.
+ */
+export interface OptionPortfolioPosition {
+  kind: "option"
+  venue: "derive"
+  symbol: string
+  side: OrderSide
+  notional: number
+}
+
+export type PortfolioInterface = PerpPortfolioPosition | OptionPortfolioPosition
+
+export const isPerpPosition = (
+  position: PortfolioInterface,
+): position is PerpPortfolioPosition => position.kind === "perp"
+
+export const isOptionPosition = (
+  position: PortfolioInterface,
+): position is OptionPortfolioPosition => position.kind === "option"
+
 export interface StagedTradeItem {
   underlying: string
   side: OrderSide
   notional: number
+  kind: PortfolioPositionKind
+  venue: PortfolioVenue
   previousWeight?: number
   newWeight?: number
   orderError?: string
+  /** Filled at Derive execution: live premium used for `amount = notional / price`. */
+  markPrice?: number
+  /** Filled at Derive execution: contract size sent to createOrder. */
+  amount?: number
 }
 
 const calcLeverage = (totalNotional: number, accountValue: number): number => {
@@ -103,7 +149,12 @@ const calcLeverage = (totalNotional: number, accountValue: number): number => {
 }
 
 export const usePortfolioState = () => {
-  const { isConnected } = useWallet()
+  const {
+    isConnected,
+    isHyperliquidConnected,
+    isDeriveConnected,
+    isDeriveLocked,
+  } = useWallet()
 
   const [isPrecise, setPreciseSignal] = createSignal(
     initialPreciseFromStorage(),
@@ -114,10 +165,14 @@ export const usePortfolioState = () => {
 
   // Exchange data queries
   const accountSummaryQuery = useHyperliquidAccountSummary()
+  const deriveBalanceQuery = useDeriveBalance()
+  const deriveAccountQuery = useDeriveAccountSnapshot()
+  const deriveSession = useDeriveSessionCredentials()
   const positionsQuery = useHyperliquidPositions()
   const leverageLimitsQuery = useHyperliquidLeverageLimits()
   // Mutations
-  const rebalancePositionsMutation = useRebalanceHyperliquidPositions()
+  const rebalanceHyperliquidMutation = useRebalanceHyperliquidPositions()
+  const rebalanceDeriveMutation = useRebalanceDerivePositions()
 
   const [currentPortfolio, setCurrentPortfolio] = createStore<
     Record<string, PortfolioInterface | undefined>
@@ -148,10 +203,74 @@ export const usePortfolioState = () => {
   const [positionsLoadedFromExchange, setPositionsLoadedFromExchange] =
     createSignal(false)
 
+  // Tracks which connected venues were folded into target on last seed/merge.
+  let lastExchangeVenueKey = ""
+
   // Track previous connection state for disconnect cleanup
   let wasConnected = isConnected()
 
+  const selectedDerivePositions = createMemo(() => {
+    const snapshot = deriveAccountQuery.data
+    if (snapshot === undefined) {
+      return []
+    }
+    const selectedSubaccountId = deriveSession()?.subaccountId ?? null
+    if (selectedSubaccountId === null) {
+      return snapshot.subaccounts.flatMap(subaccount => subaccount.positions)
+    }
+    const selected = snapshot.subaccounts.find(
+      subaccount => subaccount.subaccountId === selectedSubaccountId,
+    )
+    return selected?.positions ?? []
+  })
+
+  const buildExchangePortfolioSnapshot = (): {
+    map: Record<string, PortfolioInterface | undefined>
+    totalNotional: number
+    venueKey: string
+  } | null => {
+    const hyperliquidWanted = isHyperliquidConnected()
+    const deriveWanted = isDeriveConnected() && !isDeriveLocked()
+
+    // Only block on the initial load for a venue (no data yet). A later error
+    // or a failed Derive refetch must not freeze HL portfolio updates.
+    if (hyperliquidWanted && positionsQuery.isLoading) {
+      return null
+    }
+    if (deriveWanted && deriveAccountQuery.isLoading) {
+      return null
+    }
+
+    const hyperliquidSnapshot =
+      hyperliquidWanted && positionsQuery.data !== undefined
+        ? portfolioMapFromExchangePositions(positionsQuery.data.positions)
+        : { map: {}, totalNotional: 0 }
+
+    const deriveSnapshot =
+      deriveWanted && deriveAccountQuery.data !== undefined
+        ? portfolioMapFromDerivePositions(selectedDerivePositions())
+        : { map: {}, totalNotional: 0 }
+
+    // Connected venues with no data yet (and not loading) still cannot seed.
+    if (hyperliquidWanted && positionsQuery.data === undefined) {
+      return null
+    }
+
+    const merged = mergePortfolioMaps(
+      hyperliquidSnapshot.map,
+      deriveSnapshot.map,
+    )
+    const selectedSubaccountId = deriveSession()?.subaccountId ?? "all"
+    const venueKey = [
+      hyperliquidWanted ? "hl" : "",
+      deriveWanted ? `derive:${selectedSubaccountId}` : "",
+    ].join("|")
+
+    return { ...merged, venueKey }
+  }
+
   const handleDisconnect = () => {
+    lastExchangeVenueKey = ""
     batch(() => {
       setCurrentPortfolio(reconcile({}))
       setTargetPortfolio(reconcile({}))
@@ -249,12 +368,14 @@ export const usePortfolioState = () => {
   const symbolsBelowMinimum = createMemo(() => {
     if (isClosingAllPositions()) return []
 
+    // HL perp minimum-notional gate only; Derive option rules come later.
     return Object.keys(targetPortfolio).filter(symbol => {
       const targetPosition = targetPortfolio[symbol]
+      if (!targetPosition || !isPerpPosition(targetPosition)) return false
+      if (targetPosition.venue !== "hyperliquid") return false
+      if (targetPosition.notional >= MIN_USD) return false
+
       const currentNotional = currentPortfolio[symbol]?.notional ?? 0
-
-      if (!targetPosition || targetPosition.notional >= MIN_USD) return false
-
       const unchanged =
         currentNotional < MIN_USD &&
         Math.abs(targetPosition.notional - currentNotional) < 0.01
@@ -268,7 +389,8 @@ export const usePortfolioState = () => {
 
     return Object.keys(targetPortfolio).filter(symbol => {
       const target = targetPortfolio[symbol]
-      if (!target) return false
+      if (!target || !isPerpPosition(target)) return false
+      if (target.venue !== "hyperliquid") return false
 
       const targetSignedNotional =
         target.side === "sell" ? -target.notional : target.notional
@@ -312,18 +434,15 @@ export const usePortfolioState = () => {
     handleDisconnect()
   })
 
-  // Derive accountValue from account summary
-  const accountValue = createMemo(
-    () => accountSummaryQuery.data?.accountValue ?? 0,
-  )
-
-  // Compute targetNotional = accountValue * targetCrossAccountLeverage (used for percentage calculations)
-  const targetNotional = createMemo(() =>
-    new Decimal(accountValue())
-      .mul(targetCrossAccountLeverage())
-      .toDecimalPlaces(2, Decimal.ROUND_HALF_UP)
-      .toNumber(),
-  )
+  // Combined equity for cross-account leverage sizing. HL + selected Derive
+  // subaccount; split per-venue sizing later if staged math diverges.
+  const accountValue = createMemo(() => {
+    const hyperliquidValue = isHyperliquidConnected()
+      ? (accountSummaryQuery.data?.accountValue ?? 0)
+      : 0
+    const deriveValue = deriveBalanceQuery.data?.accountValue ?? 0
+    return hyperliquidValue + deriveValue
+  })
 
   const readonlyPortfolio = useReadonlyPortfolioState()
 
@@ -331,8 +450,16 @@ export const usePortfolioState = () => {
     portfolioMap: Record<string, PortfolioInterface | undefined>,
     totalNotional: number,
   ) => {
-    setCurrentPortfolio(reconcile(portfolioMap))
-    setCurrentTotalNotional(totalNotional)
+    const syncedArchive = syncDeletedArchiveWithCurrent(
+      untrack(() => ({ ...deletedArchive })),
+      portfolioMap,
+    )
+
+    batch(() => {
+      setCurrentPortfolio(reconcile(portfolioMap))
+      setCurrentTotalNotional(totalNotional)
+      setDeletedArchive(reconcile(syncedArchive))
+    })
   }
 
   const finalizeRebalance = async (
@@ -345,18 +472,67 @@ export const usePortfolioState = () => {
     }
 
     try {
-      const [positionsRefetch] = await Promise.all([
-        positionsQuery.refetch(),
-        accountSummaryQuery.refetch(),
-      ])
+      const hyperliquidWanted = isHyperliquidConnected()
+      const deriveWanted = isDeriveConnected() && !isDeriveLocked()
 
-      const positionsData = positionsRefetch.data
-      if (!positionsData?.positions) {
+      // Prefer allSettled so a Derive refresh failure cannot skip HL settle.
+      const [positionsRefresh, , deriveAccountRefresh] =
+        await Promise.allSettled([
+          hyperliquidWanted
+            ? positionsQuery.refetch()
+            : Promise.resolve(undefined),
+          hyperliquidWanted
+            ? accountSummaryQuery.refetch()
+            : Promise.resolve(undefined),
+          deriveWanted
+            ? deriveAccountQuery.refetch()
+            : Promise.resolve(undefined),
+          deriveWanted
+            ? deriveBalanceQuery.refetch()
+            : Promise.resolve(undefined),
+        ])
+
+      if (positionsRefresh.status === "rejected") {
+        console.error(
+          "rebalance finalize: hyperliquid positions refresh failed",
+          positionsRefresh.reason,
+        )
+      }
+      if (deriveAccountRefresh.status === "rejected") {
+        console.error(
+          "rebalance finalize: derive account refresh failed",
+          deriveAccountRefresh.reason,
+        )
+      }
+
+      const hyperliquidPositions =
+        positionsRefresh.status === "fulfilled"
+          ? positionsRefresh.value?.data?.positions
+          : positionsQuery.data?.positions
+
+      if (hyperliquidWanted && hyperliquidPositions === undefined) {
+        console.error(
+          "rebalance finalize: hyperliquid positions unavailable after refresh",
+        )
+        toast.error(
+          "Orders submitted, but portfolio refresh failed. Reload or wait a moment.",
+        )
         return
       }
 
-      const { map, totalNotional } = portfolioMapFromExchangePositions(
-        positionsData.positions,
+      const hyperliquidSnapshot =
+        hyperliquidPositions !== undefined
+          ? portfolioMapFromExchangePositions(hyperliquidPositions)
+          : { map: {}, totalNotional: 0 }
+
+      const derivePositions =
+        deriveWanted && deriveAccountQuery.data !== undefined
+          ? selectedDerivePositions()
+          : []
+      const deriveSnapshot = portfolioMapFromDerivePositions(derivePositions)
+      const exchangeSnapshot = mergePortfolioMaps(
+        hyperliquidSnapshot.map,
+        deriveSnapshot.map,
       )
 
       const {
@@ -366,7 +542,7 @@ export const usePortfolioState = () => {
       } = targetAndArchiveAfterRebalance(
         untrack(() => targetPortfolio),
         untrack(() => deletedArchive),
-        map,
+        exchangeSnapshot.map,
         actions,
         orders,
       )
@@ -377,16 +553,31 @@ export const usePortfolioState = () => {
       )
 
       batch(() => {
-        applyCurrentFromExchange(map, totalNotional)
+        applyCurrentFromExchange(
+          exchangeSnapshot.map,
+          exchangeSnapshot.totalNotional,
+        )
         setTargetPortfolio(reconcile(nextTarget))
         setTargetTotalNotional(nextTargetTotalNotional)
         setDeletedArchive(reconcile(nextDeletedArchive))
         setErrorsBySymbol(reconcile(nextErrors))
       })
+      lastExchangeVenueKey = [
+        hyperliquidWanted ? "hl" : "",
+        deriveWanted ? `derive:${deriveSession()?.subaccountId ?? "all"}` : "",
+      ].join("|")
 
       if (orders.some(order => order.status === "timed_out")) {
         console.warn(
           "rebalance order watch timed out; portfolio refreshed from exchange",
+        )
+      }
+
+      const failedOrders = orders.filter(order => order.status !== "filled")
+      if (failedOrders.length > 0) {
+        console.warn(
+          "rebalance finalize: non-filled orders kept staged target",
+          failedOrders,
         )
       }
     } finally {
@@ -394,37 +585,78 @@ export const usePortfolioState = () => {
     }
   }
 
-  // Wait for positionsQuery data and positive accountValue, then initialize from exchange positions
+  // Seed / refresh portfolio from connected exchange venues (HL + Derive).
   createEffect(() => {
-    if (positionsLoadedFromExchange()) {
-      return
-    }
-    const positionsData = positionsQuery.data
-    const isPositionsLoading = positionsQuery.isLoading
-    if (isPositionsLoading || !positionsData?.positions) {
-      return
-    }
-    // Wait for accountValue to be loaded so we can calculate correct percentages
-    if (accountValue() <= 0) {
+    // finalizeRebalance owns the post-trade snapshot; do not race it.
+    if (isRebalancingUi()) {
       return
     }
 
-    const { map, totalNotional } = portfolioMapFromExchangePositions(
-      positionsData.positions,
+    const exchangeSnapshot = buildExchangePortfolioSnapshot()
+    if (exchangeSnapshot === null) {
+      return
+    }
+
+    if (!positionsLoadedFromExchange()) {
+      if (accountValue() <= 0) {
+        return
+      }
+
+      applyCurrentFromExchange(
+        exchangeSnapshot.map,
+        exchangeSnapshot.totalNotional,
+      )
+      setTargetPortfolio(reconcile(structuredClone(exchangeSnapshot.map)))
+
+      const initialLeverage = calcLeverage(
+        exchangeSnapshot.totalNotional,
+        accountValue(),
+      )
+      setTargetTotalNotional(exchangeSnapshot.totalNotional)
+      setTargetCrossAccountLeverage(initialLeverage)
+      setCurrentCrossAccountLeverage(initialLeverage)
+      lastExchangeVenueKey = exchangeSnapshot.venueKey
+      setPositionsLoadedFromExchange(true)
+      return
+    }
+
+    const beforeCurrent = untrack(() => ({ ...currentPortfolio }))
+    const beforeTarget = untrack(() => ({ ...targetPortfolio }))
+    const beforeArchive = untrack(() => ({ ...deletedArchive }))
+    const stagedOverlay = captureStagedPortfolioOverlay(
+      beforeCurrent,
+      beforeTarget,
+      beforeArchive,
     )
 
-    applyCurrentFromExchange(map, totalNotional)
+    if (exchangeSnapshot.venueKey !== lastExchangeVenueKey) {
+      applyCurrentFromExchange(
+        exchangeSnapshot.map,
+        exchangeSnapshot.totalNotional,
+      )
 
-    // Create a FULLY independent copy for the target
-    setTargetPortfolio(reconcile(structuredClone(map)))
+      const mergedTarget = mergeExchangeTargetWithStagedOverlay(
+        exchangeSnapshot.map,
+        stagedOverlay,
+      )
+      const syncedArchive = syncDeletedArchiveWithCurrent(
+        stagedOverlay.deletedArchive,
+        exchangeSnapshot.map,
+      )
 
-    // Calculate leverage from the formula: leverage = totalNotional / accountValue
-    const initialLeverage = calcLeverage(totalNotional, accountValue())
-    setTargetTotalNotional(totalNotional)
-    setTargetCrossAccountLeverage(initialLeverage)
-    setCurrentCrossAccountLeverage(initialLeverage)
+      lastExchangeVenueKey = exchangeSnapshot.venueKey
+      batch(() => {
+        setTargetPortfolio(reconcile(mergedTarget.map))
+        setTargetTotalNotional(mergedTarget.totalNotional)
+        setDeletedArchive(reconcile(syncedArchive))
+      })
+      return
+    }
 
-    setPositionsLoadedFromExchange(true)
+    applyCurrentFromExchange(
+      exchangeSnapshot.map,
+      exchangeSnapshot.totalNotional,
+    )
   })
 
   const actions = createMemo(() =>
@@ -476,8 +708,10 @@ export const usePortfolioState = () => {
 
       return {
         underlying: symbol,
-        side: delta > 0 ? "buy" : "sell",
+        side: (delta > 0 ? "buy" : "sell") as OrderSide,
         notional: Math.abs(delta),
+        kind: action.positionKind,
+        venue: action.venue,
         previousWeight: totalCurrent
           ? (currentPosition?.notional ?? 0) / totalCurrent
           : 0,
@@ -513,20 +747,80 @@ export const usePortfolioState = () => {
   const hasSymbolsDeltaBelowMinimum = () =>
     symbolsDeltaBelowMinimum().length > 0
 
-  const handleAddToken = (symbol: string) => {
+  const handleAddToken = (
+    symbol: string,
+    kind: PortfolioPositionKind,
+    venue: PortfolioVenue,
+    options?: { side?: OrderSide; notional?: number },
+  ) => {
     if (!isConnected()) return
-    if (symbol in targetPortfolio) return
+
+    if (kind === "perp") {
+      if (symbol in targetPortfolio) return
+      if (deletedArchive[symbol] !== undefined) return
+      if (venue !== "hyperliquid" || !isHyperliquidConnected()) {
+        return
+      }
+
+      batch(() => {
+        setTargetPortfolio(symbol, {
+          kind: "perp",
+          venue: "hyperliquid",
+          symbol,
+          side: "buy",
+          leverage: leverageLimitsMap()[symbol] || 1,
+          notional: MIN_USD,
+        })
+
+        setTargetTotalNotional(prev => prev + MIN_USD)
+      })
+      return
+    }
+
+    if (venue !== "derive") {
+      return
+    }
+
+    if (!isDeriveConnected()) {
+      return
+    }
+
+    const side = options?.side ?? "buy"
+    const notional = options?.notional ?? MIN_USD
+    if (!(notional >= MIN_USD)) {
+      return
+    }
+
+    const existing = targetPortfolio[symbol]
+    if (existing !== undefined) {
+      if (!isOptionPosition(existing)) {
+        return
+      }
+      batch(() => {
+        setTargetTotalNotional(prev => prev - existing.notional + notional)
+        setTargetPortfolio(symbol, {
+          kind: "option",
+          venue: "derive",
+          symbol,
+          side,
+          notional,
+        })
+      })
+      return
+    }
+
     if (deletedArchive[symbol] !== undefined) return
 
     batch(() => {
       setTargetPortfolio(symbol, {
+        kind: "option",
+        venue: "derive",
         symbol,
-        side: "buy",
-        leverage: leverageLimitsMap()[symbol] || 1,
-        notional: MIN_USD,
+        side,
+        notional,
       })
 
-      setTargetTotalNotional(prev => prev + MIN_USD)
+      setTargetTotalNotional(prev => prev + notional)
     })
   }
 
@@ -534,11 +828,11 @@ export const usePortfolioState = () => {
     const targetPosition = targetPortfolio[symbol]
     if (!targetPosition) return
 
-    const isPresentInCurrentPortfolio = !!currentPortfolio[symbol]
+    const currentPosition = currentPortfolio[symbol]
 
     batch(() => {
-      if (isPresentInCurrentPortfolio) {
-        setDeletedArchive(symbol, { ...targetPosition })
+      if (currentPosition !== undefined) {
+        setDeletedArchive(symbol, { ...currentPosition })
       }
 
       setTargetPortfolio(symbol, undefined)
@@ -553,6 +847,8 @@ export const usePortfolioState = () => {
     const archivedPosition = deletedArchive[symbol]
     const currentPosition = currentPortfolio[symbol]
 
+    // Archive is kept in sync with live current on exchange refreshes, so undo
+    // restores an up-to-date close snapshot (fallback to current if needed).
     const positionToRestore = archivedPosition ?? currentPosition
 
     if (!positionToRestore) return
@@ -573,6 +869,11 @@ export const usePortfolioState = () => {
 
   const handleLeverageChange = (symbol: string, leverage: number) => {
     clearRebalanceErrorForSymbol(symbol)
+    const target = targetPortfolio[symbol]
+    if (target === undefined || !isPerpPosition(target)) {
+      return
+    }
+
     const maxLeverage = leverageLimitsMap()[symbol] || 1
     const newLeverage = Math.max(1, Math.min(leverage, maxLeverage))
 
@@ -651,31 +952,119 @@ export const usePortfolioState = () => {
   }
 
   const handleRebalancePositions = () => {
-    if (isRebalancingUi() || rebalancePositionsMutation.isPending) {
+    if (
+      isRebalancingUi() ||
+      rebalanceHyperliquidMutation.isPending ||
+      rebalanceDeriveMutation.isPending
+    ) {
       return
     }
 
-    const apiPayload = buildApiPayload(
+    const allActions = diffPortfolios(
       currentPortfolio,
       targetPortfolio,
       isPrecise(),
     )
+    const hyperliquidActions = allActions.filter(
+      action => action.venue === "hyperliquid",
+    )
+    const deriveActions = allActions.filter(action => action.venue === "derive")
+
+    if (hyperliquidActions.length === 0 && deriveActions.length === 0) {
+      return
+    }
+
+    if (deriveActions.length > 0) {
+      const credentials = deriveSession()
+      if (credentials === null) {
+        toast.error("Unlock Derive before rebalancing Derive positions")
+        return
+      }
+      if (credentials.subaccountId === null) {
+        toast.error("Select a Derive subaccount before rebalancing")
+        return
+      }
+    }
+
+    const currentSnapshot = untrack(() => ({ ...currentPortfolio }))
 
     setIsRebalancingUi(true)
-    rebalancePositionsMutation.mutate(apiPayload, {
-      onSettled: (data, error) => {
-        if (error || !data) {
-          if (error) {
-            console.error("rebalance failed", getExchangeErrorDetail(error))
-            toast.error(getErrorMessage(error))
-          }
-          setIsRebalancingUi(false)
-          return
-        }
 
-        void finalizeRebalance(data, apiPayload.actions)
-      },
-    })
+    void (async () => {
+      const submittedOrders: OrderResult[] = []
+      const submittedActions: RebalanceAction[] = []
+      let failureMessage: string | undefined
+
+      if (hyperliquidActions.length > 0) {
+        try {
+          const orders = await rebalanceHyperliquidMutation.mutateAsync({
+            actions: hyperliquidActions,
+          })
+          submittedOrders.push(...orders)
+          submittedActions.push(...hyperliquidActions)
+        } catch (error) {
+          console.error(
+            "hyperliquid rebalance failed",
+            getExchangeErrorDetail(error),
+          )
+          failureMessage = getErrorMessage(error)
+        }
+      }
+
+      if (deriveActions.length > 0 && failureMessage === undefined) {
+        try {
+          const credentials = deriveSession()
+          if (credentials === null) {
+            throw new Error("Unlock Derive before rebalancing Derive positions")
+          }
+          const symbols = [
+            ...new Set(deriveActions.map(action => action.symbol)),
+          ]
+          const tickers = await Effect.runPromise(
+            fetchDeriveTickers(credentials, symbols),
+          )
+          console.info("[derive] rebalance tickers", tickers)
+          const requests = deriveActionsToOrderRequests(
+            deriveActions,
+            currentSnapshot,
+            tickers,
+          )
+          console.info("[derive] rebalance mapped requests", {
+            actions: deriveActions,
+            requests,
+          })
+          const orders = await rebalanceDeriveMutation.mutateAsync({
+            requests,
+          })
+          submittedOrders.push(...orders)
+          submittedActions.push(...deriveActions)
+        } catch (error) {
+          console.error(
+            "derive rebalance failed",
+            getExchangeErrorDetail(error),
+          )
+          failureMessage = getErrorMessage(error)
+        }
+      } else if (deriveActions.length > 0 && failureMessage !== undefined) {
+        toast.message(
+          `${String(deriveActions.length)} Derive action(s) skipped after Hyperliquid failure`,
+        )
+      }
+
+      if (submittedOrders.length === 0) {
+        if (failureMessage !== undefined) {
+          toast.error(failureMessage)
+        }
+        setIsRebalancingUi(false)
+        return
+      }
+
+      if (failureMessage !== undefined) {
+        toast.error(failureMessage)
+      }
+
+      await finalizeRebalance(submittedOrders, submittedActions)
+    })()
   }
 
   const canSubmit = () => {
@@ -692,6 +1081,7 @@ export const usePortfolioState = () => {
   }
 
   const resetPortfolioStateForNetworkChange = () => {
+    lastExchangeVenueKey = ""
     batch(() => {
       setCurrentPortfolio(reconcile({}))
       setTargetPortfolio(reconcile({}))
@@ -716,9 +1106,6 @@ export const usePortfolioState = () => {
     },
     get currentCrossAccountLeverage() {
       return currentCrossAccountLeverage()
-    },
-    get targetNotional() {
-      return targetNotional()
     },
     get currentTotalNotional() {
       return currentTotalNotional()
@@ -798,10 +1185,20 @@ export const usePortfolioState = () => {
 
     // Loading states
     get isBalanceLoading() {
-      return accountSummaryQuery.isLoading
+      return (
+        accountSummaryQuery.isLoading ||
+        (isDeriveConnected() &&
+          !isDeriveLocked() &&
+          deriveBalanceQuery.isLoading)
+      )
     },
     get isPositionsLoading() {
-      return positionsQuery.isLoading
+      return (
+        positionsQuery.isLoading ||
+        (isDeriveConnected() &&
+          !isDeriveLocked() &&
+          deriveAccountQuery.isLoading)
+      )
     },
     get isLeverageLimitsLoading() {
       return leverageLimitsQuery.isLoading

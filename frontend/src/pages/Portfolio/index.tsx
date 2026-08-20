@@ -8,6 +8,10 @@ import {
   onMount,
   Show,
 } from "solid-js"
+import * as Effect from "effect/Effect"
+import { toast } from "solid-sonner"
+import hyperliquidIconUrl from "@/assets/venues/hyperliquid.png"
+import deriveIconUrl from "@/assets/venues/derive.png"
 import { ModeToggle } from "@/components/ui/mode-toggle"
 import { WalletHeader } from "@/components/wallet-header"
 import { WalletProvider } from "@/contexts/WalletProvider"
@@ -17,11 +21,13 @@ import {
   bindDockviewSolidOwner,
   releaseDockviewSolidOwner,
 } from "@/lib/dockviewSolidOwner"
+import { getErrorMessage } from "@/lib/error-message"
 import { useNetwork } from "@/hooks/useNetwork"
 import { useWallet } from "@/hooks/useWallet"
 import {
   useHyperliquidFundingRates,
   useHyperliquidTickers,
+  useWalletSettings,
 } from "@/hooks/useTrading"
 import "@arminmajerie/dockview-solid/styles/dockview.css"
 import {
@@ -35,12 +41,18 @@ import {
   type IDockviewPanelProps,
 } from "@arminmajerie/dockview-solid"
 
-import { AllSymbolsPanel } from "./components/AllSymbolsPanel"
+import { DerivePanel } from "./components/DerivePanel"
+import { DeriveSettingsMenu } from "./components/DeriveSettingsMenu"
 import { FactorsPanel } from "./components/FactorsPanel"
+import { HyperliquidPanel } from "./components/HyperliquidPanel"
 import { PerformancePanel } from "./components/PerformancePanel"
 import { PortfolioSettingsMenu } from "./components/PortfolioSettingsMenu"
 import { PositionsPanel } from "./components/PositionsPanel/PositionsPanel"
 import { usePortfolioMetricVisibility } from "./components/PositionsPanel/portfolioMetricVisibility"
+import {
+  readDeriveGreeksVisible,
+  writeDeriveGreeksVisible,
+} from "@/components/derive-options/deriveChromeStorage"
 import { RiskPanel } from "./components/RiskPanel"
 import {
   StagedChangesPanel,
@@ -60,6 +72,10 @@ import {
   type PortfolioLayoutHost,
 } from "./portfolioLayoutStorage"
 import {
+  PortfolioShellProvider,
+  usePortfolioShell,
+} from "./portfolioShellContext"
+import {
   isKeyboardPanelId,
   PANEL_DIGIT_BY_ID,
   panelDigitForId,
@@ -77,7 +93,8 @@ import "./portfolio-dockview.css"
 
 type PortfolioPanelId =
   | "portfolio"
-  | "allSymbols"
+  | "hyperliquid"
+  | "derive"
   | "performance"
   | "staged"
   | "factors"
@@ -110,10 +127,17 @@ const panelCatalog: PanelCatalogEntry[] = [
     closable: false,
   },
   {
-    id: "allSymbols",
-    title: "ALL SYMBOLS",
-    component: "allSymbols",
-    tabComponent: "allSymbolsTab",
+    id: "hyperliquid",
+    title: "HYPERLIQUID",
+    component: "hyperliquid",
+    tabComponent: "hyperliquidTab",
+    closable: false,
+  },
+  {
+    id: "derive",
+    title: "DERIVE",
+    component: "derive",
+    tabComponent: "deriveTab",
     closable: false,
   },
   {
@@ -163,6 +187,43 @@ const bitcoinBetaBenchmark: BetaBenchmark = {
   label: "BTC perpetual on Hyperliquid",
   interval: "daily log returns",
   lookback: "365 calendar days",
+}
+
+const formatUsdBalance = (value: number): string =>
+  value.toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })
+
+const VenueBalancesHeader = () => {
+  const { data: walletSettings } = useWalletSettings()
+
+  const connectedVenues = () =>
+    walletSettings().venues.filter(
+      venue => venue.connected && venue.balanceUsd !== null,
+    )
+
+  return (
+    <div class="flex items-center gap-3">
+      <For each={connectedVenues()}>
+        {venue => (
+          <div class="flex items-center gap-1.5">
+            <img
+              src={
+                venue.id === "hyperliquid" ? hyperliquidIconUrl : deriveIconUrl
+              }
+              alt=""
+              class="size-4"
+              aria-hidden="true"
+            />
+            <span class="font-mono text-[12px]">
+              ${formatUsdBalance(venue.balanceUsd ?? 0)}
+            </span>
+          </div>
+        )}
+      </For>
+    </div>
+  )
 }
 
 /** App-token theme; avoids dockview-theme-dark (#1e1e1e) fighting --background. */
@@ -329,13 +390,25 @@ const AddPanelMenu = (props: IDockviewHeaderActionsProps) => {
 
 const PortfolioPage = () => {
   const { isNetworkSwitching } = useNetwork()
-  const { hasStoredSession, isLocked, canTrade, isConnected } = useWallet()
+  const {
+    hasStoredSession,
+    isLocked,
+    canTrade,
+    isHyperliquidConnected,
+    isDeriveLocked,
+    hasVerifiedSessionPin,
+    authorizeAgent,
+  } = useWallet()
+  const shell = usePortfolioShell()
   const DockviewProviders = useDockviewPanelProviders()
   const portfolio = usePortfolioState()
 
   const [pinDialogOpen, setPinDialogOpen] = createSignal(false)
   const { metricVisibility, setMetricColumnVisible } =
     usePortfolioMetricVisibility()
+  const [deriveGreeksVisible, setDeriveGreeksVisible] = createSignal(
+    readDeriveGreeksVisible(),
+  )
 
   let dockviewContainer: HTMLDivElement | undefined
   let layoutChangeDisposable: { dispose: () => void } | undefined
@@ -355,7 +428,7 @@ const PortfolioPage = () => {
   } | null>(null)
 
   const stagedConnectionState = (): StagedConnectionState => {
-    if (!isConnected()) {
+    if (!isHyperliquidConnected()) {
       return "walletDisconnected"
     }
     if (!hasStoredSession()) {
@@ -367,13 +440,58 @@ const PortfolioPage = () => {
     return "ready"
   }
 
+  const openHyperliquidWalletConnect = () => {
+    shell.focusVenue({ venue: "hyperliquid", openConnect: true })
+  }
+
+  const authorizeAgentWithSessionPin = () => {
+    void Effect.runPromise(
+      authorizeAgent().pipe(
+        Effect.tap(() =>
+          Effect.sync(() => {
+            toast.success("Hyperliquid agent connected")
+          }),
+        ),
+        Effect.catchAll(error =>
+          Effect.sync(() => {
+            console.error("Failed to authorize Hyperliquid agent:", error)
+            toast.error(getErrorMessage(error))
+          }),
+        ),
+      ),
+    )
+  }
+
+  /**
+   * Staged "Connect to Hyperliquid":
+   * - wallet not connected -> Reown only (never a create-PIN modal)
+   * - PIN already entered this browser session -> authorize agent, then wallet sign
+   * - local PIN exists but not yet entered -> enter-PIN dialog (not create)
+   * - no PIN yet -> create-PIN dialog, then authorize
+   */
+  const beginHyperliquidTradingConnect = () => {
+    if (!isHyperliquidConnected()) {
+      openHyperliquidWalletConnect()
+      return
+    }
+
+    if (hasVerifiedSessionPin()) {
+      authorizeAgentWithSessionPin()
+      return
+    }
+
+    setPinDialogOpen(true)
+  }
+
   const handlePrimaryStagedAction = () => {
     switch (stagedConnectionState()) {
       case "walletDisconnected":
+        openHyperliquidWalletConnect()
+        return
       case "agentLocked":
         return
       case "agentMissing":
-        setPinDialogOpen(true)
+        beginHyperliquidTradingConnect()
         return
       case "ready":
         if (!canTrade()) {
@@ -401,6 +519,11 @@ const PortfolioPage = () => {
   // createEffect: persist manual weight entry toggle to localStorage when it changes
   createEffect(() => {
     writeManualWeightEntry(portfolio.isManualWeightEntry)
+  })
+
+  // createEffect: persist Derive greeks visibility when gear / close toggle changes
+  createEffect(() => {
+    writeDeriveGreeksVisible(deriveGreeksVisible())
   })
 
   const betaResult = useBeta(
@@ -485,11 +608,35 @@ const PortfolioPage = () => {
     </KeyboardAwareDockviewProviders>
   )
 
-  const AllSymbolsTab = (props: IDockviewPanelHeaderProps) => (
+  const HyperliquidTab = (props: IDockviewPanelHeaderProps) => (
     <KeyboardAwareDockviewProviders>
-      <LockedTabWithDigit {...props} digit={PANEL_DIGIT_BY_ID.allSymbols} />
+      <LockedTabWithDigit {...props} digit={PANEL_DIGIT_BY_ID.hyperliquid} />
     </KeyboardAwareDockviewProviders>
   )
+
+  const DeriveTab = (props: IDockviewPanelHeaderProps) => {
+    const title = useDockviewPanelTitle(props)
+
+    return (
+      <KeyboardAwareDockviewProviders>
+        <div
+          data-testid="dockview-dv-default-tab"
+          class="dv-default-tab portfolio-dockview-tab"
+        >
+          <span class="dv-default-tab-content portfolio-dockview-tab-title">
+            {title()}
+          </span>
+          <kbd class="ml-1 rounded bg-muted px-1 py-0.5 font-mono text-[10px] text-muted-foreground">
+            {PANEL_DIGIT_BY_ID.derive}
+          </kbd>
+          <DeriveSettingsMenu
+            greeksVisible={deriveGreeksVisible}
+            onGreeksVisibleChange={setDeriveGreeksVisible}
+          />
+        </div>
+      </KeyboardAwareDockviewProviders>
+    )
+  }
 
   const StagedTab = (props: IDockviewPanelHeaderProps) => (
     <KeyboardAwareDockviewProviders>
@@ -543,10 +690,10 @@ const PortfolioPage = () => {
         </div>
       </KeyboardAwareDockviewProviders>
     ),
-    allSymbols: (_props: IDockviewPanelProps) => (
+    hyperliquid: (_props: IDockviewPanelProps) => (
       <KeyboardAwareDockviewProviders>
         <div class="portfolio-dockview-panel-body">
-          <AllSymbolsPanel
+          <HyperliquidPanel
             screenerSymbols={screenerSymbols}
             targetPortfolio={portfolio.targetPortfolio}
             deletedArchive={portfolio.deletedArchive}
@@ -555,11 +702,46 @@ const PortfolioPage = () => {
             metricVisibility={metricVisibility()}
             onRemove={portfolio.handleRemoveToken}
             onUndoRemove={portfolio.handleUndoRemoveToken}
-            onAddSymbol={portfolio.handleAddToken}
+            onAddSymbol={symbol => {
+              portfolio.handleAddToken(symbol, "perp", "hyperliquid")
+            }}
           />
         </div>
       </KeyboardAwareDockviewProviders>
     ),
+    derive: (panelProps: IDockviewPanelProps) => {
+      const [isPanelVisible, setIsPanelVisible] = createSignal(true)
+
+      // createEffect: track dockview panel visibility for options stream lifecycle.
+      createEffect(() => {
+        // Dockview's isVisible is imperative; seed once then subscribe to changes.
+        setIsPanelVisible(panelProps.api.isVisible)
+        const disposable = panelProps.api.onDidVisibilityChange(event => {
+          setIsPanelVisible(event.isVisible)
+        })
+        onCleanup(() => {
+          disposable.dispose()
+        })
+      })
+
+      return (
+        <KeyboardAwareDockviewProviders>
+          <div class="portfolio-dockview-panel-body">
+            <DerivePanel
+              isPanelVisible={isPanelVisible}
+              greeksVisible={deriveGreeksVisible}
+              onGreeksVisibleChange={setDeriveGreeksVisible}
+              onAddOption={request => {
+                portfolio.handleAddToken(request.symbol, "option", "derive", {
+                  side: request.side,
+                  notional: request.notional,
+                })
+              }}
+            />
+          </div>
+        </KeyboardAwareDockviewProviders>
+      )
+    },
     performance: (_props: IDockviewPanelProps) => (
       <KeyboardAwareDockviewProviders>
         <div class="portfolio-dockview-panel-body">
@@ -612,7 +794,8 @@ const PortfolioPage = () => {
 
   const applyDefaultLayout = (api: DockviewApi) => {
     const portfolioConfig = findPanelCatalogEntry("portfolio")
-    const allSymbolsConfig = findPanelCatalogEntry("allSymbols")
+    const hyperliquidConfig = findPanelCatalogEntry("hyperliquid")
+    const deriveConfig = findPanelCatalogEntry("derive")
     const performanceConfig = findPanelCatalogEntry("performance")
     const stagedConfig = findPanelCatalogEntry("staged")
     const factorsConfig = findPanelCatalogEntry("factors")
@@ -620,7 +803,8 @@ const PortfolioPage = () => {
 
     if (
       portfolioConfig === undefined ||
-      allSymbolsConfig === undefined ||
+      hyperliquidConfig === undefined ||
+      deriveConfig === undefined ||
       performanceConfig === undefined ||
       stagedConfig === undefined ||
       factorsConfig === undefined ||
@@ -637,10 +821,18 @@ const PortfolioPage = () => {
     })
 
     api.addPanel({
-      id: allSymbolsConfig.id,
-      component: allSymbolsConfig.component,
-      tabComponent: allSymbolsConfig.tabComponent,
-      title: allSymbolsConfig.title,
+      id: hyperliquidConfig.id,
+      component: hyperliquidConfig.component,
+      tabComponent: hyperliquidConfig.tabComponent,
+      title: hyperliquidConfig.title,
+      position: { referencePanel: portfolioConfig.id, direction: "within" },
+    })
+
+    api.addPanel({
+      id: deriveConfig.id,
+      component: deriveConfig.component,
+      tabComponent: deriveConfig.tabComponent,
+      title: deriveConfig.title,
       position: { referencePanel: portfolioConfig.id, direction: "within" },
     })
 
@@ -825,6 +1017,7 @@ const PortfolioPage = () => {
     getAllSymbolSymbols: () => screenerSymbols(),
     isPinDialogOpen: () => pinDialogOpen(),
     connectionState: () => stagedConnectionState(),
+    isDeriveSessionLocked: () => isDeriveLocked(),
     onRemove: portfolio.handleRemoveToken,
     onUndoRemove: portfolio.handleUndoRemoveToken,
     onSideChange: portfolio.handleSideChange,
@@ -835,12 +1028,13 @@ const PortfolioPage = () => {
         portfolio.deletedArchive[symbol] ??
         portfolio.currentPortfolio[symbol]
       )?.side,
-    getPositionLeverage: symbol =>
-      (
+    getPositionLeverage: symbol => {
+      const position =
         portfolio.targetPortfolio[symbol] ??
         portfolio.deletedArchive[symbol] ??
         portfolio.currentPortfolio[symbol]
-      )?.leverage,
+      return position?.kind === "perp" ? position.leverage : undefined
+    },
     getMaxLeverage: symbol => portfolio.leverageLimitsMap[symbol],
     getCrossAccountLeverage: () => portfolio.targetCrossAccountLeverage,
     onCrossAccountLeverageChange: portfolio.handleCrossAccountLeverageChange,
@@ -856,7 +1050,9 @@ const PortfolioPage = () => {
         portfolio.targetPortfolio,
         portfolio.deletedArchive,
         {
-          onAdd: portfolio.handleAddToken,
+          onAdd: addSymbol => {
+            portfolio.handleAddToken(addSymbol, "perp", "hyperliquid")
+          },
           onRemove: portfolio.handleRemoveToken,
           onUndoRemove: portfolio.handleUndoRemoveToken,
         },
@@ -865,7 +1061,7 @@ const PortfolioPage = () => {
     onStagedSubmit: handlePrimaryStagedAction,
     onStagedClearAll: portfolio.handleResetToCurrent,
     onOpenWalletPinDialog: () => {
-      setPinDialogOpen(true)
+      beginHyperliquidTradingConnect()
     },
   })
 
@@ -874,6 +1070,23 @@ const PortfolioPage = () => {
 
   const KeyboardBridge = () => {
     keyboardBridge = usePortfolioKeyboardContext()
+    return null
+  }
+
+  const ShellFocusBridge = () => {
+    const shell = usePortfolioShell()
+
+    // createEffect: activate the dockview panel when header/portfolio requests a venue.
+    createEffect(() => {
+      const request = shell.focusVenueRequest()
+      if (request === null) {
+        return
+      }
+      const panelId = request.venue === "hyperliquid" ? "hyperliquid" : "derive"
+      dockviewApi()?.getPanel(panelId)?.api.setActive()
+      keyboardBridge?.onPanelActivated(panelId)
+    })
+
     return null
   }
 
@@ -895,6 +1108,7 @@ const PortfolioPage = () => {
     <PortfolioKeyboardProvider actions={keyboardActions()}>
       <DockviewOwnerBinder />
       <KeyboardBridge />
+      <ShellFocusBridge />
       <div class="flex min-h-0 flex-1 flex-col overflow-hidden">
         <header class="flex shrink-0 items-center justify-between border-b border-border bg-muted/30 px-3 py-1.5">
           <div class="flex items-center gap-5">
@@ -907,12 +1121,7 @@ const PortfolioPage = () => {
               }
             />
             <div class="h-4 border-l border-border" />
-            <div class="flex gap-1.5">
-              <span class="text-muted-foreground">NAV</span>
-              <span class="font-mono">
-                ${portfolio.accountValue.toFixed(2)}
-              </span>
-            </div>
+            <VenueBalancesHeader />
             <div class="flex gap-1.5">
               <span class="text-muted-foreground">Notional</span>
               <span class="font-mono">
@@ -956,7 +1165,8 @@ const PortfolioPage = () => {
             tabComponents={{
               portfolioTab: PortfolioTab,
               lockedTab: LockedTab,
-              allSymbolsTab: AllSymbolsTab,
+              hyperliquidTab: HyperliquidTab,
+              deriveTab: DeriveTab,
               stagedTab: StagedTab,
               closableTab: ClosableTab,
             }}
@@ -979,7 +1189,9 @@ const PortfolioPage = () => {
 
 const PortfolioRoute = () => (
   <WalletProvider>
-    <PortfolioPage />
+    <PortfolioShellProvider>
+      <PortfolioPage />
+    </PortfolioShellProvider>
   </WalletProvider>
 )
 

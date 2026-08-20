@@ -1,9 +1,18 @@
 import { type OrderSide, type RebalanceParams } from "@/hooks/useTrading"
 import type { OrderResult } from "@/services/hyperliquid-client"
+import type {
+  DeriveBatchOrderRequest,
+  DeriveTickerQuote,
+} from "@/services/derive-client"
 
-import type { PortfolioInterface } from "@/pages/Portfolio/hooks/usePortfolioState"
-
-import { MIN_USD } from "@/pages/Portfolio/hooks/usePortfolioState"
+import {
+  isPerpPosition,
+  MIN_USD,
+  type PortfolioInterface,
+  type PortfolioPositionKind,
+  type PortfolioVenue,
+} from "@/pages/Portfolio/hooks/usePortfolioState"
+import type { DeriveMappedPosition } from "@/services/deriveAccount"
 
 const rebalanceOrderUserMessage = (order: OrderResult): string => {
   if (order.message) {
@@ -36,6 +45,8 @@ export const portfolioMapFromExchangePositions = (
     positions.map(position => [
       position.symbol,
       {
+        kind: "perp" as const,
+        venue: "hyperliquid" as const,
         symbol: position.symbol,
         side: position.side,
         leverage: position.leverage || 1,
@@ -44,6 +55,199 @@ export const portfolioMapFromExchangePositions = (
     ]),
   ) as Record<string, PortfolioInterface | undefined>
 
+  return { map, totalNotional }
+}
+
+/** Maps Derive open positions (options + perps) into portfolio rows. */
+export const portfolioMapFromDerivePositions = (
+  positions: DeriveMappedPosition[],
+): {
+  map: Record<string, PortfolioInterface | undefined>
+  totalNotional: number
+} => {
+  const totalNotional = positions.reduce(
+    (sum, position) => sum + position.notional,
+    0,
+  )
+  const map = Object.fromEntries(
+    positions.map(position => {
+      if (position.positionKind === "option") {
+        const optionRow: PortfolioInterface = {
+          kind: "option",
+          venue: "derive",
+          symbol: position.symbol,
+          side: position.side,
+          notional: position.notional,
+        }
+        return [position.symbol, optionRow]
+      }
+
+      const perpRow: PortfolioInterface = {
+        kind: "perp",
+        venue: "derive",
+        symbol: position.symbol,
+        side: position.side,
+        leverage: position.leverage || 1,
+        notional: position.notional,
+      }
+      return [position.symbol, perpRow]
+    }),
+  ) as Record<string, PortfolioInterface | undefined>
+
+  return { map, totalNotional }
+}
+
+export const mergePortfolioMaps = (
+  ...maps: Array<Record<string, PortfolioInterface | undefined>>
+): {
+  map: Record<string, PortfolioInterface | undefined>
+  totalNotional: number
+} => {
+  const map = Object.assign({}, ...maps) as Record<
+    string,
+    PortfolioInterface | undefined
+  >
+  const totalNotional = Object.values(map).reduce(
+    (sum, position) => sum + (position?.notional ?? 0),
+    0,
+  )
+  return { map, totalNotional }
+}
+
+/** Mark / dust noise below this is not treated as intentional staging. */
+export const STAGED_NOTIONAL_EPSILON_USD = 0.1
+
+const getSignedNotional = (side: OrderSide, notional: number): number =>
+  side === "buy" ? notional : -notional
+
+const isMeaningfullyStagedPosition = (
+  current: PortfolioInterface,
+  target: PortfolioInterface,
+): boolean => {
+  if (current.side !== target.side) {
+    return true
+  }
+  if (
+    isPerpPosition(current) &&
+    isPerpPosition(target) &&
+    current.leverage !== target.leverage
+  ) {
+    return true
+  }
+
+  return (
+    Math.abs(
+      getSignedNotional(target.side, target.notional) -
+        getSignedNotional(current.side, current.notional),
+    ) > STAGED_NOTIONAL_EPSILON_USD
+  )
+}
+
+/**
+ * Keep staged-close snapshots aligned with live exchange marks so undo restore
+ * does not revive a stale notional after a venue/mark refresh.
+ */
+export const syncDeletedArchiveWithCurrent = (
+  deletedArchive: Record<string, PortfolioInterface | undefined>,
+  current: Record<string, PortfolioInterface | undefined>,
+): Record<string, PortfolioInterface | undefined> => {
+  const next: Record<string, PortfolioInterface | undefined> = {}
+
+  for (const [symbol, archived] of Object.entries(deletedArchive)) {
+    if (archived === undefined) {
+      continue
+    }
+    const livePosition = current[symbol]
+    next[symbol] =
+      livePosition !== undefined ? { ...livePosition } : { ...archived }
+  }
+
+  return next
+}
+
+/**
+ * Intentional target edits relative to current (not dust). Used when venue
+ * composition changes so exchange marks can refresh without dropping staging.
+ */
+export type StagedPortfolioOverlay = {
+  targetOverrides: Record<string, PortfolioInterface>
+  deletedArchive: Record<string, PortfolioInterface | undefined>
+}
+
+export const captureStagedPortfolioOverlay = (
+  current: Record<string, PortfolioInterface | undefined>,
+  target: Record<string, PortfolioInterface | undefined>,
+  deletedArchive: Record<string, PortfolioInterface | undefined>,
+): StagedPortfolioOverlay => {
+  const targetOverrides: Record<string, PortfolioInterface> = {}
+  const nextDeletedArchive: Record<string, PortfolioInterface | undefined> = {
+    ...deletedArchive,
+  }
+
+  const symbols = new Set([...Object.keys(current), ...Object.keys(target)])
+
+  for (const symbol of symbols) {
+    const currentPosition = current[symbol]
+    const targetPosition = target[symbol]
+
+    if (currentPosition !== undefined && targetPosition === undefined) {
+      // Always refresh from live current — archive is "position to close", not
+      // a frozen pre-delete target snapshot.
+      nextDeletedArchive[symbol] = { ...currentPosition }
+      continue
+    }
+
+    if (targetPosition === undefined) {
+      continue
+    }
+
+    if (currentPosition === undefined) {
+      targetOverrides[symbol] = { ...targetPosition }
+      continue
+    }
+
+    if (isMeaningfullyStagedPosition(currentPosition, targetPosition)) {
+      targetOverrides[symbol] = { ...targetPosition }
+    }
+  }
+
+  return {
+    targetOverrides,
+    deletedArchive: syncDeletedArchiveWithCurrent(nextDeletedArchive, current),
+  }
+}
+
+/**
+ * Start from a fresh exchange map, drop symbols staged to close, then reapply
+ * absolute target overrides (including brand-new staged rows).
+ */
+export const mergeExchangeTargetWithStagedOverlay = (
+  exchangeMap: Record<string, PortfolioInterface | undefined>,
+  overlay: StagedPortfolioOverlay,
+): {
+  map: Record<string, PortfolioInterface | undefined>
+  totalNotional: number
+} => {
+  const map: Record<string, PortfolioInterface | undefined> = {}
+
+  for (const [symbol, position] of Object.entries(exchangeMap)) {
+    if (position === undefined) {
+      continue
+    }
+    if (overlay.deletedArchive[symbol] !== undefined) {
+      continue
+    }
+    map[symbol] = { ...position }
+  }
+
+  for (const [symbol, position] of Object.entries(overlay.targetOverrides)) {
+    map[symbol] = { ...position }
+  }
+
+  const totalNotional = Object.values(map).reduce(
+    (sum, position) => sum + (position?.notional ?? 0),
+    0,
+  )
   return { map, totalNotional }
 }
 
@@ -61,6 +265,9 @@ export const targetAndArchiveAfterRebalance = (
   const actionBySymbol = new Map(actions.map(action => [action.symbol, action]))
   const orderBySymbol = new Map(orders.map(order => [order.symbol, order]))
 
+  // Start from exchange current (HL refresh), then keep staged options (and any
+  // other non-touched venues) from the prior target so a HL settle does not
+  // wipe Derive rows.
   const nextTarget = Object.fromEntries(
     Object.entries(current)
       .filter(
@@ -69,6 +276,16 @@ export const targetAndArchiveAfterRebalance = (
       )
       .map(([symbol, position]) => [symbol, { ...position }]),
   ) as Record<string, PortfolioInterface | undefined>
+
+  for (const [symbol, priorTarget] of Object.entries(target)) {
+    if (priorTarget === undefined) {
+      continue
+    }
+    if (actionBySymbol.has(symbol)) {
+      continue
+    }
+    nextTarget[symbol] ??= { ...priorTarget }
+  }
 
   const symbolsToDropFromTarget = new Set<string>()
 
@@ -132,6 +349,8 @@ export type RebalanceAction =
       kind: "close"
       symbol: string
       side: OrderSide
+      positionKind: PortfolioPositionKind
+      venue: PortfolioVenue
     }
   | {
       kind: "rebalance"
@@ -139,6 +358,8 @@ export type RebalanceAction =
       signedNotionalDelta: number
       leverage: number
       leverageChanged: boolean
+      positionKind: PortfolioPositionKind
+      venue: PortfolioVenue
     }
   | {
       kind: "preciseRebalance"
@@ -149,6 +370,8 @@ export type RebalanceAction =
       leverageChanged: boolean
       closeNotional: number
       openNotional: number
+      positionKind: PortfolioPositionKind
+      venue: PortfolioVenue
     }
 
 export const buildApiPayload = (
@@ -156,11 +379,11 @@ export const buildApiPayload = (
   target: Record<string, PortfolioInterface | undefined>,
   precise: boolean,
 ): RebalanceParams => {
-  const actions = diffPortfolios(current, target, precise)
+  const actions = diffPortfolios(current, target, precise).filter(
+    action => action.venue === "hyperliquid",
+  )
   return { actions }
 }
-
-const NOTIONAL_EPSILON = 0.1
 
 /** Signed delta: targetSigned - currentSigned (same convention as diffPortfolios). */
 export const preciseRebalanceLegs = (
@@ -189,13 +412,6 @@ export const preciseRebalanceLegs = (
   }
 }
 
-const getSignedNotional = (side: OrderSide, notional: number) =>
-  side === "buy" ? notional : -notional
-
-/**
- * Compute minimal set of actions needed to transform current portfolio into target.
- * Pure function: does not know about UI status flags or external APIs.
- */
 export const diffPortfolios = (
   current: Record<string, PortfolioInterface | undefined>,
   target: Record<string, PortfolioInterface | undefined>,
@@ -223,6 +439,8 @@ export const diffPortfolios = (
         kind: "close",
         symbol,
         side: currentPosition.side,
+        positionKind: currentPosition.kind,
+        venue: currentPosition.venue,
       })
       continue
     }
@@ -231,25 +449,41 @@ export const diffPortfolios = (
       continue
     }
 
-    if (currentPosition && targetPosition.notional <= NOTIONAL_EPSILON) {
+    if (
+      currentPosition &&
+      targetPosition.notional <= STAGED_NOTIONAL_EPSILON_USD
+    ) {
       actions.push({
         kind: "close",
         symbol,
         side: currentPosition.side,
+        positionKind: currentPosition.kind,
+        venue: currentPosition.venue,
       })
       continue
     }
 
     const leverageChanged =
-      currentPosition?.leverage !== targetPosition.leverage
-    const hasSignificantDelta = deltaAbs > NOTIONAL_EPSILON
+      isPerpPosition(targetPosition) &&
+      currentPosition !== undefined &&
+      isPerpPosition(currentPosition)
+        ? currentPosition.leverage !== targetPosition.leverage
+        : false
+
+    const hasSignificantDelta = deltaAbs > STAGED_NOTIONAL_EPSILON_USD
 
     if (!hasSignificantDelta && !leverageChanged) {
       continue
     }
 
+    const targetLeverage = isPerpPosition(targetPosition)
+      ? targetPosition.leverage
+      : 1
+
+    // Precise path is HL min-order workaround; options use simple notional delta.
     if (
       precise &&
+      isPerpPosition(targetPosition) &&
       hasSignificantDelta &&
       deltaAbs < MIN_USD &&
       currentPosition?.side === targetPosition.side
@@ -263,10 +497,12 @@ export const diffPortfolios = (
         kind: "preciseRebalance",
         symbol,
         side: targetPosition.side,
-        leverage: targetPosition.leverage,
+        leverage: targetLeverage,
         leverageChanged,
         closeNotional,
         openNotional,
+        positionKind: targetPosition.kind,
+        venue: targetPosition.venue,
       })
       continue
     }
@@ -275,10 +511,165 @@ export const diffPortfolios = (
       kind: "rebalance",
       symbol,
       signedNotionalDelta: delta,
-      leverage: targetPosition.leverage,
+      leverage: targetLeverage,
       leverageChanged,
+      positionKind: targetPosition.kind,
+      venue: targetPosition.venue,
     })
   }
 
   return actions
+}
+
+/**
+ * Aggressive limit for rebalance fills: buy at ask, sell at bid, fall back to
+ * mark/last when the book side is missing.
+ */
+export const deriveLimitPriceForSide = (
+  ticker: DeriveTickerQuote,
+  side: OrderSide,
+): number | null => {
+  const preferred =
+    side === "buy"
+      ? (ticker.ask ?? ticker.mark ?? ticker.last)
+      : (ticker.bid ?? ticker.mark ?? ticker.last)
+
+  if (preferred === null || !(preferred > 0)) {
+    return null
+  }
+
+  return preferred
+}
+
+const isReduceOnlyOrder = (
+  current: PortfolioInterface | undefined,
+  orderSide: OrderSide,
+): boolean => {
+  if (current === undefined) {
+    return false
+  }
+  return (
+    (current.side === "buy" && orderSide === "sell") ||
+    (current.side === "sell" && orderSide === "buy")
+  )
+}
+
+const contractsFromPremiumNotional = (
+  notionalUsd: number,
+  limitPrice: number,
+): number => {
+  if (!(notionalUsd > 0) || !(limitPrice > 0)) {
+    return 0
+  }
+  return notionalUsd / limitPrice
+}
+
+/** Prefer mark for converting premium USD <-> contracts; fall back to last. */
+const deriveSizingPrice = (ticker: DeriveTickerQuote): number | null => {
+  const preferred = ticker.mark ?? ticker.last
+  if (preferred === null || !(preferred > 0)) {
+    return null
+  }
+  return preferred
+}
+
+const requireDeriveTicker = (
+  tickers: Record<string, DeriveTickerQuote>,
+  symbol: string,
+  actionLabel: string,
+): DeriveTickerQuote => {
+  const entry = Object.entries(tickers).find(
+    ([tickerSymbol]) => tickerSymbol === symbol,
+  )
+  if (entry === undefined) {
+    throw new Error(`Missing Derive ticker for ${actionLabel} of ${symbol}`)
+  }
+  return entry[1]
+}
+
+/**
+ * Maps Derive portfolio actions to limit order requests. Premium notionals
+ * convert to contracts as `notional / mark` (same as the Test page /
+ * order ticket). Limit price is aggressive book (ask/bid). Throws if a
+ * required ticker or price is missing.
+ */
+export const deriveActionsToOrderRequests = (
+  actions: RebalanceAction[],
+  current: Record<string, PortfolioInterface | undefined>,
+  tickers: Record<string, DeriveTickerQuote>,
+): DeriveBatchOrderRequest[] => {
+  const deriveActions = actions.filter(action => action.venue === "derive")
+  const requests: DeriveBatchOrderRequest[] = []
+
+  for (const action of deriveActions) {
+    const currentPosition = current[action.symbol]
+
+    switch (action.kind) {
+      case "close": {
+        if (currentPosition === undefined) {
+          continue
+        }
+        const orderSide: OrderSide = action.side === "buy" ? "sell" : "buy"
+        const ticker = requireDeriveTicker(tickers, action.symbol, "close")
+        const price = deriveLimitPriceForSide(ticker, orderSide)
+        const sizingPrice = deriveSizingPrice(ticker) ?? price
+        if (price === null || sizingPrice === null) {
+          throw new Error(
+            `No usable Derive price for close of ${action.symbol}`,
+          )
+        }
+        const amount = contractsFromPremiumNotional(
+          currentPosition.notional,
+          sizingPrice,
+        )
+        if (!(amount > 0)) {
+          continue
+        }
+        requests.push({
+          symbol: action.symbol,
+          side: orderSide,
+          amount,
+          price,
+          type: "limit",
+          reduceOnly: true,
+        })
+        break
+      }
+      case "rebalance": {
+        const orderSide: OrderSide =
+          action.signedNotionalDelta > 0 ? "buy" : "sell"
+        const ticker = requireDeriveTicker(tickers, action.symbol, "rebalance")
+        const price = deriveLimitPriceForSide(ticker, orderSide)
+        const sizingPrice = deriveSizingPrice(ticker) ?? price
+        if (price === null || sizingPrice === null) {
+          throw new Error(
+            `No usable Derive price for rebalance of ${action.symbol}`,
+          )
+        }
+        const amount = contractsFromPremiumNotional(
+          Math.abs(action.signedNotionalDelta),
+          sizingPrice,
+        )
+        if (!(amount > 0)) {
+          continue
+        }
+        requests.push({
+          symbol: action.symbol,
+          side: orderSide,
+          amount,
+          price,
+          type: "limit",
+          reduceOnly: isReduceOnlyOrder(currentPosition, orderSide),
+        })
+        break
+      }
+      case "preciseRebalance": {
+        throw new Error(
+          `Derive does not support preciseRebalance (${action.symbol})`,
+        )
+      }
+    }
+  }
+
+  return requests
 }

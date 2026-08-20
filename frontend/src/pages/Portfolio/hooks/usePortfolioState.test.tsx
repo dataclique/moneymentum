@@ -5,23 +5,39 @@ import type { ParentProps } from "solid-js"
 
 import { MIN_USD, usePortfolioState } from "./usePortfolioState"
 import {
+  useDeriveAccountSnapshot,
+  useDeriveBalance,
+  useDeriveSessionCredentials,
   useHyperliquidAccountSummary,
   useHyperliquidLeverageLimits,
   useHyperliquidPositions,
+  useRebalanceDerivePositions,
   useRebalanceHyperliquidPositions,
 } from "@/hooks/useTrading"
+import { useWallet } from "@/hooks/useWallet"
 
 vi.mock("@/hooks/useTrading", () => ({
   useHyperliquidAccountSummary: vi.fn(),
   useHyperliquidPositions: vi.fn(),
   useHyperliquidLeverageLimits: vi.fn(),
   useRebalanceHyperliquidPositions: vi.fn(),
+  useRebalanceDerivePositions: vi.fn(),
+  useDeriveBalance: vi.fn(() => ({ data: undefined, isLoading: false })),
+  useDeriveAccountSnapshot: vi.fn(() => ({
+    data: undefined,
+    isLoading: false,
+    refetch: vi.fn(),
+  })),
+  useDeriveSessionCredentials: vi.fn(() => () => null),
 }))
 
 vi.mock("@/hooks/useWallet", () => ({
   useWallet: vi.fn(() => ({
     networkMode: () => "testnet",
     isConnected: () => true,
+    isHyperliquidConnected: () => true,
+    isDeriveConnected: () => false,
+    isDeriveLocked: () => false,
   })),
 }))
 
@@ -58,7 +74,7 @@ const createWrapper = () => {
 }
 
 describe("usePortfolioState", () => {
-  const mutate = vi.fn()
+  const mutateAsync = vi.fn()
   const refetchPositions = vi.fn()
   const refetchAccountSummary = vi.fn()
   let settledOrders: Array<{
@@ -103,9 +119,31 @@ describe("usePortfolioState", () => {
         crossAccountLeverage: 1,
       },
     })
-    mutate.mockImplementation((_payload, options) => {
-      options?.onSettled?.(settledOrders, null)
-    })
+    mutateAsync.mockImplementation(async () => settledOrders)
+
+    vi.mocked(useWallet).mockReturnValue({
+      networkMode: () => "testnet",
+      isConnected: () => true,
+      isHyperliquidConnected: () => true,
+      isDeriveConnected: () => false,
+      isDeriveLocked: () => false,
+    } as ReturnType<typeof useWallet>)
+
+    vi.mocked(useDeriveBalance).mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      refetch: vi.fn(),
+    } as unknown as ReturnType<typeof useDeriveBalance>)
+
+    vi.mocked(useDeriveAccountSnapshot).mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      refetch: vi.fn(),
+    } as unknown as ReturnType<typeof useDeriveAccountSnapshot>)
+
+    vi.mocked(useDeriveSessionCredentials).mockReturnValue(
+      (() => null) as ReturnType<typeof useDeriveSessionCredentials>,
+    )
 
     vi.mocked(useHyperliquidAccountSummary).mockReturnValue({
       data: {
@@ -134,9 +172,14 @@ describe("usePortfolioState", () => {
     } as ReturnType<typeof useHyperliquidLeverageLimits>)
 
     vi.mocked(useRebalanceHyperliquidPositions).mockReturnValue({
-      mutate,
+      mutateAsync,
       isPending: false,
     } as unknown as ReturnType<typeof useRebalanceHyperliquidPositions>)
+
+    vi.mocked(useRebalanceDerivePositions).mockReturnValue({
+      mutateAsync: vi.fn(async () => []),
+      isPending: false,
+    } as unknown as ReturnType<typeof useRebalanceDerivePositions>)
   })
 
   afterEach(() => {
@@ -163,6 +206,99 @@ describe("usePortfolioState", () => {
     expect(result.targetTotalNotional).toBe(1000)
   })
 
+  it("merges derive open positions into current and target portfolios", async () => {
+    vi.mocked(useWallet).mockReturnValue({
+      networkMode: () => "testnet",
+      isConnected: () => true,
+      isHyperliquidConnected: () => true,
+      isDeriveConnected: () => true,
+      isDeriveLocked: () => false,
+    } as ReturnType<typeof useWallet>)
+
+    vi.mocked(useDeriveSessionCredentials).mockReturnValue((() => ({
+      deriveWallet: "0xabc",
+      sessionAddress: "0xdef",
+      sessionPrivateKey:
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+      networkMode: "testnet" as const,
+      subaccountId: 7,
+    })) as ReturnType<typeof useDeriveSessionCredentials>)
+
+    vi.mocked(useDeriveBalance).mockReturnValue({
+      data: {
+        accountValue: 500,
+        positionsValue: 620,
+        collateralsValue: 0,
+        totals: {},
+      },
+      isLoading: false,
+      refetch: vi.fn(),
+    } as unknown as ReturnType<typeof useDeriveBalance>)
+
+    vi.mocked(useDeriveAccountSnapshot).mockReturnValue({
+      data: {
+        deriveWallet: "0xabc",
+        subaccountIds: [7],
+        subaccounts: [
+          {
+            subaccountId: 7,
+            subaccountValue: "500",
+            collateralsValue: "0",
+            initialMargin: "0",
+            maintenanceMargin: "0",
+            positionsValue: "620",
+            positions: [
+              {
+                symbol: "ETH-20260327-2000-C",
+                side: "buy" as const,
+                notional: 120,
+                entryPrice: 100,
+                unrealizedPnl: 20,
+                leverage: 1,
+                positionKind: "option" as const,
+              },
+              {
+                symbol: "ETH-PERP",
+                side: "sell" as const,
+                notional: 500,
+                entryPrice: 2000,
+                unrealizedPnl: -10,
+                leverage: 1,
+                positionKind: "perp" as const,
+              },
+            ],
+          },
+        ],
+      },
+      isLoading: false,
+      refetch: vi.fn(),
+    } as unknown as ReturnType<typeof useDeriveAccountSnapshot>)
+
+    const { result } = renderHook(() => usePortfolioState(), {
+      wrapper: createWrapper(),
+    })
+
+    await waitFor(() => {
+      expect(result.currentPortfolio["ETH-20260327-2000-C"]).toBeDefined()
+      expect(result.currentPortfolio["ETH-PERP"]).toBeDefined()
+    })
+
+    expect(result.currentPortfolio["ETH-20260327-2000-C"]).toMatchObject({
+      kind: "option",
+      venue: "derive",
+      notional: 120,
+    })
+    expect(result.currentPortfolio["ETH-PERP"]).toMatchObject({
+      kind: "perp",
+      venue: "derive",
+      side: "sell",
+      notional: 500,
+    })
+    expect(result.currentPortfolio["BTC/USDC:USDC"]?.venue).toBe("hyperliquid")
+    expect(result.currentTotalNotional).toBe(1620)
+    expect(result.targetPortfolio["ETH-20260327-2000-C"]?.venue).toBe("derive")
+  })
+
   it("adds and removes token in target portfolio", async () => {
     const { result } = renderHook(() => usePortfolioState(), {
       wrapper: createWrapper(),
@@ -172,11 +308,78 @@ describe("usePortfolioState", () => {
       expect(Object.keys(result.targetPortfolio)).toHaveLength(2)
     })
 
-    result.handleAddToken("SOL/USDC:USDC")
+    result.handleAddToken("SOL/USDC:USDC", "perp", "hyperliquid")
     expect(result.targetPortfolio["SOL/USDC:USDC"]?.notional).toBe(MIN_USD)
 
     result.handleRemoveToken("SOL/USDC:USDC")
     expect(result.targetPortfolio["SOL/USDC:USDC"]).toBeUndefined()
+  })
+
+  it("adds derive option with side and notional into target and staged trades", async () => {
+    vi.mocked(useWallet).mockReturnValue({
+      networkMode: () => "testnet",
+      isConnected: () => true,
+      isHyperliquidConnected: () => true,
+      isDeriveConnected: () => true,
+      isDeriveLocked: () => false,
+    } as ReturnType<typeof useWallet>)
+
+    vi.mocked(useDeriveAccountSnapshot).mockReturnValue({
+      data: {
+        deriveWallet: "0xabc",
+        subaccountIds: [],
+        subaccounts: [],
+      },
+      isLoading: false,
+      refetch: vi.fn(),
+    } as unknown as ReturnType<typeof useDeriveAccountSnapshot>)
+
+    vi.mocked(useDeriveBalance).mockReturnValue({
+      data: {
+        accountValue: 0,
+        positionsValue: 0,
+        collateralsValue: 0,
+        totals: {},
+      },
+      isLoading: false,
+      refetch: vi.fn(),
+    } as unknown as ReturnType<typeof useDeriveBalance>)
+
+    const { result } = renderHook(() => usePortfolioState(), {
+      wrapper: createWrapper(),
+    })
+
+    await waitFor(() => {
+      expect(Object.keys(result.targetPortfolio)).toHaveLength(2)
+    })
+
+    const instrument = "BTC-20260829-100000-P"
+    result.handleAddToken(instrument, "option", "derive", {
+      side: "sell",
+      notional: 250,
+    })
+
+    expect(result.targetPortfolio[instrument]).toEqual({
+      kind: "option",
+      venue: "derive",
+      symbol: instrument,
+      side: "sell",
+      notional: 250,
+    })
+
+    await waitFor(() => {
+      expect(
+        result.stagedTrades.some(trade => trade.underlying === instrument),
+      ).toBe(true)
+    })
+
+    const staged = result.stagedTrades.find(
+      trade => trade.underlying === instrument,
+    )
+    expect(staged?.side).toBe("sell")
+    expect(staged?.notional).toBe(250)
+    expect(staged?.kind).toBe("option")
+    expect(staged?.venue).toBe("derive")
   })
 
   it("clamps per-symbol leverage to max from leverage limits", async () => {
@@ -266,17 +469,24 @@ describe("usePortfolioState", () => {
 
     result.handleRebalancePositions()
 
-    expect(mutate).toHaveBeenCalledWith(
-      {
-        actions: [
-          { kind: "close", symbol: "BTC/USDC:USDC", side: "buy" },
-          { kind: "close", symbol: "ETH/USDC:USDC", side: "buy" },
-        ],
-      },
-      expect.objectContaining({
-        onSettled: expect.any(Function),
-      }),
-    )
+    expect(mutateAsync).toHaveBeenCalledWith({
+      actions: [
+        {
+          kind: "close",
+          symbol: "BTC/USDC:USDC",
+          side: "buy",
+          positionKind: "perp",
+          venue: "hyperliquid",
+        },
+        {
+          kind: "close",
+          symbol: "ETH/USDC:USDC",
+          side: "buy",
+          positionKind: "perp",
+          venue: "hyperliquid",
+        },
+      ],
+    })
 
     await waitFor(() => {
       expect(refetchPositions).toHaveBeenCalled()
@@ -364,22 +574,19 @@ describe("usePortfolioState", () => {
     result.handleNotionalChange("BTC/USDC:USDC", 700)
     result.handleRebalancePositions()
 
-    expect(mutate).toHaveBeenCalledWith(
-      {
-        actions: [
-          expect.objectContaining({
-            kind: "rebalance",
-            symbol: "BTC/USDC:USDC",
-            signedNotionalDelta: 100,
-            leverage: 2,
-            leverageChanged: false,
-          }),
-        ],
-      },
-      expect.objectContaining({
-        onSettled: expect.any(Function),
-      }),
-    )
+    expect(mutateAsync).toHaveBeenCalledWith({
+      actions: [
+        expect.objectContaining({
+          kind: "rebalance",
+          symbol: "BTC/USDC:USDC",
+          signedNotionalDelta: 100,
+          leverage: 2,
+          leverageChanged: false,
+          positionKind: "perp",
+          venue: "hyperliquid",
+        }),
+      ],
+    })
 
     await waitFor(() => {
       expect(refetchPositions).toHaveBeenCalled()
@@ -545,6 +752,10 @@ describe("usePortfolioState", () => {
       expect(btcTrade?.orderError).toBeUndefined()
     })
 
-    expect(consoleWarn).not.toHaveBeenCalled()
+    const unexpectedWarns = consoleWarn.mock.calls.filter(
+      ([message]) =>
+        message !== "rebalance finalize: non-filled orders kept staged target",
+    )
+    expect(unexpectedWarns).toEqual([])
   })
 })

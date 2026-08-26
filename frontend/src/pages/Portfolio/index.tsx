@@ -98,6 +98,10 @@ const PortfolioPage = () => {
     () => portfolio.readonlyBtcRows,
     () => bitcoinBetaBenchmark,
   )
+  const refreshReadonlyBtc = () => {
+    portfolio.refreshReadonlyBtc()
+    betaResult.refresh()
+  }
 
   const tickersQuery = useHyperliquidTickers()
   const fundingRatesQuery = useHyperliquidFundingRates()
@@ -216,6 +220,7 @@ const PortfolioPage = () => {
                   portfolio.readonlyBtcValidationError
                 }
                 onAddReadonlyBtcAddress={portfolio.addReadonlyBtcAddress}
+                onRefreshReadonlyBtc={refreshReadonlyBtc}
                 onRemoveReadonlyBtcAddress={portfolio.removeReadonlyBtcAddress}
                 onReadonlyBtcIncludeInBetaChange={
                   portfolio.setReadonlyBtcIncludeInBeta

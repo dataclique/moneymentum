@@ -187,7 +187,9 @@ export const useReadonlyPortfolioState = () => {
   const [validationError, setValidationError] = createSignal<string | null>(
     null,
   )
-  const refreshEntries = () => setEntriesRevision(revision => revision + 1)
+  const refreshEntries = (): void => {
+    setEntriesRevision(revision => revision + 1)
+  }
   const entries = createMemo<ReadonlyBtcEntry[]>(() => {
     entriesRevision()
     return readEntriesFromStorage(networkMode())
@@ -195,6 +197,7 @@ export const useReadonlyPortfolioState = () => {
 
   const query = useQuery(() => {
     const currentEntries = entries()
+    const currentEntriesRevision = entriesRevision()
     const currentNetworkMode = networkMode()
     const readonlyAddresses = currentEntries.map(entry => entry.address)
     const enabled = readonlyAddresses.length > 0
@@ -204,6 +207,7 @@ export const useReadonlyPortfolioState = () => {
         "readonly-btc-exposure",
         currentNetworkMode,
         readonlyAddresses,
+        currentEntriesRevision,
       ] as const,
       queryFn: (ctx: { signal: AbortSignal }) =>
         fetchExposure(currentEntries, currentNetworkMode, ctx.signal),
@@ -320,6 +324,7 @@ export const useReadonlyPortfolioState = () => {
     removeAddress,
     setIncludeInBeta,
     clearAddresses,
+    refresh: refreshEntries,
   }
 }
 

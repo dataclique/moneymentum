@@ -88,6 +88,46 @@ describe("useReadonlyPortfolioState", () => {
     ])
   })
 
+  it("refetches readonly balances on manual refresh", async () => {
+    const { result } = renderHook(() => useReadonlyPortfolioState(), {
+      wrapper: createWrapper(),
+    })
+
+    expect(result.addAddress(testnetAddress)).toBe(true)
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+      expect(result.rows[0]?.quantityBtc).toBe(0)
+    })
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        ubtc_price_usd: "100000",
+        positions: [
+          {
+            source: "btc_address",
+            source_id: testnetAddress,
+            symbol: "BTC",
+            side: "buy",
+            notional_usd: "50000",
+            quantity_btc: "0.5",
+            is_tradable: false,
+            include_in_beta: true,
+          },
+        ],
+        gross_long_usd: "50000",
+        gross_short_usd: "0",
+        net_usd: "50000",
+      }),
+    })
+
+    result.refresh()
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(2)
+      expect(result.rows[0]?.quantityBtc).toBe(0.5)
+      expect(result.rows[0]?.notionalUsd).toBe(50_000)
+    })
+  })
+
   it("persists readonly btc entries to the active network key", () => {
     const { result } = renderHook(() => useReadonlyPortfolioState(), {
       wrapper: createWrapper(),

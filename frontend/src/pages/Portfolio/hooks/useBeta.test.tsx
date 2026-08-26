@@ -4,11 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/solid-query"
 import type { ParentProps } from "solid-js"
 
 import type { PortfolioInterface } from "./usePortfolioState"
-import {
-  useBeta,
-  type BetaBenchmark,
-  type ReadonlyBetaEntry,
-} from "./useBeta"
+import { useBeta, type BetaBenchmark, type ReadonlyBetaEntry } from "./useBeta"
 
 const createWrapper = () => {
   const queryClient = new QueryClient({
@@ -131,25 +127,61 @@ describe("useBeta", () => {
     expect(callBody.readOnlyBtc).toEqual(readonlyEntries())
   })
 
-  it.each([
-    "missing_bitcoin_balance",
-    "btc_price_unavailable",
-  ] as const)("surfaces the %s degraded reason", async degradedReason => {
-    fetchMock.mockResolvedValue({
-      ok: false,
-      status: 503,
-      json: async () => ({ error: degradedReason }),
-    })
-
+  it("recalculates beta on manual refresh", async () => {
     const { result } = renderHook(
-      () => useBeta(targetPortfolio, () => [], () => bitcoinBetaBenchmark),
+      () =>
+        useBeta(
+          targetPortfolio,
+          () => [],
+          () => bitcoinBetaBenchmark,
+        ),
       { wrapper: createWrapper() },
     )
 
     await waitFor(() => {
-      expect(result.degradedReason).toBe(degradedReason)
+      expect(result.beta).toBe(1.23)
+    })
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        beta: 2.34,
+        excluded_symbols: [],
+        effective_weights: { BTC: 1 },
+        data_age_hours: 0,
+      }),
+    })
+
+    result.refresh()
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(2)
+      expect(result.beta).toBe(2.34)
     })
   })
+
+  it.each(["missing_bitcoin_balance", "btc_price_unavailable"] as const)(
+    "surfaces the %s degraded reason",
+    async degradedReason => {
+      fetchMock.mockResolvedValue({
+        ok: false,
+        status: 503,
+        json: async () => ({ error: degradedReason }),
+      })
+
+      const { result } = renderHook(
+        () =>
+          useBeta(
+            targetPortfolio,
+            () => [],
+            () => bitcoinBetaBenchmark,
+          ),
+        { wrapper: createWrapper() },
+      )
+
+      await waitFor(() => {
+        expect(result.degradedReason).toBe(degradedReason)
+      })
+    },
+  )
 
   it("surfaces excluded symbols from the beta report", async () => {
     fetchMock.mockResolvedValueOnce({
@@ -163,7 +195,12 @@ describe("useBeta", () => {
     })
 
     const { result } = renderHook(
-      () => useBeta(targetPortfolio, () => [], () => bitcoinBetaBenchmark),
+      () =>
+        useBeta(
+          targetPortfolio,
+          () => [],
+          () => bitcoinBetaBenchmark,
+        ),
       { wrapper: createWrapper() },
     )
 
@@ -186,7 +223,12 @@ describe("useBeta", () => {
     }
 
     const { result } = renderHook(
-      () => useBeta(targetPortfolio, () => [], () => selectedBenchmark),
+      () =>
+        useBeta(
+          targetPortfolio,
+          () => [],
+          () => selectedBenchmark,
+        ),
       { wrapper: createWrapper() },
     )
 
@@ -219,7 +261,12 @@ describe("useBeta", () => {
     })
 
     const { result } = renderHook(
-      () => useBeta(targetPortfolio, () => [], () => bitcoinBetaBenchmark),
+      () =>
+        useBeta(
+          targetPortfolio,
+          () => [],
+          () => bitcoinBetaBenchmark,
+        ),
       { wrapper: createWrapper() },
     )
 

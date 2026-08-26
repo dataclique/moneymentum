@@ -9,7 +9,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-import { Lock } from "lucide-solid"
+import { Lock, RotateCw } from "lucide-solid"
 
 import type { ReadonlyBtcRow } from "../../hooks/useReadonlyPortfolioState"
 
@@ -19,6 +19,7 @@ interface ReadonlyBtcPanelProps {
   error: string | null
   validationError: string | null
   onAddAddress: (address: string) => boolean
+  onRefresh: () => void
   onRemoveAddress: (address: string) => void
   onIncludeInBetaChange: (address: string, includeInBeta: boolean) => void
 }
@@ -34,6 +35,15 @@ export const ReadonlyBtcPanel = (props: ReadonlyBtcPanelProps): JSX.Element => {
           READ-ONLY BTC ({rowCount()})
         </span>
         <div class="flex items-center gap-1">
+          <Button
+            variant="ghost"
+            size="sm"
+            class="h-7 px-2"
+            aria-label="Refresh read-only Bitcoin balances and beta"
+            onClick={props.onRefresh}
+          >
+            <RotateCw aria-hidden="true" class="size-3" />
+          </Button>
           <input
             type="text"
             value={addressInput()}

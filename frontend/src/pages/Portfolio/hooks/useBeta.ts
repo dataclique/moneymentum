@@ -1,6 +1,6 @@
 import * as Effect from "effect/Effect"
 import { useQuery } from "@tanstack/solid-query"
-import { createMemo } from "solid-js"
+import { createMemo, createSignal } from "solid-js"
 import { getErrorMessage } from "@/lib/error-message"
 import { postJson } from "@/lib/http"
 import type { PortfolioInterface } from "./usePortfolioState"
@@ -54,9 +54,7 @@ const betaRequestFromPortfolio = (
   benchmark,
 })
 
-const degradedReasonFromError = (
-  error: unknown,
-): BetaDegradedReason | null => {
+const degradedReasonFromError = (error: unknown): BetaDegradedReason | null => {
   const message = getErrorMessage(error)
 
   return message === "missing_bitcoin_balance" ||
@@ -73,21 +71,18 @@ interface BetaResponse {
 }
 
 const fetchBeta = (request: BetaRequest, signal?: AbortSignal) =>
-  postJson<BetaResponse>(
-    `${import.meta.env.BASE_URL}api/beta`,
-    request,
-    {
-      signal: signal
-        ? AbortSignal.any([signal, AbortSignal.timeout(10_000)])
-        : AbortSignal.timeout(10_000),
-    },
-  )
+  postJson<BetaResponse>(`${import.meta.env.BASE_URL}api/beta`, request, {
+    signal: signal
+      ? AbortSignal.any([signal, AbortSignal.timeout(10_000)])
+      : AbortSignal.timeout(10_000),
+  })
 
 export const useBeta = (
   portfolio: () => Record<string, PortfolioInterface | undefined>,
   readonlyEntries: () => ReadonlyBetaEntry[],
   selectedBenchmark: () => BetaBenchmark,
 ) => {
+  const [refreshRevision, setRefreshRevision] = createSignal(0)
   const request = createMemo(() =>
     betaRequestFromPortfolio(
       portfolio(),
@@ -113,7 +108,7 @@ export const useBeta = (
       currentRequest.readOnlyBtc.some(entry => entry.includeInBeta)
 
     return {
-      queryKey: ["beta", currentRequest] as const,
+      queryKey: ["beta", currentRequest, refreshRevision()] as const,
       queryFn: (ctx: { signal: AbortSignal }) =>
         Effect.runPromise(fetchBeta(currentRequest, ctx.signal)),
       enabled: hasIncludedExposure,
@@ -153,6 +148,9 @@ export const useBeta = (
     },
     get methodology() {
       return methodology()
+    },
+    refresh: (): void => {
+      setRefreshRevision(revision => revision + 1)
     },
   }
 }

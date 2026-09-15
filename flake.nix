@@ -23,9 +23,6 @@
     disko.url = "github:nix-community/disko";
     disko.inputs.nixpkgs.follows = "nixpkgs";
 
-    nixos-anywhere.url = "github:nix-community/nixos-anywhere";
-    nixos-anywhere.inputs.nixpkgs.follows = "nixpkgs";
-
     deploy-rs.url = "github:serokell/deploy-rs";
     deploy-rs.inputs.nixpkgs.follows = "nixpkgs";
 
@@ -51,7 +48,6 @@
       crane,
       ragenix,
       disko,
-      nixos-anywhere,
       deploy-rs,
       bun2nix,
       fund,
@@ -76,12 +72,7 @@
         pkgs = import nixpkgs {
           inherit system;
           overlays = [ rust-overlay.overlays.default ];
-          config.allowUnfreePredicate =
-            pkg:
-            builtins.elem (pkgs.lib.getName pkg) [
-              "terraform"
-              "gitbutler-cli"
-            ];
+          config.allowUnfreePredicate = pkg: builtins.elem (pkgs.lib.getName pkg) [ "gitbutler-cli" ];
         };
 
         rustToolchain = pkgs.rust-bin.stable.latest.default;
@@ -101,7 +92,6 @@
           inherit
             pkgs
             ragenix
-            nixos-anywhere
             system
             ;
         };
@@ -225,7 +215,6 @@
                   ragenix.packages.${system}.default
                   sqlx-cli
                   doctl
-                  infraPkgs.remote
                   deployPkgs.deployNixos
                   deployPkgs.deployService
                   deployPkgs.deployServer
@@ -286,18 +275,7 @@
 
         packages = {
           inherit gitbutler-cli;
-          inherit (infraPkgs)
-            tfInit
-            tfPlan
-            tfApply
-            tfImport
-            tfEditVars
-            tfCreateVars
-            tfRekey
-            rekey
-            bootstrap
-            remote
-            ;
+          inherit (infraPkgs) rekey;
           inherit (deployPkgs)
             deployNixos
             deployService
@@ -316,8 +294,8 @@
           resolveIp = pkgs.writeShellApplication {
             name = "resolve-ip";
             runtimeInputs = [
-              pkgs.rage
-              pkgs.jq
+              pkgs.nix
+              pkgs.git
             ];
             text = ''
               ${infraPkgs.resolveIp}

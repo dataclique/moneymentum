@@ -66,12 +66,10 @@ in
       localSystem,
     }:
     let
-      # Only rage (decrypt state) + jq (parse IP) + deploy-rs are needed.
-      # infraPkgs.buildInputs also includes terraform and ragenix which
-      # deploy scripts never use.
+      # resolveIp shells out to dataclique/infra; deploy-rs activates profiles.
       deployInputs = [
-        pkgs.rage
-        pkgs.jq
+        pkgs.nix
+        pkgs.git
         deploy-rs.packages.${localSystem}.deploy-rs
       ];
 
@@ -79,7 +77,7 @@ in
         ${infraPkgs.resolveIp}
 
         if [ -z "$host_ip" ]; then
-          echo "ERROR: host_ip not resolved -- check resolveIp or --hostname flag" >&2
+          echo "ERROR: host_ip not resolved -- check INFRA_FLAKE / resolveIp" >&2
           exit 1
         fi
       '';

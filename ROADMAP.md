@@ -156,6 +156,8 @@ the next user-facing priority; it runs in parallel to the Dev track above.
 - [ ] [Keep The App Deployed And Reachable](./stories/0x008.keep-app-deployed-and-reachable.md)
 - [ ] [Verify Deployed Hyperliquid Long-Short Rebalancing](./stories/0x00a.verify-deployed-hyperliquid-long-short-rebalancing.md)
 - [ ] [Serve The App From A Domain](./stories/0x009.serve-app-from-domain.md)
+- [ ] Move Moneymentum Terraform into private dataclique/infra --
+      [#489](https://github.com/dataclique/moneymentum/issues/489)
 - [x] [Clear stale switch-to-configuration lock blocking deploys](https://github.com/dataclique/moneymentum/issues/394)
       ([#395](https://github.com/dataclique/moneymentum/pull/395))
 - [x] [Bridge the stale per-service binary through deploy activation](https://github.com/dataclique/moneymentum/issues/421)
@@ -314,7 +316,8 @@ primitives.
 Rust backend with Axum, Polars, and SQLite-backed ingestion runs/job queue.
 Ingestion pipeline fetches OHLCV and funding rates from Hyperliquid, stores as
 CSV. Beta calculation computes rolling covariance/variance against BTC. Deployed
-to DigitalOcean via NixOS + deploy-rs.
+to DigitalOcean via NixOS + deploy-rs; cloud Terraform for that host lives in
+private `dataclique/infra`.
 
 - [x] Cargo workspace + Nix flake + CI/CD
 - [x] Axum HTTP server with health check

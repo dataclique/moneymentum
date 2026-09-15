@@ -109,28 +109,38 @@ toolchain commands are fine.
 
 ## Infrastructure
 
-Terraform provisions the server, then NixOS is bootstrapped onto it.
+DigitalOcean Terraform lives in the private
+[`dataclique/infra`](https://github.com/dataclique/infra) repository. This
+checkout deploys NixOS and the application onto that host; it resolves the
+droplet IP through infra instead of carrying cloud state.
 
 ```bash
+# From dataclique/infra (provision / recreate the host):
 nix run .#tfCreateVars   # create + encrypt terraform vars
 nix run .#tfInit
 nix run .#tfPlan
 nix run .#tfApply
-nix run .#bootstrap      # bootstrap NixOS
+MONEYMENTUM_FLAKE=/path/to/moneymentum nix run .#bootstrap
 
-nix run .#remote         # SSH
-nix run .#tfEditVars
+# From this repository (deploy the app):
+nix run .#resolveIp      # needs INFRA_FLAKE or a sibling ../infra checkout
+nix run .#rekey          # rekey Moneymentum service secrets
 ```
 
-Infrastructure commands use age-encrypted state. The `-i` flag selects a custom
-SSH identity (defaults to `~/.ssh/id_ed25519`).
+SSH into the droplet from the infra checkout (`nix run .#remote`).
+
+`resolveIp` and the deploy wrappers look for `INFRA_FLAKE`, then `../infra`,
+then `github:dataclique/infra`. Pass `-i` when the SSH identity is not
+`~/.ssh/id_ed25519`.
 
 `master` deploys automatically through the `Deploy` GitHub Actions workflow. The
-workflow pins the SSH host key from `keys.nix`, resolves the host IP from
-encrypted Terraform state, builds the frontend with Bun and cached dependencies,
-runs `nix run .#deployServer` for NixOS and backend services, then runs
-`nix run .#deployFrontend` to publish the static frontend files. The
-`post-deploy-smoke-test` job verifies the public frontend and `/api/health`.
+workflow checks out `dataclique/infra` (requires repository secret
+`INFRA_REPO_TOKEN` with read access), pins the SSH host key from `keys.nix`,
+resolves the host IP from encrypted Terraform state in infra, builds the
+frontend with Bun and cached dependencies, runs `nix run .#deployServer` for
+NixOS and backend services, then runs `nix run .#deployFrontend` to publish the
+static frontend files. The `post-deploy-smoke-test` job verifies the public
+frontend and `/api/health`.
 
 Manual deployment uses the same split flow:
 
@@ -148,4 +158,5 @@ header, such as targeting a domain behind a load balancer; set
 checks must skip TLS verification for self-signed certificates.
 
 There is no standalone destroy command. To remove or reprovision resources, edit
-`infra/main.tf`, inspect `nix run .#tfPlan`, then apply the reviewed plan.
+`terraform/main.tf` in `dataclique/infra`, inspect `nix run .#tfPlan`, then
+apply the reviewed plan.

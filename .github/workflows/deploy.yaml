@@ -20,6 +20,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Checkout dataclique/infra
+        uses: actions/checkout@v4
+        with:
+          repository: dataclique/infra
+          token: ${{ secrets.INFRA_REPO_TOKEN }}
+          path: infra-checkout
+
       - uses: nixbuild/nix-quick-install-action@2c9db80fb984ceb1bcaa77cdda3fdf8cfba92035 # v34
         with:
           nix_version: "2.31.2"
@@ -64,6 +71,8 @@ jobs:
           chmod 600 ~/.ssh/id_ed25519
 
       - name: Resolve host IP
+        env:
+          INFRA_FLAKE: ${{ github.workspace }}/infra-checkout
         run: |
           host_ip=$(nix run .#resolveIp)
           echo "::add-mask::$host_ip"
@@ -84,9 +93,13 @@ jobs:
           bun run build
 
       - name: Deploy system and backend
+        env:
+          INFRA_FLAKE: ${{ github.workspace }}/infra-checkout
         run: nix run .#deployServer
 
       - name: Deploy frontend
+        env:
+          INFRA_FLAKE: ${{ github.workspace }}/infra-checkout
         run: nix run .#deployFrontend
 
       - name: Cleanup SSH
@@ -101,6 +114,13 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+
+      - name: Checkout dataclique/infra
+        uses: actions/checkout@v4
+        with:
+          repository: dataclique/infra
+          token: ${{ secrets.INFRA_REPO_TOKEN }}
+          path: infra-checkout
 
       - uses: nixbuild/nix-quick-install-action@2c9db80fb984ceb1bcaa77cdda3fdf8cfba92035 # v34
         with:
@@ -134,6 +154,7 @@ jobs:
 
       - name: Verify deployed frontend and backend
         env:
+          INFRA_FLAKE: ${{ github.workspace }}/infra-checkout
           FRONTEND_URL: ${{ vars.DEPLOY_FRONTEND_URL }}
           HEALTH_URL: ${{ vars.DEPLOY_HEALTH_URL }}
           SMOKE_HOST: ${{ vars.DEPLOY_SMOKE_HOST }}

@@ -28,7 +28,7 @@ jobs:
           nix_conf: |
             accept-flake-config = true
             fallback = true
-            access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
+            access-tokens = github.com=${{ secrets.INFRA_REPO_TOKEN }}
             keep-env-derivations = true
             keep-outputs = true
 
@@ -59,7 +59,7 @@ jobs:
           nix_conf: |
             accept-flake-config = true
             fallback = true
-            access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
+            access-tokens = github.com=${{ secrets.INFRA_REPO_TOKEN }}
             keep-env-derivations = true
             keep-outputs = true
 
@@ -92,7 +92,7 @@ jobs:
           nix_conf: |
             accept-flake-config = true
             fallback = true
-            access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}
+            access-tokens = github.com=${{ secrets.INFRA_REPO_TOKEN }}
             keep-env-derivations = true
             keep-outputs = true
 

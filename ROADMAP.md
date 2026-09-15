@@ -159,6 +159,8 @@ the next user-facing priority; it runs in parallel to the Dev track above.
 - [ ] Move Moneymentum Terraform into private dataclique/infra --
       [#489](https://github.com/dataclique/moneymentum/issues/489) /
       [#490](https://github.com/dataclique/moneymentum/pull/490)
+- [ ] Wire Yielduck live-owner onto the shared NixOS host --
+      [#491](https://github.com/dataclique/moneymentum/issues/491)
 - [x] [Clear stale switch-to-configuration lock blocking deploys](https://github.com/dataclique/moneymentum/issues/394)
       ([#395](https://github.com/dataclique/moneymentum/pull/395))
 - [x] [Bridge the stale per-service binary through deploy activation](https://github.com/dataclique/moneymentum/issues/421)

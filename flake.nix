@@ -29,6 +29,10 @@
     bun2nix.url = "github:nix-community/bun2nix?tag=2.0.7";
     bun2nix.inputs.nixpkgs.follows = "nixpkgs";
 
+    # Private shared infra (Yielduck live-owner module + Terraform ownership).
+    # Pin tracks dataclique/infra#4 until that stack merges to master.
+    infra.url = "github:dataclique/infra/d9bdd2ee94d48edde5d7a32b973eb96795b53580";
+
     # The fund Solana program. Its toolchain pins versions this monorepo
     # cannot use, so it stays in its own repository; all we consume is its
     # `packages.idl` output (the Anchor IDL json client bindings are
@@ -50,6 +54,7 @@
       disko,
       deploy-rs,
       bun2nix,
+      infra,
       fund,
       ...
     }@inputs:
@@ -60,6 +65,7 @@
         modules = [
           disko.nixosModules.disko
           ragenix.nixosModules.default
+          infra.nixosModules.yielduck-droplet
           ./os.nix
         ];
       };

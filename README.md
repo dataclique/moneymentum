@@ -135,12 +135,18 @@ then `github:dataclique/infra`. Pass `-i` when the SSH identity is not
 
 `master` deploys automatically through the `Deploy` GitHub Actions workflow. The
 workflow checks out `dataclique/infra` (requires repository secret
-`INFRA_REPO_TOKEN` with read access), pins the SSH host key from `keys.nix`,
-resolves the host IP from encrypted Terraform state in infra, builds the
-frontend with Bun and cached dependencies, runs `nix run .#deployServer` for
-NixOS and backend services, then runs `nix run .#deployFrontend` to publish the
-static frontend files. The `post-deploy-smoke-test` job verifies the public
-frontend and `/api/health`.
+`INFRA_REPO_TOKEN` with read access to that private repo and to public GitHub
+flake inputs), pins the SSH host key from `keys.nix`, resolves the host IP from
+encrypted Terraform state in infra, builds the frontend with Bun and cached
+dependencies, runs `nix run .#deployServer` for NixOS and backend services, then
+runs `nix run .#deployFrontend` to publish the static frontend files. The
+`post-deploy-smoke-test` job verifies the public frontend and `/api/health`.
+
+The NixOS host also imports `infra.nixosModules.yielduck-droplet`: an owner-only
+Unix account and `yielduck-live.service` that do **not** start on deploy. See
+[`dataclique/infra` yielduck-droplet docs](https://github.com/dataclique/infra/blob/feat/enable-yielduck-on-droplet/docs/yielduck-droplet.md)
+for binary install, `runtime.env`, and the manual cutover. Never run the laptop
+and remote Yielduck executors against the same live wallet at once.
 
 Manual deployment uses the same split flow:
 

@@ -157,7 +157,8 @@ the next user-facing priority; it runs in parallel to the Dev track above.
 - [ ] [Verify Deployed Hyperliquid Long-Short Rebalancing](./stories/0x00a.verify-deployed-hyperliquid-long-short-rebalancing.md)
 - [ ] [Serve The App From A Domain](./stories/0x009.serve-app-from-domain.md)
 - [ ] Move Moneymentum Terraform into private dataclique/infra --
-      [#489](https://github.com/dataclique/moneymentum/issues/489)
+      [#489](https://github.com/dataclique/moneymentum/issues/489) /
+      [#490](https://github.com/dataclique/moneymentum/pull/490)
 - [x] [Clear stale switch-to-configuration lock blocking deploys](https://github.com/dataclique/moneymentum/issues/394)
       ([#395](https://github.com/dataclique/moneymentum/pull/395))
 - [x] [Bridge the stale per-service binary through deploy activation](https://github.com/dataclique/moneymentum/issues/421)

@@ -428,3 +428,12 @@ to DigitalOcean via NixOS + deploy-rs.
 - [x] Document and automate the issue-and-roadmap-per-PR rule --
       [#247](https://github.com/dataclique/moneymentum/issues/247) /
       [#248](https://github.com/dataclique/moneymentum/pull/248)
+
+## Completed: record the current rebalance and deployment priorities
+
+This records the owner's priority correction; the repair and deployment gates
+above remain open.
+
+- [x] Make rebalance reliability the first epic and record the shared-host
+      migration -- [#493](https://github.com/dataclique/moneymentum/issues/493)
+      / [PR #494](https://github.com/dataclique/moneymentum/pull/494).

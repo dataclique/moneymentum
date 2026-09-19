@@ -6,8 +6,9 @@ single hex-indexed sequence so they sort and cross-reference consistently. A
 story is scoped to the value it delivers and may span as many PR-sized GitHub
 issues as it needs.
 
-Current focus: make the app usable in production, then expand portfolio beta
-from Hyperliquid-only positions to read-only wallets and protective hedges.
+Current focus: reliable rebalancing and triggers, with shared deployment in
+dataclique/infra prepared in parallel. Portfolio beta expansion follows the
+priorities in [ROADMAP.md](../ROADMAP.md).
 
 ## Completed
 
@@ -15,7 +16,6 @@ from Hyperliquid-only positions to read-only wallets and protective hedges.
 - [Edit Target Position Allocations](./0x002.edit-target-position-allocations.md)
 - [Adjust Account Leverage](./0x003.adjust-account-leverage.md)
 - [Preview Staged Rebalance Trades](./0x004.preview-staged-rebalance-trades.md)
-- [Execute Rebalance](./0x005.execute-rebalance.md)
 - [Protect Invalid Rebalances](./0x006.protect-invalid-rebalances.md)
 - [Persist Draft Portfolio Targets](./0x007.persist-draft-portfolio-targets.md)
 - [Replace Ingestion Event Sourcing With Run Ledger](./0x023.switch-event-sourcing-wrapper.md)
@@ -24,6 +24,9 @@ from Hyperliquid-only positions to read-only wallets and protective hedges.
 
 ## Planned
 
+- [Execute Rebalance](./0x005.execute-rebalance.md) -- delivered submission
+  behavior is recorded; trigger, recovery, and confirmed-outcome criteria remain
+  open.
 - [Keep The App Deployed And Reachable](./0x008.keep-app-deployed-and-reachable.md)
 - [Serve The App From A Domain](./0x009.serve-app-from-domain.md)
 - [Verify Deployed Hyperliquid Long-Short Rebalancing](./0x00a.verify-deployed-hyperliquid-long-short-rebalancing.md)

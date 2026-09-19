@@ -30,15 +30,11 @@ repair.
 - [ ] Confirm actual order outcomes and portfolio convergence before clearing
       staged changes or reporting completion --
       [#92](https://github.com/dataclique/moneymentum/issues/92).
-- [ ] Cover completion, partial failure, and recovery in every supported
-      execution mode, including repeated submissions, rejected or ambiguous
-      orders, stale observations, and reload/reconnect during execution --
-      [#159](https://github.com/dataclique/moneymentum/issues/159).
-- [ ] Verify that all existing rebalance triggers dispatch against the current
-      account and target exactly as intended. Record the trigger conditions and
-      test missed, duplicate, stale, and in-flight trigger cases alongside the
-      completion contract --
-      [#159](https://github.com/dataclique/moneymentum/issues/159).
+- [ ] Make every supported rebalance trigger and execution mode reliable, with
+      confirmed completion and recoverable partial outcomes --
+      [#159](https://github.com/dataclique/moneymentum/issues/159). Detailed
+      acceptance criteria live in the
+      [Execute Rebalance story](./stories/0x005.execute-rebalance.md).
 - [ ] Allow an intentional full close into cash and verify the resulting
       positions -- [#91](https://github.com/dataclique/moneymentum/issues/91).
 - [ ] Use the connected account's actual, current equity and positions as the
@@ -50,11 +46,12 @@ repair.
 
 **Exit gate:** each supported trigger produces the intended rebalance or a
 visible, specific rejection. Completion follows confirmed order and position
-state; partially completed work remains visible and recoverable. Tests and
-deployed verification demonstrate full close, resize, partial failure,
-duplicate-trigger handling, and account changes without false success. The
-existing test-account, funding-cap, and live-verification authorization rules in
-#314 remain in force. Merging this roadmap does not close those bugs.
+state; partially completed work remains visible and recoverable. The
+[story's reliability criteria](./stories/0x005.execute-rebalance.md) and
+[deployed verification contract](https://github.com/dataclique/moneymentum/issues/314)
+remain open, including the existing test-account, funding-cap, and
+live-verification authorization rules. Merging this roadmap does not close those
+bugs.
 
 ## Shared deployment owned by dataclique/infra
 
@@ -294,13 +291,11 @@ they land.
 
 ## Completed: finish the Python -> Rust analytics migration
 
-Port the deleted Python quant analytics to Rust as the factor and risk engine
-that powers the "Screener and staged simulation" and "Risk analytics" themes
-below. The autonomous trader's auto-pick/execute loop is out of scope --
-execution stays in the frontend. Delivered as a stack of small PRs; the
-user-facing endpoints tick their story items under those themes. This is an
-engineering track that runs in parallel to the product themes below, not ahead
-of them.
+The Python quant analytics were ported to Rust as the factor and risk engine for
+the "Screener and staged simulation" and "Risk analytics" themes above. Their
+user-facing endpoints remain tracked by the corresponding stories. The
+autonomous trader's auto-pick/execute loop remains out of scope; execution stays
+in the frontend.
 
 - [x] Point user stories at the factors module --
       [#304](https://github.com/dataclique/moneymentum/issues/304) /

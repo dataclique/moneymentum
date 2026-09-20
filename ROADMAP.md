@@ -56,9 +56,8 @@ renewal does not authorize unattended trades.
 
 - [ ] Define portfolio-goal selection across instruments and combinations --
       [#495](https://github.com/dataclique/moneymentum/issues/495).
-- [ ] Account for read-only BTC holdings and target ending BTC beta --
-      [#317](https://github.com/dataclique/moneymentum/issues/317) and
-      [#318](https://github.com/dataclique/moneymentum/issues/318).
+- [ ] Account for read-only BTC holdings in initial protection coverage --
+      [#317](https://github.com/dataclique/moneymentum/issues/317).
 - [ ] Include protective puts and Derive option positions in portfolio valuation
       and risk -- [#323](https://github.com/dataclique/moneymentum/issues/323),
       [#329](https://github.com/dataclique/moneymentum/issues/329), and
@@ -77,6 +76,14 @@ renewal does not authorize unattended trades.
       [#326](https://github.com/dataclique/moneymentum/issues/326).
 - [ ] Complete portfolio risk analytics --
       [#331](https://github.com/dataclique/moneymentum/issues/331).
+
+### After initial BTC protection
+
+- [ ] Incorporate net portfolio BTC beta, including other assets and offsetting
+      shorts, into protection targets --
+      [#318](https://github.com/dataclique/moneymentum/issues/318).
+
+This extension is not required to deliver coverage of read-only BTC holdings.
 
 **Done when:** users can compare feasible portfolio changes against an explicit
 goal, see costs and residual exposure, and choose whether to stage and execute.

@@ -1,5 +1,7 @@
 # Roadmap
 
+[Project board](https://github.com/orgs/dataclique/projects/8)
+
 [SPEC.md](./SPEC.md) describes the target system. This roadmap orders the work
 by priority; GitHub issues hold requirements, acceptance criteria, and
 sub-issues. Independent work can proceed in parallel. An open issue stays open

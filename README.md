@@ -28,15 +28,18 @@ Moneymentum makes those exposures legible and adjustable.
 
 See [ROADMAP.md](./ROADMAP.md) for what's next.
 
+Track delivery on the
+[Moneymentum project board](https://github.com/orgs/dataclique/projects/8).
+
 ## Documentation
 
-| Doc                                  | Purpose                                            |
-| ------------------------------------ | -------------------------------------------------- |
-| [SPEC.md](./SPEC.md)                 | Product vision and target architecture             |
-| [ROADMAP.md](./ROADMAP.md)           | Themed stories ordered by priority                 |
-| [stories/](./stories/README.md)      | User and dev stories with acceptance tests         |
-| [CONTRIBUTING.md](./CONTRIBUTING.md) | Extreme Programming (XP) workflow for contributors |
-| [AGENTS.md](./AGENTS.md)             | Per-repo rules for AI coding agents                |
+| Doc                                                               | Purpose                                            |
+| ----------------------------------------------------------------- | -------------------------------------------------- |
+| [SPEC.md](./SPEC.md)                                              | Product vision and target architecture             |
+| [ROADMAP.md](./ROADMAP.md)                                        | Outcome epics ordered by priority                  |
+| [GitHub issues](https://github.com/dataclique/moneymentum/issues) | Requirements, acceptance criteria, and sub-issues  |
+| [CONTRIBUTING.md](./CONTRIBUTING.md)                              | Extreme Programming (XP) workflow for contributors |
+| [AGENTS.md](./AGENTS.md)                                          | Per-repo rules for AI coding agents                |
 
 ## Quick start
 
@@ -98,7 +101,7 @@ Launch agents via `nix develop --impure` rather than relying on direnv to avoid
 shell-init quirks:
 
 ```bash
-nix develop --impure -c claude
+nix develop --impure -c pi
 ```
 
 Agents must follow [AGENTS.md](./AGENTS.md). In particular, every `bun` /

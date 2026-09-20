@@ -1,434 +1,177 @@
 # Roadmap
 
-> **Purpose**: Practical path from where we are today to the north star in
-> [SPEC](./SPEC.md).
+[SPEC.md](./SPEC.md) describes the target system. This roadmap orders the work
+by priority; GitHub issues hold requirements, acceptance criteria, and
+sub-issues. Independent work can proceed in parallel. An open issue stays open
+until its outcome is verified, even when supporting PRs have merged.
 
-Each `##` section is a theme -- a goal-oriented group of related stories. Themes
-are ordered by priority (highest first).
+## See actual portfolio performance over time
 
-Stories link to their per-feature acceptance criteria in
-[stories/](./stories/README.md). Engineering work (refactors, migrations,
-internal foundations) lives in the same folder under a "Dev" sub-heading when a
-written contract is warranted, otherwise as a standalone GitHub issue -- see
-[CONTRIBUTING.md](./CONTRIBUTING.md) for the split.
+Make the backend collect and serve the history needed to show portfolio value,
+profit, and returns. The first useful result is a performance chart backed by
+real portfolio observations, with cash flows distinguished from investment
+performance and missing history shown explicitly.
 
-Numeric story IDs (`001`, `018`, etc.) reflect creation order, not
-implementation priority. Priority is defined by this roadmap's theme order and
-the order within each theme.
+- [ ] Replace performance placeholders with historical metrics and a chart --
+      [#152](https://github.com/dataclique/moneymentum/issues/152).
+- [ ] Resolve startup and ingestion failures that obstruct reliable data
+      collection -- [#462](https://github.com/dataclique/moneymentum/issues/462)
+      and [#452](https://github.com/dataclique/moneymentum/issues/452).
+- [ ] Make historical drawdown available to the risk view --
+      [#345](https://github.com/dataclique/moneymentum/issues/345) and
+      [#209](https://github.com/dataclique/moneymentum/issues/209).
+- [ ] Replace risk-panel mock values with the available backend metrics --
+      [#351](https://github.com/dataclique/moneymentum/issues/351).
 
----
+**Done when:** a selected period shows observed portfolio performance with
+traceable valuations, cash flows, and data gaps. Historical market candles or
+simulated portfolio returns alone do not satisfy this outcome.
 
-## Reliable rebalancing from trigger to confirmed portfolio
+## Construct portfolios around desired exposures and outcomes
 
-Owner priority reaffirmed 2026-09-19: make the rebalancing process and its
-triggers reliable end to end. A submitted request is not a completed rebalance;
-the portfolio must agree with confirmed venue outcomes. This takes precedence
-over the older theme ordering. Infrastructure migration can proceed in parallel;
-later analytics, integrations, and tooling must not displace the rebalance
-repair.
+Start with the desired portfolio: less BTC sensitivity, downside protection, or
+momentum exposure without extra market beta. Compare instruments and
+combinations by their effect on the whole portfolio, including cost and
+constraints. Contract browsing supports that decision; it is not the product's
+organizing workflow.
 
-- [ ] Confirm actual order outcomes and portfolio convergence before clearing
-      staged changes or reporting completion --
-      [#92](https://github.com/dataclique/moneymentum/issues/92).
-- [ ] Make every supported rebalance trigger and execution mode reliable, with
-      confirmed completion and recoverable partial outcomes --
-      [#159](https://github.com/dataclique/moneymentum/issues/159). Detailed
-      acceptance criteria live in the
-      [Execute Rebalance story](./stories/0x005.execute-rebalance.md).
-- [ ] Allow an intentional full close into cash and verify the resulting
-      positions -- [#91](https://github.com/dataclique/moneymentum/issues/91).
-- [ ] Use the connected account's actual, current equity and positions as the
-      rebalance inputs, including unified Hyperliquid accounts --
+- [ ] Define portfolio-goal selection across instruments and combinations --
+      [#495](https://github.com/dataclique/moneymentum/issues/495).
+- [ ] Account for read-only BTC holdings and target ending BTC beta --
+      [#317](https://github.com/dataclique/moneymentum/issues/317) and
+      [#318](https://github.com/dataclique/moneymentum/issues/318).
+- [ ] Include protective puts and Derive option positions in portfolio valuation
+      and risk -- [#323](https://github.com/dataclique/moneymentum/issues/323),
+      [#329](https://github.com/dataclique/moneymentum/issues/329), and
+      [#204](https://github.com/dataclique/moneymentum/issues/204).
+- [ ] Compare current and target allocations, screen by factor, and project
+      staged portfolio metrics --
+      [#330](https://github.com/dataclique/moneymentum/issues/330),
+      [#332](https://github.com/dataclique/moneymentum/issues/332), and
+      [#333](https://github.com/dataclique/moneymentum/issues/333).
+- [ ] Compare historical crash scenarios, stressed correlations, and put rolls
+      -- [#324](https://github.com/dataclique/moneymentum/issues/324),
+      [#325](https://github.com/dataclique/moneymentum/issues/325), and
+      [#326](https://github.com/dataclique/moneymentum/issues/326).
+- [ ] Complete portfolio risk analytics --
+      [#331](https://github.com/dataclique/moneymentum/issues/331).
+
+**Done when:** users can compare feasible portfolio changes against an explicit
+goal, see costs and residual exposure, and choose whether to stage and execute.
+Estimates and unavailable projections remain visible; entering a goal never
+submits trades automatically.
+
+## Keep discretionary execution reliable
+
+Fix genuine rebalance failures without making autonomous rebalancing the main
+product direction. The user chooses when to execute; success must reflect venue
+outcomes, not just submission.
+
+- [ ] Detect completion and preserve recoverable partial or ambiguous outcomes
+      -- [#92](https://github.com/dataclique/moneymentum/issues/92) and
+      [#159](https://github.com/dataclique/moneymentum/issues/159).
+- [ ] Support full close into cash using current account equity and positions --
+      [#91](https://github.com/dataclique/moneymentum/issues/91) and
       [#463](https://github.com/dataclique/moneymentum/issues/463).
-- [ ] Verify the deployed long-short rebalance flow against its existing
-      acceptance contract --
+- [ ] Verify deployed long-short rebalancing under the existing test-account,
+      funding-cap, and separate live-authorization contract --
       [#314](https://github.com/dataclique/moneymentum/issues/314).
+- [ ] Make the portfolio desk usable by keyboard --
+      [#457](https://github.com/dataclique/moneymentum/issues/457).
 
-**Exit gate:** each supported trigger produces the intended rebalance or a
-visible, specific rejection. Completion follows confirmed order and position
-state; partially completed work remains visible and recoverable. The
-[story's reliability criteria](./stories/0x005.execute-rebalance.md) and
-[deployed verification contract](https://github.com/dataclique/moneymentum/issues/314)
-remain open, including the existing test-account, funding-cap, and
-live-verification authorization rules. Merging this roadmap does not close those
-bugs.
+## Share one host through dataclique/infra
 
-## Shared deployment owned by dataclique/infra
-
-Moneymentum, Yielduck, and Metagenda are to run on one instance. Shared host
-provisioning and activation belong in
-[dataclique/infra](https://github.com/dataclique/infra); Moneymentum retains its
-application package and service contract. Prepare this migration in parallel to
-the rebalance fixes, preserving the existing host and application availability.
+Move shared provisioning and host activation to
+[Infra](https://github.com/dataclique/infra) for Moneymentum, Yielduck, and
+Metagenda. Moneymentum retains its application package and service contract.
+This preparation can proceed alongside the product work.
 
 ```mermaid
 flowchart LR
-    receiving["infra PR #2: receive provisioning"] --> removal["PR #490: remove source provisioning"]
-    owner["infra PR #1: owner service"] --> wiring["infra PR #4: host integration"]
-    removal --> consumer["PR #492: consume host integration"]
-    wiring --> consumer
-    consumer --> cutover["remaining host ownership and verified cutover"]
+    receiving["Infra receives provisioning"] --> removal["Moneymentum removes source provisioning"]
+    service["Infra receives Yielduck service wiring"] --> consumer["Moneymentum consumes reviewed wiring"]
+    removal --> consumer
+    consumer --> cutover["Shared host ownership and authorized cutover"]
 ```
 
-- [ ] Land the receiving provisioning change before source removal --
+- [ ] Land receiving provisioning before source removal --
       [infra PR #2](https://github.com/dataclique/infra/pull/2) and
       [PR #490](https://github.com/dataclique/moneymentum/pull/490).
 - [ ] Complete the paired Yielduck host integration --
       [#491](https://github.com/dataclique/moneymentum/issues/491),
       [infra PR #4](https://github.com/dataclique/infra/pull/4), and
       [PR #492](https://github.com/dataclique/moneymentum/pull/492).
-- [ ] Finish transferring shared host configuration and deployment ownership;
-      the provisioning pair currently leaves application NixOS configuration and
-      deploy-rs in Moneymentum --
-      [infra #6](https://github.com/dataclique/infra/issues/6).
-- [ ] Verify Moneymentum remains reachable and its deployed rebalance contract
-      still holds on the shared instance --
+- [ ] Transfer the remaining shared NixOS configuration and deployment ownership
+      -- [infra #6](https://github.com/dataclique/infra/issues/6).
+- [ ] Preserve reachability, domain access, atomic service activation, and
+      recoverable candle backups --
       [#312](https://github.com/dataclique/moneymentum/issues/312),
-      [#314](https://github.com/dataclique/moneymentum/issues/314), and
-      [infra #6](https://github.com/dataclique/infra/issues/6).
-
-**Exit gate:** shared infrastructure ownership is in Infra and the owner has
-verified all three consumers on the same instance with recovery and rollback
-documented. Source removal, a Terraform move, or a merged service definition
-alone does not complete the migration.
-
-## Usable production deployment
-
-Users need a reachable app whose rebalance outcome can be trusted. Deployment
-reliability supports the first epic and the shared-infrastructure migration; it
-does not supersede the current rebalance priority.
-
-- [ ] [Keep The App Deployed And Reachable](./stories/0x008.keep-app-deployed-and-reachable.md)
-- [ ] [Serve The App From A Domain](./stories/0x009.serve-app-from-domain.md)
-- [x] [Clear stale switch-to-configuration lock blocking deploys](https://github.com/dataclique/moneymentum/issues/394)
-      ([#395](https://github.com/dataclique/moneymentum/pull/395))
-- [x] [Bridge the stale per-service binary through deploy activation](https://github.com/dataclique/moneymentum/issues/421)
-      ([#423](https://github.com/dataclique/moneymentum/pull/423))
-- [x] [Restore the applied migration #407 rewrote so the binary starts](https://github.com/dataclique/moneymentum/issues/426)
-      ([#427](https://github.com/dataclique/moneymentum/pull/427))
-- [x] [running-slot migration cannot apply to a populated database, crash-looping the deployed backend](https://github.com/dataclique/moneymentum/issues/443)
-      ([#444](https://github.com/dataclique/moneymentum/pull/444))
-- [x] [a race-loser ingestion run poisons the newest view row and breaks the status endpoint](https://github.com/dataclique/moneymentum/issues/445)
-      ([#446](https://github.com/dataclique/moneymentum/pull/446))
-- [x] [frontend markets requests 404: GET /hyperliquid/markets no longer exists](https://github.com/dataclique/moneymentum/issues/429)
-      ([#433](https://github.com/dataclique/moneymentum/pull/433))
-- [x] [systemd moneymentum-ingest timer curls the removed POST /ingest every six hours](https://github.com/dataclique/moneymentum/issues/430)
-      ([#434](https://github.com/dataclique/moneymentum/pull/434))
-- [x] cannot trigger a full on-demand ingestion after POST /ingest was removed
-      -- local `moneymentum-ingest` CLI instead of restoring the HTTP endpoint
-      ([#449](https://github.com/dataclique/moneymentum/issues/449))
-- [ ] candle parquet backups stay a manual Telegram upload with no integrity
-      check against prior dumps --
-      [#450](https://github.com/dataclique/moneymentum/issues/450)
-- [ ] scheduled candle ingestion re-fetches the full Hyperliquid history window
-      on every tick --
-      [#452](https://github.com/dataclique/moneymentum/issues/452)
-- [x] [Remove the markets_refresh_token deploy bridge from service configs](https://github.com/dataclique/moneymentum/issues/425)
-      ([#482](https://github.com/dataclique/moneymentum/pull/482))
-- [ ] [Deploy the service binary, unit, and config atomically](https://github.com/dataclique/moneymentum/issues/422)
-- [x] [Address #377 review follow-ups](https://github.com/dataclique/moneymentum/issues/392)
-      ([#393](https://github.com/dataclique/moneymentum/pull/393))
-
----
-
-## Full Bitcoin beta accounting
-
-Display portfolio-weighted Bitcoin beta for the active portfolio and surface
-read-only Bitcoin holdings so the risk view reflects the user's actual exposure.
-See [SPEC.md](./SPEC.md) for the beta methodology and the `POST /beta` contract.
-
-- [x] [Show Bitcoin Beta For The Active Portfolio](./stories/0x00b.show-bitcoin-beta-for-active-portfolio.md)
-- [x] [Add Read-Only Bitcoin Addresses](./stories/0x00c.add-read-only-bitcoin-addresses.md)
-- [ ] [Include Read-Only Bitcoin Holdings In Beta](./stories/0x00d.include-read-only-bitcoin-holdings-in-beta.md)
-- [ ] [Target Ending Bitcoin Beta While Hedging](./stories/0x00e.target-ending-bitcoin-beta-while-hedging.md)
-- [x] Compute read-only BTC and USD amounts with exact decimals --
-      [#220](https://github.com/dataclique/moneymentum/issues/220) /
-      [#378](https://github.com/dataclique/moneymentum/pull/378)
-
----
-
-## Portfolio identity and sharing
-
-Read-only portfolios need stable identity. Solana public keys are the natural
-identifier because the north star already assumes Solana deposits.
-
-- [ ] [Authenticate Portfolio Ownership By Solana Pubkey](./stories/0x00f.authenticate-portfolio-ownership-by-solana-pubkey.md)
-- [ ] [View Portfolios By Public Key URL](./stories/0x010.view-portfolios-by-public-key-url.md)
-- [ ] [Hide Portfolio Details For A Fee](./stories/0x011.hide-portfolio-details-for-fee.md)
-
----
-
-## Vault
-
-Non-custodial managed vault on Solana for users who prefer strategy allocation
-over hands-on rebalancing. Anchor program with two-phase withdrawal and a
-share-based accounting model.
-
-- [ ] [Deposit Into Vault](./stories/0x017.deposit-into-vault.md)
-- [ ] [Withdraw From Vault](./stories/0x018.withdraw-from-vault.md)
-
----
-
-## Crash protection and simulation
-
-Users who are long-term bullish Bitcoin still need protection against short- and
-mid-term crashes. Start with manually entered protective puts and simple
-historical crash simulations, then add stressed correlations and rolling.
-
-- [ ] [Enter Protective Put Positions](./stories/0x013.enter-protective-put-positions.md)
-- [ ] [Use Derive Options For Protective Puts](./stories/0x019.use-derive-options-for-protective-puts.md)
-- [ ] [Simulate Historical Bitcoin Crashes](./stories/0x014.simulate-historical-bitcoin-crashes.md)
-- [ ] [Simulate Stressed Crash Correlations](./stories/0x015.simulate-stressed-crash-correlations.md)
-- [ ] [Roll Protective Puts Before Final Month](./stories/0x016.roll-protective-puts-before-final-month.md)
-
----
-
-## Screener and staged simulation
-
-> See SPEC.md: Core Workflow > Screen, Stage, Simulate
-
-Find assets by factor characteristics, stage portfolio changes, and simulate the
-result before sending trades.
-
-- [ ] [Compare Target vs Current Portfolio](./stories/0x01a.compare-target-vs-current-portfolio.md)
-- [ ] [Screen Perps By Factor](./stories/0x01c.screen-perps-by-factor.md) --
-      backend rank API shipped
-      ([#273](https://github.com/dataclique/moneymentum/issues/273) /
-      [#274](https://github.com/dataclique/moneymentum/pull/274)); frontend
-      filter integration pending
-- [ ] [Simulate Staged Portfolio Metrics](./stories/0x01d.simulate-staged-portfolio-metrics.md)
-- [ ] [Navigate Portfolio With Keyboard](./stories/0x025.navigate-portfolio-with-keyboard.md)
-      -- [#457](https://github.com/dataclique/moneymentum/issues/457)
-
----
-
-## Risk analytics
-
-> See SPEC.md: Analytics Capabilities > Risk Engine
-
-Portfolio risk assessment beyond beta and crash-specific simulations.
-
-- [ ] [Show Risk Analytics For Active Portfolio](./stories/0x01b.show-risk-analytics-for-active-portfolio.md)
-
----
-
-## Spot trading
-
-> See SPEC.md: Domain Architecture > Spot Trading
-
-Unified perp + spot portfolio management.
-
-- [ ] [Trade Hyperliquid Spot Positions](./stories/0x01e.trade-hyperliquid-spot-positions.md)
-- [ ] [Add Read-Only Wallets On Other Chains](./stories/0x012.add-read-only-wallets-on-other-chains.md)
-
----
-
-## Backlog
-
-These are directions we know matter but haven't designed:
-
-- Tokenized equities (st0x) for TradFi factor exposure
-- Yield products (Pendle)
-- Multi-account support
-
----
-
-## Completed: event-sourced persistence foundation
-
-Give the toolkit durable, auditable state via
-[event-sorcery](https://github.com/ST0X-Technology/event-sorcery): portfolios
-(target streams that enable auto-rebalancing), the ingestion lifecycle, and the
-tradable market universe. Each domain is an event-sourced aggregate so history
-is a first-class artifact for later performance attribution and prediction, and
-the design stays forward-compatible with multiple instruments and venues.
-Design: [adrs/0001](./adrs/0001-event-sorcery-persistence-foundation.md).
-
-- [x] Adopt the event-sorcery event-store stack (sqlx 0.9, apalis 1.0-rc) --
-      [#363](https://github.com/dataclique/moneymentum/issues/363) /
-      [#361](https://github.com/dataclique/moneymentum/pull/361)
-- [x] Event-source portfolios, ingestion runs, and the market universe --
-      [#364](https://github.com/dataclique/moneymentum/issues/364) /
-      [#362](https://github.com/dataclique/moneymentum/pull/362)
-- [x] Enqueue the ingestion job atomically with the Started event --
-      [#404](https://github.com/dataclique/moneymentum/issues/404) /
-      [#406](https://github.com/dataclique/moneymentum/pull/406)
-- [x] Serve per-market max leverage limits from the catalog --
-      [#379](https://github.com/dataclique/moneymentum/issues/379) /
-      [#380](https://github.com/dataclique/moneymentum/pull/380)
-- [x] Schedule candle and funding ingestion on independent cadences --
-      [#411](https://github.com/dataclique/moneymentum/issues/411) /
-      [#412](https://github.com/dataclique/moneymentum/pull/412)
-
----
-
-## Completed: tower-native HTTP foundation
-
-Bring the backend HTTP layer onto the tower middleware ecosystem the rest of the
-Rust stack already uses, so the apalis job queue and every HTTP cross-cutting
-concern -- instrumentation, timeouts, rate limiting, auth -- share one
-middleware vocabulary instead of being reimplemented per framework. Resolving
-this early keeps new handlers from accumulating against a framework outside the
-stack's ecosystem, and unifies HTTP observability with the rest of the service.
-
-- [x] Bring the HTTP layer onto the tower middleware ecosystem --
-      [#397](https://github.com/dataclique/moneymentum/issues/397) /
-      [#119](https://github.com/dataclique/moneymentum/pull/119)
-
----
-
-## Completed: chain-agnostic signing for execution
-
-Decouple transaction signing from browser-held keys so execution code can target
-backend custody without rewriting call sites. Consumers constrain on
-[`Wallet`](./crates/wallet/src/lib.rs) and swap in chain-specific backends as
-they land.
-
-- [x] Add a chain-agnostic `Wallet` trait and mock --
-      [#398](https://github.com/dataclique/moneymentum/issues/398) /
-      [#120](https://github.com/dataclique/moneymentum/pull/120)
-
----
-
-## Completed: finish the Python -> Rust analytics migration
-
-The Python quant analytics were ported to Rust as the factor and risk engine for
-the "Screener and staged simulation" and "Risk analytics" themes above. Their
-user-facing endpoints remain tracked by the corresponding stories. The
-autonomous trader's auto-pick/execute loop remains out of scope; execution stays
-in the frontend.
-
-- [x] Point user stories at the factors module --
-      [#304](https://github.com/dataclique/moneymentum/issues/304) /
-      [#250](https://github.com/dataclique/moneymentum/pull/250)
-- [x] Consolidate beta into a factors module --
-      [#249](https://github.com/dataclique/moneymentum/issues/249) /
-      [#252](https://github.com/dataclique/moneymentum/pull/252)
-- [x] Add TimeframeConfig (lookback + annualization) --
-      [#251](https://github.com/dataclique/moneymentum/issues/251) /
-      [#254](https://github.com/dataclique/moneymentum/pull/254)
-- [x] Split the factor engine into returns/beta/scores submodules --
-      [#257](https://github.com/dataclique/moneymentum/issues/257) /
-      [#258](https://github.com/dataclique/moneymentum/pull/258)
-- [x] Factor: returns shared primitive --
-      [`src/factors/returns.rs`](./src/factors/returns.rs)
-- [x] Factor: cum_return --
-      [#253](https://github.com/dataclique/moneymentum/issues/253) /
-      [#254](https://github.com/dataclique/moneymentum/pull/254)
-- [x] Factor: volatility --
-      [#251](https://github.com/dataclique/moneymentum/issues/251) /
-      [#254](https://github.com/dataclique/moneymentum/pull/254)
-- [x] Factor: SMA --
-      [#255](https://github.com/dataclique/moneymentum/issues/255) /
-      [#256](https://github.com/dataclique/moneymentum/pull/256)
-- [x] Factor: mean return --
-      [#255](https://github.com/dataclique/moneymentum/issues/255) /
-      [#256](https://github.com/dataclique/moneymentum/pull/256)
-- [x] Factor: price z-score --
-      [#255](https://github.com/dataclique/moneymentum/issues/255) /
-      [#256](https://github.com/dataclique/moneymentum/pull/256)
-- [x] Factor: Sharpe --
-      [#259](https://github.com/dataclique/moneymentum/issues/259) /
-      [#260](https://github.com/dataclique/moneymentum/pull/260)
-- [x] Factor: Sortino (adds MAR -- Minimum Acceptable Return -- to
-      TimeframeConfig) --
-      [#261](https://github.com/dataclique/moneymentum/issues/261) /
-      [#262](https://github.com/dataclique/moneymentum/pull/262)
-- [x] Factor: autocorrelation --
-      [#263](https://github.com/dataclique/moneymentum/issues/263) /
-      [#264](https://github.com/dataclique/moneymentum/pull/264)
-- [x] Factor: information discreteness --
-      [#265](https://github.com/dataclique/moneymentum/issues/265) /
-      [#266](https://github.com/dataclique/moneymentum/pull/266)
-- [x] Factor: carry (signed funding) --
-      [#267](https://github.com/dataclique/moneymentum/issues/267) /
-      [#268](https://github.com/dataclique/moneymentum/pull/268)
-- [x] Factor: beta (per-asset, to benchmark) --
-      [#269](https://github.com/dataclique/moneymentum/issues/269) /
-      [#270](https://github.com/dataclique/moneymentum/pull/270)
-- [x] Factor: 24h volume (screener tie-break) --
-      [#271](https://github.com/dataclique/moneymentum/issues/271) /
-      [#272](https://github.com/dataclique/moneymentum/pull/272)
-- [x] Markets metadata ledger --
-      [#275](https://github.com/dataclique/moneymentum/issues/275) /
-      [#276](https://github.com/dataclique/moneymentum/pull/276)
-- [x] Tradable filter wired into ingestion --
-      [#277](https://github.com/dataclique/moneymentum/issues/277) /
-      [#278](https://github.com/dataclique/moneymentum/pull/278)
-- [x] Type-safe time-series transforms crate (returns, log-returns, rolling
-      volatility, drawdown, normalization) --
-      [#303](https://github.com/dataclique/moneymentum/issues/303) /
-      [#145](https://github.com/dataclique/moneymentum/pull/145)
-
----
-
-## Completed: Frontend rewrite in SolidJS
-
-SolidJS compiles away the runtime, has cleaner reactivity, and shadcn-solid
-provides the component library. Converted page by page -- same logic, different
-primitives.
-
-- [x] Project setup: Vite + solid-js, TypeScript config, dev server
-- [x] Routing: migrate from react-router to @solidjs/router
-- [x] State & data fetching: migrate from @tanstack/react-query to
-      @tanstack/solid-query
-- [x] UI components: replace shadcn/ui with Kobalte + shadcn-solid equivalents
-- [x] Layout & shared components: Header, WalletHeader, navigation
-- [x] Portfolio page: PositionsPanel, TokenCard, portfolio table
-- [x] Prototype page: RiskTab and all prototype-only components
-- [x] Rebalancer integration: connect rebalancer logic to SolidJS signals/stores
-- [x] Tests & CI: migrate Vitest tests to SolidJS testing utilities, verify CI
-      passes
-
----
-
-## Completed: Backend foundation and portfolio beta
-
-Rust backend with Axum, Polars, and SQLite-backed ingestion runs/job queue.
-Ingestion pipeline fetches OHLCV and funding rates from Hyperliquid, stores as
-CSV. Beta calculation computes rolling covariance/variance against BTC. Deployed
-to DigitalOcean via NixOS + deploy-rs.
-
-- [x] Cargo workspace + Nix flake + CI/CD
-- [x] Axum HTTP server with health check
-- [x] Ingestion run ledger + Apalis job queue (SQLite)
-- [x] Hyperliquid OHLCV ingestion (15m, 1h, 1d candles)
-- [x] Funding rate ingestion
-- [x] Rolling beta calculation (`POST /beta`)
-- [x] Candle API (`GET /candles/<timeframe>`)
-- [x] Ingestion status API (`GET /ingestion/status`)
-- [x] On-demand ingestion CLI (`moneymentum-ingest`)
-
----
-
-## Completed: GitButler CLI for stacked PRs
-
-- [x] Package the GitButler CLI via Nix --
-      [#243](https://github.com/dataclique/moneymentum/issues/243) /
-      [#238](https://github.com/dataclique/moneymentum/pull/238)
-- [x] Add a GitButler skill for coding agents --
-      [#244](https://github.com/dataclique/moneymentum/issues/244) /
-      [#240](https://github.com/dataclique/moneymentum/pull/240)
-
-## Completed: Finish Python/Spark removal
-
-- [x] Remove dead Python linter tooling --
-      [#245](https://github.com/dataclique/moneymentum/issues/245) /
-      [#241](https://github.com/dataclique/moneymentum/pull/241)
-- [x] Strip unused JVM/Spark deps from the dev shell --
-      [#246](https://github.com/dataclique/moneymentum/issues/246) /
-      [#242](https://github.com/dataclique/moneymentum/pull/242)
-
-## Completed: Per-PR issue and roadmap tracking
-
-- [x] Document and automate the issue-and-roadmap-per-PR rule --
-      [#247](https://github.com/dataclique/moneymentum/issues/247) /
-      [#248](https://github.com/dataclique/moneymentum/pull/248)
-
-## Completed: record the current rebalance and deployment priorities
-
-This records the owner's priority correction; the repair and deployment gates
-above remain open.
-
-- [x] Make rebalance reliability the first epic and record the shared-host
-      migration -- [#493](https://github.com/dataclique/moneymentum/issues/493)
-      / [PR #494](https://github.com/dataclique/moneymentum/pull/494).
+      [#313](https://github.com/dataclique/moneymentum/issues/313),
+      [#422](https://github.com/dataclique/moneymentum/issues/422), and
+      [#450](https://github.com/dataclique/moneymentum/issues/450).
+
+**Done when:** all three services run on the existing shared instance under
+Infra-owned host configuration, with verified state isolation, recovery, and
+rollback after an authorized cutover. The provisioning PR pair alone is a
+partial migration.
+
+## Extend portfolio coverage and ownership
+
+Broaden the same portfolio model without creating separate instrument-specific
+workflows.
+
+- [ ] Add Hyperliquid spot and read-only wallets on other chains --
+      [#334](https://github.com/dataclique/moneymentum/issues/334) and
+      [#322](https://github.com/dataclique/moneymentum/issues/322).
+- [ ] Establish Solana-public-key ownership, shareable portfolio URLs, and paid
+      privacy -- [#319](https://github.com/dataclique/moneymentum/issues/319),
+      [#320](https://github.com/dataclique/moneymentum/issues/320), and
+      [#321](https://github.com/dataclique/moneymentum/issues/321).
+- [ ] Synchronize encrypted local state --
+      [#340](https://github.com/dataclique/moneymentum/issues/340).
+
+## Managed vaults and commercialization
+
+Let investors allocate to managed portfolios with explicit share accounting,
+withdrawal behavior, and fees.
+
+- [ ] Support vault deposits and withdrawals --
+      [#327](https://github.com/dataclique/moneymentum/issues/327) and
+      [#328](https://github.com/dataclique/moneymentum/issues/328).
+- [ ] Make fee calculations transparent and define revenue buybacks --
+      [#336](https://github.com/dataclique/moneymentum/issues/336) and
+      [#335](https://github.com/dataclique/moneymentum/issues/335).
+- [ ] Define governance and contribution bounties --
+      [#337](https://github.com/dataclique/moneymentum/issues/337) and
+      [#338](https://github.com/dataclique/moneymentum/issues/338).
+
+## Not epic
+
+Tokenized equities, yield products, and multi-account support remain exploration
+directions in [SPEC.md](./SPEC.md), not scheduled work.
+
+## Completed: portfolio and analytics foundations
+
+Delivered work remains in the tracker and Git history rather than a second
+implementation checklist here. Completion of a foundation does not imply its
+dependent product experience is finished.
+
+- [x] Deliver the basic screener, staging, leverage, submission, and draft
+      portfolio contracts --
+      [#305](https://github.com/dataclique/moneymentum/issues/305) through
+      [#311](https://github.com/dataclique/moneymentum/issues/311).
+- [x] Add active-portfolio BTC beta and read-only BTC addresses --
+      [#315](https://github.com/dataclique/moneymentum/issues/315) and
+      [#316](https://github.com/dataclique/moneymentum/issues/316).
+- [x] Replace ingestion's singleton state with a run ledger --
+      [#339](https://github.com/dataclique/moneymentum/issues/339).
+- [x] Consolidate Rust factor analytics and the HTTP foundation --
+      [#249](https://github.com/dataclique/moneymentum/issues/249),
+      [#303](https://github.com/dataclique/moneymentum/issues/303), and
+      [#397](https://github.com/dataclique/moneymentum/issues/397).
+
+## Completed: planning refinement
+
+- [x] Align performance, portfolio-construction, and shared-host priorities --
+      [#493](https://github.com/dataclique/moneymentum/issues/493) /
+      [PR #494](https://github.com/dataclique/moneymentum/pull/494).

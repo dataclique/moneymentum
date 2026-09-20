@@ -46,9 +46,13 @@ costs, upside tradeoffs, and residual risk. The first options release covers
 downside protection, including rolling existing BTC hedges through the normal
 user-triggered rebalance. Upside-seeking option goals are outside this release.
 Protection uses a rolling horizon, renewed through user-triggered rebalance
-rather than a fixed calendar end date. The exact controls, horizon length, and
-budget remain refinement decisions; renewal does not authorize unattended
-trades.
+rather than a fixed calendar end date. Protection is a target portfolio
+allocation: express intent through its portfolio weight or the portion of BTC to
+protect, with suggestions based on holdings and desired protection strength.
+Show achievable protection and costs without equating allocation weight with
+hedge coverage. Generalized beta-based and non-BTC protection come later. The
+exact controls and horizon length remain refinement decisions; renewal does not
+authorize unattended trades.
 
 - [ ] Define portfolio-goal selection across instruments and combinations --
       [#495](https://github.com/dataclique/moneymentum/issues/495).

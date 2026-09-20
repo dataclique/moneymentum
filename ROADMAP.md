@@ -38,21 +38,21 @@ constraints. Contract browsing supports that decision; it is not the product's
 organizing workflow.
 
 The next product focus is options-based portfolio protection, ahead of broader
-asset coverage and managed vaults. Include passive BTC and correlated active
-digital-asset holdings when evaluating protection against a BTC decline, without
-granting trading authority over read-only holdings. Let users explore protection
-and tolerated downside visually, including gradual payout profiles, premium
-costs, upside tradeoffs, and residual risk. The first options release covers
-downside protection, including rolling existing BTC hedges through the normal
-user-triggered rebalance. Upside-seeking option goals are outside this release.
-Protection uses a rolling horizon, renewed through user-triggered rebalance
-rather than a fixed calendar end date. Protection is a target portfolio
-allocation: express intent through its portfolio weight or the portion of BTC to
-protect, with suggestions based on holdings and desired protection strength.
-Show achievable protection and costs without equating allocation weight with
-hedge coverage. Generalized beta-based and non-BTC protection come later. The
-exact controls and horizon length remain refinement decisions; renewal does not
-authorize unattended trades.
+asset coverage and managed vaults. Initial coverage is a selected share of
+read-only BTC holdings, without granting trading authority over those holdings.
+Let users explore protection and tolerated downside visually, including gradual
+payout profiles, premium costs, upside tradeoffs, and residual risk. The first
+options release covers downside protection, including rolling existing BTC
+hedges through the normal user-triggered rebalance. Upside-seeking option goals
+are outside this release. Protection uses a rolling horizon, renewed through
+user-triggered rebalance rather than a fixed calendar end date. Protection is a
+target portfolio allocation, with suggestions based on holdings and desired
+protection strength. Show achievable protection and costs without equating
+allocation weight with hedge coverage. Later, net portfolio beta can account for
+other assets and offsetting short positions. Asset-specific options follow where
+liquidity is usable; neither extension is a prerequisite for initial BTC
+protection. The exact controls and horizon length remain refinement decisions;
+renewal does not authorize unattended trades.
 
 - [ ] Define portfolio-goal selection across instruments and combinations --
       [#495](https://github.com/dataclique/moneymentum/issues/495).

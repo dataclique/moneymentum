@@ -28,9 +28,6 @@ Moneymentum makes those exposures legible and adjustable.
 
 See [ROADMAP.md](./ROADMAP.md) for what's next.
 
-Track delivery on the
-[Moneymentum project board](https://github.com/orgs/dataclique/projects/8).
-
 ## Documentation
 
 | Doc                                                               | Purpose                                            |
@@ -97,18 +94,11 @@ directly.
 
 ### Running AI coding agents
 
-Launch agents via `nix develop --impure` rather than relying on direnv to avoid
-shell-init quirks:
-
-```bash
-nix develop --impure -c pi
-```
-
-Agents must follow [AGENTS.md](./AGENTS.md). In particular, every `bun` /
-`cargo` / `sqlx` / `but` invocation from an agent shell must go through
-`nix develop --impure -c ...` -- do not run bare toolchain commands and fall
-back to Nix after they fail. Inside an already-active flake shell, bare
-toolchain commands are fine.
+Use any coding agent with direnv enabled in its command environment. Confirm
+that it inherits the repository's Nix toolchain before running checks; an
+integrated terminal and an agent's command runner may use different shells.
+Agents follow [AGENTS.md](./AGENTS.md). No Nix wrapper is needed to launch the
+agent itself.
 
 ## Infrastructure
 

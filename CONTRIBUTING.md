@@ -7,8 +7,7 @@ and version control. [SPEC.md](./SPEC.md) describes the target system;
 
 ## Planning and issue contracts
 
-Use the [Moneymentum project](https://github.com/orgs/dataclique/projects/8) and
-[GitHub issues](https://github.com/dataclique/moneymentum/issues) as the
+Use [GitHub issues](https://github.com/dataclique/moneymentum/issues) as the
 backlog. Requirements and acceptance criteria live in issues, not Markdown story
 files. Use parent issues for larger outcomes and sub-issues for independently
 deliverable work. Reuse existing issues and retain their discussion, status, and
@@ -20,26 +19,16 @@ prescribed solution in the problem statement. Internal refactors and migrations
 use the same issue workflow; they do not need a separate story format or index.
 
 Before changing code, read the issue, its parent and sub-issues, and the
-relevant specification. Clarify unresolved product decisions with the human in
-the session. Do not silently expand scope; proposed adjacent work requires a
+relevant specification. Clarify unresolved product decisions before
+implementation. Do not silently expand scope; proposed adjacent work requires a
 scope decision or a separate issue. Refactoring must support the assigned
 outcome.
 
-Priorities follow business value and the roadmap, not issue numbers. Backlog
-items are options, not a schedule. Each agent session or pair handles one
-assigned work item unless parallel work is explicitly requested.
+The project owner sets priorities, reflected in the roadmap. Issue numbers do
+not imply priority, and backlog items are not a schedule.
 
-## Roles and pairing
-
-Humans set priorities, resolve product and architectural decisions, accept work,
-and review and merge PRs. Production deployment, secrets, external
-configuration, and irreversible actions remain human responsibilities.
-
-Pi agents implement the assigned scope, write and run tests, and surface
-blockers. In human-agent pairing, the human sets direction and evaluates the
-result. In agent-agent pairing, an orchestrator decomposes the issue and checks
-the implementer's work against its acceptance criteria. Neither arrangement
-replaces human review before merge or grants external-system authority.
+Contributions are evaluated by scope, correctness, and verification, whether
+written manually or with AI assistance. No AI tool or harness is required.
 
 ## Types and tests before implementation
 
@@ -92,5 +81,4 @@ Required prerequisite refactoring is a separate PR that lands first.
   the change. Do not recreate an in-repository story index.
 - Do not add generated-by or co-author credit for an agent.
 
-Human review and merge remain required. An agent checks evidence and prepares
-the work; it does not submit a review verdict on the human's behalf.
+Maintainer review is required before merge.

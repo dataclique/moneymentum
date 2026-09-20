@@ -12,6 +12,11 @@ for the vision and [ROADMAP.md](./ROADMAP.md) for the path.
 
 ### Agent expectations
 
+The project owner sets priorities. Work within the assigned issue, surface
+blockers, and verify delegated work against its acceptance criteria. Do not
+submit review verdicts on anyone's behalf. Tool choice does not grant authority
+over deployment or external systems; no particular AI harness is required.
+
 AI coding agents working in this repo are expected to:
 
 - Read [ROADMAP.md](./ROADMAP.md) and the relevant
@@ -77,9 +82,10 @@ nix develop --impure .#frontend -c bash -lc 'cd frontend && bun run lint'
   Homebrew, etc. to work around a missing binary
 - Bypassing Nix for dependency management
 
-Humans may use `direnv allow` so bare `bun` / `cargo` work in their terminal.
-Agents should still prefer the `nix develop --impure -c ...` form so commands
-work in fresh shells without relying on direnv.
+Use direnv in both interactive terminals and agent command environments. Verify
+that the repository's Nix toolchain is active in the shell running the command.
+When it is active, run toolchain commands directly. Use an explicit flake shell
+only when direnv is unavailable; the agent itself needs no Nix launch wrapper.
 
 ### Frontend (SolidJS + Vite)
 

@@ -1,6 +1,6 @@
 # Roadmap
 
-[Project board](https://github.com/orgs/dataclique/projects/8)
+[Team project board (private)](https://github.com/orgs/dataclique/projects/8)
 
 [SPEC.md](./SPEC.md) describes the target system. This roadmap orders the work
 by priority; GitHub issues hold requirements, acceptance criteria, and
@@ -147,7 +147,7 @@ withdrawal behavior, and fees.
       [#337](https://github.com/dataclique/moneymentum/issues/337) and
       [#338](https://github.com/dataclique/moneymentum/issues/338).
 
-## Not epic
+## Further exploration
 
 Tokenized equities, yield products, and multi-account support remain exploration
 directions in [SPEC.md](./SPEC.md), not scheduled work.

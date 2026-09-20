@@ -42,9 +42,10 @@ asset coverage and managed vaults. Include passive BTC and correlated active
 digital-asset holdings when evaluating protection against a BTC decline, without
 granting trading authority over read-only holdings. Let users explore protection
 and tolerated downside visually, including gradual payout profiles, premium
-costs, upside tradeoffs, and residual risk. The exact controls, protection
-horizon, and budget remain refinement decisions; upside-seeking option goals
-have not yet been ordered against downside protection.
+costs, upside tradeoffs, and residual risk. The first options release covers
+downside protection, including rolling existing BTC hedges through the normal
+user-triggered rebalance. Upside-seeking option goals are outside this release.
+The exact controls, protection horizon, and budget remain refinement decisions.
 
 - [ ] Define portfolio-goal selection across instruments and combinations --
       [#495](https://github.com/dataclique/moneymentum/issues/495).

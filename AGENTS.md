@@ -12,11 +12,18 @@ for the vision and [ROADMAP.md](./ROADMAP.md) for the path.
 
 ### Agent expectations
 
+The project owner sets priorities. Work within the assigned issue, surface
+blockers, and verify delegated work against its acceptance criteria. Do not
+submit review verdicts on anyone's behalf. Tool choice does not grant authority
+over deployment or external systems; no particular AI harness is required.
+
 AI coding agents working in this repo are expected to:
 
-- Read [ROADMAP.md](./ROADMAP.md) and the relevant story under
-  [stories/](./stories/README.md) before changing code. The story's acceptance
-  criteria are the contract.
+- Read [ROADMAP.md](./ROADMAP.md) and the relevant
+  [GitHub issue](https://github.com/dataclique/moneymentum/issues), including
+  its parent and sub-issues, before changing code. The issue's acceptance
+  criteria are the contract. Do not create Markdown story files or a duplicate
+  backlog.
 - Follow [CONTRIBUTING.md](./CONTRIBUTING.md): types-first, failing test,
   implementation, review.
 - Honor the rules in this document for code style, testing, and quality gates.
@@ -75,9 +82,10 @@ nix develop --impure .#frontend -c bash -lc 'cd frontend && bun run lint'
   Homebrew, etc. to work around a missing binary
 - Bypassing Nix for dependency management
 
-Humans may use `direnv allow` so bare `bun` / `cargo` work in their terminal.
-Agents should still prefer the `nix develop --impure -c ...` form so commands
-work in fresh shells without relying on direnv.
+Use direnv in both interactive terminals and agent command environments. Verify
+that the repository's Nix toolchain is active in the shell running the command.
+When it is active, run toolchain commands directly. Use an explicit flake shell
+only when direnv is unavailable; the agent itself needs no Nix launch wrapper.
 
 ### Frontend (SolidJS + Vite)
 
@@ -220,13 +228,12 @@ Concrete audit checklist:
 
 - [README.md](./README.md): does it still describe the system accurately (status
   of components, doc index)?
-- [SPEC.md](./SPEC.md): does the vision or architecture description still match
-  the code?
+- [SPEC.md](./SPEC.md): does it describe the intended system without delivery
+  status, incident history, or obsolete scope?
 - [ROADMAP.md](./ROADMAP.md): are completed items marked completed, are new
   themes/stories listed, are stale ones removed?
-- [stories/](./stories/README.md): is the story status frontmatter current, is
-  the index entry present, are acceptance criteria reworded to match the shipped
-  behavior?
+- [GitHub issues](https://github.com/dataclique/moneymentum/issues): are the
+  acceptance criteria, parent/sub-issue links, and completion evidence current?
 - [CONTRIBUTING.md](./CONTRIBUTING.md) and `AGENTS.md`: did a rule change in
   practice? If so, the rule changes here first.
 - Per-file CLAUDE.md / AGENTS.md (e.g. `frontend/CLAUDE.md`): same audit at the
@@ -353,10 +360,10 @@ ASCII equivalents: `*` not `×`, `->` not `→`, `~` not `≈`, `--` not em-dash
 **Unicode** (whenever the audience is a user): UI text rendered in the app, CLI
 messages presented to a user, error messages surfaced in the product,
 tooltip/aria/accessibility strings, and -- importantly -- **the quoted UI
-strings that appear inside documentation**. Story files routinely cite UI text
-verbatim (e.g. `the tooltip reads "Read-only — cannot trade"`); inside those
-quotes, write the exact character the user will see. The prose around the quote
-stays ASCII.
+strings that appear inside documentation**. Issue contracts routinely cite UI
+text verbatim (e.g. `the tooltip reads "Read-only — cannot trade"`); inside
+those quotes, write the exact character the user will see. The prose around the
+quote stays ASCII.
 
 The placeholder rendered when a number is missing is `—` (em-dash), not `--`,
 because the user reads it. The same dash inside a code comment ("see note above
@@ -366,8 +373,8 @@ in doubt, ask: who is the audience for this exact run of characters?
 This is a strict, blast-radius-asymmetric rule. A bulk find/replace that
 substitutes `—` with `--` across the repo is **not** a safe refactor -- it
 mangles UI strings and the documentation that quotes them. Audit before running
-such a sweep, and never apply it to `*.tsx`, `*.ts`, or to quoted strings inside
-`stories/`.
+such a sweep, and never apply it to `*.tsx`, `*.ts`, or quoted UI strings in
+documentation and issues.
 
 ### Self-documenting code
 

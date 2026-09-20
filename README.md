@@ -30,13 +30,13 @@ See [ROADMAP.md](./ROADMAP.md) for what's next.
 
 ## Documentation
 
-| Doc                                  | Purpose                                            |
-| ------------------------------------ | -------------------------------------------------- |
-| [SPEC.md](./SPEC.md)                 | Product vision and target architecture             |
-| [ROADMAP.md](./ROADMAP.md)           | Themed stories ordered by priority                 |
-| [stories/](./stories/README.md)      | User and dev stories with acceptance tests         |
-| [CONTRIBUTING.md](./CONTRIBUTING.md) | Extreme Programming (XP) workflow for contributors |
-| [AGENTS.md](./AGENTS.md)             | Per-repo rules for AI coding agents                |
+| Doc                                                               | Purpose                                                      |
+| ----------------------------------------------------------------- | ------------------------------------------------------------ |
+| [SPEC.md](./SPEC.md)                                              | Product vision and target architecture                       |
+| [ROADMAP.md](./ROADMAP.md)                                        | Outcome epics ordered by priority                            |
+| [GitHub issues](https://github.com/dataclique/moneymentum/issues) | Requirements, acceptance criteria, and sub-issues            |
+| [CONTRIBUTING.md](./CONTRIBUTING.md)                              | Issue-based contributor workflow and completion requirements |
+| [AGENTS.md](./AGENTS.md)                                          | Per-repo rules for AI coding agents                          |
 
 ## Quick start
 
@@ -94,18 +94,11 @@ directly.
 
 ### Running AI coding agents
 
-Launch agents via `nix develop --impure` rather than relying on direnv to avoid
-shell-init quirks:
-
-```bash
-nix develop --impure -c claude
-```
-
-Agents must follow [AGENTS.md](./AGENTS.md). In particular, every `bun` /
-`cargo` / `sqlx` / `but` invocation from an agent shell must go through
-`nix develop --impure -c ...` -- do not run bare toolchain commands and fall
-back to Nix after they fail. Inside an already-active flake shell, bare
-toolchain commands are fine.
+Use any coding agent with direnv enabled in its command environment. Confirm
+that it inherits the repository's Nix toolchain before running checks; an
+integrated terminal and an agent's command runner may use different shells.
+Agents follow [AGENTS.md](./AGENTS.md). No Nix wrapper is needed to launch the
+agent itself.
 
 ## Infrastructure
 

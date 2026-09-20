@@ -1,8 +1,7 @@
 # Frontend Architecture: Portfolio Rebalancer
 
 This document describes the current frontend architecture as one primary
-rebalancing page (`Portfolio`) and its key execution flow. Below is factual
-information about the code.
+rebalancing page (`Portfolio`) and its key execution flow.
 
 ## 1) Main State Model
 

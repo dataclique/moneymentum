@@ -1,9 +1,8 @@
 # Theme: Risk Analytics
 
-Portfolio risk metrics beyond beta. The `RiskPanel` component in the frontend is
-fully scaffolded with the correct layout, sections, and placeholder values.
-Every metric in it is currently mocked or marked TODO. This theme covers wiring
-real data to each section.
+Portfolio risk metrics beyond beta. The `RiskPanel` component in the frontend
+has the required layout and sections, but every metric is currently mocked or
+marked TODO. This theme covers wiring real data to each section.
 
 See `frontend/src/pages/Portfolio/components/RiskPanel.tsx` for the current
 state. See `SPEC.md: Analytics Capabilities > Risk Engine` for the vision.

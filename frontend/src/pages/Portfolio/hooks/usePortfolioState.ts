@@ -333,10 +333,7 @@ export const usePortfolioState = () => {
       return
     }
 
-    if (
-      previousAccountIdentity === null ||
-      currentAccountIdentity === null
-    ) {
+    if (previousAccountIdentity === null || currentAccountIdentity === null) {
       return
     }
 
@@ -979,6 +976,7 @@ export const usePortfolioState = () => {
     handleRebalancePositions,
     handleResetToCurrent,
     addReadonlyBtcAddress: readonlyPortfolio.addAddress,
+    refreshReadonlyBtc: readonlyPortfolio.refresh,
     removeReadonlyBtcAddress: readonlyPortfolio.removeAddress,
     setReadonlyBtcIncludeInBeta: readonlyPortfolio.setIncludeInBeta,
     handleDisconnect,

@@ -2,11 +2,10 @@
 
 [![His name is Yang](https://img.youtube.com/vi/FoYC_8cutb0/0.jpg)](https://www.youtube.com/watch?v=FoYC_8cutb0)
 
-Moneymentum is an institutional-grade quant toolkit for crypto portfolio
-management. Define portfolios as proportions, not positions. Stage and simulate
-before executing. Manage factor exposures, not symbols. Most crypto holders
-cannot answer basic questions about their portfolio's factor exposure;
-Moneymentum makes those exposures legible and adjustable.
+Moneymentum is a quant toolkit for crypto portfolio management. Define
+portfolios as proportions, not positions. Stage and simulate before executing.
+Manage factor exposures, not symbols. Moneymentum makes those exposures legible
+and adjustable.
 
 ## Status
 
@@ -25,13 +24,13 @@ See [ROADMAP.md](./ROADMAP.md) for what's next.
 
 ## Documentation
 
-| Doc                                  | Purpose                                            |
-| ------------------------------------ | -------------------------------------------------- |
-| [SPEC.md](./SPEC.md)                 | Product vision and target architecture             |
-| [ROADMAP.md](./ROADMAP.md)           | Themed stories ordered by priority                 |
-| [stories/](./stories/README.md)      | User and dev stories with acceptance tests         |
-| [CONTRIBUTING.md](./CONTRIBUTING.md) | Extreme Programming (XP) workflow for contributors |
-| [AGENTS.md](./AGENTS.md)             | Per-repo rules for AI coding agents                |
+| Doc                                  | Purpose                                    |
+| ------------------------------------ | ------------------------------------------ |
+| [SPEC.md](./SPEC.md)                 | Product vision and target architecture     |
+| [ROADMAP.md](./ROADMAP.md)           | Themed stories ordered by priority         |
+| [stories/](./stories/README.md)      | User and dev stories with acceptance tests |
+| [CONTRIBUTING.md](./CONTRIBUTING.md) | Contribution workflow and quality gates    |
+| [AGENTS.md](./AGENTS.md)             | Per-repo rules for AI coding agents        |
 
 ## Quick start
 

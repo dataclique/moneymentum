@@ -1,96 +1,10 @@
 # Contributing
 
-Moneymentum uses AI-era extreme programming (XP), adapted for a world where the
-primary pairing model is human-AI and AI-AI rather than human-human. The
-practices are the same; the medium is different: small stories, tests first,
-tight feedback, and frequent review by humans and agents.
-
-Audience: contributors, human and AI. This is the workflow doc. See
+This guide covers Moneymentum's story workflow, TTDD, validation, and
+pull-request requirements for human and AI contributors. See
 [AGENTS.md](./AGENTS.md) for code-style, testing, and version-control rules
 (including the mandatory GitButler `but` CLI), and [SPEC.md](./SPEC.md) for the
 architectural vision.
-
----
-
-## Philosophy
-
-XP's core insight is that the highest-risk assumptions in software are about
-what to build and whether it works -- not how to build it. The practices exist
-to surface those assumptions as early and cheaply as possible: small releases,
-test-first development, short planning cycles, collective ownership, continuous
-integration.
-
-The AI age does not change any of that. What it changes is communication. In
-classic XP, much coordination happens through conversation -- pair programming,
-stand-ups, the customer on-site. When your collaborators are AI agents, that
-ambient, verbal coordination disappears. Everything must be written down with
-enough precision that an agent with no prior context can act on it correctly.
-This means stories, acceptance criteria, and context fields are not
-documentation you write after the fact -- they are the medium of collaboration.
-
----
-
-## Roles
-
-**Human owner**: Writes stories. Prioritizes the backlog. Accepts or rejects
-completed stories. Reviews and merges PRs. The customer in XP's planning game.
-Makes architectural decisions and resolves ambiguity when agents surface it.
-Day-to-day implementation is delegated to agents.
-
-**AI coding agent** (e.g., Claude, Cursor): Implements stories. Writes and runs
-tests. Follows the TTDD workflow. Respects story scope -- does not touch code
-outside the story boundary. Surfaces blockers rather than guessing. Marks work
-done only when all acceptance criteria pass and all quality gates are green.
-
-**AI orchestrator** (optional, for AI-AI pairing): In AI-AI sessions, one agent
-can take the navigator role -- breaking a story into tasks, reviewing the
-implementor's output, catching scope drift -- while the other implements.
-Neither agent merges to master; human review is still required at the PR stage.
-
----
-
-## The Planning Game
-
-The planning game runs in short cycles. At the start of each cycle:
-
-1. The human reviews the backlog in [stories/](./stories/README.md) and selects
-   which stories to pull into the current iteration. Priority is set by business
-   value, not technical convenience.
-2. Each story goes to one agent session (or one AI-AI pair). An agent must not
-   hold multiple stories in parallel without explicit instruction.
-
-Stories in the backlog are options, not a schedule. Ordering within the index
-does not imply implementation order. The human decides what comes next.
-
----
-
-## Pairing Models
-
-### Human-AI
-
-The human plays the navigator: sets direction, provides the story, reviews
-output, accepts or rejects. The agent plays the driver: implements, tests,
-raises blockers. The human should be available during the session to answer
-questions the agent surfaces -- this is the XP equivalent of the on-site
-customer.
-
-Practical rules:
-
-- Start each session by giving the agent the story ID and content.
-- The agent reads the story, states its interpretation of the acceptance
-  criteria, and asks any clarifying questions before writing code.
-- The human answers, then the agent proceeds.
-- The agent reports progress and blockers inline during the session.
-
-### AI-AI
-
-The orchestrator agent receives the story and owns decomposition and review. The
-implementor agent receives individual tasks and owns code. The orchestrator
-reviews each task's output against the acceptance criteria before declaring the
-story done. A human reviews the final PR.
-
-This model suits larger stories where task decomposition benefits from an agent
-that holds the full story in context while the implementor works narrowly.
 
 ---
 
@@ -257,8 +171,8 @@ reference.
   operation that reshapes the stack.
 - Do not add "Generated with [Tool Name]" anywhere. Authorship is implicit in
   the commit history.
-- PRs are reviewed by the human. AI-AI review within a session is fine but does
-  not replace human review before merge.
+- PRs require human review. Agent review does not replace human review before
+  merge.
 
 ---
 

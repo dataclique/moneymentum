@@ -51,8 +51,9 @@ protection strength. Show achievable protection and costs without equating
 allocation weight with hedge coverage. Later, net portfolio beta can account for
 other assets and offsetting short positions. Asset-specific options follow where
 liquidity is usable; neither extension is a prerequisite for initial BTC
-protection. The exact controls and horizon length remain refinement decisions;
-renewal does not authorize unattended trades.
+protection. Users select the rolling horizon in the initial release. Suggested
+horizons follow later, with manual choice retained. Renewal does not authorize
+unattended trades.
 
 - [ ] Define portfolio-goal selection across instruments and combinations --
       [#495](https://github.com/dataclique/moneymentum/issues/495).
@@ -79,11 +80,15 @@ renewal does not authorize unattended trades.
 
 ### After initial BTC protection
 
+- [ ] Suggest rolling horizons by comparing available expiries and costs while
+      retaining manual selection --
+      [#495](https://github.com/dataclique/moneymentum/issues/495) and
+      [#329](https://github.com/dataclique/moneymentum/issues/329).
 - [ ] Incorporate net portfolio BTC beta, including other assets and offsetting
       shorts, into protection targets --
       [#318](https://github.com/dataclique/moneymentum/issues/318).
 
-This extension is not required to deliver coverage of read-only BTC holdings.
+These extensions are not required to deliver coverage of read-only BTC holdings.
 
 **Done when:** users can compare feasible portfolio changes against an explicit
 goal, see costs and residual exposure, and choose whether to stage and execute.

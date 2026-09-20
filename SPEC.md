@@ -102,12 +102,88 @@ The target custody flow is:
 | HyperEVM options route      | HyperEVM native deposit -> Derive options                                                                  |
 | Withdrawal return           | USDC returns through the supported bridge and vault withdrawal flow                                        |
 
-The backend aggregates venue NAV and posts signed attestations to the vault. The
-vault accounts for investor shares, deposits, withdrawals, and fees. Management
-fees are an annual percentage of AUM deducted on withdrawal. Performance fees
-apply to new profits above a high-water mark. Platform fees are a percentage of
-the portfolio manager's collected fees, not investor capital. Personal use has
-zero management and performance fees.
+### NAV attestation boundary
+
+The backend aggregates venue NAV and posts signed attestations to the vault. A
+signature authenticates the reporter, not the correctness of its valuation. The
+vault must reject an attestation before changing balances unless:
+
+- Its signer is authorized by the vault's on-chain authority. The signed payload
+  binds the deployment, vault, valuation currency and scale, NAV, valuation
+  timestamp, sequence number, and signer epoch.
+- The valuation timestamp does not move backwards or exceed the on-chain clock,
+  and its age is within an explicitly configured freshness limit. Missing or
+  stale venue observations cannot be presented as a fresh complete valuation.
+- Its sequence is strictly greater than the vault's last accepted sequence.
+  Accepting a valuation and advancing replay-protection state are atomic; a
+  consumed signature cannot install the valuation again.
+- Its signer epoch is current. Only the on-chain authority can rotate or revoke
+  signers; those changes invalidate earlier epochs without resetting sequence
+  history. Revoked signatures and cached valuations from a revoked epoch cannot
+  authorize deposits, withdrawal settlement, or fee settlement.
+
+Vault state must retain the authority, authorized signer and epoch, freshness
+limit, and last accepted valuation with its timestamp and sequence. Each
+NAV-dependent instruction rechecks freshness and reconciles intervening cash
+flows; accepting an attestation once does not make it valid indefinitely or
+allow deposits and withdrawals to be counted twice. Invalid inputs leave shares,
+fees, and withdrawal state unchanged. Contract tests must cover unauthorized and
+revoked signers, wrong deployment or vault, replay, out-of-order and future
+valuations, staleness at use time, and cash flows after a valuation.
+
+### Vault accounting contract
+
+The vault accounts for investor shares, deposits, withdrawals, and fees.
+Management fees are an annual percentage of AUM, settled on withdrawal;
+performance fees apply only to new profits above a per-investor high-water mark.
+Platform fees come from the manager's collected fees, not an additional charge
+on investor capital. Zero management and performance rates for personal use
+therefore also produce zero platform fees from those charges.
+
+The authoritative delivery contracts are
+[deposits](https://github.com/dataclique/moneymentum/issues/327),
+[withdrawals](https://github.com/dataclique/moneymentum/issues/328), and
+[fee transparency](https://github.com/dataclique/moneymentum/issues/336). Before
+vault money movement ships, they must agree on one versioned accounting contract
+with matching on-chain and client test vectors for:
+
+- **Valuation and deposits:** the NAV snapshot and cash-flow cutoff,
+  liabilities, pending withdrawals, share supply, initial share price, and
+  conversion rounding. Deposits mint against pre-deposit value and must not
+  count contributed capital as profit or charge fees for time before that
+  capital arrived.
+- **Management fees:** the annual-rate time basis, equity basis, accrual
+  interval, and collection mechanism. Elapsed-time accrual must be settled
+  before performance fees and payout; deposits and partial withdrawals must not
+  erase accrued fees, charge the same interval twice, or reset another
+  investor's accrual history.
+- **Performance fees:** the per-investor profit basis after management fees,
+  settlement timing, and high-water-mark changes after deposits, losses,
+  recoveries, and partial or full withdrawals. Previously charged gains cannot
+  be charged again, and cash flows cannot create fictitious gains or erase loss
+  recovery requirements.
+- **Withdrawals:** `request_withdraw` records intent and an unlock time;
+  `execute_withdraw` settles only after the redeem period, calculates fees and
+  net USDC from the settlement valuation, burns the corresponding shares, and
+  consumes that request atomically. Failed settlement changes none of these;
+  replay cannot burn or pay twice. Partial withdrawals must preserve the
+  remaining investor's shares, accrued-fee allocation, and high-water-mark
+  basis.
+- **Conservation:** explicit integer units, checked arithmetic, rounding and
+  dust ownership; investor payouts, remaining claims, and manager/platform fees
+  must reconcile to vault assets. Platform and manager allocations sum to
+  collected fees, with rates and accrual state read from the same on-chain
+  source by clients.
+
+These are release gates, not a finalized fee algorithm. In particular,
+[fee math #127](https://github.com/dataclique/moneymentum/issues/127) describes
+share dilution while
+[withdrawals #328](https://github.com/dataclique/moneymentum/issues/328)
+describes per-user settlement using a vault accrual timestamp. That accounting
+choice, valuation timing, day-count convention, rounding, and high-water-mark
+adjustment rules require an explicit design decision and shared test vectors
+before implementation. Neither a client nor the vault may supply implicit
+financial-policy defaults to fill those gaps.
 
 ## Contracts and integrations
 
@@ -120,6 +196,45 @@ Data adapters normalize source data for analytics. Venue adapters expose
 execution and observation contracts. Chain, bridge, wallet, and vault clients
 keep their external protocols behind their domain traits. Mock implementations
 support contract and workflow tests.
+
+### Execution outcomes and recovery
+
+Each execution retains an account-, venue-, and plan-scoped identity with its
+per-order identities, submitted intent, acknowledgements, fills, and latest
+observations. Submission acknowledgement is not completion:
+
+- **Confirmed:** related orders are terminal and fresh venue positions reconcile
+  with the intended changes, using explicit venue quantity and rounding rules.
+- **Partial:** some changes are confirmed, but the remaining intended changes
+  are incomplete. Per-order rejection, cancellation, and unresolved status
+  remain visible; confirmed fills are never discarded.
+- **Rejected:** the venue proves that the action was rejected without execution.
+- **Ambiguous:** acceptance, terminal status, or resulting positions cannot yet
+  be established. An accepted order without reconciled venue state stays
+  ambiguous, even after a timeout. A partially completed plan can contain
+  ambiguous orders.
+
+Reloads, reconnects, repeated clicks, and account switches resume reconciliation
+of the same execution; they do not submit another copy or clear pending intent.
+Stale observations cannot advance an execution to confirmed. Recovery first
+queries the recorded order identities and reconciles fills and current
+positions. Dependent actions remain blocked while their prerequisites are
+partial, rejected, or ambiguous; resuming the plan requires a newly reviewed
+residual intent and an explicit user decision.
+
+The retry guarantee is **no duplicate economic action**, not a promise of
+exactly-once transport. A transport retry may reuse the same order identity only
+when the adapter's documented and tested venue contract guarantees deduplication
+for that request and retry interval. Otherwise an ambiguous submission is
+observation-only: no automatic resubmission, including after the deduplication
+window expires. Once non-execution or the settled residual is proven, any new
+order requires a fresh account/position check and user-approved residual plan;
+confirmed fills are never replayed. If the venue cannot resolve uncertainty,
+show an explicit blocker rather than infer failure or success.
+
+The completion and recovery requirements remain tracked in
+[#92](https://github.com/dataclique/moneymentum/issues/92) and
+[#159](https://github.com/dataclique/moneymentum/issues/159).
 
 ## Frontend
 

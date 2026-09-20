@@ -30,13 +30,13 @@ See [ROADMAP.md](./ROADMAP.md) for what's next.
 
 ## Documentation
 
-| Doc                                                               | Purpose                                            |
-| ----------------------------------------------------------------- | -------------------------------------------------- |
-| [SPEC.md](./SPEC.md)                                              | Product vision and target architecture             |
-| [ROADMAP.md](./ROADMAP.md)                                        | Outcome epics ordered by priority                  |
-| [GitHub issues](https://github.com/dataclique/moneymentum/issues) | Requirements, acceptance criteria, and sub-issues  |
-| [CONTRIBUTING.md](./CONTRIBUTING.md)                              | Extreme Programming (XP) workflow for contributors |
-| [AGENTS.md](./AGENTS.md)                                          | Per-repo rules for AI coding agents                |
+| Doc                                                               | Purpose                                                      |
+| ----------------------------------------------------------------- | ------------------------------------------------------------ |
+| [SPEC.md](./SPEC.md)                                              | Product vision and target architecture                       |
+| [ROADMAP.md](./ROADMAP.md)                                        | Outcome epics ordered by priority                            |
+| [GitHub issues](https://github.com/dataclique/moneymentum/issues) | Requirements, acceptance criteria, and sub-issues            |
+| [CONTRIBUTING.md](./CONTRIBUTING.md)                              | Issue-based contributor workflow and completion requirements |
+| [AGENTS.md](./AGENTS.md)                                          | Per-repo rules for AI coding agents                          |
 
 ## Quick start
 

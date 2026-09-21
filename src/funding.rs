@@ -11,7 +11,6 @@ use thiserror::Error;
 use tracing::{debug, instrument};
 
 use crate::dataframe::DataFrameError;
-use crate::finance::Symbol;
 
 #[derive(Debug, Error)]
 pub(crate) enum FundingError {
@@ -27,7 +26,8 @@ pub(crate) enum FundingError {
 pub(crate) struct FundingRate {
     pub(crate) timestamp: DateTime<Utc>,
     pub(crate) rate: Decimal,
-    pub(crate) symbol: Symbol,
+    /// Exchange-native base ticker for the archive `symbol` column (e.g., "kPEPE")
+    pub(crate) symbol: String,
 }
 
 #[instrument(skip_all, fields(count = rates.len()))]
@@ -79,12 +79,12 @@ mod tests {
             FundingRate {
                 timestamp: Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
                 rate: dec!(0.0001),
-                symbol: Symbol::from_raw("BTC"),
+                symbol: "BTC".to_string(),
             },
             FundingRate {
                 timestamp: Utc.with_ymd_and_hms(2024, 1, 1, 1, 0, 0).unwrap(),
                 rate: dec!(0.0002),
-                symbol: Symbol::from_raw("ETH"),
+                symbol: "ETH".to_string(),
             },
         ]
     }

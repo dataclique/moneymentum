@@ -9,7 +9,7 @@ use sqlx::SqlitePool;
 use sqlx::sqlite::SqlitePoolOptions;
 
 use crate::candle::Candle;
-use crate::finance::{Market, Symbol, hyperliquid_swap_ccxt_symbol};
+use crate::finance::{Market, archive_base_ticker, hyperliquid_archive_swap_symbol};
 use crate::funding::FundingRate;
 use crate::hyperliquid::{Hyperliquid, HyperliquidError};
 use crate::market_catalog::MarketCatalog;
@@ -81,8 +81,8 @@ impl Hyperliquid for MockHyperliquid {
             low: 95.0,
             close: 102.0,
             volume: 1000.0,
-            market: hyperliquid_swap_ccxt_symbol(market.as_str()),
-            symbol: Symbol::from_raw(market.as_str()),
+            market: hyperliquid_archive_swap_symbol(market.as_str()),
+            ticker: archive_base_ticker(market.as_str()),
         }])
     }
 
@@ -94,7 +94,7 @@ impl Hyperliquid for MockHyperliquid {
         Ok(vec![FundingRate {
             timestamp: Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
             rate: dec!(0.0001),
-            symbol: Symbol::from_raw(market.as_str()),
+            symbol: archive_base_ticker(market.as_str()),
         }])
     }
 }

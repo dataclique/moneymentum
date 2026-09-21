@@ -19,6 +19,10 @@ performance and missing history shown explicitly.
 - [ ] Resolve startup and ingestion failures that obstruct reliable data
       collection -- [#462](https://github.com/dataclique/moneymentum/issues/462)
       and [#452](https://github.com/dataclique/moneymentum/issues/452).
+- [x] Hyperliquid k-prefixed candle exports contain inconsistent casing,
+      duplicates and conflicts --
+      [#498](https://github.com/dataclique/moneymentum/issues/498) /
+      [PR #505](https://github.com/dataclique/moneymentum/pull/505).
 - [ ] Make historical drawdown available to the risk view --
       [#345](https://github.com/dataclique/moneymentum/issues/345) and
       [#209](https://github.com/dataclique/moneymentum/issues/209).

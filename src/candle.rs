@@ -12,7 +12,7 @@ use thiserror::Error;
 use tracing::{debug, instrument};
 
 use crate::dataframe::{self, DataFrameError};
-use crate::finance::{CcxtSymbol, Symbol};
+use crate::finance::CcxtSymbol;
 use crate::timeframe::Timeframe;
 
 #[derive(Debug, Error)]
@@ -33,10 +33,10 @@ pub(crate) struct Candle {
     pub(crate) low: f64,
     pub(crate) close: f64,
     pub(crate) volume: f64,
-    /// CCXT unified swap symbol (e.g., "BTC/USDC:USDC")
+    /// Archive swap id with exchange-native base casing (e.g., "kPEPE/USDC:USDC")
     pub(crate) market: CcxtSymbol,
-    /// Normalized base symbol (e.g., "BTC")
-    pub(crate) symbol: Symbol,
+    /// Exchange-native base ticker for the archive `ticker` column (e.g., "kPEPE")
+    pub(crate) ticker: String,
 }
 
 #[instrument(skip_all, fields(count = candles.len()))]
@@ -63,9 +63,9 @@ pub(crate) async fn candles_to_dataframe(candles: Vec<Candle>) -> Result<DataFra
             .iter()
             .map(|candle| candle.market.as_str())
             .collect();
-        let symbols: Vec<&str> = candles
+        let tickers: Vec<&str> = candles
             .iter()
-            .map(|candle| candle.symbol.as_str())
+            .map(|candle| candle.ticker.as_str())
             .collect();
 
         Ok(df! {
@@ -75,9 +75,9 @@ pub(crate) async fn candles_to_dataframe(candles: Vec<Candle>) -> Result<DataFra
             "low" => lows,
             "close" => closes,
             "volume" => volumes,
-            // Legacy column names: "symbol" holds the CCXT market id, "ticker" the base.
+            // Legacy column names: "symbol" holds the archive swap id, "ticker" the base.
             "symbol" => markets,
-            "ticker" => symbols,
+            "ticker" => tickers,
         }?)
     })
     .await?
@@ -118,8 +118,8 @@ mod tests {
                 low: 95.0,
                 close: 105.0,
                 volume: 1000.0,
-                market: finance::hyperliquid_swap_ccxt_symbol("BTC"),
-                symbol: Symbol::from_raw("BTC"),
+                market: finance::hyperliquid_archive_swap_symbol("BTC"),
+                ticker: finance::archive_base_ticker("BTC"),
             },
             Candle {
                 timestamp: Utc.with_ymd_and_hms(2024, 1, 1, 1, 0, 0).unwrap(),
@@ -128,8 +128,8 @@ mod tests {
                 low: 100.0,
                 close: 110.0,
                 volume: 1500.0,
-                market: finance::hyperliquid_swap_ccxt_symbol("BTC"),
-                symbol: Symbol::from_raw("BTC"),
+                market: finance::hyperliquid_archive_swap_symbol("BTC"),
+                ticker: finance::archive_base_ticker("BTC"),
             },
         ]
     }
@@ -149,8 +149,8 @@ mod tests {
                             low: 90.0,
                             close: 105.0,
                             volume: 1000.0,
-                            market: finance::hyperliquid_swap_ccxt_symbol("BTC"),
-                            symbol: Symbol::from_raw("BTC"),
+                            market: finance::hyperliquid_archive_swap_symbol("BTC"),
+                            ticker: finance::archive_base_ticker("BTC"),
                         }
                     })
                     .collect();
@@ -178,6 +178,32 @@ mod tests {
         assert!(columns.iter().any(|column| column.as_str() == "symbol"));
         assert!(columns.iter().any(|column| column.as_str() == "ticker"));
         assert_eq!(df.height(), 2);
+        assert!(logs_contain_at(
+            Level::DEBUG,
+            &["converting candles to dataframe"]
+        ));
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn candle_to_dataframe_preserves_exchange_native_k_prefixed_casing() {
+        let candles = vec![Candle {
+            timestamp: Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+            open: 0.001,
+            high: 0.002,
+            low: 0.0009,
+            close: 0.0015,
+            volume: 1000.0,
+            market: finance::hyperliquid_archive_swap_symbol("kPEPE"),
+            ticker: finance::archive_base_ticker("kPEPE"),
+        }];
+
+        let df = candles_to_dataframe(candles).await.unwrap();
+        let symbols = df.column("symbol").unwrap().str().unwrap();
+        let tickers = df.column("ticker").unwrap().str().unwrap();
+
+        assert_eq!(symbols.get(0), Some("kPEPE/USDC:USDC"));
+        assert_eq!(tickers.get(0), Some("kPEPE"));
         assert!(logs_contain_at(
             Level::DEBUG,
             &["converting candles to dataframe"]

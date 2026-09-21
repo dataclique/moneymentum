@@ -21,7 +21,7 @@ use std::str::FromStr;
 
 use crate::candle::{Candle, CandleError, candles_to_dataframe};
 use crate::dataframe::{self, DataFrameError};
-use crate::finance::{self, Market, Symbol};
+use crate::finance::{self, Market};
 use crate::funding::{self, FundingError, FundingRate};
 use crate::market_metadata::MarketMetadata;
 use crate::timeframe::Timeframe;
@@ -284,8 +284,8 @@ impl Hyperliquid for HyperliquidClient {
                     low,
                     close,
                     volume,
-                    market: finance::hyperliquid_swap_ccxt_symbol(market.as_str()),
-                    symbol: Symbol::from_raw(market.as_str()),
+                    market: finance::hyperliquid_archive_swap_symbol(market.as_str()),
+                    ticker: finance::archive_base_ticker(market.as_str()),
                 })
             })
             .collect();
@@ -326,7 +326,7 @@ impl Hyperliquid for HyperliquidClient {
                 Some(FundingRate {
                     timestamp,
                     rate,
-                    symbol: Symbol::from_raw(market.as_str()),
+                    symbol: finance::archive_base_ticker(market.as_str()),
                 })
             })
             .collect();
@@ -573,13 +573,13 @@ mod tests {
                     low: 41000.0,
                     close: 42500.0,
                     volume: 1000.0,
-                    market: finance::hyperliquid_swap_ccxt_symbol("BTC"),
-                    symbol: Symbol::from_raw("BTC"),
+                    market: finance::hyperliquid_archive_swap_symbol("BTC"),
+                    ticker: finance::archive_base_ticker("BTC"),
                 }],
                 funding_rates: vec![FundingRate {
                     timestamp: Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
                     rate: dec!(0.0001),
-                    symbol: Symbol::from_raw("BTC"),
+                    symbol: finance::archive_base_ticker("BTC"),
                 }],
                 fetch_candles_calls: AtomicUsize::new(0),
                 fetch_funding_calls: AtomicUsize::new(0),
@@ -643,8 +643,8 @@ mod tests {
                 low: 1.0,
                 close: 1.0,
                 volume: 1.0,
-                market: finance::hyperliquid_swap_ccxt_symbol(market.as_str()),
-                symbol: Symbol::from_raw(market.as_str()),
+                market: finance::hyperliquid_archive_swap_symbol(market.as_str()),
+                ticker: finance::archive_base_ticker(market.as_str()),
             }])
         }
 

@@ -1,6 +1,7 @@
 import type { OrderSide } from "@/hooks/useTrading"
 
 import type { PortfolioInterface } from "../../hooks/usePortfolioState"
+import { hourlyFundingRateForBase } from "./allSymbolRowModel"
 
 export type PositionRowStatus = "new" | "unchanged" | "changed" | "closing"
 
@@ -87,7 +88,10 @@ export const signedFundingRateForPosition = (
   fundingRatesByBaseSymbol?: Record<string, number>,
 ): number | null => {
   const baseSymbol = position.symbol.split("/")[0] ?? position.symbol
-  const hourlyRate = fundingRatesByBaseSymbol?.[baseSymbol]
+  const hourlyRate = hourlyFundingRateForBase(
+    fundingRatesByBaseSymbol,
+    baseSymbol,
+  )
   if (hourlyRate === undefined) return null
   const annualizedRate = hourlyRate * 24 * 365
   return position.side === "buy" ? -annualizedRate : annualizedRate

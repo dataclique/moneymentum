@@ -1,6 +1,6 @@
 # Roadmap
 
-[Team project board (private)](https://github.com/orgs/dataclique/projects/8)
+[Team project board (private)](https://github.com/orgs/dataclique/projects/12)
 
 [SPEC.md](./SPEC.md) describes the target system. This roadmap orders the work
 by priority; GitHub issues hold requirements, acceptance criteria, and
@@ -37,11 +37,28 @@ combinations by their effect on the whole portfolio, including cost and
 constraints. Contract browsing supports that decision; it is not the product's
 organizing workflow.
 
+The next product focus is options-based portfolio protection, ahead of broader
+asset coverage and managed vaults. Initial coverage is a selected share of
+read-only BTC holdings, without granting trading authority over those holdings.
+Let users explore protection and tolerated downside visually, including gradual
+payout profiles, premium costs, upside tradeoffs, and residual risk. The first
+options release covers downside protection, including rolling existing BTC
+hedges through the normal user-triggered rebalance. Upside-seeking option goals
+are outside this release. Protection uses a rolling horizon, renewed through
+user-triggered rebalance rather than a fixed calendar end date. Protection is a
+target portfolio allocation, with suggestions based on holdings and desired
+protection strength. Show achievable protection and costs without equating
+allocation weight with hedge coverage. Later, net portfolio beta can account for
+other assets and offsetting short positions. Asset-specific options follow where
+liquidity is usable; neither extension is a prerequisite for initial BTC
+protection. Users select the rolling horizon in the initial release. Suggested
+horizons follow later, with manual choice retained. Renewal does not authorize
+unattended trades.
+
 - [ ] Define portfolio-goal selection across instruments and combinations --
       [#495](https://github.com/dataclique/moneymentum/issues/495).
-- [ ] Account for read-only BTC holdings and target ending BTC beta --
-      [#317](https://github.com/dataclique/moneymentum/issues/317) and
-      [#318](https://github.com/dataclique/moneymentum/issues/318).
+- [ ] Account for read-only BTC holdings in initial protection coverage --
+      [#317](https://github.com/dataclique/moneymentum/issues/317).
 - [ ] Include protective puts and Derive option positions in portfolio valuation
       and risk -- [#323](https://github.com/dataclique/moneymentum/issues/323),
       [#329](https://github.com/dataclique/moneymentum/issues/329), and
@@ -51,12 +68,27 @@ organizing workflow.
       [#330](https://github.com/dataclique/moneymentum/issues/330),
       [#332](https://github.com/dataclique/moneymentum/issues/332), and
       [#333](https://github.com/dataclique/moneymentum/issues/333).
-- [ ] Compare historical crash scenarios, stressed correlations, and put rolls
-      -- [#324](https://github.com/dataclique/moneymentum/issues/324),
-      [#325](https://github.com/dataclique/moneymentum/issues/325), and
+- [ ] Compare historical crash scenarios and stressed correlations --
+      [#324](https://github.com/dataclique/moneymentum/issues/324),
+      [#325](https://github.com/dataclique/moneymentum/issues/325).
+- [ ] Maintain the chosen protection through option selection and rolls within
+      user-triggered rebalance, comparing strikes, expiries, and combinations
+      rather than prescribing a fixed ladder --
       [#326](https://github.com/dataclique/moneymentum/issues/326).
 - [ ] Complete portfolio risk analytics --
       [#331](https://github.com/dataclique/moneymentum/issues/331).
+
+### After initial BTC protection
+
+- [ ] Suggest rolling horizons by comparing available expiries and costs while
+      retaining manual selection --
+      [#495](https://github.com/dataclique/moneymentum/issues/495) and
+      [#329](https://github.com/dataclique/moneymentum/issues/329).
+- [ ] Incorporate net portfolio BTC beta, including other assets and offsetting
+      shorts, into protection targets --
+      [#318](https://github.com/dataclique/moneymentum/issues/318).
+
+These extensions are not required to deliver coverage of read-only BTC holdings.
 
 **Done when:** users can compare feasible portfolio changes against an explicit
 goal, see costs and residual exposure, and choose whether to stage and execute.
@@ -68,6 +100,13 @@ submits trades automatically.
 Fix genuine rebalance failures without making autonomous rebalancing the main
 product direction. The user chooses when to execute; success must reflect venue
 outcomes, not just submission.
+
+The initial failure policy stops new submissions across the rebalance when a
+trade fails. Already-submitted orders and fills still require reconciliation;
+stopping does not reverse fills or imply successful cancellation. Ambiguous
+outcomes also prevent new submissions until reconciled, without blind retries.
+The complete execution outcome remains open under
+[#309](https://github.com/dataclique/moneymentum/issues/309).
 
 - [ ] Detect completion and preserve recoverable partial or ambiguous outcomes
       -- [#92](https://github.com/dataclique/moneymentum/issues/92) and
@@ -147,6 +186,23 @@ withdrawal behavior, and fees.
       [#337](https://github.com/dataclique/moneymentum/issues/337) and
       [#338](https://github.com/dataclique/moneymentum/issues/338).
 
+## Continue independent work in large rebalances
+
+For larger portfolios and multiple venues, one failed trade should not prevent
+unrelated remaining work from proceeding. This is a later, low-priority
+extension of the initial stop-on-failure policy, not a prerequisite for reliable
+initial execution.
+
+```mermaid
+flowchart LR
+    stop["Stop on failure and reconcile outcomes (#159)"] --> continue["Continue independent trades and retry safely (#496)"]
+```
+
+- [ ] Preserve funding, margin, and hedge dependencies while allowing
+      independent trades to continue, with bounded retries after outcome
+      reconciliation --
+      [#496](https://github.com/dataclique/moneymentum/issues/496).
+
 ## Further exploration
 
 Tokenized equities, yield products, and multi-account support remain exploration
@@ -158,9 +214,10 @@ Delivered work remains in the tracker and Git history rather than a second
 implementation checklist here. Completion of a foundation does not imply its
 dependent product experience is finished.
 
-- [x] Deliver the basic screener, staging, leverage, submission, and draft
-      portfolio contracts --
-      [#305](https://github.com/dataclique/moneymentum/issues/305) through
+- [x] Deliver the basic screener, staging, leverage, and draft portfolio
+      contracts -- [#305](https://github.com/dataclique/moneymentum/issues/305)
+      through [#308](https://github.com/dataclique/moneymentum/issues/308), plus
+      [#310](https://github.com/dataclique/moneymentum/issues/310) and
       [#311](https://github.com/dataclique/moneymentum/issues/311).
 - [x] Add active-portfolio BTC beta and read-only BTC addresses --
       [#315](https://github.com/dataclique/moneymentum/issues/315) and

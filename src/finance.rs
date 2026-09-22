@@ -104,15 +104,35 @@ fn hyperliquid_swap_ccxt_symbol_with_collateral(base_name: &str, collateral: &st
 /// `KPEPE/USDC:USDC` are the same economic instrument, and uppercasing the
 /// archive key created duplicate rows that case-sensitive dedup could not
 /// collapse.
-pub(crate) fn hyperliquid_archive_swap_symbol(base_name: &str) -> CcxtSymbol {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ArchiveSwapSymbol(String);
+
+impl ArchiveSwapSymbol {
+    pub(crate) fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// Builds an archive swap symbol without normalizing the base ticker's casing.
+pub(crate) fn hyperliquid_archive_swap_symbol(base_name: &str) -> ArchiveSwapSymbol {
     let base = base_name.replace(':', "-");
-    CcxtSymbol(format!("{base}/USDC:USDC"))
+    ArchiveSwapSymbol(format!("{base}/USDC:USDC"))
 }
 
 /// Exchange-native base ticker for archive rows (preserves `kPEPE` casing).
-pub(crate) fn archive_base_ticker(base_name: &str) -> String {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ArchiveTicker(String);
+
+impl ArchiveTicker {
+    pub(crate) fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// Extracts an archive base ticker without normalizing its casing.
+pub(crate) fn archive_base_ticker(base_name: &str) -> ArchiveTicker {
     let base = base_name.split('/').next().unwrap_or(base_name);
-    base.replace(':', "-")
+    ArchiveTicker(base.replace(':', "-"))
 }
 
 /// CCXT `safeCurrencyCode` for Hyperliquid meta asset names.
@@ -232,9 +252,9 @@ mod tests {
 
     #[test]
     fn archive_base_ticker_preserves_exchange_native_casing() {
-        assert_eq!(archive_base_ticker("kPEPE"), "kPEPE");
-        assert_eq!(archive_base_ticker("kPEPE/USDC:USDC"), "kPEPE");
-        assert_eq!(archive_base_ticker("flx:crcl"), "flx-crcl");
+        assert_eq!(archive_base_ticker("kPEPE").as_str(), "kPEPE");
+        assert_eq!(archive_base_ticker("kPEPE/USDC:USDC").as_str(), "kPEPE");
+        assert_eq!(archive_base_ticker("flx:crcl").as_str(), "flx-crcl");
     }
 
     #[test]

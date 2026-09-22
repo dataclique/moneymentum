@@ -12,7 +12,7 @@ use thiserror::Error;
 use tracing::{debug, instrument};
 
 use crate::dataframe::{self, DataFrameError};
-use crate::finance::CcxtSymbol;
+use crate::finance::{ArchiveSwapSymbol, ArchiveTicker};
 use crate::timeframe::Timeframe;
 
 #[derive(Debug, Error)]
@@ -34,9 +34,9 @@ pub(crate) struct Candle {
     pub(crate) close: f64,
     pub(crate) volume: f64,
     /// Archive swap id with exchange-native base casing (e.g., "kPEPE/USDC:USDC")
-    pub(crate) market: CcxtSymbol,
+    pub(crate) market: ArchiveSwapSymbol,
     /// Exchange-native base ticker for the archive `ticker` column (e.g., "kPEPE")
-    pub(crate) ticker: String,
+    pub(crate) ticker: ArchiveTicker,
 }
 
 #[instrument(skip_all, fields(count = candles.len()))]

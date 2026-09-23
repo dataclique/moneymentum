@@ -7,7 +7,9 @@ by priority; GitHub issues hold requirements, acceptance criteria, and
 sub-issues. Independent work can proceed in parallel. An open issue stays open
 until its outcome is verified, even when supporting PRs have merged.
 
-## See actual portfolio performance over time
+## v0 - Portfolio management
+
+### v0.2 - Historical portfolio performance
 
 Make the backend collect and serve the history needed to show portfolio value,
 profit, and returns. The first useful result is a performance chart backed by
@@ -33,7 +35,7 @@ performance and missing history shown explicitly.
 traceable valuations, cash flows, and data gaps. Historical market candles or
 simulated portfolio returns alone do not satisfy this outcome.
 
-## Construct portfolios around desired exposures and outcomes
+### v0.3 - Goal-based portfolio construction
 
 Start with the desired portfolio: less BTC sensitivity, downside protection, or
 momentum exposure without extra market beta. Compare instruments and
@@ -67,7 +69,7 @@ goal, see costs and residual exposure, and choose whether to stage and execute.
 Estimates and unavailable projections remain visible; entering a goal never
 submits trades automatically.
 
-## Keep discretionary execution reliable
+#### Execution reliability
 
 Fix genuine rebalance failures without making autonomous rebalancing the main
 product direction. The user chooses when to execute; success must reflect venue
@@ -85,7 +87,7 @@ outcomes, not just submission.
 - [ ] Make the portfolio desk usable by keyboard --
       [#457](https://github.com/dataclique/moneymentum/issues/457).
 
-## Share one host through dataclique/infra
+#### Shared host delivery
 
 Move shared provisioning and host activation to
 [Infra](https://github.com/dataclique/infra) for Moneymentum, Yielduck, and
@@ -121,7 +123,7 @@ Infra-owned host configuration, with verified state isolation, recovery, and
 rollback after an authorized cutover. The provisioning PR pair alone is a
 partial migration.
 
-## Extend portfolio coverage and ownership
+### v0.4 - Portfolio coverage and ownership
 
 Broaden the same portfolio model without creating separate instrument-specific
 workflows.
@@ -136,7 +138,7 @@ workflows.
 - [ ] Synchronize encrypted local state --
       [#340](https://github.com/dataclique/moneymentum/issues/340).
 
-## Managed vaults and commercialization
+### v0.5 - Managed vaults and commercialization
 
 Let investors allocate to managed portfolios with explicit share accounting,
 withdrawal behavior, and fees.
@@ -151,12 +153,12 @@ withdrawal behavior, and fees.
       [#337](https://github.com/dataclique/moneymentum/issues/337) and
       [#338](https://github.com/dataclique/moneymentum/issues/338).
 
-## Further exploration
+### Unscheduled exploration
 
 Tokenized equities, yield products, and multi-account support remain exploration
 directions in [SPEC.md](./SPEC.md), not scheduled work.
 
-## Completed: portfolio and analytics foundations
+### v0.1 - Portfolio and analytics foundations
 
 Delivered work remains in the tracker and Git history rather than a second
 implementation checklist here. Completion of a foundation does not imply its
@@ -176,8 +178,11 @@ dependent product experience is finished.
       [#303](https://github.com/dataclique/moneymentum/issues/303), and
       [#397](https://github.com/dataclique/moneymentum/issues/397).
 
-## Completed: planning refinement
+#### Planning foundation
 
 - [x] Align performance, portfolio-construction, and shared-host priorities --
       [#493](https://github.com/dataclique/moneymentum/issues/493) /
       [PR #494](https://github.com/dataclique/moneymentum/pull/494).
+- [x] Ship the pull request template and align AGENTS.md with it --
+      [#436](https://github.com/dataclique/moneymentum/issues/436) /
+      [#437](https://github.com/dataclique/moneymentum/pull/437)

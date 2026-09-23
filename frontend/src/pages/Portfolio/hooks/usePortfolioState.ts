@@ -20,7 +20,10 @@ import {
   type OrderSide,
   type OrderResult,
 } from "@/hooks/useTrading"
-import { fetchDeriveTickers } from "@/services/derive/index"
+import {
+  fetchDeriveTickers,
+  isDeriveCancelledOrderBatch,
+} from "@/services/derive/index"
 import {
   captureStagedPortfolioOverlay,
   deriveActionsToOrderRequests,
@@ -1144,7 +1147,10 @@ export const usePortfolioState = () => {
             }),
           )
           if (Either.isRight(deriveResult)) {
-            submittedOrders.push(...deriveResult.right)
+            const deriveOrders = isDeriveCancelledOrderBatch(deriveResult.right)
+              ? deriveResult.right.orders
+              : deriveResult.right
+            submittedOrders.push(...deriveOrders)
             submittedActions.push(...deriveActions)
           } else {
             console.error(

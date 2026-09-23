@@ -80,6 +80,41 @@ export class DerivePartialBatchFailure extends Data.TaggedError(
   readonly cause: TradingExchangeFailure
 }> {}
 
+/** Accepted prefix retained when wallet/session context changes mid-batch. */
+export class DeriveBatchSessionCancelled extends Data.TaggedError(
+  "DeriveBatchSessionCancelled",
+)<{
+  readonly submittedOrders: readonly [
+    DeriveSubmittedOrder,
+    ...DeriveSubmittedOrder[],
+  ]
+  readonly unattemptedRequests: readonly Readonly<DeriveBatchOrderRequest>[]
+}> {}
+
+export type DeriveOrderBatchAccepted = {
+  readonly kind: "accepted"
+  readonly orderId: string
+}
+
+/** Mutation result when a live session guard stops further submissions. */
+export type DeriveCancelledOrderBatch = {
+  readonly terminal: "cancelled"
+  readonly outcomes: readonly DeriveOrderBatchAccepted[]
+  readonly orders: readonly OrderResult[]
+}
+
+export type DerivePlaceOrdersResult = OrderResult[] | DeriveCancelledOrderBatch
+
+export const isDeriveCancelledOrderBatch = (
+  value: DerivePlaceOrdersResult,
+): value is DeriveCancelledOrderBatch =>
+  !Array.isArray(value) && value.terminal === "cancelled"
+
+/** Optional live check; default keeps the batch running to completion. */
+export type DeriveSessionGuard = {
+  readonly isSessionCurrent: () => boolean
+}
+
 export interface DeriveTickerQuote {
   symbol: string
   bid: number | null
@@ -260,11 +295,16 @@ const requireSubaccountId = (
 export class DeriveTradingClient {
   private readonly exchange: DeriveCcxtExchange
   private readonly credentials: DeriveSessionCredentials
+  private readonly isSessionCurrent: () => boolean
   private marketsLoad: Promise<void> | null = null
 
-  constructor(credentials: DeriveSessionCredentials) {
+  constructor(
+    credentials: DeriveSessionCredentials,
+    sessionGuard?: DeriveSessionGuard,
+  ) {
     this.credentials = credentials
     this.exchange = createDeriveExchange(credentials)
+    this.isSessionCurrent = sessionGuard?.isSessionCurrent ?? (() => true)
   }
 
   private subaccountParams(): Effect.Effect<
@@ -527,7 +567,7 @@ export class DeriveTradingClient {
     requests: DeriveBatchOrderRequest[],
   ): Effect.Effect<
     Array<{ request: DeriveBatchOrderRequest; order: DeriveCcxtOrder }>,
-    TradingBatchFailure
+    TradingBatchFailure | DeriveBatchSessionCancelled
   > {
     return Effect.gen(this, function* () {
       if (requests.length === 0) {
@@ -545,6 +585,28 @@ export class DeriveTradingClient {
           Effect.gen(this, function* () {
             const index = responses.length
             if (index > 0) {
+              const sessionCurrent = yield* Effect.sync(() =>
+                this.isSessionCurrent(),
+              )
+              if (
+                !sessionCurrent &&
+                EffectArray.isNonEmptyArray(responses)
+              ) {
+                const unattemptedRequests = requests.slice(index)
+                yield* Effect.sync(() => {
+                  console.debug("[derive] order batch stopped", {
+                    terminal: "cancelled",
+                    accepted: responses.length,
+                    unattemptedCount: unattemptedRequests.length,
+                  })
+                })
+                return yield* Effect.fail(
+                  new DeriveBatchSessionCancelled({
+                    submittedOrders: responses,
+                    unattemptedRequests,
+                  }),
+                )
+              }
               yield* Effect.sleep(DERIVE_ORDER_NONCE_GAP_MS)
             }
             const order = yield* this.createOne(
@@ -553,7 +615,12 @@ export class DeriveTradingClient {
               requests.length,
             ).pipe(
               Effect.catchAll(
-                (cause): Effect.Effect<never, TradingBatchFailure> => {
+                (
+                  cause,
+                ): Effect.Effect<
+                  never,
+                  TradingBatchFailure | DeriveBatchSessionCancelled
+                > => {
                   if (!EffectArray.isNonEmptyArray(responses)) {
                     return Effect.fail(cause)
                   }
@@ -593,7 +660,10 @@ export class DeriveTradingClient {
   /** Sequential placement with interruptible gaps between venue nonces. */
   createOrdersBatch(
     requests: DeriveBatchOrderRequest[],
-  ): Effect.Effect<DeriveCcxtOrder[], TradingBatchFailure> {
+  ): Effect.Effect<
+    DeriveCcxtOrder[],
+    TradingBatchFailure | DeriveBatchSessionCancelled
+  > {
     return this.submitBatch(requests).pipe(
       Effect.map(submitted => submitted.map(({ order }) => order)),
     )
@@ -617,7 +687,10 @@ export class DeriveTradingClient {
   /** Return create responses without treating working orders as confirmed fills. */
   placeAndMonitorOrders(
     requests: DeriveBatchOrderRequest[],
-  ): Effect.Effect<OrderResult[], TradingBatchFailure> {
+  ): Effect.Effect<
+    OrderResult[],
+    TradingBatchFailure | DeriveBatchSessionCancelled
+  > {
     return this.submitBatch(requests).pipe(
       Effect.map(submitted =>
         submitted.map(({ order, request }) =>
@@ -701,8 +774,11 @@ const observeInterruption = <Value, Failure>(
     ),
   )
 
-let cachedTradingClient: { key: string; client: DeriveTradingClient } | null =
-  null
+let cachedTradingClient: {
+  key: string
+  client: DeriveTradingClient
+  sessionGuard: DeriveSessionGuard | undefined
+} | null = null
 
 const tradingClientCacheKey = (session: DeriveSessionCredentials): string =>
   [
@@ -715,13 +791,18 @@ const tradingClientCacheKey = (session: DeriveSessionCredentials): string =>
 
 const tradingClientFor = (
   session: DeriveSessionCredentials,
+  sessionGuard?: DeriveSessionGuard,
 ): DeriveTradingClient => {
   const key = tradingClientCacheKey(session)
-  if (cachedTradingClient !== null && cachedTradingClient.key === key) {
+  if (
+    cachedTradingClient !== null &&
+    cachedTradingClient.key === key &&
+    cachedTradingClient.sessionGuard === sessionGuard
+  ) {
     return cachedTradingClient.client
   }
-  const client = new DeriveTradingClient(session)
-  cachedTradingClient = { key, client }
+  const client = new DeriveTradingClient(session, sessionGuard)
+  cachedTradingClient = { key, client, sessionGuard }
   return client
 }
 
@@ -757,15 +838,54 @@ export const fetchDeriveFundingRates = (
     ),
   )
 
+const cancelledBatchFromSubmitted = (
+  submittedOrders: readonly [
+    DeriveSubmittedOrder,
+    ...DeriveSubmittedOrder[],
+  ],
+): DeriveCancelledOrderBatch => {
+  const orders = submittedOrders.map(({ order, request }) => {
+    const mapped = mapDeriveOrderForWatch(order)
+    const side =
+      order.side === "buy" || order.side === "sell" ? order.side : request.side
+    return {
+      symbol: request.symbol,
+      side,
+      status: mapped.status,
+      message: mapped.message,
+    } satisfies OrderResult
+  })
+  return {
+    terminal: "cancelled",
+    outcomes: submittedOrders.map(({ order }) => ({
+      kind: "accepted" as const,
+      orderId: String(order.id ?? ""),
+    })),
+    orders,
+  }
+}
+
 export const placeAndMonitorDeriveOrders = (
   credentials: DeriveSessionCredentials | null,
   requests: DeriveBatchOrderRequest[],
-): Effect.Effect<OrderResult[], DeriveSessionMissing | TradingBatchFailure> =>
+  sessionGuard?: DeriveSessionGuard,
+): Effect.Effect<
+  DerivePlaceOrdersResult,
+  DeriveSessionMissing | TradingBatchFailure
+> =>
   observeInterruption(
     "placeOrders",
     requireDeriveSession(credentials).pipe(
       Effect.flatMap(session =>
-        tradingClientFor(session).placeAndMonitorOrders(requests),
+        tradingClientFor(session, sessionGuard)
+          .placeAndMonitorOrders(requests)
+          .pipe(
+            Effect.catchTag("DeriveBatchSessionCancelled", cancelled =>
+              Effect.succeed(
+                cancelledBatchFromSubmitted(cancelled.submittedOrders),
+              ),
+            ),
+          ),
       ),
     ),
   )

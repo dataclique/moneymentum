@@ -1136,7 +1136,7 @@ async fn handle_command(
     }
     let applied: Result<_, DeriveError> = tokio::select! {
         biased;
-        _ = request.acknowledgment.closed() => {
+        () = request.acknowledgment.closed() => {
             debug!(command = ?request.command, "derive command cancelled before commit");
             return SessionControl::Reconnect;
         }

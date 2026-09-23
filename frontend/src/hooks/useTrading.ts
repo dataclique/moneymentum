@@ -1,5 +1,5 @@
 import * as Effect from "effect/Effect"
-import { createMemo } from "solid-js"
+import { createMemo, onCleanup } from "solid-js"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/solid-query"
 import { useWallet } from "./useWallet"
 import type {
@@ -23,6 +23,7 @@ import {
   requireDeriveSessionWithSubaccount,
   type DeriveBatchOrderRequest,
   type DeriveCcxtOrder,
+  type DerivePlaceOrdersResult,
   type DeriveSessionCredentials,
 } from "@/services/derive/index"
 import type { RebalanceAction } from "@/pages/Portfolio/hooks/portfolioRebalancer"
@@ -33,6 +34,7 @@ export type {
   CurrentPosition,
   LeverageLimit,
   HyperliquidMarketsResponse,
+  DerivePlaceOrdersResult,
 }
 
 const QUERY_KEYS = {
@@ -238,27 +240,68 @@ export interface DeriveRebalanceParams {
   requests: DeriveBatchOrderRequest[]
 }
 
+const sameDeriveSession = (
+  left: DeriveSessionCredentials,
+  right: DeriveSessionCredentials | null,
+): boolean =>
+  right !== null &&
+  left.deriveWallet === right.deriveWallet &&
+  left.sessionAddress === right.sessionAddress &&
+  left.sessionPrivateKey === right.sessionPrivateKey &&
+  left.networkMode === right.networkMode &&
+  left.subaccountId === right.subaccountId
+
 /**
  * Place + monitor Derive limit orders (same path as the Derive Test trading
  * tab). Callers map portfolio actions to requests before mutate.
+ *
+ * Stops further submissions when the Derive session, subaccount, network,
+ * hosting provider, or Hyperliquid main address changes mid-batch, retaining
+ * any already-accepted prefix as `terminal: "cancelled"`.
  */
 export const useRebalanceDerivePositions = () => {
   const session = useDeriveSessionCredentials()
+  const { mainAddress } = useWallet()
   const queryClient = useQueryClient()
+  const activeBatchLifetimes = new Set<{ current: boolean }>()
+
+  onCleanup(() => {
+    for (const lifetime of activeBatchLifetimes) {
+      lifetime.current = false
+    }
+    activeBatchLifetimes.clear()
+  })
 
   return useMutation(() => ({
-    mutationFn: (params: DeriveRebalanceParams) => {
+    mutationFn: (
+      params: DeriveRebalanceParams,
+    ): Promise<DerivePlaceOrdersResult> => {
       if (params.requests.length === 0) {
         return Promise.resolve([] as OrderResult[])
       }
 
+      const initiatingSession = session()
+      const initiatingMainAddress = mainAddress()
+      const batchLifetime = { current: true }
+      activeBatchLifetimes.add(batchLifetime)
+
       return Effect.runPromise(
-        requireDeriveSessionWithSubaccount(session()).pipe(
+        requireDeriveSessionWithSubaccount(initiatingSession).pipe(
           Effect.flatMap(credentials =>
-            placeAndMonitorDeriveOrders(credentials, params.requests),
+            placeAndMonitorDeriveOrders(credentials, params.requests, {
+              isSessionCurrent: () =>
+                batchLifetime.current &&
+                sameDeriveSession(credentials, session()) &&
+                (initiatingMainAddress === null
+                  ? mainAddress() === null
+                  : mainAddress()?.toLowerCase() ===
+                    initiatingMainAddress.toLowerCase()),
+            }),
           ),
         ),
-      )
+      ).finally(() => {
+        activeBatchLifetimes.delete(batchLifetime)
+      })
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({

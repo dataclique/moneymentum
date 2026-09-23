@@ -177,3 +177,6 @@ dependent product experience is finished.
 - [x] Align performance, portfolio-construction, and shared-host priorities --
       [#493](https://github.com/dataclique/moneymentum/issues/493) /
       [PR #494](https://github.com/dataclique/moneymentum/pull/494).
+- [x] Ship the pull request template and align AGENTS.md with it --
+      [#436](https://github.com/dataclique/moneymentum/issues/436) /
+      [#437](https://github.com/dataclique/moneymentum/pull/437)

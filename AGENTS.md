@@ -1,10 +1,5 @@
 # AGENTS.md
 
-Rules and guidelines for AI agents working in this repository. Everything in
-this document is a directive, not a suggestion.
-
----
-
 ## Project Direction
 
 This project is an institutional-grade quant toolkit. See [SPEC.md](./SPEC.md)
@@ -55,48 +50,23 @@ For status -- what works today vs. what's planned -- see
 
 ### Environment: Nix first
 
-All toolchain binaries (`bun`, `cargo`, `clippy`, `sqlx`, `but`, etc.) come from
-the Nix flake. Agents must not assume a bare shell has them on `PATH`.
-
-**Before any tool invocation**, either:
-
-1. Confirm the current shell is already inside the flake env (e.g. `direnv` /
-   `nix develop` already active -- `which bun` / `which cargo` resolve under the
-   Nix store or devenv), or
-2. Wrap the command in `nix develop` from the **repo root**:
-
-```bash
-# Preferred one-shot form for agent shells (no direnv assumed):
-nix develop --impure -c bash -lc 'cd frontend && bun run typecheck'
-nix develop --impure -c cargo check
-
-# Frontend-only shell (lighter; no Rust toolchain):
-nix develop --impure .#frontend -c bash -lc 'cd frontend && bun run lint'
-```
-
-**Forbidden:**
-
-- Running `bun`, `cargo`, `npm`, `yarn`, `pnpm`, `rustup`, or similar from a
-  bare shell and then "discovering" Nix after it fails
-- Installing tools with `bun install -g`, `cargo install`, `curl | sh`,
-  Homebrew, etc. to work around a missing binary
-- Bypassing Nix for dependency management
-
-Use direnv in both interactive terminals and agent command environments. Verify
-that the repository's Nix toolchain is active in the shell running the command.
-When it is active, run toolchain commands directly. Use an explicit flake shell
-only when direnv is unavailable; the agent itself needs no Nix launch wrapper.
+Use the repository's Nix toolchain for all development commands. Verify that the
+command shell has the flake environment active; otherwise, use an explicit flake
+shell from the repository root. Do not install global tools or bypass Nix for
+dependency management. Use the frontend-only shell (`.#frontend`) when Rust
+tooling is unnecessary. When direnv has activated the flake environment, run
+toolchain commands directly.
 
 ### Frontend (SolidJS + Vite)
 
 From repo root, via Nix:
 
 ```bash
-nix develop --impure -c bash -lc 'cd frontend && bun run typecheck'  # Type check only
-nix develop --impure -c bash -lc 'cd frontend && bun run lint'       # Lint
-nix develop --impure -c bash -lc 'cd frontend && bun run test'       # Run tests (vitest)
-nix develop --impure -c bash -lc 'cd frontend && bun run build'      # Full build
-nix develop --impure -c bash -lc 'cd frontend && bun run dev'        # Dev server (port 5173) - only when explicitly asked
+nix --impure develop -c bash -lc 'cd frontend && bun run typecheck'  # Type check only
+nix --impure develop -c bash -lc 'cd frontend && bun run lint'       # Lint
+nix --impure develop -c bash -lc 'cd frontend && bun run test'       # Run tests (vitest)
+nix --impure develop -c bash -lc 'cd frontend && bun run build'      # Full build
+nix --impure develop -c bash -lc 'cd frontend && bun run dev'        # Dev server (port 5173) - only when explicitly asked
 ```
 
 Inside an already-active flake shell, the same scripts run from `frontend/` as
@@ -107,10 +77,10 @@ Inside an already-active flake shell, the same scripts run from `frontend/` as
 From repo root, via Nix:
 
 ```bash
-nix develop --impure -c cargo check              # Fast compilation verification
-nix develop --impure -c cargo test -q            # Run tests
-nix develop --impure -c cargo clippy             # Linting
-nix develop --impure -c cargo fmt                # Format code
+nix --impure develop -c cargo check              # Fast compilation verification
+nix --impure develop -c cargo test -q            # Run tests
+nix --impure develop -c cargo clippy             # Linting
+nix --impure develop -c cargo fmt                # Format code
 ```
 
 Inside an already-active flake shell, bare `cargo ...` is fine.
@@ -135,14 +105,14 @@ binary.
 
 **Dependencies**: Always use `cargo add <crate>` - never manually edit
 Cargo.toml versions. Run `cargo add` through the flake shell
-(`nix develop --impure -c cargo add <crate>`).
+(`nix --impure develop -c cargo add <crate>`).
 
 **Migrations**: Never manually create migration files. Always use sqlx CLI
 (through the flake shell):
 
 ```bash
-nix develop --impure -c sqlx migrate add <migration_name>  # Creates timestamped migration file
-nix develop --impure -c sqlx migrate run                   # Applies pending migrations
+nix --impure develop -c sqlx migrate add <migration_name>  # Creates timestamped migration file
+nix --impure develop -c sqlx migrate run                   # Applies pending migrations
 ```
 
 ### Version control
@@ -201,22 +171,9 @@ makes a whole stack conform.
 
 ### Every stacked PR carries the GitButler stack footer
 
-Every PR that belongs to a multi-branch stack must carry the GitButler
-stack-navigation footer -- the
-`This is part X of N in a stack made with
-GitButler:` block (between the
-`<!-- GitButler Footer Boundary -->` markers) listing the stack's PRs
-top-to-bottom with the current one marked. It orients reviewers in the stack and
-links the sibling PRs.
-
-GitButler writes this footer when it opens or pushes a PR, but it **drifts**: a
-no-op push does not rewrite it, so after a rebase, a branch add/remove, or a
-merge it goes stale (lists merged PRs, wrong `N`, wrong position) or is missing
-entirely on PRs that were not opened through GitButler. There is no `but`
-command to refresh it. Keep every stacked PR's footer current by running
-`nix run .#pr-stack-footer` (`scripts/pr-stack-footer.nu`), which rebuilds each
-stack's footer from the live workspace and splices it into the PR bodies. Run it
-after any operation that reshapes the stack.
+Keep the GitButler stack-navigation footer current on every stacked PR. Run
+`nix run .#pr-stack-footer` after operations that reshape the stack; a no-op
+push does not refresh it.
 
 ### Documentation stays in lockstep with the code
 
@@ -268,7 +225,7 @@ the allow is necessary.
 ### Dependencies
 
 - Frontend: use bun commands (`bun add`, `bun remove`) inside the flake shell
-  (`nix develop --impure -c bash -lc 'cd frontend && bun add <pkg>'`). Never
+  (`nix --impure develop -c bash -lc 'cd frontend && bun add <pkg>'`). Never
   manually write version numbers - LLMs hallucinate them.
 - Never bypass nix for dependency management.
 
@@ -333,48 +290,14 @@ Prefer declarative, expression-oriented code:
 
 ### No boolean blindness
 
-Prefer discriminated unions or named functions over raw booleans:
-
-```typescript
-// Bad
-setIsOpen(true);
-
-// Good
-type ModalState = "open" | "closed";
-setModalState("open");
-
-// Also good
-const openModal = () => setIsOpen(true);
-```
+Prefer discriminated unions or named functions over raw booleans.
 
 ### ASCII for code, Unicode for users
 
-The split is by **audience**, not by file type or language.
-
-**ASCII** (the default): code, comments, identifiers, type names, log messages,
-git commit subjects, PR titles, documentation prose, configuration files, and
-developer-console output (`console.log`, `console.table`, `tracing` calls). Use
-ASCII equivalents: `*` not `×`, `->` not `→`, `~` not `≈`, `--` not em-dash,
-`beta` not `β`.
-
-**Unicode** (whenever the audience is a user): UI text rendered in the app, CLI
-messages presented to a user, error messages surfaced in the product,
-tooltip/aria/accessibility strings, and -- importantly -- **the quoted UI
-strings that appear inside documentation**. Issue contracts routinely cite UI
-text verbatim (e.g. `the tooltip reads "Read-only — cannot trade"`); inside
-those quotes, write the exact character the user will see. The prose around the
-quote stays ASCII.
-
-The placeholder rendered when a number is missing is `—` (em-dash), not `--`,
-because the user reads it. The same dash inside a code comment ("see note above
--- this is documented elsewhere") stays ASCII because no user ever sees it. When
-in doubt, ask: who is the audience for this exact run of characters?
-
-This is a strict, blast-radius-asymmetric rule. A bulk find/replace that
-substitutes `—` with `--` across the repo is **not** a safe refactor -- it
-mangles UI strings and the documentation that quotes them. Audit before running
-such a sweep, and never apply it to `*.tsx`, `*.ts`, or quoted UI strings in
-documentation and issues.
+Use ASCII for code, comments, identifiers, logs, commit subjects, PR titles,
+configuration, and documentation prose. Preserve Unicode in user-visible product
+text and verbatim UI quotations. Do not apply bulk replacements across code or
+documentation without distinguishing user-visible strings.
 
 ### Self-documenting code
 
@@ -400,44 +323,12 @@ Keep types with the code that uses them, not in separate files.
 
 ### Logging
 
-Use log levels semantically:
-
-- **ERROR**: Something failed that requires attention (unrecoverable failures,
-  unexpected exceptions)
-- **WARN**: Something unexpected happened but the system recovered (retries
-  exhausted, fallback used, deprecated feature accessed)
-- **INFO**: High-level service lifecycle events only (service ready, graceful
-  shutdown). One or two lines per service startup, not per component
-- **DEBUG**: Operational details useful for troubleshooting (component
-  initialized, request handled, configuration applied)
-- **TRACE**: Fine-grained execution flow for deep debugging (variable values,
-  loop iterations, function entry/exit)
-
-**Message quality:**
-
-- Log when something completes, not when it starts. "hyperliquid client ready"
-  not "initializing hyperliquid client"
-- Messages should be grep-friendly and unique. Avoid generic "error occurred" or
-  "operation failed"
-- Include relevant context as structured fields, not interpolated strings:
-  `info!(port = config.port, "server ready")` not
-  `info!("server ready on port
-  {}", config.port)`
-- Use past tense or state descriptions: "request processed", "connection
-  established", "cache invalidated"
-
-**Anti-patterns:**
-
-- Logging both "starting X" and "X complete" at the same level - pick one
-  (prefer completion)
-- INFO-level logs for internal component setup (use DEBUG)
-- Logging sensitive data (credentials, tokens, PII)
-- Empty or near-empty messages: `debug!("here")`, `info!("")`
-- Vague messages without subject: `info!("initialized")` - initialized what?
-  Yes, tracing adds module prefixes, but logs should be clear at a glance
-  without parsing `moneymentum::hyperliquid::client`. Say
-  `debug!("hyperliquid client
-  ready")` instead
+Use ERROR for failures that require attention, WARN for unexpected recovered
+conditions, INFO for service lifecycle events, DEBUG for operational details,
+and TRACE for fine-grained execution. Prefer completion records, unique messages
+that identify the subject, and structured fields. Do not duplicate start and
+completion messages at the same level, and never log credentials, tokens, or
+personal data.
 
 ### Data quality verification
 
@@ -481,11 +372,6 @@ nushell (`.nu`) instead. Bash is acceptable only for short inline blocks (CI
 workflow `run:` steps, npm `scripts`, Makefile recipes); the moment a script
 grows into a standalone file, it must be nushell. Shebang: `#!/usr/bin/env nu`.
 
-Reasons: nushell has structured data, real error handling, typed pipelines, and
-predictable quoting/word-splitting. Bash files accumulate footguns (unquoted
-expansions, `set -e` corner cases, IFS surprises) that nushell avoids by
-construction.
-
 ---
 
 ## Rust Code Style
@@ -511,138 +397,23 @@ into modules when there are clear domain boundaries.
 
 ### Type modeling
 
-**Make invalid states unrepresentable.** This is non-negotiable. Every type must
-constrain its values to only valid states.
-
-**Never use String when the domain has a finite set of valid values:**
-
-```rust
-// FORBIDDEN: String accepts infinite invalid values
-struct Config { log_level: String }  // "info", "debug", but also "banana", ""
-
-// CORRECT: enum restricts to valid values only
-enum LogLevel { Trace, Debug, Info, Warn, Error }
-struct Config { log_level: LogLevel }
-```
-
-**Use enums to encode valid states, newtypes for domain concepts:**
-
-```rust
-// Bad: fields can contradict each other
-struct Order { status: String, order_id: Option<String>, error: Option<String> }
-
-// Good: each state has exactly the data it needs
-enum OrderStatus {
-    Pending,
-    Completed { order_id: String },
-    Failed { reason: String },
-}
-```
-
-**Parse, don't validate.** If a value exists, it must be valid. Validation
-happens at construction through smart constructors:
-
-```rust
-// Bad: validation can be forgotten
-pub struct ApiKey(pub String);
-impl ApiKey { pub fn validate(&self) -> Result<(), Error> { ... } }
-
-// Good: if ApiKey exists, it's valid
-pub struct ApiKey(String);  // Private inner
-impl ApiKey {
-    pub fn new(value: String) -> Result<Self, Error> { ... }  // Only way to create
-}
-```
-
-**When deserializing from external sources** (config files, API requests), parse
-into proper types immediately at the boundary. Never pass raw strings through
-the system.
-
-**Persistent IDs must be newtypes.** Never use raw `String` or `&str` for domain
-identifiers that are persisted or passed between async boundaries:
-
-```rust
-// Bad: easy to mix up different persistent IDs
-enqueue_ingestion("ingestion-123").await;
-load_portfolio("ingestion-123").await;  // Oops, wrong ID type
-
-// Good: type system prevents mixing IDs
-struct IngestionRunId(String);
-struct PortfolioId(String);
-```
-
-If a future framework exposes stringly-typed IDs, wrap it at the boundary and
-keep raw strings out of application call sites.
+Use enums for finite sets and valid states, and newtypes for domain concepts and
+persistent identities. Smart constructors enforce invariants. Parse external
+input into these types at the boundary; do not pass raw strings through
+application code. Wrap string-based framework identifiers at the boundary.
 
 ### Avoid deep nesting
 
-Keep code flat in function bodies, module structure, and test organization.
-
-**Function bodies**: Use early returns and `let-else`:
-
-```rust
-fn validate(data: Option<&Data>) -> Result<(), Error> {
-    let data = data.ok_or(Error::NoData)?;
-    if data.qty <= 0 { return Err(Error::InvalidQty); }
-    Ok(())
-}
-```
-
-**Modules**: Don't nest modules inside modules. Keep hierarchy shallow.
-
-**Tests**: No nested modules inside `mod tests`. Use descriptive function names:
-
-```rust
-// Bad
-mod tests { mod symbol { fn normalizes() { ... } } }
-
-// Good
-mod tests { fn symbol_normalizes_hyperliquid_format() { ... } }
-```
-
-**Exception - types**: Nesting in type definitions is fine when it makes invalid
-states unrepresentable. An enum with struct variants is better than flattening
-into mutually exclusive optional fields.
+Use early returns and `let-else`. Keep modules shallow and do not nest test
+modules. Use descriptive test names. Nested type definitions are appropriate
+when they make invalid states unrepresentable.
 
 ### Error handling
 
-- Use `?` operator and proper error types
-- Never create `SomeError(String)` variants that throw away type information
-- Use `#[from]` with thiserror to preserve error chains
-- Don't think ahead about error variants - use `?` wherever needed, then
-  `cargo check` tells you exactly which `#[from]` variants to add
-
-**Never fabricate errors from other crates.** If you need to signal a condition,
-define your own error type. Manually constructing `std::io::Error::new(...)` or
-similar is data corruption - it lies about the error's origin and misleads
-anyone debugging:
-
-```rust
-// FORBIDDEN: pretending std::io produced this error
-Err(std::io::Error::new(ErrorKind::InvalidInput, "bad path"))
-
-// CORRECT: define your own error variant
-#[derive(Debug, Error)]
-enum MyError {
-    #[error("invalid path encoding")]
-    InvalidPathEncoding,
-}
-```
-
-**`#[from]` variant naming**: When using thiserror's `#[from]` attribute,
-variant names must be generic (matching the source error type) and MUST NOT
-claim what operation failed. The `?` operator auto-converts any matching error
-type to the variant, so specific claims become false if another operation
-produces the same error type.
-
-- **FORBIDDEN**: `ReadConfig(#[from] std::io::Error)` - claims config reading
-  failed, but any `?` on io::Error will use this variant
-- **CORRECT**: `Io(#[from] std::io::Error)` - generic, makes no false claims
-- **FORBIDDEN**: `ParseConfig(#[from] toml::de::Error)` - claims config parsing
-- **CORRECT**: `Toml(#[from] toml::de::Error)` - generic, truthful
-
-Rule: If `#[from]` is used, the variant name should mirror the error type, not
-the operation.
+Use `?` and thiserror to preserve typed error chains. Do not use string-only
+error variants or fabricate another crate's errors; define a domain error for a
+domain failure. Let compiler feedback identify required conversions. `#[from]`
+variant names describe the source error type, not the operation.
 
 ### Zero tolerance for panics in non-test code
 
@@ -671,11 +442,6 @@ Always use the most restrictive visibility possible:
 - `pub(super)` over `pub(crate)`
 - `pub(crate)` over `pub`
 
-This enables robust dead code detection by the compiler. When something is
-`pub`, the compiler can't know if external code uses it, so it won't warn about
-unused items. Restrictive visibility makes the relevance scope explicit and lets
-tooling catch unused code.
-
 ### Import organization
 
 Two groups only:
@@ -685,30 +451,8 @@ Two groups only:
 
 Blank line between groups. No function-level imports.
 
-**No import aliases for name conflicts.** When two types have the same name, use
-qualified paths instead of `as` aliases. Aliases require jumping around to
-figure out what's what:
-
-```rust
-// Bad: reader must find the alias to understand the code
-use crate::ingestion::Timeframe as IngestionTimeframe;
-
-// Good: meaning is clear at the usage site
-impl From<Timeframe> for crate::ingestion::Timeframe { ... }
-```
-
-**Tracing macros are unqualified.** We use tracing and nothing else for logging,
-so `tracing::error!` qualification adds no disambiguation value - it's just
-verbose bloat:
-
-```rust
-// Bad: verbose, no added clarity
-tracing::error!(error = %err, "failed");
-
-// Good
-use tracing::error;
-error!(error = %err, "failed");
-```
+Use qualified paths instead of aliases to resolve import name conflicts. Import
+tracing macros and invoke them unqualified.
 
 ### Spacing
 
@@ -772,37 +516,8 @@ update `data_test/` only when the user supplies corrected spreadsheet values) --
 never relax tolerances, rewrite assertions, or delete cases to make broken code
 pass.
 
-**Bug reproduction must exercise real code paths.** When reproducing a bug:
-
-```rust
-// BAD: Manually constructs incompatible DataFrames - proves nothing
-let existing = df! { "a" => [1], "b" => [2], "extra" => [3] }.unwrap();
-let new = df! { "a" => [1], "b" => [2] }.unwrap();
-merge_and_deduplicate(Some(existing), new); // Obviously fails
-
-// GOOD: Uses actual code paths with realistic fixtures
-let existing = read_csv(fixture_path("legacy_ohlcv.csv")).await?; // 8 columns
-let candles = vec![Candle { ... }]; // Real domain objects
-let new = candles_to_dataframe(candles).await?; // 7 columns from real code
-merge_and_deduplicate(existing, new); // Proves the actual bug
-```
-
-The first test shows that incompatible things are incompatible. The second
-proves the system produces incompatible things - that's the bug.
-
-```rust
-// Bad: tests struct assignment, not our code
-fn test_fields() {
-    let request = Request { qty: 100, symbol: "AAPL".into() };
-    assert_eq!(request.qty, 100);
-}
-
-// Good: tests our validation logic
-fn test_validates_quantity() {
-    let result = validate_order(OrderRequest { qty: -10, symbol: "AAPL".into() });
-    assert!(matches!(result, Err(OrderError::InvalidQuantity)));
-}
-```
+Reproduce bugs through the actual code paths and realistic fixtures. Assert
+correct behavior rather than language mechanics or known defects.
 
 ---
 

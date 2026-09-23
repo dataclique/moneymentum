@@ -11,7 +11,7 @@ use thiserror::Error;
 use tracing::{debug, instrument};
 
 use crate::dataframe::DataFrameError;
-use crate::finance::Symbol;
+use crate::finance::ArchiveTicker;
 
 #[derive(Debug, Error)]
 pub(crate) enum FundingError {
@@ -27,7 +27,8 @@ pub(crate) enum FundingError {
 pub(crate) struct FundingRate {
     pub(crate) timestamp: DateTime<Utc>,
     pub(crate) rate: Decimal,
-    pub(crate) symbol: Symbol,
+    /// Exchange-native base ticker for the archive `symbol` column (e.g., "kPEPE")
+    pub(crate) symbol: ArchiveTicker,
 }
 
 #[instrument(skip_all, fields(count = rates.len()))]
@@ -72,19 +73,19 @@ mod tests {
     use tracing::Level;
     use tracing_test::traced_test;
 
-    use crate::logs_contain_at;
+    use crate::{finance, logs_contain_at};
 
     fn sample_rates() -> Vec<FundingRate> {
         vec![
             FundingRate {
                 timestamp: Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
                 rate: dec!(0.0001),
-                symbol: Symbol::from_raw("BTC"),
+                symbol: finance::archive_base_ticker("BTC"),
             },
             FundingRate {
                 timestamp: Utc.with_ymd_and_hms(2024, 1, 1, 1, 0, 0).unwrap(),
                 rate: dec!(0.0002),
-                symbol: Symbol::from_raw("ETH"),
+                symbol: finance::archive_base_ticker("ETH"),
             },
         ]
     }

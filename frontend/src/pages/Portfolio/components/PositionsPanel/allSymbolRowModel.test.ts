@@ -55,6 +55,26 @@ describe("buildAllSymbolRows", () => {
     expect(ethRow?.fundingRateAnnualized).toBeCloseTo(-0.00002 * 24 * 365)
     expect(solRow?.beta).toBeNull()
   })
+
+  it("matches factor scores when archive ticker casing differs from ccxt base", () => {
+    const rows = buildAllSymbolRows(
+      ["KPEPE/USDC:USDC"],
+      [
+        {
+          ticker: "kPEPE",
+          beta: 0.4,
+          annualized_volatility: 0.9,
+          sharpe: 0.5,
+          sortino: 0.6,
+          cum_return: 0.2,
+          carry: 0.0002,
+        },
+      ],
+    )
+
+    expect(rows[0]?.beta).toBe(0.4)
+    expect(rows[0]?.sharpe).toBe(0.5)
+  })
 })
 
 describe("filterAllSymbolRows", () => {

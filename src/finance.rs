@@ -16,6 +16,11 @@ use serde::{Deserialize, Deserializer, Serialize};
 /// Serialization is transparent (the inner ticker string). Deserialization
 /// normalizes through [`Symbol::from_raw`], so a `Symbol` decoded at any boundary
 /// -- a wire request or a persisted event -- is canonical.
+///
+/// Identity joins (catalog, enablement, portfolio weights) uppercase the base so
+/// `kPEPE` and `KPEPE` match. Archive CSV rows use [`hyperliquid_archive_swap_symbol`]
+/// and the exchange-native [`Market`] string instead, preserving Hyperliquid's
+/// mixed-case coin ids.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 pub(crate) struct Symbol(String);
 
@@ -90,6 +95,44 @@ fn hyperliquid_swap_ccxt_symbol_with_collateral(base_name: &str, collateral: &st
     let quote = safe_currency_code(collateral);
     let settle = safe_currency_code(collateral);
     CcxtSymbol(format!("{base}/{quote}:{settle}"))
+}
+
+/// Archive/export swap id that keeps Hyperliquid's exchange-native base casing.
+///
+/// Trading APIs still use [`hyperliquid_swap_ccxt_symbol`] (CCXT uppercases the
+/// base). Candle and funding CSVs must not: `kPEPE/USDC:USDC` and
+/// `KPEPE/USDC:USDC` are the same economic instrument, and uppercasing the
+/// archive key created duplicate rows that case-sensitive dedup could not
+/// collapse.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ArchiveSwapSymbol(String);
+
+impl ArchiveSwapSymbol {
+    pub(crate) fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// Builds an archive swap symbol without normalizing the base ticker's casing.
+pub(crate) fn hyperliquid_archive_swap_symbol(base_name: &str) -> ArchiveSwapSymbol {
+    let base = base_name.replace(':', "-");
+    ArchiveSwapSymbol(format!("{base}/USDC:USDC"))
+}
+
+/// Exchange-native base ticker for archive rows (preserves `kPEPE` casing).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ArchiveTicker(String);
+
+impl ArchiveTicker {
+    pub(crate) fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// Extracts an archive base ticker without normalizing its casing.
+pub(crate) fn archive_base_ticker(base_name: &str) -> ArchiveTicker {
+    let base = base_name.split('/').next().unwrap_or(base_name);
+    ArchiveTicker(base.replace(':', "-"))
 }
 
 /// CCXT `safeCurrencyCode` for Hyperliquid meta asset names.
@@ -185,6 +228,33 @@ mod tests {
             hyperliquid_swap_ccxt_symbol("flx:crcl").as_str(),
             "FLX-CRCL/USDC:USDC"
         );
+    }
+
+    #[test]
+    fn hyperliquid_archive_swap_symbol_preserves_exchange_native_base_casing() {
+        assert_eq!(
+            hyperliquid_archive_swap_symbol("kPEPE").as_str(),
+            "kPEPE/USDC:USDC"
+        );
+        assert_eq!(
+            hyperliquid_archive_swap_symbol("kDOGS").as_str(),
+            "kDOGS/USDC:USDC"
+        );
+        assert_eq!(
+            hyperliquid_archive_swap_symbol("BTC").as_str(),
+            "BTC/USDC:USDC"
+        );
+        assert_eq!(
+            hyperliquid_archive_swap_symbol("flx:crcl").as_str(),
+            "flx-crcl/USDC:USDC"
+        );
+    }
+
+    #[test]
+    fn archive_base_ticker_preserves_exchange_native_casing() {
+        assert_eq!(archive_base_ticker("kPEPE").as_str(), "kPEPE");
+        assert_eq!(archive_base_ticker("kPEPE/USDC:USDC").as_str(), "kPEPE");
+        assert_eq!(archive_base_ticker("flx:crcl").as_str(), "flx-crcl");
     }
 
     #[test]

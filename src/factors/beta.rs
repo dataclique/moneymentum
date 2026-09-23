@@ -37,16 +37,34 @@ pub(crate) async fn compute_portfolio_beta_report(
         return Err(ReturnsError::NoData { path });
     };
 
+    // Archive tickers preserve exchange-native casing (`kPEPE`); portfolio
+    // weights and the benchmark arrive as uppercase CCXT bases (`KPEPE`).
+    // Normalize both sides so joins stay case-insensitive.
+    let df = df
+        .lazy()
+        .with_column(col("ticker").str().to_uppercase().alias("ticker"))
+        .collect()?;
+    let weights: Vec<(String, f64)> = weights
+        .iter()
+        .map(|(ticker, weight)| (ticker.to_ascii_uppercase(), *weight))
+        .collect();
+    let benchmark_ticker = benchmark_ticker.to_ascii_uppercase();
+
     let data_age_hours = data_age_hours_at(&df, Utc::now())?;
-    let weights_clone = weights.to_vec();
-    let benchmark_ticker_clone = benchmark_ticker.to_string();
+    let weights_clone = weights.clone();
+    let benchmark_ticker_clone = benchmark_ticker.clone();
     let lookback = LOG_RETURNS_LOOKBACK_CANDLES;
     let log_returns_df = tokio::task::spawn_blocking(move || {
         load_log_returns_last_n_candles(&df, &weights_clone, &benchmark_ticker_clone, lookback)
     })
     .await??;
 
-    compute_beta_report_from_log_returns(&log_returns_df, weights, benchmark_ticker, data_age_hours)
+    compute_beta_report_from_log_returns(
+        &log_returns_df,
+        &weights,
+        &benchmark_ticker,
+        data_age_hours,
+    )
 }
 
 /// Portfolio beta from precomputed log returns `DataFrame` (e.g. from `load_log_returns_last_n_candles`).

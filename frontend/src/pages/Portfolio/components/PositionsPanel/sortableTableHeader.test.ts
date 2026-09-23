@@ -15,7 +15,7 @@ describe("toggleColumnSort", () => {
   it("starts ascending on the first click", () => {
     const toggleSorting = vi.fn()
     const column = {
-      getIsSorted: () => false,
+      getIsSorted: (): false => false,
       toggleSorting,
     }
 

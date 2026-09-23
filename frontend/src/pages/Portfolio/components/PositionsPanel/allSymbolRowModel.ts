@@ -134,7 +134,7 @@ export const hourlyFundingRateForBase = (
 }
 
 export const buildAllSymbolRows = (
-  symbols: string[],
+  symbols: readonly string[],
   factorScores: FactorScore[],
   fundingRatesByBaseSymbol?: Record<string, number>,
 ): AllSymbolRowData[] => {

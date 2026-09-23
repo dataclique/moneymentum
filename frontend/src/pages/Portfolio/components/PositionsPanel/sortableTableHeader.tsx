@@ -4,7 +4,9 @@ import { Show, type JSX } from "solid-js"
 
 import { cn } from "@/lib/cn"
 
-export const toggleColumnSort = <TData,>(column: Column<TData>): void => {
+export const toggleColumnSort = <TData,>(
+  column: Pick<Column<TData>, "getIsSorted" | "toggleSorting">,
+): void => {
   const sorted = column.getIsSorted()
   if (!sorted) {
     column.toggleSorting(false)

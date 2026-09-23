@@ -1,12 +1,16 @@
 import { render, screen, waitFor } from "@solidjs/testing-library"
 import userEvent from "@testing-library/user-event"
 import { describe, expect, it, vi } from "vitest"
+import { createSignal } from "solid-js"
 
+import type { OptionPortfolioPosition } from "../../hooks/portfolioRebalancer"
 import { PositionsPanelRow } from "./PositionsPanelRow"
 
 const portfolioPosition = () => ({
   symbol: "ETH/USDC:USDC",
   side: "buy" as const,
+  kind: "perp" as const,
+  venue: "hyperliquid" as const,
   leverage: 2,
   notional: 500,
 })
@@ -22,6 +26,79 @@ const defaultRowMetrics = {
 }
 
 describe("PositionsPanelRow", () => {
+  it.each([
+    {
+      symbol: "ETH-20261225-2000-C",
+      longHint: "Profits if underlying rises",
+      shortHint: "Profits if underlying falls or stays flat",
+    },
+    {
+      symbol: "ETH-20261225-2000-P",
+      longHint: "Profits if underlying falls",
+      shortHint: "Profits if underlying rises or stays flat",
+    },
+    {
+      symbol: "ETH-20261225-2000-X",
+      longHint: "Option payoff unavailable",
+      shortHint: "Option payoff unavailable",
+    },
+  ])(
+    "shows reactive option payoff hints for $symbol",
+    async ({ symbol, longHint, shortHint }) => {
+      const user = userEvent.setup()
+      const [side, setSide] =
+        createSignal<OptionPortfolioPosition["side"]>("buy")
+      const position = (): OptionPortfolioPosition => ({
+        kind: "option",
+        venue: "derive",
+        symbol,
+        side: side(),
+        notional: 500,
+      })
+      render(() => (
+        <table>
+          <tbody>
+            <PositionsPanelRow
+              symbol={symbol}
+              position={position}
+              status="unchanged"
+              visibleMetricColumns={[]}
+              rowMetrics={defaultRowMetrics}
+              leverageLimitsIsLoading={false}
+              isPrecise={false}
+              fundingIsLoading={false}
+              factorsIsLoading={false}
+              onRemove={vi.fn()}
+              onUndoRemove={vi.fn()}
+              onSideChange={(_symbol, nextSide) => {
+                setSide(nextSide)
+              }}
+              onLeverageChange={vi.fn()}
+              onNotionalChange={vi.fn()}
+              onWeightChange={vi.fn()}
+              totalNotional={500}
+              symbolsBelowMinimum={[]}
+              symbolsDeltaBelowMinimum={[]}
+              symbolDelta={0}
+            />
+          </tbody>
+        </table>
+      ))
+      const sideButton = screen.getByRole("button", {
+        name: `Switch ${symbol} side`,
+      })
+      expect(sideButton).toHaveTextContent("LONG")
+      const hint = screen.getByText(longHint)
+      expect(hint.closest("td")).toBe(sideButton.closest("td"))
+      await user.click(sideButton)
+      expect(sideButton).toHaveTextContent("SHORT")
+      expect(hint).toHaveTextContent(shortHint)
+      expect(screen.getByText(shortHint).closest("td")).toBe(
+        sideButton.closest("td"),
+      )
+    },
+  )
+
   it("replaces side, weight, and notional with a compact leverage editor", async () => {
     const user = userEvent.setup()
 
@@ -54,6 +131,7 @@ describe("PositionsPanelRow", () => {
       </table>
     ))
 
+    expect(screen.queryByText(/Profits if underlying/)).not.toBeInTheDocument()
     const assetCell = screen.getByText("ETH").closest("td")
     if (assetCell === null) {
       throw new Error("asset cell not found")

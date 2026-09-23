@@ -1,4 +1,5 @@
 import {
+  batch,
   createSignal,
   createMemo,
   onMount,
@@ -9,10 +10,19 @@ import {
 import {
   WalletContext,
   WALLET_STORAGE_KEY,
+  DERIVE_WALLET_STORAGE_KEY,
   NETWORK_STORAGE_KEY,
+  MAIN_ADDRESS_STORAGE_KEY,
   getStoredEncryptedSession,
+  getStoredEncryptedDeriveSession,
   getStoredNetworkMode,
+  getRememberedMainAddress,
+  rememberMainAddress,
+  clearRememberedMainAddress,
+  resolvePersistedMainAddress,
+  type EncryptedDeriveSession,
   type EncryptedWalletSession,
+  type DeriveWalletCredentials,
   type HyperliquidClientLoad,
   type NetworkMode,
   type WalletCredentials,
@@ -31,6 +41,7 @@ import {
   WalletOperationContextChanged,
   WalletSessionMissing,
   WalletUnlockContextChanged,
+  WalletUnlockError,
   type WalletDisconnectFailure,
   type WalletUnlockFailure,
 } from "@/services/wallet"
@@ -43,6 +54,10 @@ import {
   decryptWalletPrivateKey,
   encryptWalletPrivateKey,
 } from "@/services/walletCredentialCrypto"
+import {
+  normalizeDeriveWallet,
+  parseSessionPrivateKey,
+} from "@/services/derive/index"
 import {
   ensureEvmAppKit,
   readConnectedEip1193Provider,
@@ -57,6 +72,17 @@ const credentialsFromSession = (
   accountAddress: session.accountAddress,
   apiWalletAddress: session.apiWalletAddress,
   privateKey,
+})
+
+const deriveCredentialsFromSession = (
+  session: EncryptedDeriveSession,
+  sessionPrivateKey: `0x${string}`,
+): DeriveWalletCredentials => ({
+  deriveWallet: session.deriveWallet,
+  sessionAddress: session.sessionAddress,
+  sessionPrivateKey,
+  subaccountId: session.subaccountId,
+  networkMode: session.networkMode,
 })
 
 const persistEncryptedSession = (
@@ -76,8 +102,16 @@ const persistEncryptedSession = (
   localStorage.setItem(WALLET_STORAGE_KEY, JSON.stringify(session))
 }
 
+const persistEncryptedDeriveSession = (session: EncryptedDeriveSession) => {
+  localStorage.setItem(DERIVE_WALLET_STORAGE_KEY, JSON.stringify(session))
+}
+
 const clearEncryptedSession = () => {
   localStorage.removeItem(WALLET_STORAGE_KEY)
+}
+
+const clearEncryptedDeriveSession = () => {
+  localStorage.removeItem(DERIVE_WALLET_STORAGE_KEY)
 }
 
 const sameWalletAddress = (
@@ -98,36 +132,119 @@ type HyperliquidClientConstructor =
 
 export const WalletProvider = (props: ParentProps) => {
   const storedSession = getStoredEncryptedSession()
+  const storedDeriveSession = getStoredEncryptedDeriveSession()
   const [mainAddress, setMainAddressState] = createSignal<string | null>(
-    storedSession?.accountAddress ?? null,
+    resolvePersistedMainAddress(),
   )
   const [credentials, setCredentials] = createSignal<WalletCredentials | null>(
     null,
   )
+  const [deriveCredentials, setDeriveCredentials] =
+    createSignal<DeriveWalletCredentials | null>(null)
   const [networkMode, setNetworkModeState] = createSignal<NetworkMode>(
     getStoredNetworkMode(),
   )
   const [hasStoredSession, setHasStoredSession] = createSignal(
     storedSession !== null,
   )
+  const [hasStoredDeriveSession, setHasStoredDeriveSession] = createSignal(
+    storedDeriveSession !== null,
+  )
+  const [storedDeriveWallet, setStoredDeriveWallet] = createSignal<
+    string | null
+  >(storedDeriveSession?.deriveWallet ?? null)
+  const [deriveSessionNetworkMode, setDeriveSessionNetworkMode] =
+    createSignal<NetworkMode | null>(storedDeriveSession?.networkMode ?? null)
+  const [hasVerifiedSessionPin, setHasVerifiedSessionPin] = createSignal(false)
   const [HyperliquidClientClass, setHyperliquidClientClass] =
     createSignal<HyperliquidClientConstructor | null>(null)
   const [hyperliquidClientLoad, setHyperliquidClientLoad] =
     createSignal<HyperliquidClientLoad>({ state: "loading" })
   let walletContextRevision = 0
   let activeWalletOperation: symbol | null = null
+  const walletOperationWaiters: Array<() => void> = []
+
+  const acquireWalletOperation = (token: symbol): Effect.Effect<void> =>
+    Effect.async(resume => {
+      const tryAcquire = () => {
+        if (activeWalletOperation === null) {
+          activeWalletOperation = token
+          resume(Effect.void)
+          return
+        }
+        walletOperationWaiters.push(tryAcquire)
+      }
+      tryAcquire()
+      return Effect.sync(() => {
+        const waiterIndex = walletOperationWaiters.indexOf(tryAcquire)
+        if (waiterIndex >= 0) {
+          walletOperationWaiters.splice(waiterIndex, 1)
+        }
+      })
+    })
+
+  const releaseWalletOperation = (token: symbol): void => {
+    if (activeWalletOperation !== token) {
+      return
+    }
+    activeWalletOperation = null
+    const nextWaiter = walletOperationWaiters.shift()
+    nextWaiter?.()
+  }
+
+  // Verified PIN for this SPA session only (never persisted). Cleared on full
+  // disconnect / storage wipes for both venues.
+  let sessionPin: string | null = null
 
   const markWalletContextChanged = () => {
     walletContextRevision += 1
   }
 
-  const syncStoredSessionState = () => {
-    setHasStoredSession(getStoredEncryptedSession() !== null)
+  const rememberSessionPin = (pin: string) => {
+    sessionPin = pin
+    setHasVerifiedSessionPin(true)
   }
 
-  const isConnected = createMemo(() => mainAddress() !== null)
+  const clearSessionPin = () => {
+    sessionPin = null
+    setHasVerifiedSessionPin(false)
+  }
+
+  const resolvePin = (
+    pin: string | undefined,
+  ): Effect.Effect<string, WalletConnectError> => {
+    const resolved = pin ?? sessionPin
+    if (resolved === null || resolved === "") {
+      return Effect.fail(
+        new WalletConnectError({
+          cause: new Error("Local PIN is required"),
+        }),
+      )
+    }
+    return Effect.succeed(resolved)
+  }
+
+  const syncStoredSessionState = () => {
+    setHasStoredSession(getStoredEncryptedSession() !== null)
+    const deriveSession = getStoredEncryptedDeriveSession()
+    setHasStoredDeriveSession(deriveSession !== null)
+    setStoredDeriveWallet(deriveSession?.deriveWallet ?? null)
+    setDeriveSessionNetworkMode(deriveSession?.networkMode ?? null)
+  }
+
+  const isHyperliquidConnected = createMemo(() => mainAddress() !== null)
+  const isDeriveConnected = createMemo(
+    () =>
+      hasStoredDeriveSession() && deriveSessionNetworkMode() === networkMode(),
+  )
+  const isConnected = createMemo(
+    () => isHyperliquidConnected() || isDeriveConnected(),
+  )
   const isLocked = createMemo(
     () => hasStoredSession() && credentials() === null,
+  )
+  const isDeriveLocked = createMemo(
+    () => isDeriveConnected() && deriveCredentials() === null,
   )
 
   const client = createMemo((): HyperliquidClient | null => {
@@ -191,13 +308,56 @@ export const WalletProvider = (props: ParentProps) => {
       setCredentials(null)
     }
 
-    const stored = getStoredEncryptedSession()
-    if (stored !== null && !sameWalletAddress(stored.accountAddress, address)) {
-      clearEncryptedSession()
-      syncStoredSessionState()
+    // Only wipe the encrypted agent when switching to a *different* account.
+    // Transient Reown disconnect (null) must not clear a stored agent or the
+    // remembered public address -- AppKit has enableReconnect: false and often
+    // emits disconnected right after Connect closes.
+    if (address !== null) {
+      const stored = getStoredEncryptedSession()
+      if (
+        stored !== null &&
+        !sameWalletAddress(stored.accountAddress, address)
+      ) {
+        clearEncryptedSession()
+        syncStoredSessionState()
+      }
+      rememberMainAddress(address)
+      setMainAddressState(address)
+      return
     }
 
-    setMainAddressState(address)
+    setMainAddressState(null)
+  }
+
+  const validatePinAgainstStoredSessions = (
+    pin: string,
+  ): Effect.Effect<void, WalletUnlockFailure> => {
+    const hyperliquidSession = getStoredEncryptedSession()
+    const deriveSession = getStoredEncryptedDeriveSession()
+
+    if (hyperliquidSession === null && deriveSession === null) {
+      return Effect.void
+    }
+
+    return Effect.gen(function* () {
+      if (hyperliquidSession !== null) {
+        yield* decryptWalletPrivateKey(
+          hyperliquidSession.encryptedPrivateKey,
+          pin,
+          hyperliquidSession.salt,
+          hyperliquidSession.iv,
+        )
+      }
+
+      if (deriveSession !== null) {
+        yield* decryptWalletPrivateKey(
+          deriveSession.encryptedPrivateKey,
+          pin,
+          deriveSession.salt,
+          deriveSession.iv,
+        )
+      }
+    }).pipe(Effect.asVoid)
   }
 
   const connect = (
@@ -206,10 +366,14 @@ export const WalletProvider = (props: ParentProps) => {
   ): Effect.Effect<void, WalletConnectError> => {
     const contextRevision = walletContextRevision
 
-    return Effect.tryPromise({
-      try: () => encryptWalletPrivateKey(newCredentials.privateKey, pin),
-      catch: cause => new WalletConnectError({ cause }),
-    }).pipe(
+    return validatePinAgainstStoredSessions(pin).pipe(
+      Effect.mapError(cause => new WalletConnectError({ cause })),
+      Effect.flatMap(() =>
+        Effect.tryPromise({
+          try: () => encryptWalletPrivateKey(newCredentials.privateKey, pin),
+          catch: cause => new WalletConnectError({ cause }),
+        }),
+      ),
       Effect.flatMap(encrypted => {
         if (walletContextRevision !== contextRevision) {
           return Effect.fail(
@@ -221,12 +385,102 @@ export const WalletProvider = (props: ParentProps) => {
 
         return Effect.sync(() => {
           markWalletContextChanged()
+          rememberSessionPin(pin)
           persistEncryptedSession(newCredentials, encrypted)
+          rememberMainAddress(newCredentials.accountAddress)
           setMainAddressState(newCredentials.accountAddress)
           setCredentials(newCredentials)
           syncStoredSessionState()
         })
       }),
+      Effect.asVoid,
+    )
+  }
+
+  const connectDerive = (
+    input: {
+      deriveWallet: string
+      sessionPrivateKey: string
+      subaccountId?: number | null
+    },
+    pin?: string,
+  ): Effect.Effect<void, WalletConnectError> => {
+    const contextRevision = walletContextRevision
+    const operationToken = Symbol("connect-derive")
+
+    // Effect.gen runs after the click handler; later queued calls must see
+    // context changes from earlier serialized work.
+    // eslint-disable-next-line solid/reactivity
+    return Effect.gen(function* () {
+      yield* acquireWalletOperation(operationToken)
+
+      if (walletContextRevision !== contextRevision) {
+        return yield* Effect.fail(
+          new WalletConnectError({
+            cause: new WalletConnectionContextChanged(),
+          }),
+        )
+      }
+
+      const mode = networkMode()
+      const resolvedPin = yield* resolvePin(pin)
+
+      yield* validatePinAgainstStoredSessions(resolvedPin).pipe(
+        Effect.mapError(cause => new WalletConnectError({ cause })),
+      )
+
+      const deriveWallet = yield* normalizeDeriveWallet(
+        input.deriveWallet,
+      ).pipe(Effect.mapError(cause => new WalletConnectError({ cause })))
+      const parsedKey = yield* parseSessionPrivateKey(
+        input.sessionPrivateKey,
+      ).pipe(Effect.mapError(cause => new WalletConnectError({ cause })))
+
+      const encrypted = yield* Effect.tryPromise({
+        try: () =>
+          encryptWalletPrivateKey(parsedKey.sessionPrivateKey, resolvedPin),
+        catch: cause => new WalletConnectError({ cause }),
+      })
+
+      if (walletContextRevision !== contextRevision) {
+        return yield* Effect.fail(
+          new WalletConnectError({
+            cause: new WalletConnectionContextChanged(),
+          }),
+        )
+      }
+
+      const existing = getStoredEncryptedDeriveSession()
+      const subaccountId =
+        input.subaccountId !== undefined
+          ? input.subaccountId
+          : existing?.networkMode === mode
+            ? (existing.subaccountId ?? null)
+            : null
+
+      const session: EncryptedDeriveSession = {
+        deriveWallet,
+        sessionAddress: parsedKey.sessionAddress,
+        encryptedPrivateKey: encrypted.encryptedPrivateKey,
+        salt: encrypted.salt,
+        iv: encrypted.iv,
+        subaccountId,
+        networkMode: mode,
+      }
+
+      markWalletContextChanged()
+      rememberSessionPin(resolvedPin)
+      persistEncryptedDeriveSession(session)
+      setDeriveCredentials(
+        deriveCredentialsFromSession(session, parsedKey.sessionPrivateKey),
+      )
+      syncStoredSessionState()
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          releaseWalletOperation(operationToken)
+        }),
+      ),
       Effect.asVoid,
     )
   }
@@ -239,7 +493,7 @@ export const WalletProvider = (props: ParentProps) => {
   // Called only from UI event handlers; its signal snapshots deliberately bind
   // one authorization attempt to the account and network that started it.
   const authorizeAgent = (
-    pin: string,
+    pin?: string,
   ): Effect.Effect<void, WalletConnectError> => {
     const address = mainAddress()
     const mode = networkMode()
@@ -253,11 +507,17 @@ export const WalletProvider = (props: ParentProps) => {
       if (activeWalletOperation !== null) {
         return yield* Effect.fail(
           new WalletConnectError({
-            cause: new WalletOperationContextChanged(),
+            cause: new WalletOperationContextChanged({}),
           }),
         )
       }
       activeWalletOperation = operationToken
+
+      const resolvedPin = yield* resolvePin(pin)
+
+      yield* validatePinAgainstStoredSessions(resolvedPin).pipe(
+        Effect.mapError(cause => new WalletConnectError({ cause })),
+      )
 
       const agentModule = yield* Effect.tryPromise({
         try: () => import("@/services/hyperliquidAgent"),
@@ -293,7 +553,8 @@ export const WalletProvider = (props: ParentProps) => {
       }
 
       const encrypted = yield* Effect.tryPromise({
-        try: () => encryptWalletPrivateKey(pendingCredentials.privateKey, pin),
+        try: () =>
+          encryptWalletPrivateKey(pendingCredentials.privateKey, resolvedPin),
         catch: cause => new WalletConnectError({ cause }),
       })
 
@@ -345,15 +606,16 @@ export const WalletProvider = (props: ParentProps) => {
       }
 
       markWalletContextChanged()
+      rememberSessionPin(resolvedPin)
       persistEncryptedSession(pendingCredentials, encrypted)
+      rememberMainAddress(pendingCredentials.accountAddress)
+      setMainAddressState(pendingCredentials.accountAddress)
       syncStoredSessionState()
       setCredentials(pendingCredentials)
     }).pipe(
       Effect.ensuring(
         Effect.sync(() => {
-          if (activeWalletOperation === operationToken) {
-            activeWalletOperation = null
-          }
+          releaseWalletOperation(operationToken)
         }),
       ),
     )
@@ -374,7 +636,7 @@ export const WalletProvider = (props: ParentProps) => {
       if (activeWalletOperation !== null) {
         return yield* Effect.fail(
           new WalletConnectError({
-            cause: new WalletOperationContextChanged(),
+            cause: new WalletOperationContextChanged({}),
           }),
         )
       }
@@ -419,7 +681,7 @@ export const WalletProvider = (props: ParentProps) => {
       if (walletContextRevision !== contextRevision) {
         return yield* Effect.fail(
           new WalletConnectError({
-            cause: new WalletOperationContextChanged(),
+            cause: new WalletOperationContextChanged({}),
           }),
         )
       }
@@ -431,40 +693,71 @@ export const WalletProvider = (props: ParentProps) => {
     }).pipe(
       Effect.ensuring(
         Effect.sync(() => {
-          if (activeWalletOperation === operationToken) {
-            activeWalletOperation = null
-          }
+          releaseWalletOperation(operationToken)
         }),
       ),
     )
   }
 
   const unlock = (pin: string): Effect.Effect<void, WalletUnlockFailure> => {
-    const session = getStoredEncryptedSession()
-    if (!session) {
+    const hyperliquidSession = getStoredEncryptedSession()
+    const deriveSession = getStoredEncryptedDeriveSession()
+
+    if (hyperliquidSession === null && deriveSession === null) {
       return Effect.fail(new WalletSessionMissing())
     }
     const contextRevision = walletContextRevision
 
-    return decryptWalletPrivateKey(
-      session.encryptedPrivateKey,
-      pin,
-      session.salt,
-      session.iv,
-    ).pipe(
-      Effect.flatMap(privateKey => {
-        if (walletContextRevision !== contextRevision) {
-          return Effect.fail(new WalletUnlockContextChanged())
+    return Effect.gen(function* () {
+      let hyperliquidPrivateKey: string | null = null
+      let derivePrivateKey: `0x${string}` | null = null
+
+      if (hyperliquidSession !== null) {
+        hyperliquidPrivateKey = yield* decryptWalletPrivateKey(
+          hyperliquidSession.encryptedPrivateKey,
+          pin,
+          hyperliquidSession.salt,
+          hyperliquidSession.iv,
+        )
+      }
+
+      if (deriveSession !== null) {
+        const decryptedKey = yield* decryptWalletPrivateKey(
+          deriveSession.encryptedPrivateKey,
+          pin,
+          deriveSession.salt,
+          deriveSession.iv,
+        )
+        const parsedKey = yield* parseSessionPrivateKey(decryptedKey).pipe(
+          Effect.mapError(cause => new WalletUnlockError({ cause })),
+        )
+        derivePrivateKey = parsedKey.sessionPrivateKey
+      }
+
+      if (walletContextRevision !== contextRevision) {
+        return yield* Effect.fail(new WalletUnlockContextChanged())
+      }
+
+      batch(() => {
+        markWalletContextChanged()
+
+        if (hyperliquidSession !== null && hyperliquidPrivateKey !== null) {
+          rememberMainAddress(hyperliquidSession.accountAddress)
+          setMainAddressState(hyperliquidSession.accountAddress)
+          setCredentials(
+            credentialsFromSession(hyperliquidSession, hyperliquidPrivateKey),
+          )
         }
 
-        return Effect.sync(() => {
-          markWalletContextChanged()
-          setMainAddressState(session.accountAddress)
-          setCredentials(credentialsFromSession(session, privateKey))
-        })
-      }),
-      Effect.asVoid,
-    )
+        if (deriveSession !== null && derivePrivateKey !== null) {
+          setDeriveCredentials(
+            deriveCredentialsFromSession(deriveSession, derivePrivateKey),
+          )
+        }
+
+        rememberSessionPin(pin)
+      })
+    }).pipe(Effect.asVoid)
   }
 
   const disconnect = (): Effect.Effect<void, WalletDisconnectFailure> => {
@@ -500,17 +793,52 @@ export const WalletProvider = (props: ParentProps) => {
       markWalletContextChanged()
       setCredentials(null)
       setMainAddressState(null)
+      clearRememberedMainAddress()
       clearEncryptedSession()
       syncStoredSessionState()
+      if (getStoredEncryptedDeriveSession() === null) {
+        clearSessionPin()
+      }
     }).pipe(
       Effect.ensuring(
         Effect.sync(() => {
-          if (activeWalletOperation === operationToken) {
-            activeWalletOperation = null
-          }
+          releaseWalletOperation(operationToken)
         }),
       ),
     )
+  }
+
+  const disconnectDerive = (): Effect.Effect<void, WalletDisconnectFailed> => {
+    const hyperliquidAddress = mainAddress()
+    return Effect.sync(() => {
+      markWalletContextChanged()
+      setDeriveCredentials(null)
+      clearEncryptedDeriveSession()
+      syncStoredSessionState()
+      if (getStoredEncryptedSession() === null && hyperliquidAddress === null) {
+        clearSessionPin()
+      }
+    })
+  }
+
+  const setDeriveSubaccountId = (subaccountId: number | null) => {
+    const stored = getStoredEncryptedDeriveSession()
+    if (stored?.networkMode !== networkMode()) {
+      return
+    }
+    const nextSession: EncryptedDeriveSession = {
+      ...stored,
+      subaccountId,
+    }
+    persistEncryptedDeriveSession(nextSession)
+    syncStoredSessionState()
+    const unlocked = untrack(() => deriveCredentials())
+    if (unlocked !== null && unlocked.networkMode === networkMode()) {
+      setDeriveCredentials({
+        ...unlocked,
+        subaccountId,
+      })
+    }
   }
 
   const setNetworkMode = (mode: NetworkMode) => {
@@ -519,6 +847,10 @@ export const WalletProvider = (props: ParentProps) => {
     }
     setNetworkModeState(mode)
     localStorage.setItem(NETWORK_STORAGE_KEY, mode)
+    const unlocked = untrack(() => deriveCredentials())
+    if (unlocked !== null && unlocked.networkMode !== mode) {
+      setDeriveCredentials(null)
+    }
   }
 
   const handleStorageChange = (event: StorageEvent) => {
@@ -528,8 +860,25 @@ export const WalletProvider = (props: ParentProps) => {
       const nextSession = getStoredEncryptedSession()
       syncStoredSessionState()
       if (nextSession) {
+        rememberMainAddress(nextSession.accountAddress)
         setMainAddressState(nextSession.accountAddress)
       }
+    }
+    if (event.key === MAIN_ADDRESS_STORAGE_KEY) {
+      const remembered = getRememberedMainAddress()
+      if (!sameWalletAddress(mainAddress(), remembered)) {
+        markWalletContextChanged()
+      }
+      if (remembered !== null) {
+        setMainAddressState(remembered)
+      } else if (getStoredEncryptedSession() === null) {
+        setMainAddressState(null)
+      }
+    }
+    if (event.key === DERIVE_WALLET_STORAGE_KEY) {
+      markWalletContextChanged()
+      setDeriveCredentials(null)
+      syncStoredSessionState()
     }
     if (event.key === NETWORK_STORAGE_KEY) {
       const storedNetworkMode = getStoredNetworkMode()
@@ -537,6 +886,10 @@ export const WalletProvider = (props: ParentProps) => {
         markWalletContextChanged()
       }
       setNetworkModeState(storedNetworkMode)
+      const unlocked = untrack(() => deriveCredentials())
+      if (unlocked !== null && unlocked.networkMode !== storedNetworkMode) {
+        setDeriveCredentials(null)
+      }
     }
   }
 
@@ -567,7 +920,8 @@ export const WalletProvider = (props: ParentProps) => {
           return
         }
 
-        const existingAddress = modal.getAddress("eip155")
+        const existingAddress =
+          modal.getAddress("eip155") ?? resolvePersistedMainAddress()
         if (existingAddress) {
           setMainAddress(existingAddress)
         }
@@ -588,6 +942,16 @@ export const WalletProvider = (props: ParentProps) => {
             const currentProviderAddress = modal.getAddress("eip155") ?? null
             if (currentProviderAddress !== null) {
               setMainAddress(currentProviderAddress)
+              return
+            }
+
+            // Transient AppKit disconnect (enableReconnect is false): keep the
+            // remembered / in-memory public account. Explicit disconnect()
+            // clears storage itself -- do not call setMainAddress(null) here
+            // or we race the disconnect revision check and wipe the agent.
+            const persisted = resolvePersistedMainAddress()
+            const current = untrack(() => mainAddress())
+            if (persisted !== null || current !== null) {
               return
             }
 
@@ -618,21 +982,31 @@ export const WalletProvider = (props: ParentProps) => {
       value={{
         mainAddress,
         credentials,
+        deriveCredentials,
         networkMode,
         isConnected,
+        isHyperliquidConnected,
+        isDeriveConnected,
         isLocked,
+        isDeriveLocked,
         hasStoredSession,
+        hasStoredDeriveSession,
+        storedDeriveWallet,
+        hasVerifiedSessionPin,
         canTrade,
         client,
         hyperliquidClientLoad,
         retryHyperliquidClientLoad,
         connect,
+        connectDerive,
         authorizeAgent,
         revokeAgent,
         unlock,
         disconnect,
+        disconnectDerive,
         setNetworkMode,
         setMainAddress,
+        setDeriveSubaccountId,
       }}
     >
       {props.children}

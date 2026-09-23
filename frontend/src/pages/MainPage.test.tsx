@@ -18,7 +18,7 @@ const useDateRangeMock = vi.hoisted(() =>
 )
 
 const useAnalysisDataMock = vi.hoisted(() =>
-  vi.fn(() => ({
+  vi.fn((_params: () => AnalysisParams) => ({
     data: null as { data: unknown[]; message: string | null } | null,
     error: null as { message: string } | null,
     isLoading: false,
@@ -69,10 +69,8 @@ vi.mock("@/components/ui/timeframe-select", () => ({
 type AnalysisParams = { startDate: string; endDate: string; timeframe: string }
 
 const getLastAnalysisParams = (): AnalysisParams | undefined => {
-  const calls = useAnalysisDataMock.mock.calls as unknown as Array<
-    [() => AnalysisParams]
-  >
-  return calls.at(-1)?.[0]()
+  const calls = useAnalysisDataMock.mock.calls
+  return calls[calls.length - 1]?.[0]()
 }
 
 const createWrapper = () => {
@@ -90,6 +88,7 @@ describe("MainPage", () => {
   beforeEach(() => {
     vi.clearAllMocks()
     useDateRangeMock.mockReturnValue({
+      refetch: vi.fn(),
       data: null,
       error: null,
       isLoading: true,
@@ -116,6 +115,7 @@ describe("MainPage", () => {
 
   it("shows main content after data loads", async () => {
     useDateRangeMock.mockReturnValue({
+      refetch: vi.fn(),
       data: {
         min_date: "2024-01-01T00:00:00Z",
         max_date: "2024-12-31T00:00:00Z",
@@ -140,6 +140,7 @@ describe("MainPage", () => {
 
   it("shows error state when analysis query fails", async () => {
     useDateRangeMock.mockReturnValue({
+      refetch: vi.fn(),
       data: {
         min_date: "2024-01-01T00:00:00Z",
         max_date: "2024-12-31T00:00:00Z",
@@ -163,6 +164,7 @@ describe("MainPage", () => {
 
   it("shows error state when date range query fails", async () => {
     useDateRangeMock.mockReturnValue({
+      refetch: vi.fn(),
       data: null,
       error: { message: "Date range failed" },
       isLoading: false,
@@ -177,6 +179,7 @@ describe("MainPage", () => {
 
   it("shows stop button when reload is pending", async () => {
     useDateRangeMock.mockReturnValue({
+      refetch: vi.fn(),
       data: {
         min_date: "2024-01-01T00:00:00Z",
         max_date: "2024-12-31T00:00:00Z",
@@ -202,6 +205,7 @@ describe("MainPage", () => {
 
   it("calls useAnalysisData with maxDate for both start and end", async () => {
     useDateRangeMock.mockReturnValue({
+      refetch: vi.fn(),
       data: {
         min_date: "2024-01-01T00:00:00Z",
         max_date: "2024-06-15T00:00:00Z",
@@ -229,6 +233,7 @@ describe("MainPage", () => {
 
   it("strips time component from dates, using only YYYY-MM-DD", async () => {
     useDateRangeMock.mockReturnValue({
+      refetch: vi.fn(),
       data: {
         min_date: "2024-01-15T12:30:45.123Z",
         max_date: "2024-06-20T18:45:30.999Z",
@@ -255,6 +260,7 @@ describe("MainPage", () => {
 
   it("calls useAnalysisData with empty strings when dateRange has no data", async () => {
     useDateRangeMock.mockReturnValue({
+      refetch: vi.fn(),
       data: null,
       error: null,
       isLoading: true,
@@ -275,6 +281,7 @@ describe("MainPage", () => {
 
   it("displays message from analysis data when present", async () => {
     useDateRangeMock.mockReturnValue({
+      refetch: vi.fn(),
       data: {
         min_date: "2024-01-01T00:00:00Z",
         max_date: "2024-12-31T00:00:00Z",

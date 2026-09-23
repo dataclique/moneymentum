@@ -137,7 +137,7 @@ describe("useTrading hooks", () => {
     ) {
       const store = new Map<string, string>()
       globalAny.localStorage = {
-        getItem: key => (store.has(key) ? store.get(key)! : null),
+        getItem: key => store.get(key) ?? null,
         setItem: (key, value) => {
           store.set(key, value)
         },
@@ -151,7 +151,7 @@ describe("useTrading hooks", () => {
         get length() {
           return store.size
         },
-      } as unknown as Storage
+      }
     }
   }
 
@@ -418,6 +418,8 @@ describe("useTrading hooks", () => {
         actions: [
           {
             kind: "rebalance",
+            positionKind: "perp",
+            venue: "hyperliquid",
             symbol: "BTC/USDC:USDC",
             signedNotionalDelta: 120,
             leverage: 2,
@@ -433,6 +435,8 @@ describe("useTrading hooks", () => {
       expect(mockMethods.rebalancePositions).toHaveBeenCalledWith([
         {
           kind: "rebalance",
+          positionKind: "perp",
+          venue: "hyperliquid",
           symbol: "BTC/USDC:USDC",
           signedNotionalDelta: 120,
           leverage: 2,
@@ -470,6 +474,8 @@ describe("useTrading hooks", () => {
         actions: [
           {
             kind: "close",
+            positionKind: "perp",
+            venue: "hyperliquid",
             symbol: "BTC/USDC:USDC",
             side: "buy",
           },
@@ -483,6 +489,8 @@ describe("useTrading hooks", () => {
       expect(mockMethods.rebalancePositions).toHaveBeenCalledWith([
         {
           kind: "close",
+          positionKind: "perp",
+          venue: "hyperliquid",
           symbol: "BTC/USDC:USDC",
           side: "buy",
         },
@@ -492,13 +500,13 @@ describe("useTrading hooks", () => {
   })
 
   describe("useWalletSettings", () => {
-    it("returns null data when not connected", () => {
+    it("returns disconnected venues when not connected", () => {
       const { result } = renderHook(() => useWalletSettings(), {
         wrapper: createWrapper(),
       })
 
-      expect(result.data()).toBeNull()
       expect(result.isConnected()).toBe(false)
+      expect(result.data().venues.every(venue => !venue.connected)).toBe(true)
     })
 
     it("returns wallet settings when connected", async () => {
@@ -514,8 +522,12 @@ describe("useTrading hooks", () => {
 
       await waitUntilWalletConnected(() => result.isConnected())
 
-      expect(result.data()?.accountAddress).toBe("0xMyAccountAddress")
-      expect(result.data()?.isTestnet).toBe(true)
+      const hyperliquid = result
+        .data()
+        .venues.find(venue => venue.id === "hyperliquid")
+      expect(hyperliquid?.connected).toBe(true)
+      expect(hyperliquid?.address).toBe("0xMyAccountAddress")
+      expect(result.data().isTestnet).toBe(true)
     })
 
     it("returns mainnet when network is mainnet", async () => {
@@ -531,7 +543,7 @@ describe("useTrading hooks", () => {
 
       await waitUntilWalletConnected(() => result.isConnected())
 
-      expect(result.data()?.isTestnet).toBe(false)
+      expect(result.data().isTestnet).toBe(false)
     })
   })
 

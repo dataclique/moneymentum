@@ -4,13 +4,11 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/solid-query"
 import type { Timeframe } from "@/components/ui/timeframe-select"
 import { fetchJson, postJson, postEmpty, fetchStreamChecked } from "@/lib/http"
 
-export class MissingTickerError extends Data.TaggedError("MissingTickerError")<
-  Record<string, never>
-> {}
+export class MissingTickerError extends Data.TaggedError(
+  "MissingTickerError",
+) {}
 
-export class EmptyStreamError extends Data.TaggedError("EmptyStreamError")<
-  Record<string, never>
-> {}
+export class EmptyStreamError extends Data.TaggedError("EmptyStreamError") {}
 
 export class StreamReadError extends Data.TaggedError("StreamReadError")<{
   readonly cause: unknown

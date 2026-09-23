@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import type { PortfolioInterface } from "../../hooks/usePortfolioState"
+import type { PerpPortfolioPosition } from "../../hooks/portfolioRebalancer"
 
 import {
   displayPosition,
@@ -9,8 +9,10 @@ import {
 } from "./positionRowModel"
 
 const btcPosition = (
-  overrides: Partial<PortfolioInterface> = {},
-): PortfolioInterface => ({
+  overrides: Partial<PerpPortfolioPosition> = {},
+): PerpPortfolioPosition => ({
+  kind: "perp",
+  venue: "hyperliquid",
   symbol: "BTC/USDC:USDC",
   side: "buy",
   leverage: 1,

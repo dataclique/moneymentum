@@ -43,7 +43,6 @@ const SelectTrigger = <T extends ValidComponent = "button">(
         stroke-linejoin="round"
         class="size-4 opacity-50"
         aria-hidden="true"
-        focusable="false"
       >
         <path d="M8 9l4 -4l4 4" />
         <path d="M16 15l-4 4l-4 -4" />
@@ -74,9 +73,12 @@ const SelectContent = <T extends ValidComponent = "div">(
         )}
         {...others}
       >
-        <SelectPrimitive.Listbox class="m-0 p-1">
-          {local.children}
-        </SelectPrimitive.Listbox>
+        <SelectPrimitive.Listbox
+          class="m-0 p-1"
+          children={
+            local.children === undefined ? undefined : () => local.children
+          }
+        />
       </SelectPrimitive.Content>
     </SelectPrimitive.Portal>
   )
@@ -114,7 +116,6 @@ const SelectItem = <T extends ValidComponent = "li">(
           stroke-linejoin="round"
           class="size-4"
           aria-hidden="true"
-          focusable="false"
         >
           <path d="M5 12l5 5l10 -10" />
         </svg>

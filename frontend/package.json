@@ -5,8 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
-    "typecheck": "tsc --noEmit",
+    "build": "bun run typecheck && vite build",
+    "typecheck": "tsc --noEmit --project tsconfig.app.json && tsc --noEmit --project tsconfig.node.json",
     "lint": "eslint . --max-warnings=0 --cache --cache-location .eslintcache",
     "lint:staged": "eslint --max-warnings=0 --cache --cache-location .eslintcache",
     "preview": "vite preview",

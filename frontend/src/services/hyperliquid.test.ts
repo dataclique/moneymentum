@@ -134,6 +134,8 @@ describe("hyperliquid Effect service", () => {
       const actions: RebalanceAction[] = [
         {
           kind: "rebalance",
+          positionKind: "perp",
+          venue: "hyperliquid",
           symbol: "BTC/USDC:USDC",
           signedNotionalDelta: 100,
           leverage: 2,

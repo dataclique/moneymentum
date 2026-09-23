@@ -2,13 +2,18 @@ import { Show, For, createMemo } from "solid-js"
 import type { JSX } from "solid-js"
 import { CircleAlert, TriangleAlert } from "lucide-solid"
 
-import { MIN_USD, type PortfolioInterface } from "../../hooks/usePortfolioState"
+import {
+  MIN_USD,
+  type PortfolioInterface,
+} from "../../hooks/portfolioRebalancer"
+import { positionDelta } from "./positionRowModel"
 
 export interface PositionsPanelAlertsProps {
   isLoading: boolean
   isConnected: boolean
   hasPositions: boolean
   hasTotalWeightExceeded: boolean
+  hasUnderAllocation: boolean
   targetAllocationPercent: number
   symbolsBelowMinimum: string[]
   symbolsDeltaBelowMinimum: string[]
@@ -17,36 +22,16 @@ export interface PositionsPanelAlertsProps {
   currentPortfolio: Record<string, PortfolioInterface | undefined>
 }
 
-/** Below this (vs target notional) we warn that allocation is not full. */
-const ALLOCATION_FULL_MIN_PERCENT = 99.95
-
 export const PositionsPanelAlerts = (
   props: PositionsPanelAlertsProps,
 ): JSX.Element => {
-  const isClosingAllPositions = createMemo(
-    () =>
-      Object.values(props.currentPortfolio).some(
-        position => position !== undefined,
-      ) &&
-      Object.values(props.targetPortfolio).every(
-        position => position === undefined || position.notional <= 0.01,
-      ),
-  )
-
-  const hasUnderAllocation = createMemo(
-    () =>
-      !isClosingAllPositions() &&
-      !props.hasTotalWeightExceeded &&
-      props.targetAllocationPercent < ALLOCATION_FULL_MIN_PERCENT,
-  )
-
   const visible = createMemo(
     () =>
       !props.isLoading &&
       props.isConnected &&
       props.hasPositions &&
       (props.hasTotalWeightExceeded ||
-        hasUnderAllocation() ||
+        props.hasUnderAllocation ||
         props.symbolsBelowMinimum.length > 0 ||
         (!props.isPrecise && props.symbolsDeltaBelowMinimum.length > 0)),
   )
@@ -57,9 +42,11 @@ export const PositionsPanelAlerts = (
   }
 
   const deltaDetail = (symbol: string) => {
-    const targetN = props.targetPortfolio[symbol]?.notional ?? 0
-    const currentN = props.currentPortfolio[symbol]?.notional ?? 0
-    const delta = Math.abs(targetN - currentN)
+    const delta = positionDelta(
+      symbol,
+      props.currentPortfolio,
+      props.targetPortfolio,
+    )
     return `${symbol} (delta $${delta.toFixed(2)})`
   }
 
@@ -96,7 +83,7 @@ export const PositionsPanelAlerts = (
           </div>
         </Show>
 
-        <Show when={hasUnderAllocation()}>
+        <Show when={props.hasUnderAllocation}>
           <div
             class="flex items-start gap-2 rounded border border-amber-500/40 bg-amber-500/10 px-2 py-1.5 dark:border-amber-400/35 dark:bg-amber-500/10"
             role="status"

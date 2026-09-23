@@ -269,7 +269,16 @@ export const PositionsDataTable = (
       <table class="min-w-full w-max table-fixed">
         <colgroup>
           <For each={tableColumnIds()}>
-            {columnId => <col class={positionColumnWidthClass(columnId)} />}
+            {columnId => (
+              <col
+                class={
+                  columnId === "side" &&
+                  local.data().some(row => row.position.kind === "option")
+                    ? "w-[18rem]"
+                    : positionColumnWidthClass(columnId)
+                }
+              />
+            )}
           </For>
         </colgroup>
         <thead class="sticky top-0 z-20 bg-muted/90">

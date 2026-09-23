@@ -27,7 +27,7 @@ describe("positionCellInput", () => {
     document.body.append(first, second)
 
     schedulePositionCellEditRelease(
-      { relatedTarget: second } as FocusEvent,
+      new FocusEvent("blur", { relatedTarget: second }),
       release,
     )
 
@@ -37,7 +37,7 @@ describe("positionCellInput", () => {
     first.remove()
     second.remove()
     schedulePositionCellEditRelease(
-      { relatedTarget: null } as FocusEvent,
+      new FocusEvent("blur", { relatedTarget: null }),
       release,
     )
 

@@ -165,7 +165,7 @@ export const WalletInlineConnect = (): JSX.Element => {
 }
 
 interface HyperliquidPanelProps {
-  screenerSymbols: () => string[]
+  screenerSymbols: () => readonly string[]
   targetPortfolio: Record<string, PortfolioInterface | undefined>
   deletedArchive: Record<string, PortfolioInterface | undefined>
   fundingIsLoading: boolean

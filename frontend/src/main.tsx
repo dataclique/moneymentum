@@ -70,7 +70,7 @@ render(
               <Route path="/" component={MainPage} />
             </Route>
             <Route path="/token/:ticker" component={AppLayout}>
-              <Route path="/" component={TokenPage} />
+              <Route path="/" component={() => <TokenPage timeframe="1h" />} />
             </Route>
             <Route path="*404" component={NotFound} />
           </Router>

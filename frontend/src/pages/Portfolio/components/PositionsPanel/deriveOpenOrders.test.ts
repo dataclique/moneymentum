@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import {
   formatDeriveInstrumentLabel,
@@ -6,6 +6,13 @@ import {
   mapDeriveOpenOrderRows,
   refreshProgressAlongCycle,
 } from "./deriveOpenOrders"
+
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ["Date"] })
+  vi.setSystemTime(new Date("2026-01-01T00:00:00Z"))
+})
+
+afterEach(() => vi.useRealTimers())
 
 describe("refreshProgressAlongCycle", () => {
   it("tracks progress from 0 to 1 across the duration window", () => {
@@ -71,7 +78,7 @@ describe("mapDeriveOpenOrderRow", () => {
     expect(
       mapDeriveOpenOrderRow({
         id: "order-2",
-        symbol: "ETH/USD:USDC-250925-2000-C",
+        symbol: "ETH/USD:USDC-260925-2000-C",
         side: "buy",
         price: 497.2,
         cost: 0,
@@ -87,7 +94,7 @@ describe("mapDeriveOpenOrderRow", () => {
       }),
     ).toEqual({
       id: "order-2",
-      symbol: "ETH/USD:USDC-250925-2000-C",
+      symbol: "ETH/USD:USDC-260925-2000-C",
       label: "ETH $2,000 Call Sep 25",
       side: "buy",
       amount: 0.20112626527132446,
@@ -101,7 +108,7 @@ describe("mapDeriveOpenOrderRow", () => {
   it("uses remaining size after partial fills from info.filled_amount", () => {
     const row = mapDeriveOpenOrderRow({
       id: "order-3",
-      symbol: "ETH/USD:USDC-250925-2000-C",
+      symbol: "ETH/USD:USDC-260925-2000-C",
       side: "sell",
       info: {
         instrument_name: "ETH-20260925-2000-C",

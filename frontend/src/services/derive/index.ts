@@ -51,6 +51,7 @@ export {
   cancelDeriveOrder,
   DEFAULT_DERIVE_AMOUNT_STEP,
   DeriveInstrumentNotFound,
+  DeriveOrderPriceInvalid,
   DeriveOrderSizeInvalid,
   DeriveTradingClient,
   fetchDeriveFundingRates,

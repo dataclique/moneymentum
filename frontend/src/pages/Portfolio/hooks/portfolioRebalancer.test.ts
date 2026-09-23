@@ -9,6 +9,10 @@ import {
   diffPortfolios,
   mergeExchangeTargetWithStagedOverlay,
   mergePortfolioMaps,
+  MIN_USD,
+  type PortfolioInterface,
+  type PerpPortfolioPosition,
+  type OptionPortfolioPosition,
   portfolioMapFromDerivePositions,
   portfolioMapFromExchangePositions,
   preciseRebalanceLegs,
@@ -16,9 +20,8 @@ import {
   targetAndArchiveAfterRebalance,
   targetTotalAfterExchangeMerge,
 } from "./portfolioRebalancer"
-import { MIN_USD, type PortfolioInterface } from "./usePortfolioState"
 
-const buy = (notional: number, leverage = 2): PortfolioInterface => ({
+const buy = (notional: number, leverage = 2): PerpPortfolioPosition => ({
   kind: "perp",
   venue: "hyperliquid",
   symbol: "BTC/USDC:USDC",
@@ -27,7 +30,7 @@ const buy = (notional: number, leverage = 2): PortfolioInterface => ({
   notional,
 })
 
-const sell = (notional: number, leverage = 2): PortfolioInterface => ({
+const sell = (notional: number, leverage = 2): PerpPortfolioPosition => ({
   kind: "perp",
   venue: "hyperliquid",
   symbol: "BTC/USDC:USDC",
@@ -40,7 +43,7 @@ const option = (
   symbol: string,
   notional: number,
   side: "buy" | "sell" = "buy",
-): PortfolioInterface => ({
+): OptionPortfolioPosition => ({
   kind: "option",
   venue: "derive",
   symbol,
@@ -93,6 +96,36 @@ describe("preciseRebalanceLegs", () => {
 
 describe("diffPortfolios precise mode", () => {
   const sym = "BTC/USDC:USDC"
+
+  it.each(["buy", "sell"] as const)(
+    "keeps small Derive %s adjustments on the normal execution path",
+    side => {
+      const symbol = "BTC/USD:USDC"
+      const currentPosition: PortfolioInterface = {
+        ...buy(100),
+        venue: "derive",
+        symbol,
+        side,
+      }
+      const actions = diffPortfolios(
+        { [symbol]: currentPosition },
+        { [symbol]: { ...currentPosition, notional: 102 } },
+        true,
+      )
+
+      expect(actions).toEqual([
+        {
+          kind: "rebalance",
+          symbol,
+          signedNotionalDelta: side === "buy" ? 2 : -2,
+          leverage: 2,
+          leverageChanged: false,
+          positionKind: "perp",
+          venue: "derive",
+        },
+      ])
+    },
+  )
 
   it("uses preciseRebalance when precise, same side, delta below min order", () => {
     const current: Record<string, PortfolioInterface | undefined> = {

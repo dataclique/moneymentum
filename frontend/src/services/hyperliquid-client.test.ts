@@ -1,5 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import type { Order } from "ccxt"
+import * as Cause from "effect/Cause"
+import * as Option from "effect/Option"
+import * as Runtime from "effect/Runtime"
 
 import type { WalletCredentials } from "@/contexts/wallet-context"
 import type { RebalanceAction } from "@/pages/Portfolio/hooks/portfolioRebalancer"
@@ -224,7 +227,7 @@ describe("HyperliquidClient", () => {
     ) {
       const store = new Map<string, string>()
       globalAny.localStorage = {
-        getItem: key => (store.has(key) ? store.get(key)! : null),
+        getItem: key => store.get(key) ?? null,
         setItem: (key, value) => {
           store.set(key, value)
         },
@@ -238,7 +241,7 @@ describe("HyperliquidClient", () => {
         get length() {
           return store.size
         },
-      } as unknown as Storage
+      }
     }
   })
 
@@ -366,6 +369,65 @@ describe("HyperliquidClient", () => {
     expect(mockExchange.fetchPositions).not.toHaveBeenCalled()
   })
 
+  it.each([
+    {
+      name: "HTTP failure",
+      response: () => new Response("catalog unavailable", { status: 503 }),
+      expected: { _tag: "HttpStatusError", status: 503 },
+    },
+    {
+      name: "malformed catalogue",
+      response: () => new Response("{}", { status: 200 }),
+      expected: { _tag: "JsonParseError" },
+    },
+  ])(
+    "preserves typed catalogue causes for $name",
+    async ({ response, expected }) => {
+      const healthyFetch = vi.mocked(globalThis.fetch).getMockImplementation()
+      if (healthyFetch === undefined) {
+        throw new Error("test setup must install the healthy market transport")
+      }
+      vi.mocked(globalThis.fetch).mockImplementation((input, init) => {
+        const url =
+          typeof input === "string"
+            ? input
+            : input instanceof URL
+              ? input.href
+              : input.url
+        return url.includes("api/hyperliquid/markets")
+          ? Promise.resolve(response())
+          : healthyFetch(input, init)
+      })
+      const actions: RebalanceAction[] = [
+        {
+          kind: "rebalance",
+          positionKind: "perp",
+          venue: "hyperliquid",
+          symbol: "BTC/USDC:USDC",
+          signedNotionalDelta: 100,
+          leverage: 2,
+          leverageChanged: false,
+        },
+      ]
+      const client = new HyperliquidClient(credentials, "mainnet")
+      const rejected = await client
+        .rebalancePositions(actions)
+        .catch((error: unknown) => error)
+
+      expect(mockExchange.createOrdersWs).not.toHaveBeenCalled()
+      expect(Runtime.isFiberFailure(rejected)).toBe(true)
+      if (Runtime.isFiberFailure(rejected)) {
+        const failure = Cause.failureOption(
+          rejected[Runtime.FiberFailureCauseId],
+        )
+        expect(Option.isSome(failure)).toBe(true)
+        if (Option.isSome(failure)) {
+          expect(failure.value).toMatchObject(expected)
+        }
+      }
+    },
+  )
+
   it("rejects a malformed metaAndAssetCtxs payload shape", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async input => {
       const url =
@@ -398,7 +460,13 @@ describe("HyperliquidClient", () => {
     })
 
     const actions: RebalanceAction[] = [
-      { kind: "close", symbol: "BTC/USDC:USDC", side: "buy" },
+      {
+        kind: "close",
+        positionKind: "perp",
+        venue: "hyperliquid",
+        symbol: "BTC/USDC:USDC",
+        side: "buy",
+      },
     ]
 
     const client = new HyperliquidClient(credentials, "mainnet")
@@ -442,7 +510,13 @@ describe("HyperliquidClient", () => {
     })
 
     const actions: RebalanceAction[] = [
-      { kind: "close", symbol: "BTC/USDC:USDC", side: "buy" },
+      {
+        kind: "close",
+        positionKind: "perp",
+        venue: "hyperliquid",
+        symbol: "BTC/USDC:USDC",
+        side: "buy",
+      },
     ]
 
     const client = new HyperliquidClient(credentials, "mainnet")
@@ -455,6 +529,8 @@ describe("HyperliquidClient", () => {
     const actions: RebalanceAction[] = [
       {
         kind: "rebalance",
+        positionKind: "perp",
+        venue: "hyperliquid",
         symbol: "BTC/USDC:USDC",
         signedNotionalDelta: 100,
         leverage: 5,
@@ -462,6 +538,8 @@ describe("HyperliquidClient", () => {
       },
       {
         kind: "close",
+        positionKind: "perp",
+        venue: "hyperliquid",
         symbol: "ETH/USDC:USDC",
         side: "buy",
       },
@@ -539,6 +617,8 @@ describe("HyperliquidClient", () => {
     const actions: RebalanceAction[] = [
       {
         kind: "rebalance",
+        positionKind: "perp",
+        venue: "hyperliquid",
         symbol: "BANANA/USDC:USDC",
         signedNotionalDelta: 15,
         leverage: 3,
@@ -582,6 +662,8 @@ describe("HyperliquidClient", () => {
     const actions: RebalanceAction[] = [
       {
         kind: "rebalance",
+        positionKind: "perp",
+        venue: "hyperliquid",
         symbol: "BANANA/USDC:USDC",
         signedNotionalDelta: 15,
         leverage: 3,
@@ -603,11 +685,15 @@ describe("HyperliquidClient", () => {
     const actions: RebalanceAction[] = [
       {
         kind: "close",
+        positionKind: "perp",
+        venue: "hyperliquid",
         symbol: "ETH/USDC:USDC",
         side: "buy",
       },
       {
         kind: "rebalance",
+        positionKind: "perp",
+        venue: "hyperliquid",
         symbol: "BTC/USDC:USDC",
         signedNotionalDelta: 100,
         leverage: 2,
@@ -655,6 +741,8 @@ describe("HyperliquidClient", () => {
     const actions: RebalanceAction[] = [
       {
         kind: "rebalance",
+        positionKind: "perp",
+        venue: "hyperliquid",
         symbol: "BTC/USDC:USDC",
         signedNotionalDelta: -50,
         leverage: 2,
@@ -686,6 +774,8 @@ describe("HyperliquidClient", () => {
     const actions: RebalanceAction[] = [
       {
         kind: "rebalance",
+        positionKind: "perp",
+        venue: "hyperliquid",
         symbol: "BTC/USDC:USDC",
         signedNotionalDelta: 100,
         leverage: 2,
@@ -709,6 +799,8 @@ describe("HyperliquidClient", () => {
     const actions: RebalanceAction[] = [
       {
         kind: "rebalance",
+        positionKind: "perp",
+        venue: "hyperliquid",
         symbol: "BTC/USDC:USDC",
         signedNotionalDelta: 10,
         leverage: 2,
@@ -758,6 +850,8 @@ describe("HyperliquidClient", () => {
     const actions: RebalanceAction[] = [
       {
         kind: "rebalance",
+        positionKind: "perp",
+        venue: "hyperliquid",
         symbol: "AERO/USDC:USDC",
         signedNotionalDelta: -10,
         leverage: 2,
@@ -805,6 +899,8 @@ describe("HyperliquidClient", () => {
     const actions: RebalanceAction[] = [
       {
         kind: "rebalance",
+        positionKind: "perp",
+        venue: "hyperliquid",
         symbol: "KPEPE/USDC:USDC",
         signedNotionalDelta: -10,
         leverage: 2,
@@ -848,6 +944,8 @@ describe("HyperliquidClient", () => {
     const actions: RebalanceAction[] = [
       {
         kind: "rebalance",
+        positionKind: "perp",
+        venue: "hyperliquid",
         symbol: "FLX-CRCL/USDC:USDC",
         signedNotionalDelta: 10,
         leverage: 2,
@@ -880,6 +978,8 @@ describe("HyperliquidClient", () => {
     const actions: RebalanceAction[] = [
       {
         kind: "rebalance",
+        positionKind: "perp",
+        venue: "hyperliquid",
         symbol: "BTC/USDC:USDC",
         signedNotionalDelta: 10,
         leverage: 2,
@@ -926,6 +1026,8 @@ describe("HyperliquidClient", () => {
     const actions: RebalanceAction[] = [
       {
         kind: "preciseRebalance",
+        positionKind: "perp",
+        venue: "hyperliquid",
         symbol: "BTC/USDC:USDC",
         side: "buy",
         leverage: 2,
@@ -978,6 +1080,8 @@ describe("HyperliquidClient", () => {
     const actions: RebalanceAction[] = [
       {
         kind: "close",
+        positionKind: "perp",
+        venue: "hyperliquid",
         symbol: "ETH/USDC:USDC",
         side: "sell",
       },
@@ -1018,11 +1122,15 @@ describe("HyperliquidClient", () => {
     const actions: RebalanceAction[] = [
       {
         kind: "close",
+        positionKind: "perp",
+        venue: "hyperliquid",
         symbol: "ETH/USDC:USDC",
         side: "buy",
       },
       {
         kind: "rebalance",
+        positionKind: "perp",
+        venue: "hyperliquid",
         symbol: "BTC/USDC:USDC",
         signedNotionalDelta: -25,
         leverage: 2,
@@ -1060,6 +1168,8 @@ describe("HyperliquidClient", () => {
     const actions: RebalanceAction[] = [
       {
         kind: "preciseRebalance",
+        positionKind: "perp",
+        venue: "hyperliquid",
         symbol: "BTC/USDC:USDC",
         side: "buy",
         leverage: 2,
@@ -1085,6 +1195,8 @@ describe("HyperliquidClient", () => {
     const actions: RebalanceAction[] = [
       {
         kind: "rebalance",
+        positionKind: "perp",
+        venue: "hyperliquid",
         symbol: "BTC/USDC:USDC",
         signedNotionalDelta: 100,
         leverage: 2,
@@ -1092,6 +1204,8 @@ describe("HyperliquidClient", () => {
       },
       {
         kind: "close",
+        positionKind: "perp",
+        venue: "hyperliquid",
         symbol: "ETH/USDC:USDC",
         side: "buy",
       },
@@ -1160,6 +1274,8 @@ describe("HyperliquidClient", () => {
     const actions: RebalanceAction[] = [
       {
         kind: "rebalance",
+        positionKind: "perp",
+        venue: "hyperliquid",
         symbol: "BTC/USDC:USDC",
         signedNotionalDelta: 0,
         leverage: 5,
@@ -1191,6 +1307,8 @@ describe("HyperliquidClient", () => {
     const actions: RebalanceAction[] = [
       {
         kind: "rebalance",
+        positionKind: "perp",
+        venue: "hyperliquid",
         symbol: "BTC/USDC:USDC",
         signedNotionalDelta: 100,
         leverage: 2,
@@ -1221,6 +1339,8 @@ describe("HyperliquidClient", () => {
     const actions: RebalanceAction[] = [
       {
         kind: "rebalance",
+        positionKind: "perp",
+        venue: "hyperliquid",
         symbol: "BTC/USDC:USDC",
         signedNotionalDelta: 100,
         leverage: 2,
@@ -1259,6 +1379,8 @@ describe("HyperliquidClient", () => {
       const actions: RebalanceAction[] = [
         {
           kind: "rebalance",
+          positionKind: "perp",
+          venue: "hyperliquid",
           symbol: "BTC/USDC:USDC",
           signedNotionalDelta: 100,
           leverage: 2,
@@ -1332,6 +1454,8 @@ describe("HyperliquidClient", () => {
       const actions: RebalanceAction[] = [
         {
           kind: "rebalance",
+          positionKind: "perp",
+          venue: "hyperliquid",
           symbol: "BERA/USDC:USDC",
           signedNotionalDelta: -10,
           leverage: 2,
@@ -1384,6 +1508,8 @@ describe("HyperliquidClient", () => {
       const actions: RebalanceAction[] = [
         {
           kind: "rebalance",
+          positionKind: "perp",
+          venue: "hyperliquid",
           symbol: "BTC/USDC:USDC",
           signedNotionalDelta: 100,
           leverage: 2,
@@ -1427,6 +1553,8 @@ describe("HyperliquidClient", () => {
       const actions: RebalanceAction[] = [
         {
           kind: "rebalance",
+          positionKind: "perp",
+          venue: "hyperliquid",
           symbol: "BTC/USDC:USDC",
           signedNotionalDelta: 100,
           leverage: 2,
@@ -1480,6 +1608,8 @@ describe("HyperliquidClient", () => {
       const actions: RebalanceAction[] = [
         {
           kind: "rebalance",
+          positionKind: "perp",
+          venue: "hyperliquid",
           symbol: "BTC/USDC:USDC",
           signedNotionalDelta: 100,
           leverage: 2,
@@ -1512,6 +1642,8 @@ describe("HyperliquidClient", () => {
     const actions: RebalanceAction[] = [
       {
         kind: "rebalance",
+        positionKind: "perp",
+        venue: "hyperliquid",
         symbol: "BTC/USDC:USDC",
         signedNotionalDelta: 100,
         leverage: 2,
@@ -1539,6 +1671,8 @@ describe("HyperliquidClient", () => {
     const actions: RebalanceAction[] = [
       {
         kind: "rebalance",
+        positionKind: "perp",
+        venue: "hyperliquid",
         symbol: "BTC/USDC:USDC",
         signedNotionalDelta: 100,
         leverage: 2,
@@ -1571,6 +1705,8 @@ describe("HyperliquidClient", () => {
     const actions: RebalanceAction[] = [
       {
         kind: "rebalance",
+        positionKind: "perp",
+        venue: "hyperliquid",
         symbol: "BTC/USDC:USDC",
         signedNotionalDelta: 100,
         leverage: 2,
@@ -1606,6 +1742,8 @@ describe("HyperliquidClient", () => {
     const actions: RebalanceAction[] = [
       {
         kind: "rebalance",
+        positionKind: "perp",
+        venue: "hyperliquid",
         symbol: "BTC/USDC:USDC",
         signedNotionalDelta: 100,
         leverage: 2,
@@ -1643,6 +1781,8 @@ describe("HyperliquidClient", () => {
     const actions: RebalanceAction[] = [
       {
         kind: "rebalance",
+        positionKind: "perp",
+        venue: "hyperliquid",
         symbol: "ETH/USDC:USDC",
         signedNotionalDelta: 5,
         leverage: 2,
@@ -1685,11 +1825,15 @@ describe("HyperliquidClient", () => {
     const actions: RebalanceAction[] = [
       {
         kind: "close",
+        positionKind: "perp",
+        venue: "hyperliquid",
         symbol: "ETH/USDC:USDC",
         side: "buy",
       },
       {
         kind: "rebalance",
+        positionKind: "perp",
+        venue: "hyperliquid",
         symbol: "BTC/USDC:USDC",
         signedNotionalDelta: 100,
         leverage: 2,
@@ -1697,6 +1841,8 @@ describe("HyperliquidClient", () => {
       },
       {
         kind: "rebalance",
+        positionKind: "perp",
+        venue: "hyperliquid",
         symbol: "ETH/USDC:USDC",
         signedNotionalDelta: 5,
         leverage: 2,

@@ -5,6 +5,7 @@ import { getErrorMessage, getExchangeErrorDetail } from "./error-message"
 import { HttpStatusError, NetworkError } from "./http"
 import { ApiMessageError, MissingTickerError } from "@/hooks/useApi"
 import { ExchangeRequestError } from "@/services/hyperliquid"
+import { DerivePartialBatchFailure } from "@/services/derive/trading"
 import {
   ClipboardWriteFailed,
   WalletAddressMissing,
@@ -26,6 +27,7 @@ import {
   DeriveSubaccountMissing,
   DeriveInstrumentNotFound,
   DeriveOrderSizeInvalid,
+  DeriveOrderPriceInvalid,
 } from "@/services/derive/index"
 import {
   ApproveAgentFailed,
@@ -44,6 +46,37 @@ const asFiberFailure = async (error: unknown): Promise<unknown> => {
 }
 
 describe("getErrorMessage", () => {
+  it("requires reconciliation after a partial batch without exposing its cause", async () => {
+    const failure = await asFiberFailure(
+      new DerivePartialBatchFailure({
+        submittedOrders: [
+          {
+            request: {
+              symbol: "ETH-PERP",
+              side: "buy",
+              amount: 0.01,
+              price: 2000,
+            },
+            order: { id: "first-order", status: "open" },
+          },
+        ],
+        failedRequest: {
+          symbol: "ETH-PERP",
+          side: "sell",
+          amount: 0.02,
+          price: 2100,
+        },
+        unattemptedRequests: [],
+        cause: new ExchangeRequestError({
+          cause: new Error("upstream request detail"),
+        }),
+      }),
+    )
+    expect(getErrorMessage(failure)).toBe(
+      "Some Derive orders were submitted before the batch stopped. Reconcile order and account state before retrying.",
+    )
+  })
+
   it("maps a FiberFailure-wrapped HttpStatusError to its detail", async () => {
     const failure = await asFiberFailure(
       new HttpStatusError({ status: 503, detail: "service unavailable" }),
@@ -214,7 +247,7 @@ describe("getErrorMessage", () => {
       "Wallet changed while credentials were connecting. Please try again.",
     ],
     [
-      new WalletOperationContextChanged(),
+      new WalletOperationContextChanged({}),
       "Wallet changed before the operation completed. Please try again.",
     ],
   ])(
@@ -315,6 +348,21 @@ describe("getErrorMessage", () => {
       new DeriveInstrumentNotFound({ instrument: "ETH-PERP" }),
     )
     expect(getErrorMessage(failure)).toContain("instrument was not found")
+  })
+
+  it.each([
+    Number.NaN,
+    Number.POSITIVE_INFINITY,
+    Number.NEGATIVE_INFINITY,
+    0,
+    -1,
+  ])("maps invalid Derive price %s to an actionable message", async price => {
+    const failure = await asFiberFailure(
+      new DeriveOrderPriceInvalid({ symbol: "ETH-PERP", price }),
+    )
+    expect(getErrorMessage(failure)).toBe(
+      "Enter a finite, positive order price compatible with the instrument tick size.",
+    )
   })
 
   it("maps DeriveOrderSizeInvalid to a size message", async () => {

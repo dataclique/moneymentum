@@ -7,9 +7,9 @@ import type {
 } from "./hyperliquid-client"
 import type { RebalanceAction } from "@/pages/Portfolio/hooks/portfolioRebalancer"
 
-export class WalletNotConnected extends Data.TaggedError("WalletNotConnected")<
-  Record<string, never>
-> {}
+export class WalletNotConnected extends Data.TaggedError(
+  "WalletNotConnected",
+) {}
 
 export class ExchangeRequestError extends Data.TaggedError(
   "ExchangeRequestError",

@@ -29,19 +29,22 @@ import { boardKeysEqual, buildBoardKeys, type QuoteBook } from "./quoteBook"
 const SpotDividerRow = (props: {
   asset: Accessor<string>
   spot: Accessor<number>
-}) => (
-  <tr class="d-spot-divider-row">
-    <td colspan={OPTION_CHAIN_COLUMN_COUNT}>
-      <div class="d-spot-divider">
-        <div class="d-spot-divider-line" />
-        <div class="d-spot-badge">
-          {/* Only the badge text tracks spot -- the dashed line stays static. */}
-          {() => formatSpotBadge(props.asset(), props.spot())}
+}) => {
+  const spotLabel: Accessor<string> = createMemo(() =>
+    formatSpotBadge(props.asset(), props.spot()),
+  )
+
+  return (
+    <tr class="d-spot-divider-row">
+      <td colspan={OPTION_CHAIN_COLUMN_COUNT}>
+        <div class="d-spot-divider">
+          <div class="d-spot-divider-line" />
+          <div class="d-spot-badge">{spotLabel()}</div>
         </div>
-      </div>
-    </td>
-  </tr>
-)
+      </td>
+    </tr>
+  )
+}
 
 const ExpiryCountdownHeader = (props: {
   expiryUnix: Accessor<ExpiryUnix | null>

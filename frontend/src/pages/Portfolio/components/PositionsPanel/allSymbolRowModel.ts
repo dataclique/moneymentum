@@ -117,24 +117,40 @@ export const annualizedFundingRate = (
   return hourlyRate * 24 * 365
 }
 
+/** Look up a per-base rate when archive keys may differ in ASCII case from CCXT. */
+export const hourlyFundingRateForBase = (
+  fundingRatesByBaseSymbol: Record<string, number> | undefined,
+  baseSymbol: string,
+): number | undefined => {
+  if (fundingRatesByBaseSymbol === undefined) return undefined
+  if (baseSymbol in fundingRatesByBaseSymbol) {
+    return fundingRatesByBaseSymbol[baseSymbol]
+  }
+  const needle = baseSymbol.toUpperCase()
+  const match = Object.entries(fundingRatesByBaseSymbol).find(
+    ([ticker]) => ticker.toUpperCase() === needle,
+  )
+  return match?.[1]
+}
+
 export const buildAllSymbolRows = (
-  symbols: string[],
+  symbols: readonly string[],
   factorScores: FactorScore[],
   fundingRatesByBaseSymbol?: Record<string, number>,
 ): AllSymbolRowData[] => {
   const factorsByTicker = new Map(
-    factorScores.map(score => [score.ticker, score]),
+    factorScores.map(score => [score.ticker.toUpperCase(), score]),
   )
 
   return symbols.map(symbol => {
     const baseSymbol = symbol.split("/")[0] ?? symbol
-    const factors = factorsByTicker.get(baseSymbol)
+    const factors = factorsByTicker.get(baseSymbol.toUpperCase())
 
     return {
       symbol,
       baseSymbol,
       fundingRateAnnualized: annualizedFundingRate(
-        fundingRatesByBaseSymbol?.[baseSymbol],
+        hourlyFundingRateForBase(fundingRatesByBaseSymbol, baseSymbol),
       ),
       beta: factors?.beta ?? null,
       volatility: factors?.annualized_volatility ?? null,

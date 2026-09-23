@@ -1,11 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import * as Effect from "effect/Effect"
+import * as Exit from "effect/Exit"
+import * as Fiber from "effect/Fiber"
 import { renderHook, waitFor } from "@solidjs/testing-library"
 import { useWallet } from "./useWallet"
 import { WalletProvider } from "@/contexts/WalletProvider"
 import type { ParentProps } from "solid-js"
 import { getErrorMessage } from "@/lib/error-message"
-import { ApproveAgentFailed } from "@/services/hyperliquidAgent"
+import {
+  ApproveAgentFailed,
+  type approveHyperliquidAgent,
+  type revokeHyperliquidAgent,
+} from "@/services/hyperliquidAgent"
 
 vi.mock("@/services/hyperliquid-client", async importOriginal => {
   const actual =
@@ -33,7 +39,7 @@ vi.mock("@/services/hyperliquidClientLoader", () => ({
 const mockEnsureEvmAppKit = vi.fn(
   async () =>
     null as null | {
-      getAddress: () => null
+      getAddress: () => string | null
       disconnect?: (namespace: "eip155") => Promise<void>
       subscribeAccount?: (
         subscriber: (accountState: unknown) => void,
@@ -63,18 +69,24 @@ vi.mock("@/reown/evmAppKit", () => ({
     accountState.isConnected === true,
 }))
 
-const mockApproveHyperliquidAgent = vi.fn(() => Effect.void)
-const mockRevokeHyperliquidAgent = vi.fn(() => Effect.void)
+const mockApproveHyperliquidAgent = vi.fn<typeof approveHyperliquidAgent>(
+  () => Effect.void,
+)
+const mockRevokeHyperliquidAgent = vi.fn<typeof revokeHyperliquidAgent>(
+  () => Effect.void,
+)
 
 vi.mock("@/services/hyperliquidAgent", async importOriginal => {
   const actual =
     await importOriginal<typeof import("@/services/hyperliquidAgent")>()
   return {
     ...actual,
-    approveHyperliquidAgent: (...args: unknown[]) =>
-      mockApproveHyperliquidAgent(...args),
-    revokeHyperliquidAgent: (...args: unknown[]) =>
-      mockRevokeHyperliquidAgent(...args),
+    approveHyperliquidAgent: (
+      ...args: Parameters<typeof actual.approveHyperliquidAgent>
+    ) => mockApproveHyperliquidAgent(...args),
+    revokeHyperliquidAgent: (
+      ...args: Parameters<typeof actual.revokeHyperliquidAgent>
+    ) => mockRevokeHyperliquidAgent(...args),
     generateHyperliquidAgent: () => ({
       agentAddress: "0xGeneratedAgentAddress",
       agentPrivateKey:
@@ -106,7 +118,7 @@ describe("useWallet", () => {
     ) {
       const store = new Map<string, string>()
       globalAny.localStorage = {
-        getItem: key => (store.has(key) ? store.get(key)! : null),
+        getItem: key => store.get(key) ?? null,
         setItem: (key, value) => {
           store.set(key, value)
         },
@@ -120,7 +132,7 @@ describe("useWallet", () => {
         get length() {
           return store.size
         },
-      } as unknown as Storage
+      }
     }
   }
 
@@ -489,6 +501,104 @@ describe("useWallet", () => {
     expect(result.hasStoredSession()).toBe(false)
     expect(result.credentials()).toBeNull()
     expect(result.canTrade()).toBe(false)
+  })
+
+  it.each(["authorize", "revoke", "disconnect"] as const)(
+    "releases a queued Derive connection when %s is interrupted",
+    async operation => {
+      let operationStarted = false
+      const pendingOperation = Effect.sync(() => {
+        operationStarted = true
+      }).pipe(Effect.zipRight(Effect.never))
+      mockApproveHyperliquidAgent.mockReturnValue(pendingOperation)
+      mockRevokeHyperliquidAgent.mockReturnValue(pendingOperation)
+      mockEnsureEvmAppKit.mockResolvedValue({
+        getAddress: () => null,
+        subscribeAccount: () => () => undefined,
+        disconnect: () =>
+          new Promise<void>(() => {
+            operationStarted = true
+          }),
+      })
+      mockReadConnectedEip1193Provider.mockReturnValue({ request: vi.fn() })
+      const { result } = renderHook(() => useWallet(), { wrapper })
+      result.setMainAddress("0xMainFromReown")
+      const operationEffect =
+        operation === "authorize"
+          ? result.authorizeAgent(TEST_PIN)
+          : operation === "revoke"
+            ? result.revokeAgent()
+            : result.disconnect()
+      const activeOperation = Effect.runFork(
+        Effect.gen(function* () {
+          return yield* operationEffect
+        }),
+      )
+      await vi.waitFor(() => {
+        expect(operationStarted).toBe(true)
+      })
+
+      const connection = Effect.runPromiseExit(
+        result
+          .connectDerive(
+            {
+              deriveWallet: `0x${"22".repeat(20)}`,
+              sessionPrivateKey: `0x${"11".repeat(32)}`,
+              subaccountId: 42,
+            },
+            TEST_PIN,
+          )
+          .pipe(Effect.timeout("2 seconds")),
+      )
+      await Effect.runPromise(Fiber.interrupt(activeOperation))
+
+      expect(Exit.isSuccess(await connection)).toBe(true)
+      expect(result.isDeriveConnected()).toBe(true)
+      expect(result.deriveCredentials()?.subaccountId).toBe(42)
+    },
+  )
+
+  it("removes an interrupted Derive waiter without blocking the next connection", async () => {
+    let operationStarted = false
+    mockRevokeHyperliquidAgent.mockReturnValue(
+      Effect.sync(() => {
+        operationStarted = true
+      }).pipe(Effect.zipRight(Effect.never)),
+    )
+    mockEnsureEvmAppKit.mockResolvedValue({
+      getAddress: () => null,
+      subscribeAccount: () => () => undefined,
+    })
+    mockReadConnectedEip1193Provider.mockReturnValue({ request: vi.fn() })
+    const { result } = renderHook(() => useWallet(), { wrapper })
+    result.setMainAddress("0xMainFromReown")
+    const activeOperation = Effect.runFork(result.revokeAgent())
+    await vi.waitFor(() => {
+      expect(operationStarted).toBe(true)
+    })
+    const input = {
+      deriveWallet: `0x${"22".repeat(20)}`,
+      sessionPrivateKey: `0x${"11".repeat(32)}`,
+      subaccountId: 42,
+    }
+    let firstConnectionStarted = false
+    const cancelledConnection = Effect.runFork(
+      Effect.suspend(() => {
+        firstConnectionStarted = true
+        return result.connectDerive(input, TEST_PIN)
+      }),
+    )
+    await vi.waitFor(() => {
+      expect(firstConnectionStarted).toBe(true)
+    })
+    await Effect.runPromise(Fiber.interrupt(cancelledConnection))
+    const nextConnection = Effect.runPromiseExit(
+      result.connectDerive(input, TEST_PIN).pipe(Effect.timeout("2 seconds")),
+    )
+    await Effect.runPromise(Fiber.interrupt(activeOperation))
+
+    expect(Exit.isSuccess(await nextConnection)).toBe(true)
+    expect(result.deriveCredentials()?.subaccountId).toBe(42)
   })
 
   it("persists the encrypted session only after agent approval succeeds", async () => {

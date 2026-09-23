@@ -75,6 +75,25 @@ describe("resolveStagedConnectionState", () => {
     ).toBe("ready")
   })
 
+  it.each(["hyperliquid", "derive"] as const)(
+    "requires the locked %s venue when both venues have staged changes",
+    lockedVenue => {
+      expect(
+        resolveStagedConnectionState(
+          connectionInput({
+            hyperliquidPublicConnected: true,
+            hasHyperliquidAgent: true,
+            hyperliquidUnlocked: lockedVenue !== "hyperliquid",
+            deriveConnected: true,
+            deriveUnlocked: lockedVenue !== "derive",
+            hasHyperliquidStagedChanges: true,
+            hasDeriveStagedChanges: true,
+          }),
+        ),
+      ).toBe("agentLocked")
+    },
+  )
+
   it("returns chooseVenue when nothing is connected, unlocked, or staged", () => {
     expect(resolveStagedConnectionState(connectionInput())).toBe("chooseVenue")
   })

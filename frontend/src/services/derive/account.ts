@@ -272,7 +272,7 @@ const privateCallWithSession = <Result>(
       credentials.sessionPrivateKey,
       timestampMs,
     )
-    return yield* postPrivate(
+    return yield* postPrivate<Result>(
       baseUrl,
       methodPath,
       body,

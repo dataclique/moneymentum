@@ -37,11 +37,11 @@ export class DeriveWalletInvalid extends Data.TaggedError(
 
 export class DeriveSessionMissing extends Data.TaggedError(
   "DeriveSessionMissing",
-)<Record<string, never>> {}
+) {}
 
 export class DeriveSubaccountMissing extends Data.TaggedError(
   "DeriveSubaccountMissing",
-)<Record<string, never>> {}
+) {}
 
 export class DeriveSessionSignFailed extends Data.TaggedError(
   "DeriveSessionSignFailed",
@@ -168,7 +168,7 @@ export const parseStoredDeriveSession = (
     try: () => JSON.parse(raw) as unknown,
     catch: cause => cause,
   }).pipe(
-    Effect.map(parsed => {
+    Effect.map((parsed): DeriveSessionCredentials | null => {
       if (typeof parsed !== "object" || parsed === null) {
         return null
       }

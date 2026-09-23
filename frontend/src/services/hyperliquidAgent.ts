@@ -21,7 +21,7 @@ const REVOKED_AGENT_ADDRESS =
 
 export class ReownWalletUnavailable extends Data.TaggedError(
   "ReownWalletUnavailable",
-)<Record<string, never>> {}
+) {}
 
 export class ReownWalletRejected extends Data.TaggedError(
   "ReownWalletRejected",

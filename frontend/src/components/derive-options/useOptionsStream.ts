@@ -80,6 +80,7 @@ export const useOptionsStream = (
 
   const deriveBaseUrl = deriveOptionsBaseUrl()
   let streamRef: EventSource | null = null
+  let selectionRevision = Symbol("options selection")
 
   const expirySwitchInFlightRef: {
     postAbort: AbortController | undefined
@@ -105,7 +106,7 @@ export const useOptionsStream = (
   const expiryTabList = createMemo(
     (previous: ExpiryTab[] | undefined): ExpiryTab[] => {
       let tabs: ExpiryTab[] = []
-      if (book.loaded && book.expiry_unixes.length > 0) {
+      if (book.loaded) {
         tabs = book.expiry_unixes.map((unix, index) => ({
           unix,
           iso: book.expiry_dates[index] ?? new Date(unix * 1000).toISOString(),
@@ -194,6 +195,8 @@ export const useOptionsStream = (
     }
 
     const previousExpiryUnix = selectedExpiryUnix()
+    const operationRevision = Symbol("expiry selection")
+    selectionRevision = operationRevision
 
     expirySwitchInFlightRef.postAbort?.abort()
     const controller = new AbortController()
@@ -208,11 +211,23 @@ export const useOptionsStream = (
       postActiveExpiry(expiryUnix, controller.signal).pipe(
         Effect.match({
           onFailure: message => {
+            if (
+              controller.signal.aborted ||
+              selectionRevision !== operationRevision
+            ) {
+              return
+            }
             expirySwitchInFlightRef.blockStreamUntilExpiryUnix = null
             setSelectedExpiryUnix(previousExpiryUnix)
             setErrorMessage(message)
           },
           onSuccess: () => {
+            if (
+              controller.signal.aborted ||
+              selectionRevision !== operationRevision
+            ) {
+              return
+            }
             setErrorMessage(null)
           },
         }),
@@ -232,6 +247,8 @@ export const useOptionsStream = (
 
     const previousAsset = selectedAsset()
     const previousExpiryUnix = selectedExpiryUnix()
+    const operationRevision = Symbol("asset selection")
+    selectionRevision = operationRevision
 
     assetSwitchInFlightRef.postAbort?.abort()
     expirySwitchInFlightRef.postAbort?.abort()
@@ -250,6 +267,12 @@ export const useOptionsStream = (
       postActiveAsset(asset, controller.signal).pipe(
         Effect.match({
           onFailure: message => {
+            if (
+              controller.signal.aborted ||
+              selectionRevision !== operationRevision
+            ) {
+              return
+            }
             assetSwitchInFlightRef.blockStreamUntilAsset = null
             setSelectedAsset(previousAsset)
             setSelectedExpiryUnix(previousExpiryUnix)
@@ -257,6 +280,12 @@ export const useOptionsStream = (
             setErrorMessage(message)
           },
           onSuccess: () => {
+            if (
+              controller.signal.aborted ||
+              selectionRevision !== operationRevision
+            ) {
+              return
+            }
             setErrorMessage(null)
           },
         }),
@@ -264,9 +293,11 @@ export const useOptionsStream = (
     )
   }
 
-  const loadSnapshot = (signal?: AbortSignal): Promise<OptionsSnapshot> =>
+  const loadSnapshot = (signal?: AbortSignal) =>
     Effect.runPromise(
-      deriveService.fetchSnapshot(deriveBaseUrl, networkMode(), signal),
+      Effect.either(
+        deriveService.fetchSnapshot(deriveBaseUrl, networkMode(), signal),
+      ),
     )
 
   const startStream = (): void => {
@@ -319,10 +350,14 @@ export const useOptionsStream = (
         }
         const pendingExpiry = expirySwitchInFlightRef.blockStreamUntilExpiryUnix
         if (pendingExpiry !== null) {
-          if (next.active_expiry_unix !== pendingExpiry) {
+          if (
+            next.active_expiry_unix !== pendingExpiry &&
+            next.expiry_unixes.includes(pendingExpiry)
+          ) {
             return
           }
           expirySwitchInFlightRef.blockStreamUntilExpiryUnix = null
+          setSelectedExpiryUnix(next.active_expiry_unix)
         } else {
           const selected = selectedExpiryUnix()
           const selectedStillListed =
@@ -343,7 +378,9 @@ export const useOptionsStream = (
           error instanceof Error ? error.message : "Stream parse error",
         )
       } finally {
-        setIsLoading(false)
+        if (assetSwitchInFlightRef.blockStreamUntilAsset === null) {
+          setIsLoading(false)
+        }
       }
     }
     streamRef.onerror = () => {
@@ -364,6 +401,7 @@ export const useOptionsStream = (
     }
 
     const network = networkMode()
+    const initializationRevision = selectionRevision
     const controller = new AbortController()
     const load: { cancelled: boolean } = { cancelled: false }
     const loadWasCancelled = (): boolean => load.cancelled
@@ -395,8 +433,14 @@ export const useOptionsStream = (
           setSelectedAsset(boot.asset)
         }
         if (!userChoseAsset && !userChoseExpiry) {
+          setSelectedExpiryUnix(boot.default_expiry_unix)
+        }
+        if (
+          !userChoseAsset &&
+          !userChoseExpiry &&
+          boot.default_expiry_unix !== null
+        ) {
           const defaultUnix = boot.default_expiry_unix
-          setSelectedExpiryUnix(defaultUnix)
           expirySwitchInFlightRef.postAbort?.abort()
           const expiryController = new AbortController()
           expirySwitchInFlightRef.postAbort = expiryController
@@ -409,8 +453,7 @@ export const useOptionsStream = (
             return
           }
           const userSwitchedDuringDefaultPost =
-            expirySwitchInFlightRef.blockStreamUntilExpiryUnix !== null ||
-            assetSwitchInFlightRef.blockStreamUntilAsset !== null
+            selectionRevision !== initializationRevision
           if (Either.isLeft(postedExpiry) && !userSwitchedDuringDefaultPost) {
             setErrorMessage(postedExpiry.left)
             return
@@ -420,10 +463,19 @@ export const useOptionsStream = (
         if (loadWasCancelled()) {
           return
         }
-        const data = await loadSnapshot(controller.signal)
+        const snapshot = await loadSnapshot(controller.signal)
         if (loadWasCancelled()) {
           return
         }
+        if (Either.isLeft(snapshot)) {
+          if (selectionRevision === initializationRevision) {
+            setErrorMessage(getErrorMessage(snapshot.left))
+          } else if (assetSwitchInFlightRef.blockStreamUntilAsset !== null) {
+            startStream()
+          }
+          return
+        }
+        const data = snapshot.right
 
         const pendingAsset = assetSwitchInFlightRef.blockStreamUntilAsset
         const pendingExpiry = expirySwitchInFlightRef.blockStreamUntilExpiryUnix
@@ -454,19 +506,24 @@ export const useOptionsStream = (
           }
         }
 
-        setErrorMessage(null)
+        if (selectionRevision === initializationRevision) {
+          setErrorMessage(null)
+        }
         startStream()
       } catch (error) {
-        if (loadWasCancelled() || isAbortError(error)) {
+        if (
+          loadWasCancelled() ||
+          isAbortError(error) ||
+          selectionRevision !== initializationRevision
+        ) {
           return
         }
-        setErrorMessage(
-          error instanceof Error
-            ? error.message
-            : "Unknown derive options error",
-        )
+        setErrorMessage(getErrorMessage(error))
       } finally {
-        if (!loadWasCancelled()) {
+        if (
+          !loadWasCancelled() &&
+          assetSwitchInFlightRef.blockStreamUntilAsset === null
+        ) {
           setIsLoading(false)
         }
       }

@@ -1,7 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { renderHook, waitFor } from "@solidjs/testing-library"
-import { QueryClient, QueryClientProvider } from "@tanstack/solid-query"
-import type { ParentProps } from "solid-js"
+import {
+  QueryClient,
+  QueryClientProvider,
+  QueryObserver,
+} from "@tanstack/solid-query"
+import { createSignal, type ParentProps } from "solid-js"
 
 import { MIN_USD, usePortfolioState } from "./usePortfolioState"
 import {
@@ -74,6 +78,7 @@ const createWrapper = () => {
 }
 
 describe("usePortfolioState", () => {
+  const fixtureQueryClient = new QueryClient()
   const mutateAsync = vi.fn()
   const refetchPositions = vi.fn()
   const refetchAccountSummary = vi.fn()
@@ -92,6 +97,8 @@ describe("usePortfolioState", () => {
         leverage: 2,
         notional: 600,
         percentage: 60,
+        entryPrice: 50_000,
+        unrealizedPnl: 0,
       },
       {
         symbol: "ETH/USDC:USDC",
@@ -99,6 +106,8 @@ describe("usePortfolioState", () => {
         leverage: 3,
         notional: 400,
         percentage: 40,
+        entryPrice: 4_000,
+        unrealizedPnl: 0,
       },
     ],
     totalNotional: 1000,
@@ -146,30 +155,58 @@ describe("usePortfolioState", () => {
     )
 
     vi.mocked(useHyperliquidAccountSummary).mockReturnValue({
-      data: {
-        accountValue: 1000,
-        totalNotionalPosition: 1000,
-        withdrawable: 500,
-        crossAccountLeverage: 1,
-      },
-      isLoading: false,
+      ...new QueryObserver<
+        NonNullable<ReturnType<typeof useHyperliquidAccountSummary>["data"]>
+      >(fixtureQueryClient, {
+        queryKey: ["account-summary"],
+        enabled: false,
+        initialData: {
+          accountValue: 1000,
+          totalNotionalPosition: 1000,
+          withdrawable: 500,
+          crossAccountLeverage: 1,
+        },
+      }).getCurrentResult(),
       refetch: refetchAccountSummary,
-    } as ReturnType<typeof useHyperliquidAccountSummary>)
+    })
 
     vi.mocked(useHyperliquidPositions).mockReturnValue({
-      data: exchangePositions,
-      isLoading: false,
+      ...new QueryObserver<
+        NonNullable<ReturnType<typeof useHyperliquidPositions>["data"]>
+      >(fixtureQueryClient, {
+        queryKey: ["positions"],
+        enabled: false,
+        initialData: exchangePositions,
+      }).getCurrentResult(),
       refetch: refetchPositions,
-    } as ReturnType<typeof useHyperliquidPositions>)
+    })
 
     vi.mocked(useHyperliquidLeverageLimits).mockReturnValue({
       data: [
-        { symbol: "BTC/USDC:USDC", maxLeverage: 5 },
-        { symbol: "ETH/USDC:USDC", maxLeverage: 7 },
-        { symbol: "SOL/USDC:USDC", maxLeverage: 10 },
+        {
+          symbol: "BTC/USDC:USDC",
+          maxLeverage: 5,
+          assetIndex: 0,
+          onlyIsolated: false,
+        },
+        {
+          symbol: "ETH/USDC:USDC",
+          maxLeverage: 7,
+          assetIndex: 1,
+          onlyIsolated: false,
+        },
+        {
+          symbol: "SOL/USDC:USDC",
+          maxLeverage: 10,
+          assetIndex: 2,
+          onlyIsolated: false,
+        },
       ],
       isLoading: false,
-    } as ReturnType<typeof useHyperliquidLeverageLimits>)
+      isSuccess: true,
+      isError: false,
+      error: null,
+    })
 
     vi.mocked(useRebalanceHyperliquidPositions).mockReturnValue({
       mutateAsync,
@@ -183,6 +220,7 @@ describe("usePortfolioState", () => {
   })
 
   afterEach(() => {
+    fixtureQueryClient.clear()
     vi.restoreAllMocks()
   })
 
@@ -298,6 +336,114 @@ describe("usePortfolioState", () => {
     expect(result.currentTotalNotional).toBe(1620)
     expect(result.targetPortfolio["ETH-20260327-2000-C"]?.venue).toBe("derive")
   })
+
+  it.each(["cached", "missing", "after-submit"] as const)(
+    "retains Derive positions and blocks submission after a failed %s snapshot",
+    async mode => {
+      const [failed, setFailed] = createSignal(false)
+      vi.mocked(useWallet).mockReturnValue({
+        networkMode: () => "testnet",
+        isConnected: () => true,
+        isHyperliquidConnected: () => true,
+        isDeriveConnected: () => true,
+        isDeriveLocked: () => false,
+      } as ReturnType<typeof useWallet>)
+      vi.mocked(useDeriveSessionCredentials).mockReturnValue((() => ({
+        deriveWallet: `0x${"22".repeat(20)}`,
+        sessionAddress: `0x${"33".repeat(20)}`,
+        sessionPrivateKey: `0x${"11".repeat(32)}`,
+        networkMode: "testnet",
+        subaccountId: 7,
+      })) as ReturnType<typeof useDeriveSessionCredentials>)
+      const snapshot = {
+        deriveWallet: `0x${"22".repeat(20)}`,
+        subaccountIds: [7],
+        subaccounts: [
+          {
+            subaccountId: 7,
+            subaccountValue: "500",
+            collateralsValue: "0",
+            initialMargin: "0",
+            maintenanceMargin: "0",
+            positionsValue: "120",
+            positions: [
+              {
+                symbol: "ETH-20260327-2000-C",
+                side: "buy" as const,
+                notional: 120,
+                entryPrice: 100,
+                unrealizedPnl: 20,
+                leverage: 1,
+                positionKind: "option" as const,
+              },
+            ],
+          },
+        ],
+      }
+      vi.mocked(useDeriveAccountSnapshot).mockReturnValue({
+        get data() {
+          return failed() && mode !== "cached" ? undefined : snapshot
+        },
+        get isError() {
+          return failed()
+        },
+        isLoading: false,
+        refetch: vi.fn(),
+      } as unknown as ReturnType<typeof useDeriveAccountSnapshot>)
+      vi.mocked(useDeriveBalance).mockReturnValue({
+        data: {
+          accountValue: 500,
+          positionsValue: 120,
+          collateralsValue: 0,
+          totals: {},
+        },
+        isLoading: false,
+        refetch: vi.fn(),
+      } as unknown as ReturnType<typeof useDeriveBalance>)
+      const { result } = renderHook(() => usePortfolioState(), {
+        wrapper: createWrapper(),
+      })
+      await waitFor(() => {
+        expect(result.currentPortfolio["ETH-20260327-2000-C"]?.notional).toBe(
+          120,
+        )
+      })
+      result.setManualWeightEntry(true)
+      result.handleNotionalChange("BTC/USDC:USDC", 620)
+      result.handleNotionalChange("ETH/USDC:USDC", 380)
+      expect(result.canSubmit).toBe(true)
+
+      if (mode === "after-submit") {
+        mutateAsync.mockImplementation(async () => {
+          setFailed(true)
+          return settledOrders
+        })
+        result.handleRebalancePositions()
+        await waitFor(() => {
+          expect(mutateAsync).toHaveBeenCalledTimes(1)
+        })
+        await waitFor(() => {
+          expect(result.isRebalancing).toBe(false)
+        })
+        expect(result.currentPortfolio["ETH-20260327-2000-C"]?.notional).toBe(
+          120,
+        )
+        expect(result.canSubmit).toBe(false)
+        return
+      }
+
+      setFailed(true)
+      await waitFor(() => {
+        expect(result.currentPortfolio["ETH-20260327-2000-C"]?.notional).toBe(
+          120,
+        )
+      })
+      result.handleRebalancePositions()
+
+      expect(mutateAsync).not.toHaveBeenCalled()
+      expect(result.canSubmit).toBe(false)
+    },
+  )
 
   it("clears derive positions on venue disconnect without resetting hyperliquid", async () => {
     vi.mocked(useWallet).mockReturnValue({
@@ -477,7 +623,10 @@ describe("usePortfolioState", () => {
     })
 
     result.handleLeverageChange("BTC/USDC:USDC", 999)
-    expect(result.targetPortfolio["BTC/USDC:USDC"]?.leverage).toBe(5)
+    expect(result.targetPortfolio["BTC/USDC:USDC"]).toMatchObject({
+      kind: "perp",
+      leverage: 5,
+    })
   })
 
   it("builds staged trades from diff after target changes", async () => {

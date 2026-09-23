@@ -18,7 +18,7 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use thiserror::Error;
-use tokio::sync::{RwLock, broadcast, mpsc};
+use tokio::sync::{RwLock, broadcast, mpsc, oneshot};
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
 use tracing::{debug, error, info, warn};
@@ -31,6 +31,10 @@ const TICKER_SLIM_INTERVAL_MS: &str = "100";
 const SUBSCRIBE_CHANNELS_PER_MESSAGE: usize = 25;
 const CATALOGUE_REFRESH_INTERVAL: Duration = Duration::from_mins(1);
 const HTTP_USER_AGENT: &str = "moneymentum-derive/0.1";
+const HTTP_CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
+const HTTP_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
+const OPTIONS_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(25);
+const HUB_COMMAND_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Commands the websocket hub consumes: switch expiry, switch underlying
 /// asset (reload catalogue), or the timer-driven catalogue refresh that
@@ -39,6 +43,11 @@ const HTTP_USER_AGENT: &str = "moneymentum-derive/0.1";
 enum HubCommand {
     SetExpiry(i64),
     SetAsset(String),
+}
+
+struct HubRequest {
+    command: HubCommand,
+    acknowledgment: oneshot::Sender<Result<(), DeriveError>>,
 }
 
 type DeriveWsWriter = futures::stream::SplitSink<
@@ -126,6 +135,11 @@ struct GetTickersResult {
 
 #[derive(Debug, Deserialize, Clone)]
 struct TickerSlimDto {
+    // Both REST and WS define `t` as snapshot creation time in Unix milliseconds:
+    // https://docs.derive.xyz/api-reference/channels/tickerslim
+    // https://docs.derive.xyz/api-reference/market-data/publicget_tickers
+    #[serde(rename = "t")]
+    snapshot_timestamp_ms: u64,
     #[serde(rename = "A")]
     best_ask_size: String,
     #[serde(rename = "B")]
@@ -242,7 +256,7 @@ pub struct OptionQuote {
 pub struct OptionsSnapshot {
     pub asset: String,
     pub updated_at: DateTime<Utc>,
-    pub active_expiry_unix: i64,
+    pub active_expiry_unix: Option<i64>,
     pub expiry_unixes: Vec<i64>,
     pub spot_price: f64,
     pub expiry_dates: Vec<DateTime<Utc>>,
@@ -260,7 +274,7 @@ pub struct ExpiryTabPayload {
 pub struct OptionsBootstrap {
     pub asset: String,
     pub assets: Vec<String>,
-    pub default_expiry_unix: i64,
+    pub default_expiry_unix: Option<i64>,
     pub tabs: Vec<ExpiryTabPayload>,
 }
 
@@ -285,6 +299,7 @@ struct InstrumentMeta {
 
 #[derive(Debug, Clone)]
 struct QuoteState {
+    snapshot_timestamp_ms: u64,
     bid: Option<f64>,
     ask: Option<f64>,
     bid_size: Option<f64>,
@@ -297,6 +312,7 @@ struct QuoteState {
 impl Default for QuoteState {
     fn default() -> Self {
         Self {
+            snapshot_timestamp_ms: 0,
             bid: None,
             ask: None,
             bid_size: None,
@@ -326,26 +342,38 @@ struct DeriveState {
     active: Arc<RwLock<SharedActiveOptions>>,
     snapshot: Arc<RwLock<OptionsSnapshot>>,
     tx: broadcast::Sender<OptionsSnapshot>,
-    command_tx: mpsc::Sender<HubCommand>,
+    command_tx: mpsc::Sender<HubRequest>,
+    hub_task: tokio::task::AbortHandle,
+}
+
+impl Drop for DeriveState {
+    fn drop(&mut self) {
+        self.hub_task.abort();
+    }
 }
 
 /// Dual-network hubs: one websocket process per Derive deployment.
 struct DeriveNetworksState {
-    mainnet: Arc<DeriveState>,
-    testnet: Arc<DeriveState>,
+    mainnet: Result<Arc<DeriveState>, DeriveError>,
+    testnet: Result<Arc<DeriveState>, DeriveError>,
 }
 
 impl DeriveNetworksState {
-    fn for_network(&self, network: DeriveNetwork) -> &Arc<DeriveState> {
+    fn for_network(&self, network: DeriveNetwork) -> Result<&Arc<DeriveState>, StatusCode> {
         match network {
-            DeriveNetwork::Mainnet => &self.mainnet,
-            DeriveNetwork::Testnet => &self.testnet,
+            DeriveNetwork::Mainnet => self.mainnet.as_ref(),
+            DeriveNetwork::Testnet => self.testnet.as_ref(),
         }
+        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)
     }
 }
 
 fn build_http_client() -> Result<Client, DeriveError> {
-    Ok(Client::builder().user_agent(HTTP_USER_AGENT).build()?)
+    Ok(Client::builder()
+        .user_agent(HTTP_USER_AGENT)
+        .connect_timeout(HTTP_CONNECT_TIMEOUT)
+        .timeout(HTTP_REQUEST_TIMEOUT)
+        .build()?)
 }
 
 fn apply_cors_headers(response: &mut Response) {
@@ -737,6 +765,7 @@ fn quote_state_from_ticker(ticker: &TickerSlimDto) -> QuoteState {
             .filter(|model_mark| *model_mark != 0.0)
     });
     QuoteState {
+        snapshot_timestamp_ms: ticker.snapshot_timestamp_ms,
         bid: parse_optional_number(&ticker.best_bid_price),
         ask: parse_optional_number(&ticker.best_ask_price),
         bid_size: parse_optional_number(&ticker.best_bid_size),
@@ -750,14 +779,20 @@ fn quote_state_from_ticker(ticker: &TickerSlimDto) -> QuoteState {
 fn upsert_quote(
     quote_map: &mut HashMap<String, QuoteState>,
     instrument_name: String,
-    incoming: QuoteState,
+    mut incoming: QuoteState,
 ) {
-    if incoming.spot <= 0.0
-        && quote_map
-            .get(&instrument_name)
-            .is_some_and(|existing| existing.spot > 0.0)
+    if quote_map
+        .get(&instrument_name)
+        .is_some_and(|existing| incoming.snapshot_timestamp_ms <= existing.snapshot_timestamp_ms)
     {
         return;
+    }
+    if (!incoming.spot.is_finite() || incoming.spot <= 0.0)
+        && let Some(existing) = quote_map
+            .get(&instrument_name)
+            .filter(|existing| existing.spot.is_finite() && existing.spot > 0.0)
+    {
+        incoming.spot = existing.spot;
     }
     quote_map.insert(instrument_name, incoming);
 }
@@ -860,11 +895,7 @@ fn build_bootstrap(
                 .unwrap_or_default(),
         })
         .collect::<Vec<_>>();
-    let default_expiry_unix = catalogue
-        .expiry_unix_sorted_asc
-        .first()
-        .copied()
-        .unwrap_or(0);
+    let default_expiry_unix = catalogue.expiry_unix_sorted_asc.first().copied();
     OptionsBootstrap {
         asset: asset.to_string(),
         assets: assets.to_vec(),
@@ -884,17 +915,14 @@ fn expiry_datetimes_from_catalogue(catalogue: &OptionsCatalogue) -> Vec<DateTime
 fn build_tab_snapshot(
     asset: &str,
     catalogue: &OptionsCatalogue,
-    active_expiry_unix: i64,
+    active_expiry_unix: Option<i64>,
     quote_map: &HashMap<String, QuoteState>,
 ) -> OptionsSnapshot {
-    let names = catalogue
-        .names_by_expiry_unix
-        .get(&active_expiry_unix)
-        .cloned()
-        .unwrap_or_default();
+    let names = active_expiry_unix.and_then(|expiry| catalogue.names_by_expiry_unix.get(&expiry));
 
     let mut quotes: Vec<OptionQuote> = names
-        .iter()
+        .into_iter()
+        .flatten()
         .filter_map(|instrument_name| {
             let meta = catalogue.instrument_by_name.get(instrument_name)?;
             let state = quote_map.get(instrument_name).cloned().unwrap_or_default();
@@ -959,23 +987,18 @@ async fn apply_tab_switch(
     writer: &mut DeriveWsWriter,
     message_id: &mut i64,
     subscribed_channels: &mut Vec<String>,
-    quote_map: &mut HashMap<String, QuoteState>,
     catalogue: &OptionsCatalogue,
-    new_expiry_unix: i64,
+    new_expiry_unix: Option<i64>,
 ) -> Result<(), DeriveError> {
     if !subscribed_channels.is_empty() {
         send_unsubscribe_batch(writer, subscribed_channels, message_id).await?;
         subscribed_channels.clear();
     }
-    quote_map.clear();
 
-    let names = catalogue
-        .names_by_expiry_unix
-        .get(&new_expiry_unix)
-        .cloned()
-        .unwrap_or_default();
+    let names = new_expiry_unix.and_then(|expiry| catalogue.names_by_expiry_unix.get(&expiry));
     let channels = names
-        .iter()
+        .into_iter()
+        .flatten()
         .map(|name| channel_name_for_instrument(name))
         .collect::<Vec<_>>();
     if !channels.is_empty() {
@@ -993,9 +1016,10 @@ struct OptionsHub {
     broadcast_tx: broadcast::Sender<OptionsSnapshot>,
 }
 
+#[derive(Clone)]
 struct HubRuntime {
     quote_map: HashMap<String, QuoteState>,
-    active_expiry_unix: i64,
+    active_expiry_unix: Option<i64>,
     asset: String,
     catalogue: OptionsCatalogue,
 }
@@ -1024,23 +1048,34 @@ async fn resubscribe_active_tab(
     hub: &OptionsHub,
     runtime: &mut HubRuntime,
 ) -> Result<(), DeriveError> {
-    apply_tab_switch(
+    let subscribed = apply_tab_switch(
         session.writer,
         session.message_id,
         session.subscribed_channels,
-        &mut runtime.quote_map,
         &runtime.catalogue,
         runtime.active_expiry_unix,
     )
-    .await?;
-    seed_quote_map_from_rest(
-        &hub.http,
-        &hub.rest_base_url,
-        runtime.asset.as_str(),
-        runtime.active_expiry_unix,
-        &mut runtime.quote_map,
-    )
     .await;
+    let subscription_result = match (runtime.active_expiry_unix, subscribed) {
+        (Some(_), Err(error)) => return Err(error),
+        (Some(expiry_unix), Ok(())) => {
+            runtime.quote_map.clear();
+            seed_quote_map_from_rest(
+                &hub.http,
+                &hub.rest_base_url,
+                runtime.asset.as_str(),
+                expiry_unix,
+                &mut runtime.quote_map,
+            )
+            .await;
+            Ok(())
+        }
+        (None, outcome) => {
+            runtime.quote_map.clear();
+            session.subscribed_channels.clear();
+            outcome
+        }
+    };
     publish_snapshot(
         runtime.asset.as_str(),
         &runtime.catalogue,
@@ -1050,84 +1085,109 @@ async fn resubscribe_active_tab(
         &hub.broadcast_tx,
     )
     .await;
-    Ok(())
+    if runtime.active_expiry_unix.is_none() {
+        debug!(asset = %runtime.asset, "derive empty option snapshot published");
+    }
+    subscription_result
 }
 
-async fn handle_set_expiry(
-    next_expiry_unix: i64,
-    session: &mut WsSession<'_>,
+async fn prepare_command(
+    command: &HubCommand,
     hub: &OptionsHub,
-    runtime: &mut HubRuntime,
-) -> Result<SessionControl, DeriveError> {
-    if !runtime
-        .catalogue
-        .expiry_unix_sorted_asc
-        .contains(&next_expiry_unix)
-    {
-        warn!(
-            expiry_unix = next_expiry_unix,
-            asset = %runtime.asset,
-            "ignored unknown expiry tab switch"
-        );
-        return Ok(SessionControl::Continue);
-    }
-    runtime.active_expiry_unix = next_expiry_unix;
-    if let Err(error) = resubscribe_active_tab(session, hub, runtime).await {
-        error!(error = %error, "derive tab switch failed");
-        return Ok(SessionControl::Reconnect);
-    }
-    debug!(
-        expiry_unix = runtime.active_expiry_unix,
-        asset = %runtime.asset,
-        "derive tab switched and subscriptions updated"
-    );
-    Ok(SessionControl::Continue)
-}
-
-async fn handle_set_asset(
-    next_asset: String,
-    session: &mut WsSession<'_>,
-    hub: &OptionsHub,
-    runtime: &mut HubRuntime,
-) -> Result<SessionControl, DeriveError> {
-    if next_asset == runtime.asset {
-        return Ok(SessionControl::Continue);
-    }
-    let next_catalogue =
-        match fetch_options_catalogue(&hub.http, &hub.rest_base_url, &next_asset).await {
-            Ok(next_catalogue) => next_catalogue,
-            Err(error) => {
-                error!(
-                    asset = %next_asset,
-                    error = %error,
-                    "derive asset catalogue fetch failed"
-                );
-                return Ok(SessionControl::Continue);
+    runtime: &HubRuntime,
+) -> Result<HubRuntime, DeriveError> {
+    let mut next = runtime.clone();
+    match command {
+        HubCommand::SetExpiry(expiry) => {
+            if !runtime.catalogue.expiry_unix_sorted_asc.contains(expiry) {
+                return Err(DeriveError::InvalidExpiry { timestamp: *expiry });
             }
-        };
-    let Some(next_expiry_unix) = next_catalogue.expiry_unix_sorted_asc.first().copied() else {
-        warn!(
-            asset = %next_asset,
-            "ignored asset switch with no active expiries"
-        );
-        return Ok(SessionControl::Continue);
-    };
-
-    runtime.catalogue = next_catalogue;
-    runtime.asset = next_asset;
-    publish_shared_active(hub, runtime).await;
-    runtime.active_expiry_unix = next_expiry_unix;
-
-    if let Err(error) = resubscribe_active_tab(session, hub, runtime).await {
-        error!(error = %error, "derive asset switch subscriptions failed");
-        return Ok(SessionControl::Reconnect);
+            next.active_expiry_unix = Some(*expiry);
+        }
+        HubCommand::SetAsset(asset) => {
+            next.catalogue = fetch_options_catalogue(&hub.http, &hub.rest_base_url, asset).await?;
+            next.asset.clone_from(asset);
+            next.active_expiry_unix = next.catalogue.expiry_unix_sorted_asc.first().copied();
+        }
     }
-    debug!(
-        asset = %runtime.asset,
-        expiry_unix = runtime.active_expiry_unix,
-        "derive asset switched and subscriptions updated"
-    );
-    Ok(SessionControl::Continue)
+    next.quote_map.clear();
+    if let Some(expiry) = next.active_expiry_unix {
+        let tickers =
+            fetch_option_tickers(&hub.http, &hub.rest_base_url, &next.asset, expiry).await?;
+        seed_quote_map(&mut next.quote_map, tickers);
+    }
+    Ok(next)
+}
+
+async fn handle_command(
+    mut request: HubRequest,
+    session: &mut WsSession<'_>,
+    hub: &OptionsHub,
+    runtime: &mut HubRuntime,
+) -> SessionControl {
+    if request.acknowledgment.is_closed() {
+        debug!(command = ?request.command, "derive command cancelled before application");
+        return SessionControl::Continue;
+    }
+    if matches!(&request.command, HubCommand::SetAsset(asset) if asset == &runtime.asset) {
+        debug!(command = ?request.command, "derive command applied");
+        let _ = request.acknowledgment.send(Ok(()));
+        return SessionControl::Continue;
+    }
+    let applied: Result<_, DeriveError> = tokio::select! {
+        biased;
+        _ = request.acknowledgment.closed() => {
+            debug!(command = ?request.command, "derive command cancelled before commit");
+            return SessionControl::Reconnect;
+        }
+        prepared = async {
+            let next = prepare_command(&request.command, hub, runtime).await?;
+            apply_tab_switch(
+                session.writer,
+                session.message_id,
+                session.subscribed_channels,
+                &next.catalogue,
+                next.active_expiry_unix,
+            ).await?;
+            let active = hub.shared_active.write().await;
+            let snapshot = hub.snapshot.write().await;
+            Ok((next, active, snapshot))
+        } => prepared,
+    };
+    match applied {
+        Ok((next, mut active, mut snapshot)) => {
+            if request.acknowledgment.is_closed() {
+                debug!(command = ?request.command, "derive command cancelled before commit");
+                return SessionControl::Reconnect;
+            }
+            let next_snapshot = build_tab_snapshot(
+                &next.asset,
+                &next.catalogue,
+                next.active_expiry_unix,
+                &next.quote_map,
+            );
+            *active = SharedActiveOptions {
+                asset: next.asset.clone(),
+                catalogue: next.catalogue.clone(),
+            };
+            *snapshot = next_snapshot.clone();
+            *runtime = next;
+            let _ = hub.broadcast_tx.send(next_snapshot);
+            debug!(command = ?request.command, "derive command applied");
+            let _ = request.acknowledgment.send(Ok(()));
+            SessionControl::Continue
+        }
+        Err(error) => {
+            let control = if matches!(&error, DeriveError::WebSocket(_)) {
+                SessionControl::Reconnect
+            } else {
+                SessionControl::Continue
+            };
+            error!(command = ?request.command, error = %error, "derive command failed");
+            let _ = request.acknowledgment.send(Err(error));
+            control
+        }
+    }
 }
 
 async fn handle_catalogue_refresh(
@@ -1143,14 +1203,7 @@ async fn handle_catalogue_refresh(
     )
     .await
     {
-        Ok(catalogue) if !catalogue.expiry_unix_sorted_asc.is_empty() => catalogue,
-        Ok(_) => {
-            warn!(
-                asset = %runtime.asset,
-                "derive catalogue refresh returned no open expiries"
-            );
-            prune_closed_expiries(&runtime.catalogue, now_unix)
-        }
+        Ok(catalogue) => catalogue,
         Err(error) => {
             warn!(
                 asset = %runtime.asset,
@@ -1161,30 +1214,15 @@ async fn handle_catalogue_refresh(
         }
     };
 
-    if next_catalogue.expiry_unix_sorted_asc.is_empty() {
-        warn!(
-            asset = %runtime.asset,
-            "derive catalogue has no open expiries after refresh"
-        );
+    let next_active = runtime
+        .active_expiry_unix
+        .filter(|expiry| next_catalogue.expiry_unix_sorted_asc.contains(expiry))
+        .or_else(|| next_catalogue.expiry_unix_sorted_asc.first().copied());
+    if catalogues_equivalent(&runtime.catalogue, &next_catalogue)
+        && next_active == runtime.active_expiry_unix
+    {
         return Ok(SessionControl::Continue);
     }
-
-    let active_still_listed = next_catalogue
-        .expiry_unix_sorted_asc
-        .contains(&runtime.active_expiry_unix);
-    if catalogues_equivalent(&runtime.catalogue, &next_catalogue) && active_still_listed {
-        return Ok(SessionControl::Continue);
-    }
-
-    let next_active = if active_still_listed {
-        runtime.active_expiry_unix
-    } else {
-        let Some(nearest_expiry_unix) = next_catalogue.expiry_unix_sorted_asc.first().copied()
-        else {
-            return Ok(SessionControl::Continue);
-        };
-        nearest_expiry_unix
-    };
 
     runtime.catalogue = next_catalogue;
     publish_shared_active(hub, runtime).await;
@@ -1196,7 +1234,7 @@ async fn handle_catalogue_refresh(
     }
     debug!(
         asset = %runtime.asset,
-        expiry_unix = runtime.active_expiry_unix,
+        expiry_unix = ?runtime.active_expiry_unix,
         tabs = runtime.catalogue.expiry_unix_sorted_asc.len(),
         "derive option catalogue refreshed"
     );
@@ -1206,7 +1244,7 @@ async fn handle_catalogue_refresh(
 async fn publish_snapshot(
     asset: &str,
     catalogue: &OptionsCatalogue,
-    active_expiry_unix: i64,
+    active_expiry_unix: Option<i64>,
     quote_map: &HashMap<String, QuoteState>,
     snapshot: &RwLock<OptionsSnapshot>,
     broadcast_tx: &broadcast::Sender<OptionsSnapshot>,
@@ -1220,7 +1258,7 @@ async fn process_message(
     message: Message,
     catalogue: &OptionsCatalogue,
     asset: &str,
-    active_expiry_unix: i64,
+    active_expiry_unix: Option<i64>,
     quote_map: &mut HashMap<String, QuoteState>,
     snapshot: &RwLock<OptionsSnapshot>,
     broadcast_tx: &broadcast::Sender<OptionsSnapshot>,
@@ -1244,7 +1282,7 @@ async fn process_message(
     let Some(meta) = catalogue.instrument_by_name.get(&instrument_name) else {
         return Ok(());
     };
-    if meta.expiry_unix != active_expiry_unix {
+    if Some(meta.expiry_unix) != active_expiry_unix {
         return Ok(());
     }
     upsert_quote(
@@ -1267,13 +1305,13 @@ async fn process_message(
 async fn run_websocket_hub(
     ws_url: Url,
     hub: OptionsHub,
-    mut command_rx: mpsc::Receiver<HubCommand>,
+    mut command_rx: mpsc::Receiver<HubRequest>,
     initial_asset: String,
     initial_expiry_unix: i64,
 ) -> Result<(), DeriveError> {
     let mut runtime = HubRuntime {
         quote_map: HashMap::new(),
-        active_expiry_unix: initial_expiry_unix,
+        active_expiry_unix: Some(initial_expiry_unix),
         asset: initial_asset,
         catalogue: hub.shared_active.read().await.catalogue.clone(),
     };
@@ -1313,20 +1351,7 @@ async fn run_websocket_hub(
                     let Some(command) = maybe_command else {
                         return Ok(());
                     };
-                    let control = match command {
-                        HubCommand::SetExpiry(next_expiry_unix) => {
-                            handle_set_expiry(
-                                next_expiry_unix,
-                                &mut session,
-                                &hub,
-                                &mut runtime,
-                            )
-                            .await?
-                        }
-                        HubCommand::SetAsset(next_asset) => {
-                            handle_set_asset(next_asset, &mut session, &hub, &mut runtime).await?
-                        }
-                    };
+                    let control = handle_command(command, &mut session, &hub, &mut runtime).await;
                     if control == SessionControl::Reconnect {
                         break 'session;
                     }
@@ -1375,29 +1400,29 @@ async fn health() -> &'static str {
 async fn get_bootstrap(
     State(networks): State<Arc<DeriveNetworksState>>,
     Query(query): Query<NetworkQuery>,
-) -> Json<OptionsBootstrap> {
-    let state = networks.for_network(query.network);
+) -> Result<Json<OptionsBootstrap>, StatusCode> {
+    let state = networks.for_network(query.network)?;
     let active = state.active.read().await;
-    Json(build_bootstrap(
+    Ok(Json(build_bootstrap(
         &active.catalogue,
         active.asset.as_str(),
         &state.assets,
-    ))
+    )))
 }
 
 async fn get_snapshot(
     State(networks): State<Arc<DeriveNetworksState>>,
     Query(query): Query<NetworkQuery>,
-) -> Json<OptionsSnapshot> {
-    let state = networks.for_network(query.network);
-    Json(state.snapshot.read().await.clone())
+) -> Result<Json<OptionsSnapshot>, StatusCode> {
+    let state = networks.for_network(query.network)?;
+    Ok(Json(state.snapshot.read().await.clone()))
 }
 
 async fn stream_options(
     State(networks): State<Arc<DeriveNetworksState>>,
     Query(query): Query<NetworkQuery>,
-) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
-    let state = networks.for_network(query.network);
+) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, StatusCode> {
+    let state = networks.for_network(query.network)?;
     let receiver = state.tx.subscribe();
     let stream = futures::stream::unfold(receiver, |mut receiver| async move {
         loop {
@@ -1417,7 +1442,7 @@ async fn stream_options(
             }
         }
     });
-    Sse::new(stream)
+    Ok(Sse::new(stream))
 }
 
 /// Switch the active expiry that the selected network hub streams.
@@ -1431,7 +1456,7 @@ async fn post_active_expiry(
     Query(query): Query<NetworkQuery>,
     Json(body): Json<ActiveExpiryBody>,
 ) -> Result<StatusCode, StatusCode> {
-    let state = networks.for_network(query.network);
+    let state = networks.for_network(query.network)?;
     let active = state.active.read().await;
     if !active
         .catalogue
@@ -1441,12 +1466,7 @@ async fn post_active_expiry(
         return Err(StatusCode::BAD_REQUEST);
     }
     drop(active);
-    state
-        .command_tx
-        .send(HubCommand::SetExpiry(body.expiry_unix))
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(StatusCode::NO_CONTENT)
+    await_command(state, HubCommand::SetExpiry(body.expiry_unix)).await
 }
 
 /// Switch the active underlying asset on the selected network hub. Reloads that
@@ -1459,15 +1479,34 @@ async fn post_active_asset(
     Query(query): Query<NetworkQuery>,
     Json(body): Json<ActiveAssetBody>,
 ) -> Result<StatusCode, StatusCode> {
-    let state = networks.for_network(query.network);
+    let state = networks.for_network(query.network)?;
     if !state.assets.iter().any(|asset| asset == &body.asset) {
         return Err(StatusCode::BAD_REQUEST);
     }
-    state
-        .command_tx
-        .send(HubCommand::SetAsset(body.asset))
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    await_command(state, HubCommand::SetAsset(body.asset)).await
+}
+
+async fn await_command(state: &DeriveState, command: HubCommand) -> Result<StatusCode, StatusCode> {
+    let (acknowledgment, applied) = oneshot::channel();
+    tokio::time::timeout(HUB_COMMAND_TIMEOUT, async {
+        state
+            .command_tx
+            .send(HubRequest {
+                command,
+                acknowledgment,
+            })
+            .await
+            .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+        applied
+            .await
+            .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?
+            .map_err(|error| match error {
+                DeriveError::InvalidExpiry { .. } => StatusCode::BAD_REQUEST,
+                _ => StatusCode::BAD_GATEWAY,
+            })
+    })
+    .await
+    .map_err(|_| StatusCode::GATEWAY_TIMEOUT)??;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -1477,7 +1516,17 @@ async fn spawn_options_hub(
     network: DeriveNetwork,
 ) -> Result<Arc<DeriveState>, DeriveError> {
     let http = build_http_client()?;
-    let discovered = fetch_option_assets(&http, &rest_base_url).await?;
+    let discovered = tokio::time::timeout(
+        OPTIONS_DISCOVERY_TIMEOUT,
+        fetch_option_assets(&http, &rest_base_url),
+    )
+    .await
+    .map_err(|_| DeriveError::Api {
+        message: format!(
+            "derive {network:?} option discovery exceeded {} seconds",
+            OPTIONS_DISCOVERY_TIMEOUT.as_secs()
+        ),
+    })??;
     let default_asset = discovered
         .assets
         .first()
@@ -1503,28 +1552,22 @@ async fn spawn_options_hub(
     let empty_snapshot = build_tab_snapshot(
         default_asset.as_str(),
         &catalogue,
-        default_expiry_unix,
+        Some(default_expiry_unix),
         &HashMap::new(),
     );
     let snapshot = Arc::new(RwLock::new(empty_snapshot));
     let (broadcast_tx, _) = broadcast::channel(2048);
-    let (command_tx, command_rx) = mpsc::channel::<HubCommand>(32);
+    let (command_tx, command_rx) = mpsc::channel::<HubRequest>(32);
     let shared_active = Arc::new(RwLock::new(SharedActiveOptions {
         asset: default_asset.clone(),
         catalogue,
     }));
 
-    let state = Arc::new(DeriveState {
-        assets,
-        active: Arc::clone(&shared_active),
-        snapshot: Arc::clone(&snapshot),
-        tx: broadcast_tx.clone(),
-        command_tx,
-    });
-
+    let active_for_state = Arc::clone(&shared_active);
+    let broadcast_for_state = broadcast_tx.clone();
     let snapshot_for_task = Arc::clone(&snapshot);
     let http_for_task = http.clone();
-    tokio::spawn(async move {
+    let hub_task = tokio::spawn(async move {
         if let Err(error) = run_websocket_hub(
             ws_url,
             OptionsHub {
@@ -1544,6 +1587,14 @@ async fn spawn_options_hub(
         }
     });
 
+    let state = Arc::new(DeriveState {
+        assets,
+        active: active_for_state,
+        snapshot,
+        tx: broadcast_for_state,
+        command_tx,
+        hub_task: hub_task.abort_handle(),
+    });
     debug!(?network, "derive options websocket hub spawned");
     Ok(state)
 }
@@ -1557,21 +1608,30 @@ async fn spawn_options_hub(
 ///
 /// # Errors
 ///
-/// Returns [`DeriveError`] when either network's options hub fails to start.
+/// Returns [`DeriveError`] when both networks fail to initialize. A failed
+/// network returns HTTP 503 without disabling the other network's routes.
 pub async fn derive_options_router(config: DeriveConfig) -> Result<Router, DeriveError> {
-    let mainnet = spawn_options_hub(
-        config.rest_base_url.clone(),
-        config.ws_url.clone(),
-        DeriveNetwork::Mainnet,
-    )
-    .await?;
-    let testnet = spawn_options_hub(
-        config.testnet_rest_base_url.clone(),
-        config.testnet_ws_url.clone(),
-        DeriveNetwork::Testnet,
-    )
-    .await?;
-
+    let (mainnet, testnet) = tokio::join!(
+        spawn_options_hub(config.rest_base_url, config.ws_url, DeriveNetwork::Mainnet),
+        spawn_options_hub(
+            config.testnet_rest_base_url,
+            config.testnet_ws_url,
+            DeriveNetwork::Testnet
+        ),
+    );
+    for (network, result) in [
+        (DeriveNetwork::Mainnet, &mainnet),
+        (DeriveNetwork::Testnet, &testnet),
+    ] {
+        if let Err(error) = result {
+            warn!(?network, error = %error, "derive options network unavailable");
+        }
+    }
+    if mainnet.is_err() && testnet.is_err() {
+        return Err(DeriveError::Api {
+            message: "neither Derive network could initialize".to_string(),
+        });
+    }
     let networks = Arc::new(DeriveNetworksState { mainnet, testnet });
 
     Ok(Router::new()
@@ -1599,7 +1659,641 @@ pub async fn derive_app(config: DeriveConfig) -> Result<Router, DeriveError> {
 
 #[cfg(test)]
 mod tests {
+    use tracing_test::traced_test;
+
     use super::*;
+
+    fn logs_contain_at(level: tracing::Level, snippets: &[&str]) -> bool {
+        let buffer = tracing_test::internal::global_buf()
+            .lock()
+            .expect("test log buffer");
+        let logs = String::from_utf8_lossy(&buffer);
+        logs.lines().any(|line| {
+            line.contains(level.as_str()) && snippets.iter().all(|snippet| line.contains(snippet))
+        })
+    }
+
+    #[test]
+    fn empty_catalogue_bootstrap_has_no_default_expiry() {
+        let catalogue = catalogue_from_instruments(Vec::new(), Utc::now().timestamp())
+            .expect("empty catalogue");
+        let bootstrap = build_bootstrap(&catalogue, "BTC", &["BTC".to_string()]);
+        let payload = serde_json::to_value(bootstrap).expect("bootstrap JSON");
+        assert!(payload["default_expiry_unix"].is_null());
+        assert_eq!(payload["tabs"], json!([]));
+    }
+
+    #[derive(Clone, Copy)]
+    enum TestConnection {
+        Open,
+        Closed,
+    }
+
+    async fn assert_empty_catalogue_refresh(
+        expiry_unix: i64,
+        status: StatusCode,
+        connection: TestConnection,
+    ) {
+        let venue = serve_test_router(Router::new().route(
+            "/public/get_instruments",
+            post(move || async move { (status, Json(json!({"result": []}))) }),
+        ))
+        .await;
+        let catalogue = catalogue_from_instruments(
+            vec![InstrumentDto {
+                instrument_name: "BTC-C".to_string(),
+                is_active: true,
+                option_details: Some(OptionDetailsDto {
+                    option_type: "C".to_string(),
+                    strike: "65000".to_string(),
+                    expiry: u64::try_from(expiry_unix).expect("fixture expiry"),
+                }),
+            }],
+            expiry_unix - 1,
+        )
+        .expect("initial catalogue");
+        let quote_map = HashMap::from([("BTC-C".to_string(), QuoteState::default())]);
+        let snapshot = build_tab_snapshot("BTC", &catalogue, Some(expiry_unix), &quote_map);
+        let (broadcast_tx, mut snapshots) = broadcast::channel(4);
+        let hub = OptionsHub {
+            http: build_http_client().expect("HTTP client"),
+            rest_base_url: venue.url.clone(),
+            shared_active: Arc::new(RwLock::new(SharedActiveOptions {
+                asset: "BTC".to_string(),
+                catalogue: catalogue.clone(),
+            })),
+            snapshot: Arc::new(RwLock::new(snapshot)),
+            broadcast_tx,
+        };
+        let mut runtime = HubRuntime {
+            quote_map,
+            active_expiry_unix: Some(expiry_unix),
+            asset: "BTC".to_string(),
+            catalogue,
+        };
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("WS listener");
+        let ws_url = format!("ws://{}", listener.local_addr().expect("WS address"));
+        let (client, mut peer) = tokio::join!(connect_async(ws_url), async {
+            let (socket, _) = listener.accept().await.expect("WS accept");
+            tokio_tungstenite::accept_async(socket)
+                .await
+                .expect("WS handshake")
+        });
+        let (mut writer, _reader) = client.expect("WS client").0.split();
+        if matches!(connection, TestConnection::Closed) {
+            writer.close().await.expect("close test writer");
+        }
+        let old_channel = channel_name_for_instrument("BTC-C");
+        let mut channels = vec![old_channel.clone()];
+        let mut message_id = 1;
+        let mut session = WsSession {
+            writer: &mut writer,
+            message_id: &mut message_id,
+            subscribed_channels: &mut channels,
+        };
+        assert_eq!(
+            handle_catalogue_refresh(&mut session, &hub, &mut runtime)
+                .await
+                .expect("refresh"),
+            match connection {
+                TestConnection::Open => SessionControl::Continue,
+                TestConnection::Closed => SessionControl::Reconnect,
+            },
+        );
+        assert!(
+            runtime.catalogue.expiry_unix_sorted_asc.is_empty(),
+            "last expiry must disappear"
+        );
+        assert!(runtime.quote_map.is_empty());
+        assert!(channels.is_empty());
+        let active = hub.shared_active.read().await;
+        let bootstrap = serde_json::to_value(build_bootstrap(
+            &active.catalogue,
+            &active.asset,
+            &["BTC".to_string()],
+        ))
+        .expect("bootstrap JSON");
+        assert!(bootstrap["default_expiry_unix"].is_null());
+        assert_eq!(bootstrap["tabs"], json!([]));
+        let snapshot =
+            serde_json::to_value(hub.snapshot.read().await.clone()).expect("snapshot JSON");
+        assert!(snapshot["active_expiry_unix"].is_null());
+        for field in ["expiry_unixes", "expiry_dates", "strikes", "quotes"] {
+            assert_eq!(snapshot[field], json!([]), "{field} must be cleared");
+        }
+        assert_eq!(
+            serde_json::to_value(snapshots.try_recv().expect("published empty snapshot"))
+                .expect("event JSON"),
+            snapshot
+        );
+        if matches!(connection, TestConnection::Closed) {
+            assert!(logs_contain_at(
+                tracing::Level::DEBUG,
+                &["derive empty option snapshot published"]
+            ));
+            return;
+        }
+        let unsubscribe = tokio::time::timeout(Duration::from_secs(1), peer.next())
+            .await
+            .expect("unsubscribe deadline")
+            .expect("unsubscribe frame")
+            .expect("WS read");
+        let payload: serde_json::Value =
+            serde_json::from_str(unsubscribe.to_text().expect("unsubscribe text"))
+                .expect("unsubscribe JSON");
+        assert_eq!(payload["method"], "unsubscribe");
+        assert_eq!(payload["params"]["channels"], json!([old_channel]));
+        assert!(logs_contain_at(
+            tracing::Level::DEBUG,
+            &["derive option catalogue refreshed", "tabs=0"]
+        ));
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn empty_catalogue_refresh_clears_delisted_future_expiry() {
+        assert_empty_catalogue_refresh(
+            Utc::now().timestamp() + 3600,
+            StatusCode::OK,
+            TestConnection::Open,
+        )
+        .await;
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn empty_catalogue_refresh_prunes_final_expiry_when_rest_fails() {
+        assert_empty_catalogue_refresh(
+            Utc::now().timestamp() - 1,
+            StatusCode::SERVICE_UNAVAILABLE,
+            TestConnection::Open,
+        )
+        .await;
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn empty_catalogue_refresh_publishes_even_when_unsubscribe_fails() {
+        assert_empty_catalogue_refresh(
+            Utc::now().timestamp() + 3600,
+            StatusCode::OK,
+            TestConnection::Closed,
+        )
+        .await;
+    }
+
+    fn command_fixture(rest_base_url: Url) -> (OptionsHub, HubRuntime) {
+        let catalogue = catalogue_from_instruments(
+            [1_900_000_000, 1_910_000_000]
+                .into_iter()
+                .map(|expiry| InstrumentDto {
+                    instrument_name: format!("BTC-{expiry}-C"),
+                    is_active: true,
+                    option_details: Some(OptionDetailsDto {
+                        option_type: "C".to_string(),
+                        strike: "65000".to_string(),
+                        expiry,
+                    }),
+                })
+                .collect(),
+            1_800_000_000,
+        )
+        .expect("catalogue");
+        let runtime = HubRuntime {
+            catalogue,
+            asset: "BTC".to_string(),
+            active_expiry_unix: Some(1_900_000_000),
+            quote_map: HashMap::from([(
+                "BTC-1900000000-C".to_string(),
+                QuoteState {
+                    mark: Some(12.0),
+                    ..QuoteState::default()
+                },
+            )]),
+        };
+        let (broadcast_tx, _) = broadcast::channel(4);
+        let hub = OptionsHub {
+            http: build_http_client().expect("client"),
+            rest_base_url,
+            shared_active: Arc::new(RwLock::new(SharedActiveOptions {
+                asset: runtime.asset.clone(),
+                catalogue: runtime.catalogue.clone(),
+            })),
+            snapshot: Arc::new(RwLock::new(build_tab_snapshot(
+                &runtime.asset,
+                &runtime.catalogue,
+                runtime.active_expiry_unix,
+                &runtime.quote_map,
+            ))),
+            broadcast_tx,
+        };
+        (hub, runtime)
+    }
+
+    async fn closed_command_writer() -> DeriveWsWriter {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("WS listener");
+        let ws_url = format!("ws://{}", listener.local_addr().expect("WS address"));
+        let (client, _peer) = tokio::join!(connect_async(ws_url), async {
+            let (socket, _) = listener.accept().await.expect("WS accept");
+            tokio_tungstenite::accept_async(socket)
+                .await
+                .expect("WS handshake")
+        });
+        let (mut writer, _reader) = client.expect("WS client").0.split();
+        writer.close().await.expect("close writer");
+        writer
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn command_subscription_failure_preserves_runtime_and_publication() {
+        let venue = serve_test_router(Router::new().route(
+            "/public/get_tickers",
+            post(|| async { Json(json!({"result": {"tickers": {}}})) }),
+        ))
+        .await;
+        let (hub, mut runtime) = command_fixture(venue.url.clone());
+        let original =
+            serde_json::to_value(hub.snapshot.read().await.clone()).expect("snapshot JSON");
+        let mut publications = hub.broadcast_tx.subscribe();
+        let mut writer = closed_command_writer().await;
+        let mut message_id = 1;
+        let mut channels = vec![channel_name_for_instrument("BTC-1900000000-C")];
+        let mut session = WsSession {
+            writer: &mut writer,
+            message_id: &mut message_id,
+            subscribed_channels: &mut channels,
+        };
+        let (acknowledgment, applied) = oneshot::channel();
+        let control = handle_command(
+            HubRequest {
+                command: HubCommand::SetExpiry(1_910_000_000),
+                acknowledgment,
+            },
+            &mut session,
+            &hub,
+            &mut runtime,
+        )
+        .await;
+        assert_eq!(control, SessionControl::Reconnect);
+        assert!(matches!(
+            applied.await.expect("acknowledgment"),
+            Err(DeriveError::WebSocket(_))
+        ));
+        assert_eq!(runtime.active_expiry_unix, Some(1_900_000_000));
+        assert_eq!(
+            runtime
+                .quote_map
+                .get("BTC-1900000000-C")
+                .expect("old quote")
+                .mark,
+            Some(12.0)
+        );
+        assert_eq!(
+            serde_json::to_value(hub.snapshot.read().await.clone()).expect("snapshot JSON"),
+            original
+        );
+        assert!(matches!(
+            publications.try_recv(),
+            Err(broadcast::error::TryRecvError::Empty)
+        ));
+        assert!(logs_contain_at(
+            tracing::Level::ERROR,
+            &["derive command failed", "SetExpiry"]
+        ));
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn command_cancelled_before_application_is_skipped() {
+        let venue = serve_test_router(Router::new()).await;
+        let (hub, mut runtime) = command_fixture(venue.url.clone());
+        let mut writer = closed_command_writer().await;
+        let mut message_id = 1;
+        let mut channels = Vec::new();
+        let mut session = WsSession {
+            writer: &mut writer,
+            message_id: &mut message_id,
+            subscribed_channels: &mut channels,
+        };
+        let (acknowledgment, applied) = oneshot::channel();
+        drop(applied);
+        assert_eq!(
+            handle_command(
+                HubRequest {
+                    command: HubCommand::SetExpiry(1_910_000_000),
+                    acknowledgment
+                },
+                &mut session,
+                &hub,
+                &mut runtime
+            )
+            .await,
+            SessionControl::Continue
+        );
+        assert_eq!(runtime.active_expiry_unix, Some(1_900_000_000));
+        assert_eq!(message_id, 1);
+        assert!(logs_contain_at(
+            tracing::Level::DEBUG,
+            &["derive command cancelled before application"]
+        ));
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn command_cancelled_during_preparation_cannot_publish_later() {
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let request_entered = Arc::clone(&entered);
+        let venue = serve_test_router(Router::new().route(
+            "/public/get_tickers",
+            post(move || {
+                let entered = Arc::clone(&request_entered);
+                async move {
+                    entered.notify_one();
+                    std::future::pending::<Json<serde_json::Value>>().await
+                }
+            }),
+        ))
+        .await;
+        let (hub, mut runtime) = command_fixture(venue.url.clone());
+        let original =
+            serde_json::to_value(hub.snapshot.read().await.clone()).expect("snapshot JSON");
+        let mut writer = closed_command_writer().await;
+        let mut message_id = 1;
+        let mut channels = Vec::new();
+        let mut session = WsSession {
+            writer: &mut writer,
+            message_id: &mut message_id,
+            subscribed_channels: &mut channels,
+        };
+        let (acknowledgment, applied) = oneshot::channel();
+        let (control, ()) = tokio::join!(
+            handle_command(
+                HubRequest {
+                    command: HubCommand::SetExpiry(1_910_000_000),
+                    acknowledgment
+                },
+                &mut session,
+                &hub,
+                &mut runtime
+            ),
+            async {
+                tokio::time::timeout(Duration::from_secs(1), entered.notified())
+                    .await
+                    .expect("seed started");
+                drop(applied);
+            },
+        );
+        assert_eq!(control, SessionControl::Reconnect);
+        assert_eq!(runtime.active_expiry_unix, Some(1_900_000_000));
+        assert_eq!(message_id, 1);
+        assert_eq!(
+            serde_json::to_value(hub.snapshot.read().await.clone()).expect("snapshot JSON"),
+            original
+        );
+        assert!(logs_contain_at(
+            tracing::Level::DEBUG,
+            &["derive command cancelled before commit"]
+        ));
+    }
+
+    struct TestServer {
+        url: Url,
+        task: tokio::task::JoinHandle<()>,
+    }
+
+    impl Drop for TestServer {
+        fn drop(&mut self) {
+            self.task.abort();
+        }
+    }
+
+    async fn serve_test_router(router: Router) -> TestServer {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener");
+        let url = Url::parse(&format!(
+            "http://{}",
+            listener.local_addr().expect("address")
+        ))
+        .expect("test URL");
+        let task = tokio::spawn(async move {
+            axum::serve(listener, router).await.expect("test server");
+        });
+        TestServer { url, task }
+    }
+
+    async fn test_rest_venue() -> TestServer {
+        let router = Router::new()
+            .route("/public/get_all_currencies", post(|| async {
+                Json(json!({"result": [{"currency": "BTC", "instrument_types": ["option"]}]}))
+            }))
+            .route("/public/get_instruments", post(|| async {
+                Json(json!({"result": [{
+                    "instrument_name": "BTC-C", "is_active": true,
+                    "option_details": {"option_type": "C", "strike": "65000", "expiry": Utc::now().timestamp() + 3600}
+                }]}))
+            }));
+        serve_test_router(router).await
+    }
+
+    async fn assert_one_network_remains_available(healthy: DeriveNetwork) {
+        let venue = test_rest_venue().await;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("WS listener");
+        let ws_url = Url::parse(&format!(
+            "ws://{}",
+            listener.local_addr().expect("WS address")
+        ))
+        .expect("WS URL");
+        let unavailable_url = venue.url.join("unavailable").expect("unavailable URL");
+        let config = DeriveConfig {
+            port: 0,
+            rest_base_url: if healthy == DeriveNetwork::Mainnet {
+                venue.url.clone()
+            } else {
+                unavailable_url.clone()
+            },
+            testnet_rest_base_url: if healthy == DeriveNetwork::Testnet {
+                venue.url.clone()
+            } else {
+                unavailable_url
+            },
+            ws_url: ws_url.clone(),
+            testnet_ws_url: ws_url,
+        };
+        let router = derive_options_router(config)
+            .await
+            .expect("healthy network must remain available");
+        let application = serve_test_router(router).await;
+        let client = build_http_client().expect("client");
+        for network in [DeriveNetwork::Mainnet, DeriveNetwork::Testnet] {
+            let name = match network {
+                DeriveNetwork::Mainnet => "mainnet",
+                DeriveNetwork::Testnet => "testnet",
+            };
+            let response = client
+                .get(
+                    application
+                        .url
+                        .join(&format!("derive/options/bootstrap?network={name}"))
+                        .expect("bootstrap URL"),
+                )
+                .send()
+                .await
+                .expect("bootstrap response");
+            assert_eq!(
+                response.status(),
+                if network == healthy {
+                    StatusCode::OK
+                } else {
+                    StatusCode::SERVICE_UNAVAILABLE
+                }
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn mainnet_remains_available_when_testnet_discovery_fails() {
+        assert_one_network_remains_available(DeriveNetwork::Mainnet).await;
+    }
+
+    #[tokio::test]
+    async fn testnet_remains_available_when_mainnet_discovery_fails() {
+        assert_one_network_remains_available(DeriveNetwork::Testnet).await;
+    }
+
+    #[tokio::test]
+    async fn dropping_hub_state_cancels_a_stalled_websocket_handshake() {
+        let venue = test_rest_venue().await;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("WS listener");
+        let ws_url = Url::parse(&format!(
+            "ws://{}",
+            listener.local_addr().expect("WS address")
+        ))
+        .expect("WS URL");
+        let (connected_tx, connected_rx) = tokio::sync::oneshot::channel();
+        let (closed_tx, closed_rx) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            let (socket, _) = listener.accept().await.expect("WS accept");
+            let _ = connected_tx.send(());
+            let mut buffer = [0_u8; 2048];
+            loop {
+                socket.readable().await.expect("socket readable");
+                match socket.try_read(&mut buffer) {
+                    Ok(0) => break,
+                    Ok(_) => {}
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+                    Err(error) if error.kind() == std::io::ErrorKind::ConnectionReset => break,
+                    Err(error) => panic!("test socket read failed: {error}"),
+                }
+            }
+            let _ = closed_tx.send(());
+        });
+        let state = spawn_options_hub(venue.url.clone(), ws_url, DeriveNetwork::Mainnet)
+            .await
+            .expect("hub");
+        tokio::time::timeout(Duration::from_secs(2), connected_rx)
+            .await
+            .expect("connection deadline")
+            .expect("connected");
+        drop(state);
+        let closed = tokio::time::timeout(Duration::from_secs(1), closed_rx).await;
+        server.abort();
+        assert!(
+            matches!(closed, Ok(Ok(()))),
+            "dropping the owner must terminate its websocket task"
+        );
+    }
+
+    #[tokio::test]
+    async fn aggregate_discovery_is_bounded_across_many_slow_currency_probes() {
+        let probes = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let observed_probes = Arc::clone(&probes);
+        let router =
+            Router::new()
+                .route(
+                    "/public/get_all_currencies",
+                    post(|| async {
+                        let currencies = (0..56).map(|index| json!({
+                    "currency": format!("ASSET{index}"), "instrument_types": ["option"]
+                })).collect::<Vec<_>>();
+                        Json(json!({"result": currencies}))
+                    }),
+                )
+                .route(
+                    "/public/get_instruments",
+                    post(move || {
+                        let probes = Arc::clone(&observed_probes);
+                        async move {
+                            probes.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            tokio::time::sleep(Duration::from_secs(6)).await;
+                            Json(json!({"result": []}))
+                        }
+                    }),
+                );
+        let venue = serve_test_router(router).await;
+        let ws_listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("WS listener");
+        let ws_url = Url::parse(&format!(
+            "ws://{}",
+            ws_listener.local_addr().expect("WS address")
+        ))
+        .expect("WS URL");
+        let result = tokio::time::timeout(
+            Duration::from_secs(26),
+            derive_options_router(DeriveConfig {
+                port: 0,
+                rest_base_url: venue.url.clone(),
+                testnet_rest_base_url: venue.url.clone(),
+                ws_url: ws_url.clone(),
+                testnet_ws_url: ws_url,
+            }),
+        )
+        .await;
+        assert!(
+            probes.load(std::sync::atomic::Ordering::Relaxed) >= 16,
+            "both networks must enter concurrent discovery"
+        );
+        assert!(
+            result
+                .expect("aggregate discovery must finish before the outer deadline")
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn http_client_bounds_a_server_that_never_replies() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("test listener");
+        let address = listener.local_addr().expect("listener address");
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("test connection");
+            tokio::time::sleep(Duration::from_secs(10)).await;
+            drop(stream);
+        });
+        let client = build_http_client().expect("HTTP client");
+        let result = tokio::time::timeout(
+            Duration::from_secs(6),
+            client.get(format!("http://{address}/stalled")).send(),
+        )
+        .await;
+        server.abort();
+        assert!(server.await.is_err_and(|error| error.is_cancelled()));
+        let failure = result
+            .expect("client deadline must precede the outer test deadline")
+            .expect_err("stalled request must time out");
+        assert!(failure.is_timeout());
+    }
 
     #[test]
     fn build_greeks_maps_option_pricing_including_zero_bid_iv() {
@@ -1610,6 +2304,7 @@ mod tests {
             "b": "1",
             "I": "71760",
             "M": "13289",
+            "t": 1_786_606_788_776_u64,
             "option_pricing": {
                 "d": "-0.9545",
                 "t": "-15.89706",
@@ -1645,6 +2340,7 @@ mod tests {
             "b": "1",
             "I": "100",
             "M": "50",
+            "t": 1_786_606_788_776_u64,
             "option_pricing": null
         }))
         .expect("fixture ticker");
@@ -1775,7 +2471,7 @@ mod tests {
             },
         );
 
-        let snapshot = build_tab_snapshot("BTC", &catalogue, 1_700_000_000, &quote_map);
+        let snapshot = build_tab_snapshot("BTC", &catalogue, Some(1_700_000_000), &quote_map);
 
         assert_eq!(snapshot.strikes, vec![70000.0, 71000.0]);
         assert!((snapshot.spot_price - 70500.0).abs() < 1e-9);
@@ -1808,7 +2504,7 @@ mod tests {
         let bootstrap = build_bootstrap(&catalogue, "ETH", &assets);
         assert_eq!(bootstrap.asset, "ETH");
         assert_eq!(bootstrap.assets, assets);
-        assert_eq!(bootstrap.default_expiry_unix, 1_700_000_000);
+        assert_eq!(bootstrap.default_expiry_unix, Some(1_700_000_000));
         assert_eq!(bootstrap.tabs.len(), 1);
     }
 
@@ -2024,11 +2720,31 @@ mod tests {
                 ..QuoteState::default()
             },
         );
-        upsert_quote(&mut quote_map, "BTC-C".to_string(), QuoteState::default());
+        for (index, spot) in [0.0, -1.0, f64::NAN, f64::INFINITY].into_iter().enumerate() {
+            upsert_quote(
+                &mut quote_map,
+                "BTC-C".to_string(),
+                QuoteState {
+                    snapshot_timestamp_ms: u64::try_from(index).expect("fixture index") + 1,
+                    spot,
+                    bid: Some(928.0),
+                    ask: Some(932.0),
+                    mark: Some(930.0),
+                    greeks: OptionGreeks {
+                        delta: Some(0.7),
+                        ..OptionGreeks::default()
+                    },
+                    ..QuoteState::default()
+                },
+            );
 
-        let state = quote_map.get("BTC-C").expect("seeded quote");
-        assert!((state.spot - 63818.0).abs() < 1e-9);
-        assert_eq!(state.mark, Some(927.0));
+            let state = quote_map.get("BTC-C").expect("seeded quote");
+            assert!((state.spot - 63818.0).abs() < 1e-9);
+            assert_eq!(state.bid, Some(928.0));
+            assert_eq!(state.ask, Some(932.0));
+            assert_eq!(state.mark, Some(930.0));
+            assert_eq!(state.greeks.delta, Some(0.7));
+        }
     }
 
     #[test]
@@ -2047,6 +2763,7 @@ mod tests {
             &mut quote_map,
             "BTC-C".to_string(),
             QuoteState {
+                snapshot_timestamp_ms: 1,
                 spot: 63820.0,
                 mark: Some(930.0),
                 ..QuoteState::default()
@@ -2056,6 +2773,41 @@ mod tests {
         let state = quote_map.get("BTC-C").expect("live quote");
         assert!((state.spot - 63820.0).abs() < 1e-9);
         assert_eq!(state.mark, Some(930.0));
+    }
+
+    #[test]
+    fn buffered_ticks_cannot_overwrite_a_newer_rest_seed() {
+        for delta in [-1_i64, 0, 1] {
+            let seed: TickerSlimDto =
+                serde_json::from_value(testnet_rest_ticker_json()).expect("REST seed");
+            let mut incoming = testnet_rest_ticker_json();
+            incoming["t"] = serde_json::json!(
+                seed.snapshot_timestamp_ms
+                    .checked_add_signed(delta)
+                    .expect("fixture timestamp")
+            );
+            incoming["M"] = serde_json::json!("930");
+            let ticker: TickerSlimDto = serde_json::from_value(incoming).expect("buffered tick");
+            let mut quotes = HashMap::new();
+            seed_quote_map(&mut quotes, HashMap::from([("BTC-C".to_string(), seed)]));
+            upsert_quote(
+                &mut quotes,
+                "BTC-C".to_string(),
+                quote_state_from_ticker(&ticker),
+            );
+
+            let quote = quotes.get("BTC-C").expect("quote");
+            assert_eq!(quote.mark, Some(if delta > 0 { 930.0 } else { 927.0 }));
+        }
+    }
+
+    #[test]
+    fn ticker_requires_a_nonnegative_venue_snapshot_timestamp() {
+        let mut payload = testnet_rest_ticker_json();
+        payload.as_object_mut().expect("fixture object").remove("t");
+        assert!(serde_json::from_value::<TickerSlimDto>(payload.clone()).is_err());
+        payload["t"] = serde_json::json!(-1);
+        assert!(serde_json::from_value::<TickerSlimDto>(payload).is_err());
     }
 
     #[test]

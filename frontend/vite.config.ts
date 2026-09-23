@@ -333,8 +333,9 @@ export default defineConfig({
     css: true,
     server: {
       deps: {
+        // vite-plugin-solid externalizes Solid; inlining it as well loads a
+        // second reactive runtime when components import Kobalte primitives.
         inline: [
-          /solid-js/,
           /@solidjs/,
           /@kobalte/,
           /@tanstack/,

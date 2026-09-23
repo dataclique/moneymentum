@@ -2,8 +2,8 @@
 //! per-ticker factor scores from `funding_rate1h.csv`.
 
 use polars::prelude::{
-    DataFrame, DataFrameJoinOps, DataType, IntoLazy, JoinArgs, JoinType, NULL, PolarsError,
-    SortMultipleOptions, col, lit,
+    DataFrame, DataType, IntoLazy, JoinArgs, JoinType, NULL, PolarsError, SortMultipleOptions, col,
+    cols, lit,
 };
 
 use super::returns::chronological;
@@ -19,13 +19,31 @@ pub(super) fn with_carry(
     match funding {
         Some(funding) => {
             let carry = carry_by_ticker(funding)?;
-            Ok(factors.join(
-                &carry,
-                ["ticker"],
-                ["ticker"],
-                JoinArgs::new(JoinType::Left),
-                None,
-            )?)
+            // Archive candle tickers and funding symbols may differ only by
+            // ASCII case (`kPEPE` vs `KPEPE`); join on an uppercased key while
+            // keeping the factor table's exchange-native ticker for display.
+            let factors = factors.lazy().with_column(
+                col("ticker")
+                    .str()
+                    .to_uppercase()
+                    .alias("_carry_join_ticker"),
+            );
+            let carry = carry.lazy().select([
+                col("ticker")
+                    .str()
+                    .to_uppercase()
+                    .alias("_carry_join_ticker"),
+                col("carry"),
+            ]);
+            Ok(factors
+                .join(
+                    carry,
+                    [col("_carry_join_ticker")],
+                    [col("_carry_join_ticker")],
+                    JoinArgs::new(JoinType::Left),
+                )
+                .drop(cols(["_carry_join_ticker"]))
+                .collect()?)
         }
         None => Ok(factors
             .lazy()
@@ -116,6 +134,28 @@ mod tests {
             carry_for("SOL").is_none(),
             "a ticker without funding data must keep a null carry, not vanish"
         );
+    }
+
+    #[test]
+    fn with_carry_joins_when_funding_symbol_casing_differs() {
+        let factors = df! {
+            "ticker" => &["kPEPE"],
+            "sma" => &[1.0_f64],
+        }
+        .unwrap();
+        let funding = df! {
+            "timestamp" => &["2024-01-01T00:00:00Z"],
+            "funding_rate" => &[0.0005_f64],
+            "symbol" => &["KPEPE"],
+        }
+        .unwrap();
+
+        let out = with_carry(factors, Some(&funding)).unwrap();
+        let tickers = out.column("ticker").unwrap().str().unwrap();
+        let carry = out.column("carry").unwrap().f64().unwrap();
+
+        assert_eq!(tickers.get(0), Some("kPEPE"));
+        assert!((carry.get(0).unwrap() - 0.0005).abs() < 1e-12);
     }
 
     #[test]

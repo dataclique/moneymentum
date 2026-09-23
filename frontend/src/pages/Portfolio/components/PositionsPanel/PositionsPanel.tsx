@@ -112,7 +112,10 @@ export const PositionsPanel = (props: PositionsPanelProps): JSX.Element => {
   const factorScoresByTicker = createMemo(
     () =>
       new Map(
-        (factorScoresQuery.data ?? []).map(score => [score.ticker, score]),
+        (factorScoresQuery.data ?? []).map(score => [
+          score.ticker.toUpperCase(),
+          score,
+        ]),
       ),
   )
 
@@ -136,7 +139,7 @@ export const PositionsPanel = (props: PositionsPanelProps): JSX.Element => {
         props.deletedArchive,
       )
       const baseSymbol = symbol.split("/")[0] ?? symbol
-      const factors = factorScoresByTicker().get(baseSymbol)
+      const factors = factorScoresByTicker().get(baseSymbol.toUpperCase())
 
       return {
         symbol,

@@ -133,7 +133,7 @@ const Harness = (props: { children?: JSX.Element }) => (
                 [PORTFOLIO_CELL_ATTR]: "weight",
                 [PORTFOLIO_SYMBOL_ATTR]: symbol,
               }}
-              defaultValue="10"
+              value="10"
               aria-label={`${symbol} weight`}
             />
             <input
@@ -141,7 +141,7 @@ const Harness = (props: { children?: JSX.Element }) => (
                 [PORTFOLIO_CELL_ATTR]: "notional",
                 [PORTFOLIO_SYMBOL_ATTR]: symbol,
               }}
-              defaultValue="100"
+              value="100"
               aria-label={`${symbol} notional`}
             />
           </div>
@@ -156,7 +156,7 @@ const Harness = (props: { children?: JSX.Element }) => (
       <input
         {...{ [ALL_SYMBOLS_SEARCH_ATTR]: "" }}
         aria-label="Search symbols"
-        defaultValue=""
+        value=""
       />
     </div>
     <div
@@ -167,18 +167,15 @@ const Harness = (props: { children?: JSX.Element }) => (
       <input
         {...{ [DERIVE_PIN_ATTR]: "" }}
         aria-label="Enter 6-digit PIN to load data"
-        defaultValue=""
+        value=""
       />
     </div>
-    <div {...{ [PORTFOLIO_PANEL_ATTR]: "staged" }} data-testid="staged-panel">
-      <input
-        {...{ [STAGED_PIN_ATTR]: "" }}
-        aria-label="Enter PIN"
-        defaultValue=""
-      />
-    </div>
+    {props.children ?? (
+      <div {...{ [PORTFOLIO_PANEL_ATTR]: "staged" }} data-testid="staged-panel">
+        <input {...{ [STAGED_PIN_ATTR]: "" }} aria-label="Enter PIN" value="" />
+      </div>
+    )}
     <SelectionProbe />
-    {props.children}
   </PortfolioKeyboardProvider>
 )
 
@@ -452,7 +449,7 @@ describe("portfolio keyboard workflow", () => {
     expect(bar.textContent).toContain("rebalance")
   })
 
-  it("keeps Enter on the real staged PIN field without global blur", () => {
+  it("keeps Enter on the real staged PIN field without global blur", async () => {
     setConnectionState("agentLocked")
     render(() => (
       <Harness>
@@ -468,10 +465,12 @@ describe("portfolio keyboard workflow", () => {
       </Harness>
     ))
 
-    fireEvent.keyDown(window, { key: "3" })
+    fireEvent.keyDown(window, { key: "4" })
     const pinInput = screen.getByPlaceholderText("Enter 6-digit PIN to unlock")
-    pinInput.focus()
-    expect(document.activeElement).toBe(pinInput)
+    expect(activatePanel).toHaveBeenCalledWith("staged")
+    await vi.waitFor(() => {
+      expect(document.activeElement).toBe(pinInput)
+    })
 
     fireEvent.keyDown(pinInput, { key: "Enter" })
     expect(document.activeElement).toBe(pinInput)

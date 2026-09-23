@@ -126,6 +126,8 @@ const AllSymbolsWithSettings = () => {
 }
 
 const bitcoinPosition: PortfolioInterface = {
+  kind: "perp",
+  venue: "hyperliquid",
   symbol: "BTC/USDC:USDC",
   side: "buy",
   leverage: 2,
@@ -133,6 +135,8 @@ const bitcoinPosition: PortfolioInterface = {
 }
 
 const ethereumPosition: PortfolioInterface = {
+  kind: "perp",
+  venue: "hyperliquid",
   symbol: "ETH/USDC:USDC",
   side: "sell",
   leverage: 1,
@@ -348,7 +352,8 @@ describe("AllSymbolsPanel metric visibility", () => {
     expect(
       screen.getByRole("button", { name: "Sort by Sharpe", hidden: true }),
     ).toBeInTheDocument()
-    expect(allSymbolsTable().headerCells().at(-1)?.textContent?.trim()).toBe(
+    const headerCells = allSymbolsTable().headerCells()
+    expect(headerCells[headerCells.length - 1]?.textContent?.trim()).toBe(
       "Sharpe",
     )
   })
@@ -398,6 +403,9 @@ describe("PositionsPanel", () => {
     renderPositionsPanel()
 
     const positionsTable = screen.getByRole("table", { hidden: true })
+    expect(
+      positionsTable.querySelector("colgroup col:nth-child(2)"),
+    ).toHaveClass("w-[2.875rem]")
 
     expect(within(positionsTable).getByText("BTC")).toBeInTheDocument()
     expect(within(positionsTable).getByText("ETH")).toBeInTheDocument()
@@ -413,6 +421,28 @@ describe("PositionsPanel", () => {
         hidden: true,
       }),
     ).toHaveTextContent("SHORT")
+  })
+
+  it("reserves side-column space for inline option payoff hints", () => {
+    const symbol = "ETH-20261225-2000-C"
+    renderPositionsPanel({
+      targetPortfolio: {
+        [symbol]: {
+          kind: "option",
+          venue: "derive",
+          symbol,
+          side: "buy",
+          notional: 500,
+        },
+      },
+    })
+    const table = screen.getByRole("table", { hidden: true })
+    expect(
+      within(table).getByText("Profits if underlying rises"),
+    ).toBeInTheDocument()
+    expect(table.querySelector("colgroup col:nth-child(2)")).toHaveClass(
+      "w-[18rem]",
+    )
   })
 
   it("prompts to add positions when the portfolio is empty", () => {
@@ -443,6 +473,34 @@ describe("PositionsPanel", () => {
     expect(screen.getByText("0.500000 BTC")).toBeInTheDocument()
     expect(screen.getByText("$30,000")).toBeInTheDocument()
   })
+
+  it.each([
+    { currentSide: "buy", targetSide: "sell", delta: "9.00" },
+    { currentSide: "sell", targetSide: "buy", delta: "9.00" },
+    { currentSide: "buy", targetSide: "buy", delta: "1.00" },
+  ] as const)(
+    "displays the signed rebalance delta for $currentSide to $targetSide",
+    ({ currentSide, targetSide, delta }) => {
+      const symbol = bitcoinPosition.symbol
+      renderPositionsPanel({
+        currentPortfolio: {
+          [symbol]: { ...bitcoinPosition, side: currentSide, notional: 4 },
+        },
+        targetPortfolio: {
+          [symbol]: { ...bitcoinPosition, side: targetSide, notional: 5 },
+        },
+        targetTotalNotional: 5,
+        isPrecise: false,
+        symbolsDeltaBelowMinimum: [symbol],
+      })
+      const alerts = screen.getByRole("region", {
+        name: "Portfolio validation messages",
+      })
+      expect(
+        within(alerts).getByText(`${symbol} (delta $${delta})`),
+      ).toBeInTheDocument()
+    },
+  )
 
   it("warns when target weights exceed the portfolio notional", () => {
     renderPositionsPanel({

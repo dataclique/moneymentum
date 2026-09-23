@@ -547,6 +547,7 @@ export const diffPortfolios = (
     if (
       precise &&
       isPerpPosition(targetPosition) &&
+      targetPosition.venue === "hyperliquid" &&
       hasSignificantDelta &&
       deltaAbs < MIN_USD &&
       currentPosition?.side === targetPosition.side

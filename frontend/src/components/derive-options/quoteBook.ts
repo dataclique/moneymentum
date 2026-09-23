@@ -9,6 +9,13 @@ import {
   type OptionsSnapshot,
 } from "./optionsSnapshot"
 
+/** Writable UI projection; decoded transport quotes remain readonly. */
+type LiveOptionQuote = {
+  -readonly [Field in keyof OptionQuote]: Field extends "greeks"
+    ? { -readonly [Greek in keyof OptionGreeks]: OptionGreeks[Greek] }
+    : OptionQuote[Field]
+}
+
 /** Fine-grained live book: cells read leaf store paths, not whole snapshots. */
 export type QuoteBook = {
   loaded: boolean
@@ -18,12 +25,27 @@ export type QuoteBook = {
   expiry_unixes: ExpiryUnix[]
   expiry_dates: string[]
   spot_price: number
-  byInstrument: Record<string, OptionQuote>
+  byInstrument: Record<string, LiveOptionQuote>
   callByStrike: Record<number, string>
   putByStrike: Record<number, string>
   strikesAsc: number[]
   instrumentNamesAsc: string[]
 }
+
+/** Instrument identifiers are data, including names inherited by plain objects. */
+const emptyInstrumentQuotes = (): QuoteBook["byInstrument"] => {
+  const quotes: QuoteBook["byInstrument"] = {}
+  Object.setPrototypeOf(quotes, null)
+  return quotes
+}
+
+const ownQuote = (
+  quotes: Partial<Record<string, OptionQuote>>,
+  instrumentName: string,
+): OptionQuote | undefined =>
+  Object.prototype.hasOwnProperty.call(quotes, instrumentName)
+    ? quotes[instrumentName]
+    : undefined
 
 export const emptyQuoteBook = (): QuoteBook => ({
   loaded: false,
@@ -33,18 +55,24 @@ export const emptyQuoteBook = (): QuoteBook => ({
   expiry_unixes: [],
   expiry_dates: [],
   spot_price: 0,
-  byInstrument: {},
+  byInstrument: emptyInstrumentQuotes(),
   callByStrike: {},
   putByStrike: {},
   strikesAsc: [],
   instrumentNamesAsc: [],
 })
 
-const numberArraysEqual = (left: number[], right: number[]): boolean =>
+const numberArraysEqual = (
+  left: readonly number[],
+  right: readonly number[],
+): boolean =>
   left.length === right.length &&
   left.every((value, index) => value === right[index])
 
-const stringArraysEqual = (left: string[], right: string[]): boolean =>
+const stringArraysEqual = (
+  left: readonly string[],
+  right: readonly string[],
+): boolean =>
   left.length === right.length &&
   left.every((value, index) => value === right[index])
 
@@ -101,7 +129,7 @@ const buildQuoteIndex = (
   | "strikesAsc"
   | "instrumentNamesAsc"
 > => {
-  const byInstrument: Record<string, OptionQuote> = {}
+  const byInstrument = emptyInstrumentQuotes()
   const callByStrike: Record<number, string> = {}
   const putByStrike: Record<number, string> = {}
   const strikeSet = new Set<number>()
@@ -361,7 +389,7 @@ export const applyOptionsSnapshot = (
   }
 
   for (const quote of quantizedQuotes) {
-    const before = previous[quote.instrument_name]
+    const before = ownQuote(previous, quote.instrument_name)
     if (quoteNeedsApply(before, quote)) {
       leafPatches += 1
     }
@@ -389,17 +417,6 @@ export const applyOptionsSnapshot = (
 
   const skipped = previousNames.length > 0 && leafPatches === 0
 
-  if (skipped) {
-    return {
-      totalQuotes: next.quotes.length,
-      bidChanged,
-      askChanged,
-      markChanged,
-      skipped: true,
-      coldGreeksApplied: false,
-    }
-  }
-
   const priceOrSpotChanged =
     bidChanged + askChanged + markChanged > 0 || spotChanged
   let coldGreeksApplied = false
@@ -421,12 +438,15 @@ export const applyOptionsSnapshot = (
         ? previousDates
         : next.expiry_dates,
     )
+    if (skipped) {
+      return
+    }
     if (spotChanged) {
       setBook("spot_price", nextSpot)
     }
 
     for (const quote of quantizedQuotes) {
-      const before = previous[quote.instrument_name]
+      const before = ownQuote(previous, quote.instrument_name)
       const patch = patchQuoteLeaves(
         setBook,
         quote.instrument_name,
@@ -451,7 +471,7 @@ export const applyOptionsSnapshot = (
 
     setBook(
       produce(current => {
-        const nextByInstrument: Record<string, OptionQuote> = {}
+        const nextByInstrument = emptyInstrumentQuotes()
         for (const name of Object.keys(index.byInstrument)) {
           nextByInstrument[name] = current.byInstrument[name]
         }
@@ -478,7 +498,7 @@ export const applyOptionsSnapshot = (
     bidChanged,
     askChanged,
     markChanged,
-    skipped: false,
+    skipped,
     coldGreeksApplied: applyColdGreeks && coldGreeksApplied,
   }
 }
@@ -488,7 +508,7 @@ export const skeletonizeQuoteBook = (
   setBook: SetStoreFunction<QuoteBook>,
 ): void => {
   setBook("byInstrument", previous => {
-    const next: Record<string, OptionQuote> = {}
+    const next = emptyInstrumentQuotes()
     for (const [name, quote] of Object.entries(previous)) {
       next[name] = {
         ...quote,

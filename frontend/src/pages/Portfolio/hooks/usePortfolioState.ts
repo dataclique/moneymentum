@@ -233,6 +233,11 @@ export const usePortfolioState = () => {
     return selected?.positions ?? []
   })
 
+  const hasDeriveAccountSnapshotForSizing = (): boolean =>
+    !isDeriveConnected() ||
+    isDeriveLocked() ||
+    (deriveAccountQuery.data !== undefined && !deriveAccountQuery.isError)
+
   const buildExchangePortfolioSnapshot = (): {
     map: Record<string, PortfolioInterface | undefined>
     totalNotional: number
@@ -261,7 +266,10 @@ export const usePortfolioState = () => {
         : { map: {}, totalNotional: 0 }
 
     // Connected venues with no data yet (and not loading) still cannot seed.
-    if (hyperliquidWanted && positionsQuery.data === undefined) {
+    if (
+      (hyperliquidWanted && positionsQuery.data === undefined) ||
+      (deriveWanted && deriveAccountQuery.data === undefined)
+    ) {
       return null
     }
 
@@ -570,11 +578,26 @@ export const usePortfolioState = () => {
           ? portfolioMapFromExchangePositions(hyperliquidPositions)
           : { map: {}, totalNotional: 0 }
 
-      const derivePositions =
-        deriveWanted && deriveAccountQuery.data !== undefined
-          ? selectedDerivePositions()
-          : []
-      const deriveSnapshot = portfolioMapFromDerivePositions(derivePositions)
+      const retainedDeriveMap = deriveWanted
+        ? omitVenueFromPortfolio(
+            untrack(() => ({ ...currentPortfolio })),
+            "hyperliquid",
+          )
+        : {}
+      const deriveSnapshot =
+        deriveWanted && deriveAccountQuery.data === undefined
+          ? {
+              map: retainedDeriveMap,
+              totalNotional: portfolioNotionalSum(retainedDeriveMap),
+            }
+          : portfolioMapFromDerivePositions(
+              deriveWanted ? selectedDerivePositions() : [],
+            )
+      if (deriveWanted && !hasDeriveAccountSnapshotForSizing()) {
+        toast.error(
+          "Derive refresh failed. Last known positions retained; rebalancing is disabled until refresh succeeds.",
+        )
+      }
       const exchangeSnapshot = mergePortfolioMaps(
         hyperliquidSnapshot.map,
         deriveSnapshot.map,
@@ -936,7 +959,7 @@ export const usePortfolioState = () => {
     const maxLeverage = leverageLimitsMap()[symbol] || 1
     const newLeverage = Math.max(1, Math.min(leverage, maxLeverage))
 
-    setTargetPortfolio(symbol, "leverage", newLeverage)
+    setTargetPortfolio(symbol, { ...target, leverage: newLeverage })
   }
 
   const handleNotionalChange = (symbol: string, newNotional: number) => {
@@ -1025,6 +1048,13 @@ export const usePortfolioState = () => {
       rebalanceHyperliquidMutation.isPending ||
       rebalanceDeriveMutation.isPending
     ) {
+      return
+    }
+
+    if (!hasDeriveAccountSnapshotForSizing()) {
+      toast.error(
+        "Derive account data is unavailable. Refresh before rebalancing.",
+      )
       return
     }
 
@@ -1157,6 +1187,7 @@ export const usePortfolioState = () => {
 
     return (
       isPortfolioValid &&
+      hasDeriveAccountSnapshotForSizing() &&
       !hasPositionsBelowMinimum() &&
       (isPrecise() || !hasSymbolsDeltaBelowMinimum()) &&
       !hasTotalWeightExceeded() &&

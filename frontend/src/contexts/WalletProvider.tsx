@@ -1,4 +1,5 @@
 import {
+  batch,
   createSignal,
   createMemo,
   onMount,
@@ -174,6 +175,12 @@ export const WalletProvider = (props: ParentProps) => {
         walletOperationWaiters.push(tryAcquire)
       }
       tryAcquire()
+      return Effect.sync(() => {
+        const waiterIndex = walletOperationWaiters.indexOf(tryAcquire)
+        if (waiterIndex >= 0) {
+          walletOperationWaiters.splice(waiterIndex, 1)
+        }
+      })
     })
 
   const releaseWalletOperation = (token: symbol): void => {
@@ -500,7 +507,7 @@ export const WalletProvider = (props: ParentProps) => {
       if (activeWalletOperation !== null) {
         return yield* Effect.fail(
           new WalletConnectError({
-            cause: new WalletOperationContextChanged(),
+            cause: new WalletOperationContextChanged({}),
           }),
         )
       }
@@ -608,9 +615,7 @@ export const WalletProvider = (props: ParentProps) => {
     }).pipe(
       Effect.ensuring(
         Effect.sync(() => {
-          if (activeWalletOperation === operationToken) {
-            activeWalletOperation = null
-          }
+          releaseWalletOperation(operationToken)
         }),
       ),
     )
@@ -631,7 +636,7 @@ export const WalletProvider = (props: ParentProps) => {
       if (activeWalletOperation !== null) {
         return yield* Effect.fail(
           new WalletConnectError({
-            cause: new WalletOperationContextChanged(),
+            cause: new WalletOperationContextChanged({}),
           }),
         )
       }
@@ -676,7 +681,7 @@ export const WalletProvider = (props: ParentProps) => {
       if (walletContextRevision !== contextRevision) {
         return yield* Effect.fail(
           new WalletConnectError({
-            cause: new WalletOperationContextChanged(),
+            cause: new WalletOperationContextChanged({}),
           }),
         )
       }
@@ -688,9 +693,7 @@ export const WalletProvider = (props: ParentProps) => {
     }).pipe(
       Effect.ensuring(
         Effect.sync(() => {
-          if (activeWalletOperation === operationToken) {
-            activeWalletOperation = null
-          }
+          releaseWalletOperation(operationToken)
         }),
       ),
     )
@@ -707,7 +710,7 @@ export const WalletProvider = (props: ParentProps) => {
 
     return Effect.gen(function* () {
       let hyperliquidPrivateKey: string | null = null
-      let derivePrivateKey: string | null = null
+      let derivePrivateKey: `0x${string}` | null = null
 
       if (hyperliquidSession !== null) {
         hyperliquidPrivateKey = yield* decryptWalletPrivateKey(
@@ -719,41 +722,41 @@ export const WalletProvider = (props: ParentProps) => {
       }
 
       if (deriveSession !== null) {
-        derivePrivateKey = yield* decryptWalletPrivateKey(
+        const decryptedKey = yield* decryptWalletPrivateKey(
           deriveSession.encryptedPrivateKey,
           pin,
           deriveSession.salt,
           deriveSession.iv,
         )
+        const parsedKey = yield* parseSessionPrivateKey(decryptedKey).pipe(
+          Effect.mapError(cause => new WalletUnlockError({ cause })),
+        )
+        derivePrivateKey = parsedKey.sessionPrivateKey
       }
 
       if (walletContextRevision !== contextRevision) {
         return yield* Effect.fail(new WalletUnlockContextChanged())
       }
 
-      markWalletContextChanged()
+      batch(() => {
+        markWalletContextChanged()
 
-      if (hyperliquidSession !== null && hyperliquidPrivateKey !== null) {
-        rememberMainAddress(hyperliquidSession.accountAddress)
-        setMainAddressState(hyperliquidSession.accountAddress)
-        setCredentials(
-          credentialsFromSession(hyperliquidSession, hyperliquidPrivateKey),
-        )
-      }
+        if (hyperliquidSession !== null && hyperliquidPrivateKey !== null) {
+          rememberMainAddress(hyperliquidSession.accountAddress)
+          setMainAddressState(hyperliquidSession.accountAddress)
+          setCredentials(
+            credentialsFromSession(hyperliquidSession, hyperliquidPrivateKey),
+          )
+        }
 
-      if (deriveSession !== null && derivePrivateKey !== null) {
-        const parsedKey = yield* parseSessionPrivateKey(derivePrivateKey).pipe(
-          Effect.mapError(cause => new WalletUnlockError({ cause })),
-        )
-        setDeriveCredentials(
-          deriveCredentialsFromSession(
-            deriveSession,
-            parsedKey.sessionPrivateKey,
-          ),
-        )
-      }
+        if (deriveSession !== null && derivePrivateKey !== null) {
+          setDeriveCredentials(
+            deriveCredentialsFromSession(deriveSession, derivePrivateKey),
+          )
+        }
 
-      rememberSessionPin(pin)
+        rememberSessionPin(pin)
+      })
     }).pipe(Effect.asVoid)
   }
 
@@ -799,9 +802,7 @@ export const WalletProvider = (props: ParentProps) => {
     }).pipe(
       Effect.ensuring(
         Effect.sync(() => {
-          if (activeWalletOperation === operationToken) {
-            activeWalletOperation = null
-          }
+          releaseWalletOperation(operationToken)
         }),
       ),
     )

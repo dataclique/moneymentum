@@ -63,7 +63,10 @@ export const fetchJson = <A>(
   url: string,
   init?: RequestInit,
 ): Effect.Effect<A, NetworkError | HttpStatusError | JsonParseError> =>
-  request(url, init).pipe(Effect.flatMap(ensureOk), Effect.flatMap(parseJson))
+  request(url, init).pipe(
+    Effect.flatMap(ensureOk),
+    Effect.flatMap(parseJson<A>),
+  )
 
 export const postJson = <A>(
   url: string,
@@ -82,7 +85,7 @@ export const postJson = <A>(
     catch: cause => new JsonSerializeError({ cause }),
   }).pipe(
     Effect.flatMap(serialized =>
-      fetchJson(url, {
+      fetchJson<A>(url, {
         ...init,
         method: "POST",
         headers,

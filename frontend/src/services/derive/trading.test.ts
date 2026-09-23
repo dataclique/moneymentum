@@ -1,4 +1,27 @@
-import { describe, expect, it, vi, beforeEach } from "vitest"
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest"
+import * as Deferred from "effect/Deferred"
+import * as Effect from "effect/Effect"
+import * as Exit from "effect/Exit"
+import * as Fiber from "effect/Fiber"
+
+import { getErrorMessage } from "@/lib/error-message"
+
+import type { DeriveCcxtExchange } from "./exchange"
+import {
+  fetchDeriveTickers,
+  fetchDeriveFundingRates,
+  placeAndMonitorDeriveOrders,
+  cancelDeriveOrder,
+  DerivePartialBatchFailure,
+} from "./trading"
+
+const exchangeBoundary = vi.hoisted(() => ({
+  loadMarkets: vi.fn<DeriveCcxtExchange["loadMarkets"]>(),
+  fetchTicker: vi.fn<DeriveCcxtExchange["fetchTicker"]>(),
+  fetchFundingRate: vi.fn<DeriveCcxtExchange["fetchFundingRate"]>(),
+  createOrder: vi.fn<DeriveCcxtExchange["createOrder"]>(),
+  cancelOrder: vi.fn<DeriveCcxtExchange["cancelOrder"]>(),
+}))
 
 vi.mock("ccxt/derive", () => ({
   default: vi.fn(function DeriveMock(this: {
@@ -9,6 +32,10 @@ vi.mock("ccxt/derive", () => ({
     this.setSandboxMode = vi.fn()
     this.urls = { api: {} }
     this.options = {}
+    Object.assign(this, exchangeBoundary, {
+      markets: { "ETH-PERP": { symbol: "ETH-PERP", swap: true } },
+      market: () => ({ symbol: "ETH-PERP", swap: true }),
+    })
     return this
   }),
 }))
@@ -98,10 +125,316 @@ describe("mapDeriveOrderForWatch", () => {
   })
 })
 
+describe("DeriveTradingClient typed effects", () => {
+  it.each([
+    "resolveSymbol",
+    "fetchTickers",
+    "fetchFundingRates",
+    "createOrdersBatch",
+    "placeAndMonitorOrders",
+    "fetchOpenOrders",
+    "cancelOrder",
+  ] as const)(
+    "constructs a lazy %s operation without starting exchange I/O",
+    async method => {
+      const client = new DeriveTradingClient(credentials())
+      const market = { symbol: "ETH-PERP", swap: true }
+      const exchangeMock = {
+        loadMarkets: vi.fn().mockResolvedValue({}),
+        markets: { "ETH-PERP": market },
+        market: vi.fn().mockReturnValue(market),
+        fetchTicker: vi.fn().mockResolvedValue({ bid: 2000, ask: 2001 }),
+        fetchFundingRate: vi.fn().mockResolvedValue({ fundingRate: 0.001 }),
+        createOrder: vi
+          .fn()
+          .mockResolvedValue({ id: "created", status: "open" }),
+        fetchOpenOrders: vi.fn().mockResolvedValue([]),
+        cancelOrder: vi
+          .fn()
+          .mockResolvedValue({ id: "cancelled", status: "cancelled" }),
+      }
+      const exchange = (client as unknown as { exchange: typeof exchangeMock })
+        .exchange
+      Object.assign(exchange, exchangeMock)
+      const requests: DeriveBatchOrderRequest[] = [
+        { symbol: "ETH-PERP", side: "buy", amount: 0.01, price: 2000 },
+      ]
+      const operations = {
+        resolveSymbol: () => client.resolveSymbol("ETH-PERP"),
+        fetchTickers: () => client.fetchTickers(["ETH-PERP"]),
+        fetchFundingRates: () => client.fetchFundingRates(["ETH-PERP"]),
+        createOrdersBatch: () => client.createOrdersBatch(requests),
+        placeAndMonitorOrders: () => client.placeAndMonitorOrders(requests),
+        fetchOpenOrders: () => client.fetchOpenOrders(),
+        cancelOrder: () => client.cancelOrder("order", "ETH-PERP"),
+      }
+      const operation = operations[method]()
+      // Settle the old eager Promise implementation before asserting its contract.
+      if (operation instanceof Promise) {
+        await operation
+      }
+
+      expect(Effect.isEffect(operation)).toBe(true)
+      expect(exchangeMock.loadMarkets).not.toHaveBeenCalled()
+      expect(exchangeMock.fetchOpenOrders).not.toHaveBeenCalled()
+      expect(exchangeMock.createOrder).not.toHaveBeenCalled()
+      expect(exchangeMock.cancelOrder).not.toHaveBeenCalled()
+    },
+  )
+})
+
+describe("public trading operation interruption", () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it.each(["tickers", "fundingRates", "placeOrders", "cancelOrder"] as const)(
+    "does not continue %s exchange I/O after cancellation during market discovery",
+    async operationName => {
+      const loading = Effect.runSync(Deferred.make<void>())
+      const loaded = Effect.runSync(
+        Deferred.make<Awaited<ReturnType<DeriveCcxtExchange["loadMarkets"]>>>(),
+      )
+      exchangeBoundary.loadMarkets.mockImplementation(() => {
+        Effect.runSync(Deferred.succeed(loading, undefined))
+        return Effect.runPromise(Deferred.await(loaded))
+      })
+      exchangeBoundary.fetchTicker
+        .mockReset()
+        .mockResolvedValue({ bid: 2000, ask: 2001 })
+      exchangeBoundary.fetchFundingRate
+        .mockReset()
+        .mockResolvedValue({ fundingRate: 0.001 })
+      exchangeBoundary.createOrder
+        .mockReset()
+        .mockResolvedValue({ id: "accepted", status: "open" })
+      exchangeBoundary.cancelOrder
+        .mockReset()
+        .mockResolvedValue({ id: "cancelled", status: "cancelled" })
+      const debug = vi
+        .spyOn(console, "debug")
+        .mockImplementation(() => undefined)
+      const info = vi.spyOn(console, "info").mockImplementation(() => undefined)
+      const accountIds = {
+        tickers: 900001,
+        fundingRates: 900002,
+        placeOrders: 900003,
+        cancelOrder: 900004,
+      }
+      const session = {
+        ...credentials(),
+        subaccountId: accountIds[operationName],
+      }
+      const operations = {
+        tickers: () => fetchDeriveTickers(session, ["ETH-PERP"]),
+        fundingRates: () => fetchDeriveFundingRates(session, ["ETH-PERP"]),
+        placeOrders: () =>
+          placeAndMonitorDeriveOrders(session, [
+            { symbol: "ETH-PERP", side: "buy", amount: 0.01, price: 2000 },
+          ]),
+        cancelOrder: () =>
+          cancelDeriveOrder(session, { id: "order", symbol: "ETH-PERP" }),
+      }
+      const operation: Effect.Effect<unknown, unknown> =
+        operations[operationName]()
+      const fiber = Effect.runFork(operation)
+      await Effect.runPromise(Deferred.await(loading))
+      const exit = await Effect.runPromise(Fiber.interrupt(fiber))
+      expect(Exit.isInterrupted(exit)).toBe(true)
+
+      Effect.runSync(Deferred.succeed(loaded, {}))
+      // CCXT's pending Promise can settle; drain its microtasks before checking dispatch.
+      await new Promise<void>(resolve => {
+        setTimeout(resolve, 0)
+      })
+
+      expect(exchangeBoundary.fetchTicker).not.toHaveBeenCalled()
+      expect(exchangeBoundary.fetchFundingRate).not.toHaveBeenCalled()
+      expect(exchangeBoundary.createOrder).not.toHaveBeenCalled()
+      expect(exchangeBoundary.cancelOrder).not.toHaveBeenCalled()
+      expect(info).not.toHaveBeenCalledWith(
+        expect.stringContaining("createOrder accepted"),
+        expect.anything(),
+      )
+      expect(debug).toHaveBeenCalledWith(
+        "[derive] trading operation interrupted",
+        { operation: operationName },
+      )
+    },
+  )
+})
+
 describe("DeriveTradingClient.createOrdersBatch", () => {
   beforeEach(() => {
     vi.restoreAllMocks()
   })
+
+  it.each([Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY])(
+    "rejects a non-finite order amount %s before venue submission",
+    async amount => {
+      const debug = vi
+        .spyOn(console, "debug")
+        .mockImplementation(() => undefined)
+      exchangeBoundary.createOrder.mockReset().mockResolvedValue({
+        id: "must-not-submit",
+        symbol: "ETH-PERP",
+        side: "buy",
+        status: "open",
+      })
+      const client = new DeriveTradingClient(credentials())
+      vi.spyOn(client, "resolveSymbol").mockReturnValue(
+        Effect.succeed("ETH-PERP"),
+      )
+      const outcome = await Effect.runPromise(
+        Effect.either(
+          client.createOrdersBatch([
+            { symbol: "ETH-PERP", side: "buy", amount, price: 2000 },
+          ]),
+        ),
+      )
+
+      expect(outcome).toMatchObject({
+        _tag: "Left",
+        left: { _tag: "DeriveOrderSizeInvalid" },
+      })
+      expect(exchangeBoundary.createOrder).not.toHaveBeenCalled()
+      expect(debug).toHaveBeenCalledWith("[derive] order rejected locally", {
+        index: 0,
+        total: 1,
+        field: "amount",
+      })
+    },
+  )
+
+  it.each([Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY])(
+    "rejects a non-finite order price %s before venue submission",
+    async price => {
+      const debug = vi
+        .spyOn(console, "debug")
+        .mockImplementation(() => undefined)
+      exchangeBoundary.createOrder.mockReset().mockResolvedValue({
+        id: "must-not-submit",
+        symbol: "ETH-PERP",
+        side: "buy",
+        status: "open",
+      })
+      const client = new DeriveTradingClient(credentials())
+      vi.spyOn(client, "resolveSymbol").mockReturnValue(
+        Effect.succeed("ETH-PERP"),
+      )
+      const outcome = await Effect.runPromise(
+        Effect.either(
+          client.createOrdersBatch([
+            { symbol: "ETH-PERP", side: "buy", amount: 0.01, price },
+          ]),
+        ),
+      )
+
+      expect(outcome).toMatchObject({
+        _tag: "Left",
+        left: { _tag: "DeriveOrderPriceInvalid", price },
+      })
+      expect(exchangeBoundary.createOrder).not.toHaveBeenCalled()
+      expect(debug).toHaveBeenCalledWith("[derive] order rejected locally", {
+        index: 0,
+        total: 1,
+        field: "price",
+      })
+    },
+  )
+
+  it.each([
+    { operation: "createOrdersBatch", failure: "venue" },
+    { operation: "createOrdersBatch", failure: "local" },
+    { operation: "placeAndMonitorOrders", failure: "venue" },
+    { operation: "placeAndMonitorOrders", failure: "local" },
+  ] as const)(
+    "$operation retains prior responses after a later $failure failure",
+    async ({ operation, failure }) => {
+      const warning = vi
+        .spyOn(console, "warn")
+        .mockImplementation(() => undefined)
+      const transportFailure = new Error("submission response lost")
+      const receivedOrder = {
+        id: "first-order",
+        symbol: "ETH-PERP",
+        side: "buy",
+        status: "open",
+      }
+      exchangeBoundary.loadMarkets.mockReset().mockResolvedValue({})
+      exchangeBoundary.createOrder
+        .mockReset()
+        .mockResolvedValueOnce(receivedOrder)
+        .mockRejectedValueOnce(transportFailure)
+      const client = new DeriveTradingClient(credentials())
+      const firstRequest: DeriveBatchOrderRequest = {
+        symbol: "ETH-PERP",
+        side: "buy",
+        amount: 0.01,
+        price: 2000,
+      }
+      const failedRequest: DeriveBatchOrderRequest = {
+        symbol: "ETH-PERP",
+        side: "sell",
+        amount: failure === "local" ? 0 : 0.02,
+        price: 2100,
+      }
+      const untouchedRequest: DeriveBatchOrderRequest = {
+        symbol: "ETH-PERP",
+        side: "buy",
+        amount: 0.03,
+        price: 2200,
+      }
+      const outcome = await Effect.runPromise(
+        client[operation]([firstRequest, failedRequest, untouchedRequest]).pipe(
+          Effect.either,
+        ),
+      )
+
+      expect(outcome._tag).toBe("Left")
+      if (outcome._tag !== "Left") {
+        throw new Error("expected a partial batch failure")
+      }
+      expect(outcome.left).toBeInstanceOf(DerivePartialBatchFailure)
+      if (!(outcome.left instanceof DerivePartialBatchFailure)) {
+        throw new Error("expected retained submission responses")
+      }
+      expect(outcome.left.submittedOrders).toEqual([
+        { request: firstRequest, order: receivedOrder },
+      ])
+      expect(outcome.left.failedRequest).toEqual(failedRequest)
+      expect(outcome.left.unattemptedRequests).toEqual([untouchedRequest])
+      const causeTag =
+        failure === "venue" ? "ExchangeRequestError" : "DeriveOrderSizeInvalid"
+      expect(outcome.left.cause._tag).toBe(causeTag)
+      if (failure === "venue") {
+        expect(outcome.left.cause).toMatchObject({ cause: transportFailure })
+      }
+      expect(exchangeBoundary.createOrder).toHaveBeenCalledTimes(
+        failure === "venue" ? 2 : 1,
+      )
+      expect(exchangeBoundary.createOrder).not.toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        expect.anything(),
+        untouchedRequest.amount,
+        expect.anything(),
+        expect.anything(),
+      )
+      expect(warning).toHaveBeenCalledWith("[derive] order batch stopped", {
+        submittedCount: 1,
+        failedIndex: 1,
+        unattemptedCount: 1,
+        causeTag,
+      })
+      const message = await Effect.runPromise(Effect.fail(outcome.left)).catch(
+        getErrorMessage,
+      )
+      expect(message).toBe(
+        "Some Derive orders were submitted before the batch stopped. Reconcile order and account state before retrying.",
+      )
+    },
+  )
 
   it("creates orders sequentially with max_fee and subaccount_id", async () => {
     const createOrder = vi
@@ -131,8 +464,9 @@ describe("DeriveTradingClient.createOrdersBatch", () => {
     }
     exchange.createOrder = createOrder
 
-    // Bypass private marketsLoaded + resolve via public resolveSymbol path
-    vi.spyOn(client, "resolveSymbol").mockResolvedValue("ETH/USD:USDC")
+    vi.spyOn(client, "resolveSymbol").mockReturnValue(
+      Effect.succeed("ETH/USD:USDC"),
+    )
 
     const requests: DeriveBatchOrderRequest[] = [
       {
@@ -150,7 +484,7 @@ describe("DeriveTradingClient.createOrdersBatch", () => {
       },
     ]
 
-    const orders = await client.createOrdersBatch(requests)
+    const orders = await Effect.runPromise(client.createOrdersBatch(requests))
 
     expect(orders).toHaveLength(2)
     expect(createOrder).toHaveBeenCalledTimes(2)
@@ -200,11 +534,15 @@ describe("DeriveTradingClient.createOrdersBatch", () => {
     ).exchange
     exchange.createOrder = createOrder
     exchange.fetchOpenOrders = fetchOpenOrders
-    vi.spyOn(client, "resolveSymbol").mockResolvedValue("ETH/USD:USDC")
+    vi.spyOn(client, "resolveSymbol").mockReturnValue(
+      Effect.succeed("ETH/USD:USDC"),
+    )
 
-    const orders = await client.createOrdersBatch([
-      { symbol: "ETH-PERP", side: "buy", amount: 0.01, price: 2000 },
-    ])
+    const orders = await Effect.runPromise(
+      client.createOrdersBatch([
+        { symbol: "ETH-PERP", side: "buy", amount: 0.01, price: 2000 },
+      ]),
+    )
 
     expect(orders).toEqual([
       expect.objectContaining({ id: "recovered", status: "open" }),
@@ -240,13 +578,21 @@ describe("DeriveTradingClient.createOrdersBatch", () => {
     ).exchange
     exchange.createOrder = createOrder
     exchange.fetchOpenOrders = fetchOpenOrders
-    vi.spyOn(client, "resolveSymbol").mockResolvedValue("ETH/USD:USDC")
+    vi.spyOn(client, "resolveSymbol").mockReturnValue(
+      Effect.succeed("ETH/USD:USDC"),
+    )
 
-    await expect(
-      client.createOrdersBatch([
-        { symbol: "ETH-PERP", side: "buy", amount: 0.01, price: 2000 },
-      ]),
-    ).rejects.toMatchObject({ name: "RequestTimeout" })
+    const outcome = await Effect.runPromise(
+      Effect.either(
+        client.createOrdersBatch([
+          { symbol: "ETH-PERP", side: "buy", amount: 0.01, price: 2000 },
+        ]),
+      ),
+    )
+    expect(outcome).toMatchObject({
+      _tag: "Left",
+      left: { _tag: "ExchangeRequestError", cause: timeout },
+    })
   })
 
   it("snaps amount and price to market steps before createOrder", async () => {
@@ -276,18 +622,20 @@ describe("DeriveTradingClient.createOrdersBatch", () => {
       precision: { amount: 0.00001, price: 0.1 },
       info: { amount_step: "0.00001", tick_size: "0.1" },
     })
-    vi.spyOn(client, "resolveSymbol").mockResolvedValue(
-      "BTC/USD:USDC-260816-64000-C",
+    vi.spyOn(client, "resolveSymbol").mockReturnValue(
+      Effect.succeed("BTC/USD:USDC-260816-64000-C"),
     )
 
-    await client.createOrdersBatch([
-      {
-        symbol: "BTC-20260816-64000-C",
-        side: "buy",
-        amount: 0.011866234,
-        price: 927.04,
-      },
-    ])
+    await Effect.runPromise(
+      client.createOrdersBatch([
+        {
+          symbol: "BTC-20260816-64000-C",
+          side: "buy",
+          amount: 0.011866234,
+          price: 927.04,
+        },
+      ]),
+    )
 
     expect(createOrder).toHaveBeenCalledWith(
       "BTC/USD:USDC-260816-64000-C",
@@ -307,13 +655,21 @@ describe("DeriveTradingClient.createOrdersBatch", () => {
       ...credentials(),
       subaccountId: null,
     })
-    vi.spyOn(client, "resolveSymbol").mockResolvedValue("ETH/USD:USDC")
+    vi.spyOn(client, "resolveSymbol").mockReturnValue(
+      Effect.succeed("ETH/USD:USDC"),
+    )
 
-    await expect(
-      client.createOrdersBatch([
-        { symbol: "ETH-PERP", side: "buy", amount: 1, price: 10 },
-      ]),
-    ).rejects.toMatchObject({ _tag: "DeriveSubaccountMissing" })
+    const outcome = await Effect.runPromise(
+      Effect.either(
+        client.createOrdersBatch([
+          { symbol: "ETH-PERP", side: "buy", amount: 1, price: 10 },
+        ]),
+      ),
+    )
+    expect(outcome).toMatchObject({
+      _tag: "Left",
+      left: { _tag: "DeriveSubaccountMissing" },
+    })
   })
 })
 
@@ -351,11 +707,15 @@ describe("DeriveTradingClient.placeAndMonitorOrders", () => {
     exchange.markets_by_id = {}
     exchange.createOrder = createOrder
     exchange.watchOrders = vi.fn()
-    vi.spyOn(client, "resolveSymbol").mockResolvedValue("ETH/USD:USDC")
+    vi.spyOn(client, "resolveSymbol").mockReturnValue(
+      Effect.succeed("ETH/USD:USDC"),
+    )
 
-    const results = await client.placeAndMonitorOrders([
-      { symbol: "ETH-PERP", side: "buy", amount: 0.01, price: 2000 },
-    ])
+    const results = await Effect.runPromise(
+      client.placeAndMonitorOrders([
+        { symbol: "ETH-PERP", side: "buy", amount: 0.01, price: 2000 },
+      ]),
+    )
 
     expect(results).toEqual([
       {
@@ -399,11 +759,13 @@ describe("DeriveTradingClient.cancelOrder", () => {
     }
     exchange.markets_by_id = {}
     exchange.cancelOrder = cancelOrder
-    vi.spyOn(client, "resolveSymbol").mockResolvedValue(
-      "ETH/USD:USDC-250925-2000-C",
+    vi.spyOn(client, "resolveSymbol").mockReturnValue(
+      Effect.succeed("ETH/USD:USDC-250925-2000-C"),
     )
 
-    await client.cancelOrder("order-1", "ETH-20250925-2000-C")
+    await Effect.runPromise(
+      client.cancelOrder("order-1", "ETH-20250925-2000-C"),
+    )
 
     expect(cancelOrder).toHaveBeenCalledWith(
       "order-1",

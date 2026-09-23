@@ -12,7 +12,7 @@ import {
 } from "./PositionsPanel/portfolioMetricVisibility"
 
 interface AllSymbolsPanelProps {
-  screenerSymbols: Accessor<string[]>
+  screenerSymbols: Accessor<readonly string[]>
   targetPortfolio: Record<string, PortfolioInterface | undefined>
   deletedArchive: Record<string, PortfolioInterface | undefined>
   fundingIsLoading: boolean

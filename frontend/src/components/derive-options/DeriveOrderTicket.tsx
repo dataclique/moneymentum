@@ -213,7 +213,7 @@ export const DeriveOrderTicket = (props: {
         {selection => (
           <>
             <div class="min-w-0 text-[13px] font-semibold text-[var(--d-text)]">
-              {selection.displayLabel}
+              {selection().displayLabel}
             </div>
 
             <div class="grid grid-cols-2 gap-3 sm:grid-cols-4">

@@ -27,9 +27,9 @@ export interface PortfolioSettingsMenuProps {
 export const PortfolioSettingsMenu = (
   props: PortfolioSettingsMenuProps,
 ): JSX.Element => (
-  <DropdownMenu>
+  <DropdownMenu placement="bottom-end">
     <SettingsMenuGearTrigger aria-label="Open positions settings" />
-    <DropdownMenuContent align="end">
+    <DropdownMenuContent>
       <DropdownMenuCheckboxItem
         checked={props.isPrecise}
         closeOnSelect={false}

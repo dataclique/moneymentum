@@ -22,6 +22,7 @@ import {
   placeAndMonitorDeriveOrders,
   requireDeriveSessionWithSubaccount,
   type DeriveBatchOrderRequest,
+  type DeriveCcxtOrder,
   type DeriveSessionCredentials,
 } from "@/services/derive/index"
 import type { RebalanceAction } from "@/pages/Portfolio/hooks/portfolioRebalancer"
@@ -405,9 +406,11 @@ export const useDeriveAccountSnapshot = () => {
   })
 }
 
+/** Refresh account projections while orders rest, including final disappearance. */
 export const useDeriveOpenOrders = () => {
   const session = useDeriveSessionCredentials()
   const { isDeriveConnected, isDeriveLocked } = useWallet()
+  const queryClient = useQueryClient()
 
   return useQuery(() => {
     const credentials = session()
@@ -417,20 +420,61 @@ export const useDeriveOpenOrders = () => {
       credentials !== null &&
       credentials.subaccountId !== null
 
+    const queryKey = [
+      ...QUERY_KEYS.deriveOpenOrders,
+      credentials?.sessionAddress ?? null,
+      credentials?.subaccountId ?? null,
+      credentials?.networkMode ?? null,
+    ] as const
+
     return {
-      queryKey: [
-        ...QUERY_KEYS.deriveOpenOrders,
-        credentials?.sessionAddress ?? null,
-        credentials?.subaccountId ?? null,
-        credentials?.networkMode ?? null,
-      ],
-      queryFn: () =>
+      queryKey,
+      queryFn: async () => {
         // Re-read session at fetch time -- refetch() ignores `enabled`.
-        Effect.runPromise(
-          requireDeriveSessionWithSubaccount(session()).pipe(
+        const initiatingSession = session()
+        const orders = await Effect.runPromise(
+          requireDeriveSessionWithSubaccount(initiatingSession).pipe(
             Effect.flatMap(credentials => fetchDeriveOpenOrders(credentials)),
           ),
-        ),
+        )
+        const previousOrders =
+          queryClient.getQueryData<DeriveCcxtOrder[]>(queryKey)
+        const hadOpenOrders =
+          previousOrders !== undefined && previousOrders.length > 0
+
+        if (
+          initiatingSession !== null &&
+          session() === initiatingSession &&
+          (orders.length > 0 || hadOpenOrders)
+        ) {
+          await Promise.all([
+            queryClient.invalidateQueries({
+              queryKey: [
+                ...QUERY_KEYS.deriveBalance,
+                initiatingSession.deriveWallet,
+                initiatingSession.subaccountId,
+                initiatingSession.networkMode,
+              ],
+              exact: true,
+            }),
+            queryClient.invalidateQueries({
+              queryKey: [
+                ...QUERY_KEYS.deriveAccount,
+                initiatingSession.deriveWallet,
+                initiatingSession.networkMode,
+              ],
+              exact: true,
+            }),
+          ])
+          console.debug(
+            "[derive] account query refresh settled after order snapshot",
+            {
+              openOrderCount: orders.length,
+            },
+          )
+        }
+        return orders
+      },
       enabled: canFetch,
       staleTime: DATA_STALE_TIME_MS,
       // Refresh cadence is owned by DeriveOpenOrdersPanel's timer ring.

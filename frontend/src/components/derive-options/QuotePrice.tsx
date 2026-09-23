@@ -1,4 +1,4 @@
-import { Show, type Accessor } from "solid-js"
+import { createMemo, Show, type Accessor } from "solid-js"
 
 import { cn } from "@/lib/cn"
 
@@ -11,6 +11,7 @@ export const QuotePrice = (props: {
   isSelected: Accessor<boolean>
   onSelect?: () => void
 }) => {
+  const quote = createMemo(() => props.value())
   const className = (): string => {
     const selected = props.isSelected()
     const empty = props.value() === null
@@ -27,7 +28,12 @@ export const QuotePrice = (props: {
     <Show
       when={props.onSelect !== undefined}
       fallback={
-        <span class={className()} use:flashQuoteChange={props.value()}>
+        <span
+          class={className()}
+          ref={element => {
+            flashQuoteChange(element, quote)
+          }}
+        >
           {formatUsdPrice(props.value())}
         </span>
       }
@@ -35,7 +41,9 @@ export const QuotePrice = (props: {
       <button
         type="button"
         class={className()}
-        use:flashQuoteChange={props.value()}
+        ref={element => {
+          flashQuoteChange(element, quote)
+        }}
         onClick={() => {
           props.onSelect?.()
         }}

@@ -30,7 +30,7 @@ const formatSignedSize = (amount: number | null, side: string): string => {
   if (amount === null) {
     return "—"
   }
-  const sign = side === "sell" ? "-" : "+"
+  const sign = side === "sell" ? "-" : side === "buy" ? "+" : ""
   const formatted = amount.toLocaleString("en-US", {
     maximumFractionDigits: 8,
   })

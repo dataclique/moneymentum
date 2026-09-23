@@ -12,9 +12,9 @@ export const DeriveSettingsMenu = (props: {
   greeksVisible: Accessor<boolean>
   onGreeksVisibleChange: (visible: boolean) => void
 }): JSX.Element => (
-  <DropdownMenu>
+  <DropdownMenu placement="bottom-end">
     <SettingsMenuGearTrigger aria-label="Open Derive settings" />
-    <DropdownMenuContent align="end">
+    <DropdownMenuContent>
       <DropdownMenuCheckboxItem
         checked={props.greeksVisible()}
         closeOnSelect={false}

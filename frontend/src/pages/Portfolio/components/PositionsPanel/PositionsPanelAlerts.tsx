@@ -2,7 +2,11 @@ import { Show, For, createMemo } from "solid-js"
 import type { JSX } from "solid-js"
 import { CircleAlert, TriangleAlert } from "lucide-solid"
 
-import { MIN_USD, type PortfolioInterface } from "../../hooks/usePortfolioState"
+import {
+  MIN_USD,
+  type PortfolioInterface,
+} from "../../hooks/portfolioRebalancer"
+import { positionDelta } from "./positionRowModel"
 
 export interface PositionsPanelAlertsProps {
   isLoading: boolean
@@ -38,9 +42,11 @@ export const PositionsPanelAlerts = (
   }
 
   const deltaDetail = (symbol: string) => {
-    const targetN = props.targetPortfolio[symbol]?.notional ?? 0
-    const currentN = props.currentPortfolio[symbol]?.notional ?? 0
-    const delta = Math.abs(targetN - currentN)
+    const delta = positionDelta(
+      symbol,
+      props.currentPortfolio,
+      props.targetPortfolio,
+    )
     return `${symbol} (delta $${delta.toFixed(2)})`
   }
 

@@ -137,7 +137,7 @@ describe("useTrading hooks", () => {
     ) {
       const store = new Map<string, string>()
       globalAny.localStorage = {
-        getItem: key => (store.has(key) ? store.get(key)! : null),
+        getItem: key => store.get(key) ?? null,
         setItem: (key, value) => {
           store.set(key, value)
         },
@@ -151,7 +151,7 @@ describe("useTrading hooks", () => {
         get length() {
           return store.size
         },
-      } as unknown as Storage
+      }
     }
   }
 
@@ -418,6 +418,8 @@ describe("useTrading hooks", () => {
         actions: [
           {
             kind: "rebalance",
+            positionKind: "perp",
+            venue: "hyperliquid",
             symbol: "BTC/USDC:USDC",
             signedNotionalDelta: 120,
             leverage: 2,
@@ -433,6 +435,8 @@ describe("useTrading hooks", () => {
       expect(mockMethods.rebalancePositions).toHaveBeenCalledWith([
         {
           kind: "rebalance",
+          positionKind: "perp",
+          venue: "hyperliquid",
           symbol: "BTC/USDC:USDC",
           signedNotionalDelta: 120,
           leverage: 2,
@@ -470,6 +474,8 @@ describe("useTrading hooks", () => {
         actions: [
           {
             kind: "close",
+            positionKind: "perp",
+            venue: "hyperliquid",
             symbol: "BTC/USDC:USDC",
             side: "buy",
           },
@@ -483,6 +489,8 @@ describe("useTrading hooks", () => {
       expect(mockMethods.rebalancePositions).toHaveBeenCalledWith([
         {
           kind: "close",
+          positionKind: "perp",
+          venue: "hyperliquid",
           symbol: "BTC/USDC:USDC",
           side: "buy",
         },

@@ -30,7 +30,7 @@ import {
 export interface PortfolioKeyboardActions {
   activatePanel: (panelId: KeyboardPanelId) => void
   getPortfolioSymbols: () => string[]
-  getAllSymbolSymbols: () => string[]
+  getAllSymbolSymbols: () => readonly string[]
   isPinDialogOpen: () => boolean
   connectionState: () => StagedConnectionState
   /** Derive stored session present but credentials not decrypted. */

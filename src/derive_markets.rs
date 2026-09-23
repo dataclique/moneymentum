@@ -65,12 +65,18 @@ pub(crate) struct Strike(f64);
 
 impl Strike {
     pub(crate) fn parse(raw: &str) -> Result<Self, DeriveMarketsError> {
-        let value = raw
+        let strike = raw
             .parse::<f64>()
             .map_err(|_| DeriveMarketsError::InvalidStrike {
                 strike: raw.to_string(),
             })?;
-        Ok(Self(value))
+        if !strike.is_finite() {
+            return Err(DeriveMarketsError::InvalidStrike {
+                strike: raw.to_string(),
+            });
+        }
+
+        Ok(Self(strike))
     }
 
     pub(crate) const fn get(self) -> f64 {
@@ -457,6 +463,40 @@ mod tests {
 
         let error = DeriveInstrument::try_from(raw).unwrap_err();
         assert!(matches!(error, DeriveMarketsError::InvalidStrike { .. }));
+    }
+
+    #[test]
+    fn try_from_rejects_non_finite_strikes() {
+        for strike in [
+            "NaN",
+            "inf",
+            "-inf",
+            "infinity",
+            "-infinity",
+            "1e999",
+            "-1e999",
+        ] {
+            let mut raw = sample_raw_option();
+            raw.option_details
+                .as_mut()
+                .expect("option fixture must contain option details")
+                .strike = strike.to_string();
+
+            let error = DeriveInstrument::try_from(raw).unwrap_err();
+            assert!(
+                matches!(error, DeriveMarketsError::InvalidStrike { strike: rejected } if rejected == strike),
+                "non-finite strike must fail at the instrument boundary: {strike}",
+            );
+        }
+    }
+
+    #[test]
+    fn strike_parse_preserves_finite_decimal_values() {
+        for (raw, expected) in [("0.25", 0.25_f64), ("2000", 2000.0), ("50000.5", 50000.5)] {
+            let strike = Strike::parse(raw).unwrap();
+            assert_eq!(strike.get().to_bits(), expected.to_bits());
+            assert!(strike.get().is_finite());
+        }
     }
 
     #[test]

@@ -1,15 +1,10 @@
 import type { Order, OrderRequest } from "ccxt"
 import hyperliquid from "ccxt/hyperliquid"
-import * as Cause from "effect/Cause"
 import * as Effect from "effect/Effect"
-import * as Exit from "effect/Exit"
-import * as Option from "effect/Option"
 import type { NetworkMode, WalletCredentials } from "@/contexts/wallet-context"
-import { getErrorMessage } from "@/lib/error-message"
 import type { RebalanceAction } from "@/pages/Portfolio/hooks/portfolioRebalancer"
 import {
   fetchHyperliquidMarkets,
-  type HyperliquidMarketsResponse,
   type LeverageLimit,
 } from "@/services/hyperliquid-markets"
 
@@ -337,7 +332,7 @@ const mapExchangeOrderAfterTimeout = (
     return { status: "filled", message: null }
   }
   if (mapped.status === "failed") {
-    return mapped
+    return { status: "failed", message: mapped.message }
   }
 
   const infoStatus = readHyperliquidInfoStatus(order)
@@ -1178,7 +1173,7 @@ export class HyperliquidClient {
     let step: RebalanceStep = "fetch_markets"
     try {
       const [backendMarkets, perpContexts] = await Promise.all([
-        this.fetchMarketsCatalog(),
+        Effect.runPromise(this.fetchMarketsCatalog()),
         fetchPerpMarketContexts(this.networkMode),
       ])
 
@@ -1317,25 +1312,9 @@ export class HyperliquidClient {
     }
   }
 
-  /** Markets catalog via Promise so failures are not nested FiberFailures. */
-  private async fetchMarketsCatalog(): Promise<HyperliquidMarketsResponse> {
-    const exit = await Effect.runPromiseExit(
-      fetchHyperliquidMarkets(this.networkMode),
-    )
-    if (Exit.isSuccess(exit)) {
-      return exit.value
-    }
-
-    const failure = Cause.failureOption(exit.cause)
-    if (Option.isSome(failure)) {
-      throw new Error(
-        `Failed to fetch Hyperliquid markets: ${getErrorMessage(failure.value)}`,
-      )
-    }
-
-    throw new Error("Failed to fetch Hyperliquid markets", {
-      cause: Cause.pretty(exit.cause),
-    })
+  /** Keep catalogue failures typed until the rebalance caller runs the effect. */
+  private fetchMarketsCatalog(): ReturnType<typeof fetchHyperliquidMarkets> {
+    return fetchHyperliquidMarkets(this.networkMode)
   }
 
   getNetworkMode(): NetworkMode {

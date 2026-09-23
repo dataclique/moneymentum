@@ -58,7 +58,7 @@ export type OptionQuote = typeof OptionQuote.Type
 export const OptionsSnapshot = Schema.Struct({
   asset: Schema.String,
   updated_at: Schema.String,
-  active_expiry_unix: ExpiryUnix,
+  active_expiry_unix: Schema.NullOr(ExpiryUnix),
   expiry_unixes: Schema.Array(ExpiryUnix),
   spot_price: Schema.Number,
   expiry_dates: Schema.Array(Schema.String),
@@ -70,7 +70,7 @@ export type OptionsSnapshot = typeof OptionsSnapshot.Type
 export const OptionsBootstrap = Schema.Struct({
   asset: Schema.String,
   assets: Schema.Array(Schema.String),
-  default_expiry_unix: ExpiryUnix,
+  default_expiry_unix: Schema.NullOr(ExpiryUnix),
   tabs: Schema.Array(
     Schema.Struct({
       expiry_unix: ExpiryUnix,

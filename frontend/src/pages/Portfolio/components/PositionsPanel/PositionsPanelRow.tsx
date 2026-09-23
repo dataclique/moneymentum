@@ -157,6 +157,22 @@ export const PositionsPanelRow = (props: {
 
   const positionVenue = () => props.position().venue
 
+  const optionSideHint = createMemo((): string | null => {
+    const position = props.position()
+    if (position.kind !== "option") return null
+    if (position.symbol.endsWith("-C")) {
+      return position.side === "buy"
+        ? "Profits if underlying rises"
+        : "Profits if underlying falls or stays flat"
+    }
+    if (position.symbol.endsWith("-P")) {
+      return position.side === "buy"
+        ? "Profits if underlying falls"
+        : "Profits if underlying rises or stays flat"
+    }
+    return "Option payoff unavailable"
+  })
+
   const leverageEditorSpan = () => leverageEditorColumnSpan()
 
   const tableColumnCount = () =>
@@ -560,6 +576,11 @@ export const PositionsPanelRow = (props: {
                   >
                     {props.position().side === "buy" ? "LONG" : "SHORT"}
                   </button>
+                  <Show when={optionSideHint()}>
+                    <span class="whitespace-nowrap text-[10px] text-muted-foreground">
+                      {optionSideHint()}
+                    </span>
+                  </Show>
                 </div>
               </td>
               <td class={positionBodyCellClass("weight")}>

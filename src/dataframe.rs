@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use polars::prelude::{
     CsvReader, CsvWriter, DataFrame, IntoLazy, PlSmallStr, PolarsError, Selector, SerReader,
-    SerWriter, SortMultipleOptions, UniqueKeepStrategy, col,
+    SerWriter, SortMultipleOptions, UniqueKeepStrategy, col, cols,
 };
 use thiserror::Error;
 use tracing::{debug, instrument};
@@ -72,9 +72,12 @@ pub(crate) async fn write_csv(path: PathBuf, mut df: DataFrame) -> Result<(), Da
 
 /// Merges `DataFrames` and deduplicates by (timestamp, symbol).
 ///
-/// Keeps the last occurrence when duplicates exist, then sorts by timestamp
-/// and symbol ascending. This enables incremental ingestion: new data with
-/// the same key overwrites old data.
+/// Symbol identity is ASCII-case-insensitive so archive rows that differ only
+/// by Hyperliquid coin casing (`kPEPE/USDC:USDC` vs `KPEPE/USDC:USDC`, or
+/// funding `kPEPE` vs `KPEPE`) collapse to one economic instrument. Keeps the
+/// last occurrence when duplicates exist, then sorts by timestamp and symbol
+/// ascending. This enables incremental ingestion: new data with the same key
+/// overwrites old data.
 pub(crate) async fn merge_and_deduplicate(
     existing: Option<DataFrame>,
     new: DataFrame,
@@ -93,17 +96,19 @@ pub(crate) async fn merge_and_deduplicate(
 
         let deduped = combined
             .lazy()
+            .with_column(col("symbol").str().to_uppercase().alias("_dedup_symbol"))
             .unique(
                 Some(Selector::ByName {
                     names: [
                         PlSmallStr::from_static("timestamp"),
-                        PlSmallStr::from_static("symbol"),
+                        PlSmallStr::from_static("_dedup_symbol"),
                     ]
                     .into(),
                     strict: true,
                 }),
                 UniqueKeepStrategy::Last,
             )
+            .drop(cols(["_dedup_symbol"]))
             .sort_by_exprs(
                 [col("timestamp"), col("symbol")],
                 SortMultipleOptions::default(),
@@ -213,6 +218,49 @@ mod tests {
         write_csv(path.clone(), replacement).await.unwrap();
         let reloaded = read_csv(path).await.unwrap().unwrap();
         assert_eq!(reloaded.height(), 1, "overwrite must replace the contents");
+    }
+
+    #[tokio::test]
+    async fn merge_collapses_case_variant_symbol_duplicates_keeping_last() {
+        let existing = df! {
+            "timestamp" => &["2024-01-01T00:00:00.000Z", "2024-01-01T00:00:00.000Z"],
+            "symbol" => &["KPEPE/USDC:USDC", "kPEPE/USDC:USDC"],
+            "ticker" => &["KPEPE", "kPEPE"],
+            "close" => &[0.001_f64, 0.002],
+        }
+        .unwrap();
+
+        let new = df! {
+            "timestamp" => &["2024-01-01T00:00:00.000Z"],
+            "symbol" => &["kPEPE/USDC:USDC"],
+            "ticker" => &["kPEPE"],
+            "close" => &[0.003_f64],
+        }
+        .unwrap();
+
+        let merged = merge_and_deduplicate(Some(existing), new).await.unwrap();
+
+        assert_eq!(merged.height(), 1);
+        assert_eq!(
+            merged.column("symbol").unwrap().str().unwrap().get(0),
+            Some("kPEPE/USDC:USDC")
+        );
+        assert_eq!(
+            merged.column("ticker").unwrap().str().unwrap().get(0),
+            Some("kPEPE")
+        );
+        assert!(
+            (merged
+                .column("close")
+                .unwrap()
+                .f64()
+                .unwrap()
+                .get(0)
+                .unwrap()
+                - 0.003)
+                .abs()
+                < f64::EPSILON
+        );
     }
 
     #[tokio::test]

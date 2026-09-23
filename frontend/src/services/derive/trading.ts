@@ -107,8 +107,7 @@ export type DerivePlaceOrdersResult = OrderResult[] | DeriveCancelledOrderBatch
 
 export const isDeriveCancelledOrderBatch = (
   value: DerivePlaceOrdersResult,
-): value is DeriveCancelledOrderBatch =>
-  !Array.isArray(value) && value.terminal === "cancelled"
+): value is DeriveCancelledOrderBatch => !Array.isArray(value)
 
 /** Optional live check; default keeps the batch running to completion. */
 export type DeriveSessionGuard = {
@@ -588,10 +587,7 @@ export class DeriveTradingClient {
               const sessionCurrent = yield* Effect.sync(() =>
                 this.isSessionCurrent(),
               )
-              if (
-                !sessionCurrent &&
-                EffectArray.isNonEmptyArray(responses)
-              ) {
+              if (!sessionCurrent && EffectArray.isNonEmptyArray(responses)) {
                 const unattemptedRequests = requests.slice(index)
                 yield* Effect.sync(() => {
                   console.debug("[derive] order batch stopped", {
@@ -839,10 +835,7 @@ export const fetchDeriveFundingRates = (
   )
 
 const cancelledBatchFromSubmitted = (
-  submittedOrders: readonly [
-    DeriveSubmittedOrder,
-    ...DeriveSubmittedOrder[],
-  ],
+  submittedOrders: readonly [DeriveSubmittedOrder, ...DeriveSubmittedOrder[]],
 ): DeriveCancelledOrderBatch => {
   const orders = submittedOrders.map(({ order, request }) => {
     const mapped = mapDeriveOrderForWatch(order)
@@ -859,7 +852,7 @@ const cancelledBatchFromSubmitted = (
     terminal: "cancelled",
     outcomes: submittedOrders.map(({ order }) => ({
       kind: "accepted" as const,
-      orderId: String(order.id ?? ""),
+      orderId: order.id ?? "",
     })),
     orders,
   }

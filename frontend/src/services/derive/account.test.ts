@@ -76,6 +76,8 @@ describe("mapDerivePosition", () => {
       entryPrice: 120.5,
       unrealizedPnl: 23.75,
       leverage: 1,
+      contracts: 2.5,
+      markPrice: 130,
       positionKind: "option",
     })
   })
@@ -94,6 +96,8 @@ describe("mapDerivePosition", () => {
       entryPrice: 120.5,
       unrealizedPnl: 23.75,
       leverage: 1,
+      contracts: 1.25,
+      markPrice: 130,
       positionKind: "option",
     })
   })
@@ -117,6 +121,8 @@ describe("mapDerivePosition", () => {
       entryPrice: 85,
       unrealizedPnl: 5,
       leverage: 1,
+      contracts: 1,
+      markPrice: 90,
       positionKind: "option",
     })
   })
@@ -140,6 +146,8 @@ describe("mapDerivePosition", () => {
       entryPrice: 40,
       unrealizedPnl: 10,
       leverage: 1,
+      contracts: 2,
+      markPrice: 35,
       positionKind: "option",
     })
   })
@@ -162,6 +170,8 @@ describe("mapDerivePosition", () => {
       entryPrice: 2000,
       unrealizedPnl: 50,
       leverage: 1,
+      contracts: 0.5,
+      markPrice: 2100,
       positionKind: "perp",
     })
   })
@@ -191,6 +201,8 @@ describe("mapDerivePosition", () => {
       entryPrice: 0,
       unrealizedPnl: 23.75,
       leverage: 1,
+      contracts: 2.5,
+      markPrice: 0,
       positionKind: "option",
     })
   })

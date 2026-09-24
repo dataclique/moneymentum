@@ -30,6 +30,10 @@ export type { CurrentPosition }
 /** Open Derive position with kind so portfolio can distinguish options vs perps. */
 export type DeriveMappedPosition = CurrentPosition & {
   positionKind: "option" | "perp"
+  /** Absolute contract size (`|amount|` from the venue). */
+  contracts: number
+  /** Last mark premium from the venue snapshot (0 when missing). */
+  markPrice: number
 }
 
 /**
@@ -235,6 +239,8 @@ export const mapDerivePosition = (
     entryPrice: averagePrice,
     unrealizedPnl: parseDeriveNumeric(position.unrealized_pnl, 0),
     leverage: 1,
+    contracts: Math.abs(signedAmount),
+    markPrice: markPrice > 0 ? markPrice : 0,
     positionKind: classifyDeriveInstrument(
       instrumentName,
       position.instrument_type,

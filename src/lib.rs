@@ -1,3 +1,4 @@
+mod account_performance;
 mod candle;
 mod dataframe;
 mod derive_markets;
@@ -31,7 +32,7 @@ use axum::Router;
 use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::routing::{get, post, put};
 use derive::DeriveNetwork;
 use event_sorcery::{
     AggregateError, CircuitBreakerConfig, FAIL_STOP_RECOVERY_TIMEOUT, JobBackend, LifecycleError,
@@ -560,6 +561,74 @@ async fn post_portfolio_archive(
     Ok(StatusCode::ACCEPTED)
 }
 
+fn classify_account_performance_error(
+    error: account_performance::AccountPerformanceError,
+) -> ApiError {
+    use account_performance::AccountPerformanceError;
+
+    match error {
+        AccountPerformanceError::InvalidWalletAddress(_)
+        | AccountPerformanceError::UnknownVenue(_)
+        | AccountPerformanceError::InvalidEquityValue { .. }
+        | AccountPerformanceError::MissingAccountValueHistory => {
+            api_error(StatusCode::BAD_REQUEST, error.to_string())
+        }
+        other => {
+            error!(error = %other, "account performance request failed");
+            api_error(StatusCode::INTERNAL_SERVER_ERROR, other.to_string())
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct PerformanceHyperliquidRefreshQuery {
+    network: HyperliquidNetwork,
+}
+
+async fn get_account_performance(
+    State(state): State<Arc<AppState>>,
+    AxumPath(wallet): AxumPath<String>,
+) -> Result<Json<account_performance::WalletPerformanceCache>, ApiError> {
+    account_performance::load_wallet_performance(&state.database_pool, &wallet)
+        .await
+        .map(Json)
+        .map_err(classify_account_performance_error)
+}
+
+async fn put_account_performance_venue(
+    State(state): State<Arc<AppState>>,
+    AxumPath((wallet, venue_raw)): AxumPath<(String, String)>,
+    Json(body): Json<account_performance::UpsertVenuePerformanceRequest>,
+) -> Result<Json<account_performance::VenuePerformanceSeries>, ApiError> {
+    let venue = account_performance::PerformanceVenue::from_str(&venue_raw)
+        .map_err(classify_account_performance_error)?;
+    account_performance::upsert_venue_series(&state.database_pool, &wallet, venue, body)
+        .await
+        .map(Json)
+        .map_err(classify_account_performance_error)
+}
+
+async fn post_hyperliquid_performance_refresh(
+    State(state): State<Arc<AppState>>,
+    AxumPath(wallet): AxumPath<String>,
+    Query(query): Query<PerformanceHyperliquidRefreshQuery>,
+) -> Result<Json<account_performance::VenuePerformanceSeries>, ApiError> {
+    let hyperliquid_base_url = match query.network {
+        HyperliquidNetwork::Mainnet => state.config.hyperliquid_base_url.as_ref(),
+        HyperliquidNetwork::Testnet => state.config.hyperliquid_testnet_base_url.as_ref(),
+    };
+    let http_client = reqwest::Client::new();
+    account_performance::refresh_hyperliquid_performance(
+        &state.database_pool,
+        &http_client,
+        hyperliquid_base_url,
+        &wallet,
+    )
+    .await
+    .map(Json)
+    .map_err(classify_account_performance_error)
+}
+
 /// Maps a finite `f64` from the wire onto an exact `Decimal`; `None` for NaN,
 /// infinities, or values outside `Decimal`'s range.
 fn finite_decimal(value: f64) -> Option<Decimal> {
@@ -1052,6 +1121,15 @@ fn build_router(state: Arc<AppState>) -> Router {
         .route("/portfolio/{id}/target", post(post_portfolio_target))
         .route("/portfolio/{id}/rename", post(post_portfolio_rename))
         .route("/portfolio/{id}/archive", post(post_portfolio_archive))
+        .route("/performance/{wallet}", get(get_account_performance))
+        .route(
+            "/performance/{wallet}/{venue}",
+            put(put_account_performance_venue),
+        )
+        .route(
+            "/performance/{wallet}/hyperliquid/refresh",
+            post(post_hyperliquid_performance_refresh),
+        )
         .route("/hyperliquid/markets", get(get_hyperliquid_markets))
         .route("/derive/markets", get(get_derive_markets))
         .route("/markets/{venue}", get(get_markets))

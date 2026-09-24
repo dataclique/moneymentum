@@ -15,6 +15,8 @@ use tracing::{debug, info, instrument};
 
 const DEFAULT_HYPERLIQUID_INFO_BASE_URL: &str = "https://api.hyperliquid.xyz";
 
+/// One SQLite row from `account_performance_cache`.
+type CachedVenueRow = (String, String, String, String, Option<i64>, Option<i64>);
 /// Trading venue whose equity series we cache.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -196,7 +198,7 @@ pub(crate) async fn load_wallet_performance(
     wallet_address: &str,
 ) -> Result<WalletPerformanceCache, AccountPerformanceError> {
     let wallet = parse_wallet_address(wallet_address)?;
-    let rows: Vec<(String, String, String, String, Option<i64>, Option<i64>)> = sqlx::query_as(
+    let rows: Vec<CachedVenueRow> = sqlx::query_as(
         "SELECT venue, equity_points_json, events_json, fetched_at,
                 coverage_start_ms, coverage_end_ms
          FROM account_performance_cache
@@ -260,16 +262,18 @@ pub(crate) fn equity_points_from_hyperliquid_portfolio(
     for entry in windows {
         let pair = entry
             .as_array()
-            .filter(|items| items.len() == 2)
             .ok_or(AccountPerformanceError::MissingAccountValueHistory)?;
-        let window_name = pair[0]
+        let [window_name_value, history_value] = pair.as_slice() else {
+            return Err(AccountPerformanceError::MissingAccountValueHistory);
+        };
+        let window_name = window_name_value
             .as_str()
             .ok_or(AccountPerformanceError::MissingAccountValueHistory)?;
         let rank = prefer_portfolio_window(window_name);
         if rank < best_rank {
             continue;
         }
-        let history = pair[1]
+        let history = history_value
             .get("accountValueHistory")
             .and_then(|value| value.as_array())
             .ok_or(AccountPerformanceError::MissingAccountValueHistory)?;
@@ -284,12 +288,14 @@ pub(crate) fn equity_points_from_hyperliquid_portfolio(
     for sample in history {
         let pair = sample
             .as_array()
-            .filter(|items| items.len() == 2)
             .ok_or(AccountPerformanceError::MissingAccountValueHistory)?;
-        let timestamp_ms = pair[0]
+        let [timestamp_value, equity_value] = pair.as_slice() else {
+            return Err(AccountPerformanceError::MissingAccountValueHistory);
+        };
+        let timestamp_ms = timestamp_value
             .as_i64()
             .ok_or(AccountPerformanceError::MissingAccountValueHistory)?;
-        let value_raw = match &pair[1] {
+        let value_raw = match equity_value {
             serde_json::Value::String(text) => text.clone(),
             serde_json::Value::Number(number) => number.to_string(),
             _ => {

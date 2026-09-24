@@ -25,8 +25,8 @@ export interface PerpPortfolioPosition {
 
 /**
  * Derive option row. Notional is premium USD (`contracts * mark` at fetch /
- * `contracts * limit` when staging); contracts are derived at order time as
- * `notional / price`.
+ * `contracts * limit` when staging). Closes size from `contracts` when known;
+ * otherwise `notional / price` at order time.
  */
 export interface OptionPortfolioPosition {
   kind: "option"
@@ -34,6 +34,12 @@ export interface OptionPortfolioPosition {
   symbol: string
   side: OrderSide
   notional: number
+  /** Absolute contract size from the venue; 0 when staging by premium only. */
+  contracts: number
+  /** Venue mark premium; close limit fallback when the book is empty. */
+  markPrice: number
+  /** Average entry premium; close limit fallback after mark. */
+  entryPrice: number
 }
 
 export type PortfolioInterface = PerpPortfolioPosition | OptionPortfolioPosition
@@ -113,6 +119,9 @@ export const portfolioMapFromDerivePositions = (
           symbol: position.symbol,
           side: position.side,
           notional: position.notional,
+          contracts: position.contracts,
+          markPrice: position.markPrice,
+          entryPrice: position.entryPrice,
         }
         return [position.symbol, optionRow]
       }
@@ -516,13 +525,18 @@ export const diffPortfolios = (
       currentPosition &&
       targetPosition.notional <= STAGED_NOTIONAL_EPSILON_USD
     ) {
-      actions.push({
-        kind: "close",
-        symbol,
-        side: currentPosition.side,
-        positionKind: currentPosition.kind,
-        venue: currentPosition.venue,
-      })
+      // Target near zero is only a close when current still has meaningful
+      // size. Dust mirrored on both sides (worthless options, mark noise)
+      // must not auto-appear in staged changes.
+      if (currentPosition.notional > STAGED_NOTIONAL_EPSILON_USD) {
+        actions.push({
+          kind: "close",
+          symbol,
+          side: currentPosition.side,
+          positionKind: currentPosition.kind,
+          venue: currentPosition.venue,
+        })
+      }
       continue
     }
 
@@ -592,17 +606,24 @@ export const diffPortfolios = (
 export const deriveLimitPriceForSide = (
   ticker: DeriveTickerQuote,
   side: OrderSide,
+  fallbacks: readonly number[] = [],
 ): number | null => {
   const preferred =
     side === "buy"
       ? (ticker.ask ?? ticker.mark ?? ticker.last)
       : (ticker.bid ?? ticker.mark ?? ticker.last)
 
-  if (preferred === null || !(preferred > 0)) {
-    return null
+  if (preferred !== null && preferred > 0) {
+    return preferred
   }
 
-  return preferred
+  for (const fallback of fallbacks) {
+    if (fallback > 0) {
+      return fallback
+    }
+  }
+
+  return null
 }
 
 const isReduceOnlyOrder = (
@@ -652,11 +673,32 @@ const requireDeriveTicker = (
   return Effect.succeed(tickers[symbol])
 }
 
+const emptyDeriveTicker = (symbol: string): DeriveTickerQuote => ({
+  symbol,
+  bid: null,
+  ask: null,
+  last: null,
+  mark: null,
+})
+
 /**
- * Maps Derive portfolio actions to limit order requests. Premium notionals
- * convert to contracts as `notional / mark` (same as the order ticket).
- * Limit price is aggressive book (ask/bid). Fails if a required ticker or
- * price is missing. Precise rebalance is not a Derive action.
+ * IOC/market reduce-only needs a taking quote (sell→bid, buy→ask). Empty book
+ * forces resting GTC without reduce_only (Derive 11009 + 11024).
+ */
+export const hasDeriveTakingLiquidity = (
+  ticker: DeriveTickerQuote,
+  side: OrderSide,
+): boolean => {
+  const taking = side === "buy" ? ticker.ask : ticker.bid
+  return taking !== null && taking > 0
+}
+
+/**
+ * Maps Derive portfolio actions to limit order requests. Option closes prefer
+ * venue `contracts` so dust premium notionals still flatten. Limit price is
+ * aggressive book (ask/bid), then ticker mark/last, then the position's last
+ * mark/entry. Dust with neither size nor price is skipped; open/rebalance
+ * still fails loud when a price is missing.
  */
 export const deriveActionsToOrderRequests = (
   actions: DeriveRebalanceAction[],
@@ -676,26 +718,48 @@ export const deriveActionsToOrderRequests = (
             continue
           }
           const orderSide: OrderSide = action.side === "buy" ? "sell" : "buy"
-          const ticker = yield* requireDeriveTicker(
-            tickers,
-            action.symbol,
-            "close",
+          const ticker =
+            action.symbol in tickers
+              ? tickers[action.symbol]
+              : emptyDeriveTicker(action.symbol)
+          const positionFallbacks = isOptionPosition(currentPosition)
+            ? [currentPosition.markPrice, currentPosition.entryPrice]
+            : []
+          const price = deriveLimitPriceForSide(
+            ticker,
+            orderSide,
+            positionFallbacks,
           )
-          const price = deriveLimitPriceForSide(ticker, orderSide)
           const sizingPrice = deriveSizingPrice(ticker) ?? price
-          if (price === null || sizingPrice === null) {
+          const contractsFromVenue =
+            isOptionPosition(currentPosition) && currentPosition.contracts > 0
+              ? currentPosition.contracts
+              : null
+          const amount =
+            contractsFromVenue ??
+            (sizingPrice !== null
+              ? contractsFromPremiumNotional(
+                  currentPosition.notional,
+                  sizingPrice,
+                )
+              : 0)
+          // Dust / unpriceable flatten: skip instead of failing the whole batch.
+          if (!(amount > 0)) {
+            continue
+          }
+          if (price === null) {
             return yield* Effect.fail(
               new DeriveOrderMappingFailed({
                 reason: `No usable Derive price for close of ${action.symbol}`,
               }),
             )
           }
-          const amount = contractsFromPremiumNotional(
-            currentPosition.notional,
-            sizingPrice,
-          )
-          if (!(amount > 0)) {
-            continue
+          if (!hasDeriveTakingLiquidity(ticker, orderSide)) {
+            return yield* Effect.fail(
+              new DeriveOrderMappingFailed({
+                reason: `No liquidity to close ${action.symbol} (empty taking book)`,
+              }),
+            )
           }
           requests.push({
             symbol: action.symbol,
@@ -715,7 +779,16 @@ export const deriveActionsToOrderRequests = (
             action.symbol,
             "rebalance",
           )
-          const price = deriveLimitPriceForSide(ticker, orderSide)
+          const currentOption = currentPosition
+          const positionFallbacks =
+            currentOption !== undefined && isOptionPosition(currentOption)
+              ? [currentOption.markPrice, currentOption.entryPrice]
+              : []
+          const price = deriveLimitPriceForSide(
+            ticker,
+            orderSide,
+            positionFallbacks,
+          )
           const sizingPrice = deriveSizingPrice(ticker) ?? price
           if (price === null || sizingPrice === null) {
             return yield* Effect.fail(
@@ -731,13 +804,21 @@ export const deriveActionsToOrderRequests = (
           if (!(amount > 0)) {
             continue
           }
+          const reduceOnly = isReduceOnlyOrder(currentPosition, orderSide)
+          if (reduceOnly && !hasDeriveTakingLiquidity(ticker, orderSide)) {
+            return yield* Effect.fail(
+              new DeriveOrderMappingFailed({
+                reason: `No liquidity to reduce ${action.symbol} (empty taking book)`,
+              }),
+            )
+          }
           requests.push({
             symbol: action.symbol,
             side: orderSide,
             amount,
             price,
             type: "limit",
-            reduceOnly: isReduceOnlyOrder(currentPosition, orderSide),
+            reduceOnly,
           })
           break
         }

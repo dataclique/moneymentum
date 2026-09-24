@@ -49,21 +49,18 @@ describe("mapDeriveOpenOrderRow", () => {
   it("maps a resting limit into a display row", () => {
     expect(
       mapDeriveOpenOrderRow({
-        id: "order-1",
-        symbol: "BTC/USD:USDC-250821-62000-P",
-        side: "buy",
-        amount: 1,
-        price: 0.07813,
-        status: "open",
-        info: {
-          instrument_name: "BTC-20250821-62000-P",
-          order_status: "open",
-          order_type: "limit",
-        },
+        order_id: "order-1",
+        instrument_name: "BTC-20250821-62000-P",
+        direction: "buy",
+        amount: "1",
+        filled_amount: "0",
+        limit_price: "0.07813",
+        order_status: "open",
+        order_type: "limit",
       }),
     ).toEqual({
       id: "order-1",
-      symbol: "BTC/USD:USDC-250821-62000-P",
+      symbol: "BTC-20250821-62000-P",
       label: "BTC $62,000 Put Aug 21 2025",
       side: "buy",
       amount: 1,
@@ -74,27 +71,21 @@ describe("mapDeriveOpenOrderRow", () => {
     })
   })
 
-  it("reads size and price from Derive info when CCXT leaves amount/cost empty", () => {
+  it("reads size and price from Derive wire fields", () => {
     expect(
       mapDeriveOpenOrderRow({
-        id: "order-2",
-        symbol: "ETH/USD:USDC-260925-2000-C",
-        side: "buy",
-        price: 497.2,
-        cost: 0,
-        status: "open",
-        info: {
-          instrument_name: "ETH-20260925-2000-C",
-          amount: "0.20112626527132446",
-          filled_amount: "0",
-          limit_price: "497.2",
-          order_status: "open",
-          order_type: "limit",
-        },
+        order_id: "order-2",
+        instrument_name: "ETH-20260925-2000-C",
+        direction: "buy",
+        amount: "0.20112626527132446",
+        filled_amount: "0",
+        limit_price: "497.2",
+        order_status: "open",
+        order_type: "limit",
       }),
     ).toEqual({
       id: "order-2",
-      symbol: "ETH/USD:USDC-260925-2000-C",
+      symbol: "ETH-20260925-2000-C",
       label: "ETH $2,000 Call Sep 25",
       side: "buy",
       amount: 0.20112626527132446,
@@ -105,27 +96,37 @@ describe("mapDeriveOpenOrderRow", () => {
     })
   })
 
-  it("uses remaining size after partial fills from info.filled_amount", () => {
+  it("uses remaining size after partial fills from filled_amount", () => {
     const row = mapDeriveOpenOrderRow({
-      id: "order-3",
-      symbol: "ETH/USD:USDC-260925-2000-C",
-      side: "sell",
-      info: {
-        instrument_name: "ETH-20260925-2000-C",
-        amount: "1",
-        filled_amount: "0.25",
-        limit_price: "100",
-        order_status: "open",
-        order_type: "limit",
-      },
+      order_id: "order-3",
+      instrument_name: "ETH-20260925-2000-C",
+      direction: "sell",
+      amount: "1",
+      filled_amount: "0.25",
+      limit_price: "100",
+      order_status: "open",
+      order_type: "limit",
     })
 
     expect(row?.amount).toBe(0.75)
     expect(row?.notional).toBe(75)
   })
 
-  it("drops orders without an id or symbol", () => {
-    expect(mapDeriveOpenOrderRow({ side: "buy", amount: 1 })).toBeNull()
-    expect(mapDeriveOpenOrderRows([{ id: "1" }, { symbol: "X" }])).toEqual([])
+  it("treats a missing orders list as empty when mapping rows", () => {
+    expect(
+      mapDeriveOpenOrderRow({
+        order_id: "",
+        instrument_name: "ETH-PERP",
+      }),
+    ).toBeNull()
+    expect(
+      mapDeriveOpenOrderRows([
+        { order_id: "1", instrument_name: "" },
+        {
+          order_id: "",
+          instrument_name: "X",
+        },
+      ]),
+    ).toEqual([])
   })
 })

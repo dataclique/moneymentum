@@ -16,11 +16,13 @@ import {
   deriveRestBaseUrl,
   parseDeriveNumeric,
   requireDeriveSession,
+  requireDeriveSessionWithSubaccount,
   type DeriveBaseUrl,
   type DeriveSessionCredentials,
   DeriveRpcError,
   DeriveSessionMissing,
   DeriveSessionSignFailed,
+  DeriveSubaccountMissing,
 } from "./session"
 
 export type { CurrentPosition }
@@ -28,6 +30,10 @@ export type { CurrentPosition }
 /** Open Derive position with kind so portfolio can distinguish options vs perps. */
 export type DeriveMappedPosition = CurrentPosition & {
   positionKind: "option" | "perp"
+  /** Absolute contract size (`|amount|` from the venue). */
+  contracts: number
+  /** Last mark premium from the venue snapshot (0 when missing). */
+  markPrice: number
 }
 
 /**
@@ -233,6 +239,8 @@ export const mapDerivePosition = (
     entryPrice: averagePrice,
     unrealizedPnl: parseDeriveNumeric(position.unrealized_pnl, 0),
     leverage: 1,
+    contracts: Math.abs(signedAmount),
+    markPrice: markPrice > 0 ? markPrice : 0,
     positionKind: classifyDeriveInstrument(
       instrumentName,
       position.instrument_type,
@@ -283,6 +291,87 @@ const privateCallWithSession = <Result>(
       ),
       signal,
     )
+  })
+
+/** Wire shape of one resting order from `private/get_orders`. */
+export interface DeriveApiOrder {
+  readonly order_id: string
+  readonly instrument_name: string
+  readonly direction?: string
+  readonly amount?: string | number
+  readonly filled_amount?: string | number
+  readonly limit_price?: string | number
+  readonly average_price?: string | number
+  readonly order_status?: string
+  readonly order_type?: string
+}
+
+interface RawOpenOrdersResult {
+  readonly subaccount_id?: number
+  readonly orders?: DeriveApiOrder[] | null
+  readonly pagination?: {
+    readonly num_pages?: number
+  }
+}
+
+const DERIVE_OPEN_ORDERS_PAGE_SIZE = 500
+const DERIVE_OPEN_ORDERS_MAX_PAGES = 100
+
+/** Validate `private/get_orders` result.orders (required array per Derive). */
+export const ordersFromGetOrdersResult = (
+  result: RawOpenOrdersResult,
+): Effect.Effect<DeriveApiOrder[], DeriveRpcError> =>
+  Array.isArray(result.orders)
+    ? Effect.succeed(result.orders)
+    : Effect.fail(
+        new DeriveRpcError({
+          code: null,
+          message: "Derive get_orders response has an invalid orders list.",
+        }),
+      )
+
+/**
+ * Resting orders for the selected subaccount via `private/get_orders`.
+ * Same signed REST path as account snapshots -- no CCXT `loadMarkets`.
+ * Walks every page reported by `pagination.num_pages`.
+ */
+export const fetchDeriveOpenOrders = (
+  credentials: DeriveSessionCredentials | null,
+  signal?: AbortSignal,
+): Effect.Effect<
+  DeriveApiOrder[],
+  SessionPrivateCallFailure | DeriveSessionMissing | DeriveSubaccountMissing
+> =>
+  Effect.gen(function* () {
+    const session = yield* requireDeriveSessionWithSubaccount(credentials)
+    const baseUrl = deriveRestBaseUrl(session.networkMode)
+    let page = 1
+    let orders: DeriveApiOrder[] = []
+
+    while (page <= DERIVE_OPEN_ORDERS_MAX_PAGES) {
+      const result = yield* privateCallWithSession<RawOpenOrdersResult>(
+        baseUrl,
+        "private/get_orders",
+        {
+          subaccount_id: session.subaccountId,
+          status: "open",
+          page,
+          page_size: DERIVE_OPEN_ORDERS_PAGE_SIZE,
+        },
+        session,
+        signal,
+      )
+      const pageOrders = yield* ordersFromGetOrdersResult(result)
+      orders = [...orders, ...pageOrders]
+
+      const numPages = Math.max(1, result.pagination?.num_pages ?? page)
+      if (page >= numPages) {
+        return orders
+      }
+      page += 1
+    }
+
+    return orders
   })
 
 /**

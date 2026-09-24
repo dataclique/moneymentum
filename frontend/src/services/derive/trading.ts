@@ -6,11 +6,14 @@ import { ExchangeRequestError } from "@/services/hyperliquid"
 import type { OrderResult, OrderSide } from "@/services/hyperliquid-client"
 
 import {
+  fetchDeriveOpenOrders as fetchDeriveOpenOrdersFromApi,
+  type DeriveApiOrder,
+} from "./account"
+import {
   createDeriveExchange,
   type DeriveCcxtExchange,
   type DeriveCcxtMarket,
   type DeriveCcxtOrder,
-  type DeriveCcxtTicker,
 } from "./exchange"
 import {
   parseDeriveNumeric,
@@ -39,6 +42,14 @@ export class DeriveOrderPriceInvalid extends Data.TaggedError(
 )<{
   readonly symbol: string
   readonly price: number
+}> {}
+
+/** Reduce-only IOC rejected because the book has no taking liquidity (11009). */
+export class DeriveZeroLiquidity extends Data.TaggedError(
+  "DeriveZeroLiquidity",
+)<{
+  readonly symbol: string
+  readonly side: OrderSide
 }> {}
 
 const DERIVE_ORDER_NONCE_GAP_MS = 2
@@ -141,6 +152,26 @@ export const isCcxtRequestTimeout = (error: unknown): boolean => {
   )
 }
 
+/** Derive 11009: market/IOC/FOK rejected — no liquidity inside the limit. */
+export const isDeriveZeroLiquidityOrderError = (error: unknown): boolean => {
+  const message =
+    error instanceof Error
+      ? error.message
+      : typeof error === "string"
+        ? error
+        : typeof error === "object" &&
+            error !== null &&
+            "message" in error &&
+            typeof error.message === "string"
+          ? error.message
+          : JSON.stringify(error)
+  return (
+    message.includes('"code":"11009"') ||
+    message.includes('"code": 11009') ||
+    message.includes("Zero liquidity for market or IOC/FOK")
+  )
+}
+
 const amountsMatch = (left: number, right: number): boolean =>
   Math.abs(left - right) <= Math.max(1e-8, Math.abs(right) * 1e-8)
 
@@ -161,10 +192,20 @@ const orderMatchesRequest = (
   marketId: string,
 ): boolean => {
   const orderSymbol = typeof order.symbol === "string" ? order.symbol : ""
-  if (orderSymbol !== symbol || orderSymbol !== request.symbol) {
+  const instrumentName = orderMarketId(order)
+  const symbolMatches =
+    orderSymbol === symbol ||
+    orderSymbol === request.symbol ||
+    (marketId.length > 0 && instrumentName === marketId) ||
+    instrumentName === request.symbol
+  if (!symbolMatches) {
     return false
   }
-  if (marketId.length > 0 && orderMarketId(order) !== marketId) {
+  if (
+    marketId.length > 0 &&
+    instrumentName.length > 0 &&
+    instrumentName !== marketId
+  ) {
     return false
   }
   if (order.side !== request.side) {
@@ -180,6 +221,42 @@ const orderMatchesRequest = (
     return false
   }
   return true
+}
+
+/** Project a Derive wire order onto the CCXT shape used by watch / recovery. */
+const apiOrderToCcxtOrder = (
+  order: DeriveApiOrder,
+  unifiedSymbol: string,
+): DeriveCcxtOrder => {
+  const amount = parseDeriveNumeric(order.amount, Number.NaN)
+  const filled = parseDeriveNumeric(order.filled_amount, 0)
+  const price = parseDeriveNumeric(order.limit_price, Number.NaN)
+  const sideRaw = (order.direction ?? "").toLowerCase()
+  const side: OrderSide | undefined =
+    sideRaw === "buy" || sideRaw === "sell" ? sideRaw : undefined
+
+  return {
+    id: order.order_id,
+    symbol: unifiedSymbol,
+    side,
+    amount: Number.isFinite(amount) ? amount : undefined,
+    filled: Number.isFinite(filled) ? filled : undefined,
+    remaining: Number.isFinite(amount)
+      ? Math.max(amount - (Number.isFinite(filled) ? filled : 0), 0)
+      : undefined,
+    price: Number.isFinite(price) ? price : undefined,
+    status: order.order_status,
+    info: {
+      instrument_name: order.instrument_name,
+      order_id: order.order_id,
+      order_status: order.order_status,
+      order_type: order.order_type,
+      amount: order.amount,
+      filled_amount: order.filled_amount,
+      limit_price: order.limit_price,
+      direction: order.direction,
+    },
+  }
 }
 
 const positivePriceOrNull = (
@@ -294,8 +371,7 @@ const requireSubaccountId = (
 export class DeriveTradingClient {
   private readonly exchange: DeriveCcxtExchange
   private readonly credentials: DeriveSessionCredentials
-  private readonly isSessionCurrent: () => boolean
-  private marketsLoad: Promise<void> | null = null
+  private isSessionCurrent: () => boolean = () => true
 
   constructor(
     credentials: DeriveSessionCredentials,
@@ -303,6 +379,11 @@ export class DeriveTradingClient {
   ) {
     this.credentials = credentials
     this.exchange = createDeriveExchange(credentials)
+    this.bindSessionGuard(sessionGuard)
+  }
+
+  /** Replace the mid-batch session check without recreating the exchange. */
+  bindSessionGuard(sessionGuard?: DeriveSessionGuard): void {
     this.isSessionCurrent = sessionGuard?.isSessionCurrent ?? (() => true)
   }
 
@@ -315,19 +396,6 @@ export class DeriveTradingClient {
     )
   }
 
-  private ensureMarketsLoaded(): Effect.Effect<void, TradingExchangeFailure> {
-    return wrapExchange(() => {
-      this.marketsLoad ??= this.exchange.loadMarkets().then(
-        () => undefined,
-        (cause: unknown) => {
-          this.marketsLoad = null
-          return Promise.reject(tradingFailure(cause))
-        },
-      )
-      return this.marketsLoad
-    })
-  }
-
   private marketsByIdEntry(
     instrumentName: string,
   ): DeriveCcxtMarket | undefined {
@@ -338,12 +406,15 @@ export class DeriveTradingClient {
     return Array.isArray(entry) ? entry[0] : entry
   }
 
-  /** Resolve an existing symbol or hydrate an option beyond CCXT's first page. */
+  /**
+   * Resolve a unified symbol or Derive instrument_name without a full
+   * `loadMarkets` of every option. Seeds CCXT with the single instrument so
+   * later `createOrder` / `cancelOrder` `loadMarkets()` calls are cache hits.
+   */
   resolveSymbol(
     instrumentOrSymbol: string,
   ): Effect.Effect<string, TradingExchangeFailure> {
     return Effect.gen(this, function* () {
-      yield* this.ensureMarketsLoaded()
       const markets = this.exchange.markets ?? {}
       if (instrumentOrSymbol in markets) {
         return instrumentOrSymbol
@@ -365,13 +436,18 @@ export class DeriveTradingClient {
       const market = yield* wrapExchangeSync(() =>
         this.exchange.parseMarket(response.result),
       )
+      const existingMarkets = Object.values(this.exchange.markets ?? {})
       yield* wrapExchangeSync(() => {
-        this.exchange.setMarkets([...Object.values(markets), market])
+        this.exchange.setMarkets([...existingMarkets, market])
       })
       return market.symbol
     })
   }
 
+  /**
+   * Quotes via public `get_ticker` (no CCXT `fetchTicker` / full `loadMarkets`).
+   * Still hydrates the instrument so a following place/cancel is a cache hit.
+   */
   fetchTickers(
     instrumentsOrSymbols: string[],
   ): Effect.Effect<Record<string, DeriveTickerQuote>, TradingExchangeFailure> {
@@ -380,27 +456,39 @@ export class DeriveTradingClient {
       instrumentOrSymbol =>
         Effect.gen(this, function* () {
           const symbol = yield* this.resolveSymbol(instrumentOrSymbol)
-          const ticker: DeriveCcxtTicker = yield* wrapExchange(() =>
-            this.exchange.fetchTicker(symbol),
+          const market = this.lookupMarket(symbol)
+          const instrumentName = market?.id ?? instrumentOrSymbol
+          const response = yield* wrapExchange(() =>
+            this.exchange.publicPostGetTicker({
+              instrument_name: instrumentName,
+            }),
           )
-          const info = ticker.info as
-            | {
-                mark_price?: unknown
-                option_pricing?: { m?: unknown; mark_price?: unknown }
-              }
-            | undefined
-          const markFromInfo = parseDeriveNumeric(info?.mark_price, Number.NaN)
+          if (response.result === undefined || response.result === null) {
+            return yield* Effect.fail(
+              new DeriveInstrumentNotFound({ instrument: instrumentOrSymbol }),
+            )
+          }
+          const raw = response.result as {
+            best_bid_price?: unknown
+            best_ask_price?: unknown
+            mark_price?: unknown
+            option_pricing?: { m?: unknown; mark_price?: unknown }
+          }
+          const markFromInfo = parseDeriveNumeric(raw.mark_price, Number.NaN)
           const modelMark = parseDeriveNumeric(
-            info?.option_pricing?.m ?? info?.option_pricing?.mark_price,
+            raw.option_pricing?.m ?? raw.option_pricing?.mark_price,
             Number.NaN,
           )
           const quote: DeriveTickerQuote = {
             symbol,
-            bid: positivePriceOrNull(ticker.bid),
-            ask: positivePriceOrNull(ticker.ask),
-            last: positivePriceOrNull(ticker.last ?? ticker.close ?? null),
+            bid: positivePriceOrNull(
+              parseDeriveNumeric(raw.best_bid_price, Number.NaN),
+            ),
+            ask: positivePriceOrNull(
+              parseDeriveNumeric(raw.best_ask_price, Number.NaN),
+            ),
+            last: null,
             mark:
-              positivePriceOrNull(ticker.mark) ??
               positivePriceOrNull(markFromInfo) ??
               positivePriceOrNull(modelMark),
           }
@@ -505,10 +593,15 @@ export class DeriveTradingClient {
       }
       const maxFee = request.maxFee ?? defaultMaxFee(price, amount)
       const subaccount = yield* this.subaccountParams()
+      // Derive rejects reduce-only with resting GTC (11024); IOC/FOK only.
+      // Do not fall back to ordinary GTC on 11009 — that can open reverse
+      // exposure after the position is gone. Fail typed so the close stays staged.
       const params = {
         ...subaccount,
         max_fee: maxFee,
-        ...(request.reduceOnly === true ? { reduceOnly: true } : {}),
+        ...(request.reduceOnly === true
+          ? { reduceOnly: true as const, timeInForce: "ioc" as const }
+          : {}),
       }
       const sent: DeriveBatchOrderRequest = {
         ...request,
@@ -530,16 +623,36 @@ export class DeriveTradingClient {
         Effect.catchAll(error => {
           const cause =
             error instanceof ExchangeRequestError ? error.cause : error
-          if (!isCcxtRequestTimeout(cause)) {
-            return Effect.fail(error)
+          if (isCcxtRequestTimeout(cause)) {
+            return this.recoverTimedOutOrder(
+              symbol,
+              sent,
+              market?.id ?? "",
+            ).pipe(
+              Effect.flatMap(recovered =>
+                recovered === null
+                  ? Effect.fail(error)
+                  : Effect.succeed(recovered),
+              ),
+            )
           }
-          return this.recoverTimedOutOrder(symbol, sent, market?.id ?? "").pipe(
-            Effect.flatMap(recovered =>
-              recovered === null
-                ? Effect.fail(error)
-                : Effect.succeed(recovered),
-            ),
-          )
+          if (
+            request.reduceOnly === true &&
+            isDeriveZeroLiquidityOrderError(cause)
+          ) {
+            console.debug("[derive] reduce-only IOC rejected; no liquidity", {
+              index,
+              total,
+              symbol: request.symbol,
+            })
+            return Effect.fail(
+              new DeriveZeroLiquidity({
+                symbol: request.symbol,
+                side: request.side,
+              }),
+            )
+          }
+          return Effect.fail(error)
         }),
       )
       console.debug("[derive] order accepted", { index, total })
@@ -697,16 +810,28 @@ export class DeriveTradingClient {
   }
 
   fetchOpenOrders(): Effect.Effect<DeriveCcxtOrder[], TradingExchangeFailure> {
-    return this.subaccountParams().pipe(
-      Effect.flatMap(params =>
-        wrapExchange(() =>
-          this.exchange.fetchOpenOrders(
-            undefined,
-            undefined,
-            undefined,
-            params,
-          ),
-        ),
+    return fetchDeriveOpenOrdersFromApi(this.credentials).pipe(
+      Effect.map(orders =>
+        orders.flatMap(order => {
+          if (
+            typeof order.order_id !== "string" ||
+            order.order_id.length === 0 ||
+            typeof order.instrument_name !== "string" ||
+            order.instrument_name.length === 0
+          ) {
+            return []
+          }
+          const unifiedSymbol =
+            this.marketsByIdEntry(order.instrument_name)?.symbol ??
+            order.instrument_name
+          return [apiOrderToCcxtOrder(order, unifiedSymbol)]
+        }),
+      ),
+      Effect.mapError(
+        (cause): TradingExchangeFailure =>
+          cause instanceof DeriveSubaccountMissing
+            ? cause
+            : new ExchangeRequestError({ cause }),
       ),
     )
   }
@@ -731,6 +856,7 @@ type TradingExchangeFailure =
   | DeriveInstrumentNotFound
   | DeriveOrderSizeInvalid
   | DeriveOrderPriceInvalid
+  | DeriveZeroLiquidity
 
 type TradingBatchFailure = TradingExchangeFailure | DerivePartialBatchFailure
 
@@ -739,7 +865,8 @@ const tradingFailure = (cause: unknown): TradingExchangeFailure =>
   cause instanceof DeriveSubaccountMissing ||
   cause instanceof DeriveInstrumentNotFound ||
   cause instanceof DeriveOrderSizeInvalid ||
-  cause instanceof DeriveOrderPriceInvalid
+  cause instanceof DeriveOrderPriceInvalid ||
+  cause instanceof DeriveZeroLiquidity
     ? cause
     : new ExchangeRequestError({ cause })
 
@@ -754,12 +881,7 @@ const wrapExchangeSync = <Value>(
   Effect.try({ try: run, catch: tradingFailure })
 
 const observeInterruption = <Value, Failure>(
-  operation:
-    | "tickers"
-    | "fundingRates"
-    | "placeOrders"
-    | "openOrders"
-    | "cancelOrder",
+  operation: "tickers" | "fundingRates" | "placeOrders" | "cancelOrder",
   program: Effect.Effect<Value, Failure>,
 ): Effect.Effect<Value, Failure> =>
   program.pipe(
@@ -790,11 +912,13 @@ const tradingClientFor = (
   sessionGuard?: DeriveSessionGuard,
 ): DeriveTradingClient => {
   const key = tradingClientCacheKey(session)
-  if (
-    cachedTradingClient !== null &&
-    cachedTradingClient.key === key &&
-    cachedTradingClient.sessionGuard === sessionGuard
-  ) {
+  if (cachedTradingClient !== null && cachedTradingClient.key === key) {
+    // Keep the hydrated exchange; only attach a batch guard when one is given
+    // so ticker/funding reads do not wipe an in-flight place session check.
+    if (sessionGuard !== undefined) {
+      cachedTradingClient.client.bindSessionGuard(sessionGuard)
+      cachedTradingClient.sessionGuard = sessionGuard
+    }
     return cachedTradingClient.client
   }
   const client = new DeriveTradingClient(session, sessionGuard)
@@ -870,7 +994,10 @@ export const placeAndMonitorDeriveOrders = (
     "placeOrders",
     requireDeriveSession(credentials).pipe(
       Effect.flatMap(session =>
-        tradingClientFor(session, sessionGuard)
+        tradingClientFor(
+          session,
+          sessionGuard ?? { isSessionCurrent: () => true },
+        )
           .placeAndMonitorOrders(requests)
           .pipe(
             Effect.catchTag("DeriveBatchSessionCancelled", cancelled =>
@@ -880,19 +1007,6 @@ export const placeAndMonitorDeriveOrders = (
             ),
           ),
       ),
-    ),
-  )
-
-export const fetchDeriveOpenOrders = (
-  credentials: DeriveSessionCredentials | null,
-): Effect.Effect<
-  DeriveCcxtOrder[],
-  DeriveSessionMissing | TradingExchangeFailure
-> =>
-  observeInterruption(
-    "openOrders",
-    requireDeriveSession(credentials).pipe(
-      Effect.flatMap(session => tradingClientFor(session).fetchOpenOrders()),
     ),
   )
 

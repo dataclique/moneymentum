@@ -28,6 +28,7 @@ import {
   fetchDeriveBalance,
   integerForAbiEncode,
   mapDerivePosition,
+  ordersFromGetOrdersResult,
   parseOptionalSubaccountId,
   parseSessionPrivateKey,
   parseStoredDeriveSession,
@@ -75,6 +76,8 @@ describe("mapDerivePosition", () => {
       entryPrice: 120.5,
       unrealizedPnl: 23.75,
       leverage: 1,
+      contracts: 2.5,
+      markPrice: 130,
       positionKind: "option",
     })
   })
@@ -93,6 +96,8 @@ describe("mapDerivePosition", () => {
       entryPrice: 120.5,
       unrealizedPnl: 23.75,
       leverage: 1,
+      contracts: 1.25,
+      markPrice: 130,
       positionKind: "option",
     })
   })
@@ -116,6 +121,8 @@ describe("mapDerivePosition", () => {
       entryPrice: 85,
       unrealizedPnl: 5,
       leverage: 1,
+      contracts: 1,
+      markPrice: 90,
       positionKind: "option",
     })
   })
@@ -139,6 +146,8 @@ describe("mapDerivePosition", () => {
       entryPrice: 40,
       unrealizedPnl: 10,
       leverage: 1,
+      contracts: 2,
+      markPrice: 35,
       positionKind: "option",
     })
   })
@@ -161,6 +170,8 @@ describe("mapDerivePosition", () => {
       entryPrice: 2000,
       unrealizedPnl: 50,
       leverage: 1,
+      contracts: 0.5,
+      markPrice: 2100,
       positionKind: "perp",
     })
   })
@@ -190,6 +201,8 @@ describe("mapDerivePosition", () => {
       entryPrice: 0,
       unrealizedPnl: 23.75,
       leverage: 1,
+      contracts: 2.5,
+      markPrice: 0,
       positionKind: "option",
     })
   })
@@ -402,6 +415,39 @@ describe("integerForAbiEncode", () => {
     expect(integerForAbiEncode("3.96e+28")).toBeNull()
     expect(integerForAbiEncode(3.961410874492286e28)).toBeNull()
     expect(integerForAbiEncode(undefined)).toBeNull()
+  })
+})
+
+describe("ordersFromGetOrdersResult", () => {
+  it("fails when orders is null or missing", async () => {
+    const nullOrders = await Effect.runPromise(
+      Effect.either(ordersFromGetOrdersResult({ orders: null })),
+    )
+    expect(nullOrders).toMatchObject({
+      _tag: "Left",
+      left: { _tag: "DeriveRpcError" },
+    })
+
+    const missingOrders = await Effect.runPromise(
+      Effect.either(ordersFromGetOrdersResult({})),
+    )
+    expect(missingOrders).toMatchObject({
+      _tag: "Left",
+      left: { _tag: "DeriveRpcError" },
+    })
+  })
+
+  it("returns the wire order list when present", async () => {
+    const orders = [
+      {
+        order_id: "1",
+        instrument_name: "ETH-PERP",
+        direction: "buy",
+      },
+    ]
+    expect(await Effect.runPromise(ordersFromGetOrdersResult({ orders }))).toBe(
+      orders,
+    )
   })
 })
 

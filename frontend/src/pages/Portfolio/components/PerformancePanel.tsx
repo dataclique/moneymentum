@@ -11,7 +11,9 @@ import * as Effect from "effect/Effect"
 import {
   createChart,
   AreaSeries,
+  CrosshairMode,
   type IChartApi,
+  type MouseEventParams,
   type Time,
 } from "lightweight-charts"
 import { useWallet } from "@/hooks/useWallet"
@@ -40,6 +42,13 @@ const PERIOD_DAYS: Record<Period, number> = {
   "All": Infinity,
 }
 
+/** Minimum visible equity span as a fraction of mid price (avoids mountain noise). */
+const MIN_SCALE_FRACTION = 0.05
+/** Floor for that span in USD so tiny accounts still get a calm axis. */
+const MIN_SCALE_USD = 100
+/** Extra padding around the chosen span. */
+const SCALE_PAD_FRACTION = 0.1
+
 const UNSUPPORTED = "—"
 
 const formatUsd = (value: number): string =>
@@ -51,8 +60,11 @@ const formatUsd = (value: number): string =>
 
 const pointValue = (point: EquityPoint): number => {
   const parsed = Number.parseFloat(point.value_usd)
-  return Number.isFinite(parsed) ? parsed : 0
+  return Number.isFinite(parsed) ? parsed : Number.NaN
 }
+
+const isChartableEquity = (value: number): boolean =>
+  Number.isFinite(value) && value > 0
 
 const filterPointsByPeriod = (
   points: readonly EquityPoint[],
@@ -64,6 +76,34 @@ const filterPointsByPeriod = (
   return points.filter(point => point.timestamp_ms >= cutoff)
 }
 
+/** Drop zero/NaN venue samples that collapse the Y scale to the origin. */
+export const chartableEquityPoints = (
+  points: readonly EquityPoint[],
+): EquityPoint[] => points.filter(point => isChartableEquity(pointValue(point)))
+
+/**
+ * Stable price range: expand tiny swings to at least 5% of mid (or $100),
+ * so the chart does not flip between a flat line and exaggerated mountains.
+ */
+export const equityPriceScaleRange = (
+  values: readonly number[],
+): { minValue: number; maxValue: number } | null => {
+  const usable = values.filter(isChartableEquity)
+  if (usable.length === 0) return null
+
+  const minValue = Math.min(...usable)
+  const maxValue = Math.max(...usable)
+  const mid = (minValue + maxValue) / 2
+  const observed = maxValue - minValue
+  const minSpan = Math.max(mid * MIN_SCALE_FRACTION, MIN_SCALE_USD)
+  const span = Math.max(observed, minSpan)
+  const pad = span * SCALE_PAD_FRACTION
+  return {
+    minValue: mid - span / 2 - pad,
+    maxValue: mid + span / 2 + pad,
+  }
+}
+
 /** Merge venue series onto a shared timeline (sum values at matching second buckets). */
 export const mergeEquitySeries = (
   seriesList: readonly VenuePerformanceSeries[],
@@ -71,9 +111,11 @@ export const mergeEquitySeries = (
   const bySecond = new Map<number, number>()
   for (const series of seriesList) {
     for (const point of series.equity_points) {
+      const value = pointValue(point)
+      if (!isChartableEquity(value)) continue
       const second = Math.floor(point.timestamp_ms / 1000)
       const previous = bySecond.get(second) ?? 0
-      bySecond.set(second, previous + pointValue(point))
+      bySecond.set(second, previous + value)
     }
   }
   return [...bySecond.entries()]
@@ -82,6 +124,12 @@ export const mergeEquitySeries = (
       timestamp_ms: second * 1000,
       value_usd: value.toString(),
     }))
+}
+
+type HoverEquityLabel = {
+  x: number
+  y: number
+  text: string
 }
 
 export const PerformancePanel = () => {
@@ -100,6 +148,9 @@ export const PerformancePanel = () => {
   const [period, setPeriod] = createSignal<Period>("All")
   const [includeHyperliquid, setIncludeHyperliquid] = createSignal(true)
   const [includeDerive, setIncludeDerive] = createSignal(true)
+  const [hoverLabel, setHoverLabel] = createSignal<HoverEquityLabel | null>(
+    null,
+  )
 
   let chartHost: HTMLDivElement | undefined
   let chartApi: IChartApi | undefined
@@ -172,7 +223,7 @@ export const PerformancePanel = () => {
   )
 
   const periodPoints = createMemo(() =>
-    filterPointsByPeriod(mergedPoints(), period()),
+    chartableEquityPoints(filterPointsByPeriod(mergedPoints(), period())),
   )
 
   const endingEquity = createMemo(() => {
@@ -181,7 +232,9 @@ export const PerformancePanel = () => {
     for (const point of points) {
       lastPoint = point
     }
-    return lastPoint === undefined ? null : pointValue(lastPoint)
+    if (lastPoint === undefined) return null
+    const value = pointValue(lastPoint)
+    return isChartableEquity(value) ? value : null
   })
 
   // Imperative lightweight-charts mount: must create/destroy the chart when
@@ -199,10 +252,14 @@ export const PerformancePanel = () => {
       chartApi.remove()
       chartApi = undefined
     }
+    setHoverLabel(null)
 
     if (!enabled || isLoading || error !== null || points.length === 0) {
       return
     }
+
+    const chartValues = points.map(pointValue).filter(isChartableEquity)
+    const priceRange = equityPriceScaleRange(chartValues)
 
     const chart = createChart(host, {
       width: host.clientWidth,
@@ -210,8 +267,19 @@ export const PerformancePanel = () => {
       layout: { background: { color: "transparent" }, textColor: "#888" },
       grid: { vertLines: { color: "#222" }, horzLines: { color: "#222" } },
       timeScale: { borderColor: "#333", timeVisible: false },
-      rightPriceScale: { borderColor: "#333" },
-      crosshair: { mode: 0 },
+      rightPriceScale: {
+        borderColor: "#333",
+        scaleMargins: { top: 0.12, bottom: 0.12 },
+      },
+      crosshair: {
+        mode: CrosshairMode.Normal,
+        vertLine: {
+          labelVisible: true,
+        },
+        horzLine: {
+          labelVisible: true,
+        },
+      },
     })
     chartApi = chart
 
@@ -220,6 +288,12 @@ export const PerformancePanel = () => {
       topColor: "rgba(34, 197, 94, 0.3)",
       bottomColor: "rgba(34, 197, 94, 0)",
       lineWidth: 1,
+      autoscaleInfoProvider: () =>
+        priceRange === null
+          ? null
+          : {
+              priceRange,
+            },
     })
     area.setData(
       points.map(point => ({
@@ -228,6 +302,34 @@ export const PerformancePanel = () => {
       })),
     )
     chart.timeScale().fitContent()
+
+    const onCrosshairMove = (param: MouseEventParams) => {
+      if (
+        param.point === undefined ||
+        param.time === undefined ||
+        param.point.x < 0 ||
+        param.point.y < 0
+      ) {
+        setHoverLabel(null)
+        return
+      }
+      const sample = param.seriesData.get(area)
+      if (
+        sample === undefined ||
+        !("value" in sample) ||
+        typeof sample.value !== "number" ||
+        !isChartableEquity(sample.value)
+      ) {
+        setHoverLabel(null)
+        return
+      }
+      setHoverLabel({
+        x: param.point.x,
+        y: param.point.y,
+        text: formatUsd(sample.value),
+      })
+    }
+    chart.subscribeCrosshairMove(onCrosshairMove)
 
     const resizeObserver = new ResizeObserver(entries => {
       for (const entry of entries) {
@@ -240,11 +342,13 @@ export const PerformancePanel = () => {
     resizeObserver.observe(host)
 
     onCleanup(() => {
+      chart.unsubscribeCrosshairMove(onCrosshairMove)
       resizeObserver.disconnect()
       chart.remove()
       if (chartApi === chart) {
         chartApi = undefined
       }
+      setHoverLabel(null)
     })
   })
 
@@ -369,6 +473,19 @@ export const PerformancePanel = () => {
 
           <div class="relative flex-1 min-h-0">
             <div ref={chartHost} class="absolute inset-0" />
+            <Show when={hoverLabel()}>
+              {label => (
+                <div
+                  class="pointer-events-none absolute z-10 -translate-x-1/2 -translate-y-full rounded bg-background/90 px-1.5 py-0.5 font-mono text-[10px] text-foreground shadow border border-border/60"
+                  style={{
+                    left: `${label().x}px`,
+                    top: `${Math.max(label().y - 8, 4)}px`,
+                  }}
+                >
+                  {label().text}
+                </div>
+              )}
+            </Show>
             <Show when={!performanceQuery.isEnabled}>
               <div class="absolute inset-0 flex items-center justify-center text-[10px] text-muted-foreground border border-dashed border-border/50 rounded">
                 Connect Hyperliquid or Derive to load equity

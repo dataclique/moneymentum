@@ -21,6 +21,10 @@ const exchangeBoundary = vi.hoisted(() => ({
   fetchFundingRate: vi.fn<DeriveCcxtExchange["fetchFundingRate"]>(),
   createOrder: vi.fn<DeriveCcxtExchange["createOrder"]>(),
   cancelOrder: vi.fn<DeriveCcxtExchange["cancelOrder"]>(),
+  publicPostGetInstrument:
+    vi.fn<DeriveCcxtExchange["publicPostGetInstrument"]>(),
+  parseMarket: vi.fn<DeriveCcxtExchange["parseMarket"]>(),
+  setMarkets: vi.fn<DeriveCcxtExchange["setMarkets"]>(),
 }))
 
 vi.mock("ccxt/derive", () => ({
@@ -28,12 +32,15 @@ vi.mock("ccxt/derive", () => ({
     setSandboxMode: ReturnType<typeof vi.fn>
     urls: { api: Record<string, string> }
     options: Record<string, unknown>
+    markets?: Record<string, { symbol: string; swap?: boolean }>
+    markets_by_id?: Record<string, { symbol: string; swap?: boolean }>
   }) {
     this.setSandboxMode = vi.fn()
     this.urls = { api: {} }
     this.options = {}
     Object.assign(this, exchangeBoundary, {
       markets: { "ETH-PERP": { symbol: "ETH-PERP", swap: true } },
+      markets_by_id: { "ETH-PERP": { symbol: "ETH-PERP", swap: true } },
       market: () => ({ symbol: "ETH-PERP", swap: true }),
     })
     return this
@@ -142,7 +149,11 @@ describe("DeriveTradingClient typed effects", () => {
       const exchangeMock = {
         loadMarkets: vi.fn().mockResolvedValue({}),
         markets: { "ETH-PERP": market },
+        markets_by_id: { "ETH-PERP": market },
         market: vi.fn().mockReturnValue(market),
+        publicPostGetInstrument: vi.fn(),
+        parseMarket: vi.fn(),
+        setMarkets: vi.fn(),
         fetchTicker: vi.fn().mockResolvedValue({ bid: 2000, ask: 2001 }),
         fetchFundingRate: vi.fn().mockResolvedValue({ fundingRate: 0.001 }),
         createOrder: vi
@@ -176,7 +187,7 @@ describe("DeriveTradingClient typed effects", () => {
 
       expect(Effect.isEffect(operation)).toBe(true)
       expect(exchangeMock.loadMarkets).not.toHaveBeenCalled()
-      expect(exchangeMock.fetchOpenOrders).not.toHaveBeenCalled()
+      expect(exchangeMock.publicPostGetInstrument).not.toHaveBeenCalled()
       expect(exchangeMock.createOrder).not.toHaveBeenCalled()
       expect(exchangeMock.cancelOrder).not.toHaveBeenCalled()
     },
@@ -189,13 +200,13 @@ describe("public trading operation interruption", () => {
   })
 
   it.each(["tickers", "fundingRates", "placeOrders", "cancelOrder"] as const)(
-    "does not continue %s exchange I/O after cancellation during market discovery",
+    "does not continue %s exchange I/O after cancellation during instrument hydrate",
     async operationName => {
       const loading = Effect.runSync(Deferred.make<void>())
       const loaded = Effect.runSync(
-        Deferred.make<Awaited<ReturnType<DeriveCcxtExchange["loadMarkets"]>>>(),
+        Deferred.make<{ result: { instrument_name: string } }>(),
       )
-      exchangeBoundary.loadMarkets.mockImplementation(() => {
+      exchangeBoundary.publicPostGetInstrument.mockImplementation(() => {
         Effect.runSync(Deferred.succeed(loading, undefined))
         return Effect.runPromise(Deferred.await(loaded))
       })
@@ -225,15 +236,25 @@ describe("public trading operation interruption", () => {
         ...credentials(),
         subaccountId: accountIds[operationName],
       }
+      const unknownInstrument = "ETH-20260925-2000-C"
       const operations = {
-        tickers: () => fetchDeriveTickers(session, ["ETH-PERP"]),
-        fundingRates: () => fetchDeriveFundingRates(session, ["ETH-PERP"]),
+        tickers: () => fetchDeriveTickers(session, [unknownInstrument]),
+        fundingRates: () =>
+          fetchDeriveFundingRates(session, [unknownInstrument]),
         placeOrders: () =>
           placeAndMonitorDeriveOrders(session, [
-            { symbol: "ETH-PERP", side: "buy", amount: 0.01, price: 2000 },
+            {
+              symbol: unknownInstrument,
+              side: "buy",
+              amount: 0.01,
+              price: 2000,
+            },
           ]),
         cancelOrder: () =>
-          cancelDeriveOrder(session, { id: "order", symbol: "ETH-PERP" }),
+          cancelDeriveOrder(session, {
+            id: "order",
+            symbol: unknownInstrument,
+          }),
       }
       const operation: Effect.Effect<unknown, unknown> =
         operations[operationName]()
@@ -242,8 +263,12 @@ describe("public trading operation interruption", () => {
       const exit = await Effect.runPromise(Fiber.interrupt(fiber))
       expect(Exit.isInterrupted(exit)).toBe(true)
 
-      Effect.runSync(Deferred.succeed(loaded, {}))
-      // CCXT's pending Promise can settle; drain its microtasks before checking dispatch.
+      Effect.runSync(
+        Deferred.succeed(loaded, {
+          result: { instrument_name: unknownInstrument },
+        }),
+      )
+      // Pending Promise can settle; drain its microtasks before checking dispatch.
       await new Promise<void>(resolve => {
         setTimeout(resolve, 0)
       })
@@ -512,30 +537,31 @@ describe("DeriveTradingClient.createOrdersBatch", () => {
     )
     timeout.name = "RequestTimeout"
     const createOrder = vi.fn().mockRejectedValue(timeout)
-    const fetchOpenOrders = vi.fn().mockResolvedValue([
-      {
-        id: "recovered",
-        symbol: "ETH/USD:USDC",
-        side: "buy",
-        amount: 0.01,
-        price: 2000,
-        status: "open",
-      },
-    ])
 
     const client = new DeriveTradingClient(credentials())
     const exchange = (
       client as unknown as {
         exchange: {
           createOrder: typeof createOrder
-          fetchOpenOrders: typeof fetchOpenOrders
         }
       }
     ).exchange
     exchange.createOrder = createOrder
-    exchange.fetchOpenOrders = fetchOpenOrders
     vi.spyOn(client, "resolveSymbol").mockReturnValue(
       Effect.succeed("ETH/USD:USDC"),
+    )
+    vi.spyOn(client, "fetchOpenOrders").mockReturnValue(
+      Effect.succeed([
+        {
+          id: "recovered",
+          symbol: "ETH/USD:USDC",
+          side: "buy",
+          amount: 0.01,
+          price: 2000,
+          status: "open",
+          info: { instrument_name: "ETH-PERP" },
+        },
+      ]),
     )
 
     const orders = await Effect.runPromise(
@@ -547,7 +573,7 @@ describe("DeriveTradingClient.createOrdersBatch", () => {
     expect(orders).toEqual([
       expect.objectContaining({ id: "recovered", status: "open" }),
     ])
-    expect(fetchOpenOrders).toHaveBeenCalled()
+    expect(client.fetchOpenOrders).toHaveBeenCalled()
   })
 
   it("does not recover an open order whose symbol only overlaps by substring", async () => {
@@ -556,30 +582,31 @@ describe("DeriveTradingClient.createOrdersBatch", () => {
     )
     timeout.name = "RequestTimeout"
     const createOrder = vi.fn().mockRejectedValue(timeout)
-    const fetchOpenOrders = vi.fn().mockResolvedValue([
-      {
-        id: "other",
-        symbol: "ETH/USD:USDC-260925-2000-C",
-        side: "buy",
-        amount: 0.01,
-        price: 2000,
-        status: "open",
-      },
-    ])
 
     const client = new DeriveTradingClient(credentials())
     const exchange = (
       client as unknown as {
         exchange: {
           createOrder: typeof createOrder
-          fetchOpenOrders: typeof fetchOpenOrders
         }
       }
     ).exchange
     exchange.createOrder = createOrder
-    exchange.fetchOpenOrders = fetchOpenOrders
     vi.spyOn(client, "resolveSymbol").mockReturnValue(
       Effect.succeed("ETH/USD:USDC"),
+    )
+    vi.spyOn(client, "fetchOpenOrders").mockReturnValue(
+      Effect.succeed([
+        {
+          id: "other",
+          symbol: "ETH/USD:USDC-260925-2000-C",
+          side: "buy",
+          amount: 0.01,
+          price: 2000,
+          status: "open",
+          info: { instrument_name: "ETH-20260925-2000-C" },
+        },
+      ]),
     )
 
     const outcome = await Effect.runPromise(

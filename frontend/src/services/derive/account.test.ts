@@ -28,6 +28,7 @@ import {
   fetchDeriveBalance,
   integerForAbiEncode,
   mapDerivePosition,
+  ordersFromGetOrdersResult,
   parseOptionalSubaccountId,
   parseSessionPrivateKey,
   parseStoredDeriveSession,
@@ -402,6 +403,24 @@ describe("integerForAbiEncode", () => {
     expect(integerForAbiEncode("3.96e+28")).toBeNull()
     expect(integerForAbiEncode(3.961410874492286e28)).toBeNull()
     expect(integerForAbiEncode(undefined)).toBeNull()
+  })
+})
+
+describe("ordersFromGetOrdersResult", () => {
+  it("treats null or missing orders as an empty list", () => {
+    expect(ordersFromGetOrdersResult({ orders: null })).toEqual([])
+    expect(ordersFromGetOrdersResult({})).toEqual([])
+  })
+
+  it("returns the wire order list when present", () => {
+    const orders = [
+      {
+        order_id: "1",
+        instrument_name: "ETH-PERP",
+        direction: "buy",
+      },
+    ]
+    expect(ordersFromGetOrdersResult({ orders })).toBe(orders)
   })
 })
 

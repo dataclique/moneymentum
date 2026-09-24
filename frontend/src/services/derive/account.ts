@@ -16,11 +16,13 @@ import {
   deriveRestBaseUrl,
   parseDeriveNumeric,
   requireDeriveSession,
+  requireDeriveSessionWithSubaccount,
   type DeriveBaseUrl,
   type DeriveSessionCredentials,
   DeriveRpcError,
   DeriveSessionMissing,
   DeriveSessionSignFailed,
+  DeriveSubaccountMissing,
 } from "./session"
 
 export type { CurrentPosition }
@@ -283,6 +285,57 @@ const privateCallWithSession = <Result>(
       ),
       signal,
     )
+  })
+
+/** Wire shape of one resting order from `private/get_orders`. */
+export interface DeriveApiOrder {
+  readonly order_id: string
+  readonly instrument_name: string
+  readonly direction?: string
+  readonly amount?: string | number
+  readonly filled_amount?: string | number
+  readonly limit_price?: string | number
+  readonly average_price?: string | number
+  readonly order_status?: string
+  readonly order_type?: string
+}
+
+interface RawOpenOrdersResult {
+  readonly subaccount_id?: number
+  readonly orders?: DeriveApiOrder[] | null
+}
+
+/** Normalize `private/get_orders` result.orders (null/omitted → []). */
+export const ordersFromGetOrdersResult = (
+  result: RawOpenOrdersResult,
+): DeriveApiOrder[] => (Array.isArray(result.orders) ? result.orders : [])
+
+/**
+ * Resting orders for the selected subaccount via `private/get_orders`.
+ * Same signed REST path as account snapshots -- no CCXT `loadMarkets`.
+ */
+export const fetchDeriveOpenOrders = (
+  credentials: DeriveSessionCredentials | null,
+  signal?: AbortSignal,
+): Effect.Effect<
+  DeriveApiOrder[],
+  SessionPrivateCallFailure | DeriveSessionMissing | DeriveSubaccountMissing
+> =>
+  Effect.gen(function* () {
+    const session = yield* requireDeriveSessionWithSubaccount(credentials)
+    const baseUrl = deriveRestBaseUrl(session.networkMode)
+    const result = yield* privateCallWithSession<RawOpenOrdersResult>(
+      baseUrl,
+      "private/get_orders",
+      {
+        subaccount_id: session.subaccountId,
+        status: "open",
+        page_size: 500,
+      },
+      session,
+      signal,
+    )
+    return ordersFromGetOrdersResult(result)
   })
 
 /**

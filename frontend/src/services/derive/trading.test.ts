@@ -18,6 +18,7 @@ import {
 const exchangeBoundary = vi.hoisted(() => ({
   loadMarkets: vi.fn<DeriveCcxtExchange["loadMarkets"]>(),
   fetchTicker: vi.fn<DeriveCcxtExchange["fetchTicker"]>(),
+  publicPostGetTicker: vi.fn<DeriveCcxtExchange["publicPostGetTicker"]>(),
   fetchFundingRate: vi.fn<DeriveCcxtExchange["fetchFundingRate"]>(),
   createOrder: vi.fn<DeriveCcxtExchange["createOrder"]>(),
   cancelOrder: vi.fn<DeriveCcxtExchange["cancelOrder"]>(),
@@ -155,6 +156,13 @@ describe("DeriveTradingClient typed effects", () => {
         parseMarket: vi.fn(),
         setMarkets: vi.fn(),
         fetchTicker: vi.fn().mockResolvedValue({ bid: 2000, ask: 2001 }),
+        publicPostGetTicker: vi.fn().mockResolvedValue({
+          result: {
+            best_bid_price: "2000",
+            best_ask_price: "2001",
+            mark_price: "2000.5",
+          },
+        }),
         fetchFundingRate: vi.fn().mockResolvedValue({ fundingRate: 0.001 }),
         createOrder: vi
           .fn()
@@ -210,9 +218,13 @@ describe("public trading operation interruption", () => {
         Effect.runSync(Deferred.succeed(loading, undefined))
         return Effect.runPromise(Deferred.await(loaded))
       })
-      exchangeBoundary.fetchTicker
-        .mockReset()
-        .mockResolvedValue({ bid: 2000, ask: 2001 })
+      exchangeBoundary.publicPostGetTicker.mockReset().mockResolvedValue({
+        result: {
+          best_bid_price: "2000",
+          best_ask_price: "2001",
+          mark_price: "2000.5",
+        },
+      })
       exchangeBoundary.fetchFundingRate
         .mockReset()
         .mockResolvedValue({ fundingRate: 0.001 })
@@ -273,6 +285,7 @@ describe("public trading operation interruption", () => {
         setTimeout(resolve, 0)
       })
 
+      expect(exchangeBoundary.publicPostGetTicker).not.toHaveBeenCalled()
       expect(exchangeBoundary.fetchTicker).not.toHaveBeenCalled()
       expect(exchangeBoundary.fetchFundingRate).not.toHaveBeenCalled()
       expect(exchangeBoundary.createOrder).not.toHaveBeenCalled()
@@ -287,6 +300,41 @@ describe("public trading operation interruption", () => {
       )
     },
   )
+})
+
+describe("DeriveTradingClient.fetchTickers", () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it("quotes via public get_ticker without CCXT fetchTicker or loadMarkets", async () => {
+    exchangeBoundary.publicPostGetTicker.mockReset().mockResolvedValue({
+      result: {
+        best_bid_price: "1999.5",
+        best_ask_price: "2000.5",
+        mark_price: "2000",
+      },
+    })
+    exchangeBoundary.fetchTicker.mockReset()
+    exchangeBoundary.loadMarkets.mockReset()
+
+    const quotes = await Effect.runPromise(
+      fetchDeriveTickers(credentials(), ["ETH-PERP"]),
+    )
+
+    expect(quotes["ETH-PERP"]).toEqual({
+      symbol: "ETH-PERP",
+      bid: 1999.5,
+      ask: 2000.5,
+      last: null,
+      mark: 2000,
+    })
+    expect(exchangeBoundary.publicPostGetTicker).toHaveBeenCalledWith({
+      instrument_name: "ETH-PERP",
+    })
+    expect(exchangeBoundary.fetchTicker).not.toHaveBeenCalled()
+    expect(exchangeBoundary.loadMarkets).not.toHaveBeenCalled()
+  })
 })
 
 describe("DeriveTradingClient.createOrdersBatch", () => {

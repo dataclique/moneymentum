@@ -14,7 +14,6 @@ import {
   type DeriveCcxtExchange,
   type DeriveCcxtMarket,
   type DeriveCcxtOrder,
-  type DeriveCcxtTicker,
 } from "./exchange"
 import {
   parseDeriveNumeric,
@@ -344,7 +343,7 @@ const requireSubaccountId = (
 export class DeriveTradingClient {
   private readonly exchange: DeriveCcxtExchange
   private readonly credentials: DeriveSessionCredentials
-  private readonly isSessionCurrent: () => boolean
+  private isSessionCurrent: () => boolean = () => true
 
   constructor(
     credentials: DeriveSessionCredentials,
@@ -352,6 +351,11 @@ export class DeriveTradingClient {
   ) {
     this.credentials = credentials
     this.exchange = createDeriveExchange(credentials)
+    this.bindSessionGuard(sessionGuard)
+  }
+
+  /** Replace the mid-batch session check without recreating the exchange. */
+  bindSessionGuard(sessionGuard?: DeriveSessionGuard): void {
     this.isSessionCurrent = sessionGuard?.isSessionCurrent ?? (() => true)
   }
 
@@ -377,7 +381,7 @@ export class DeriveTradingClient {
   /**
    * Resolve a unified symbol or Derive instrument_name without a full
    * `loadMarkets` of every option. Seeds CCXT with the single instrument so
-   * later `createOrder` / `fetchTicker` `loadMarkets()` calls are cache hits.
+   * later `createOrder` / `cancelOrder` `loadMarkets()` calls are cache hits.
    */
   resolveSymbol(
     instrumentOrSymbol: string,
@@ -404,9 +408,7 @@ export class DeriveTradingClient {
       const market = yield* wrapExchangeSync(() =>
         this.exchange.parseMarket(response.result),
       )
-      const marketsRecord = this.exchange.markets
-      const existingMarkets =
-        marketsRecord === undefined ? [] : Object.values(marketsRecord)
+      const existingMarkets = Object.values(this.exchange.markets ?? {})
       yield* wrapExchangeSync(() => {
         this.exchange.setMarkets([...existingMarkets, market])
       })
@@ -414,6 +416,10 @@ export class DeriveTradingClient {
     })
   }
 
+  /**
+   * Quotes via public `get_ticker` (no CCXT `fetchTicker` / full `loadMarkets`).
+   * Still hydrates the instrument so a following place/cancel is a cache hit.
+   */
   fetchTickers(
     instrumentsOrSymbols: string[],
   ): Effect.Effect<Record<string, DeriveTickerQuote>, TradingExchangeFailure> {
@@ -422,27 +428,39 @@ export class DeriveTradingClient {
       instrumentOrSymbol =>
         Effect.gen(this, function* () {
           const symbol = yield* this.resolveSymbol(instrumentOrSymbol)
-          const ticker: DeriveCcxtTicker = yield* wrapExchange(() =>
-            this.exchange.fetchTicker(symbol),
+          const market = this.lookupMarket(symbol)
+          const instrumentName = market?.id ?? instrumentOrSymbol
+          const response = yield* wrapExchange(() =>
+            this.exchange.publicPostGetTicker({
+              instrument_name: instrumentName,
+            }),
           )
-          const info = ticker.info as
-            | {
-                mark_price?: unknown
-                option_pricing?: { m?: unknown; mark_price?: unknown }
-              }
-            | undefined
-          const markFromInfo = parseDeriveNumeric(info?.mark_price, Number.NaN)
+          if (response.result === undefined || response.result === null) {
+            return yield* Effect.fail(
+              new DeriveInstrumentNotFound({ instrument: instrumentOrSymbol }),
+            )
+          }
+          const raw = response.result as {
+            best_bid_price?: unknown
+            best_ask_price?: unknown
+            mark_price?: unknown
+            option_pricing?: { m?: unknown; mark_price?: unknown }
+          }
+          const markFromInfo = parseDeriveNumeric(raw.mark_price, Number.NaN)
           const modelMark = parseDeriveNumeric(
-            info?.option_pricing?.m ?? info?.option_pricing?.mark_price,
+            raw.option_pricing?.m ?? raw.option_pricing?.mark_price,
             Number.NaN,
           )
           const quote: DeriveTickerQuote = {
             symbol,
-            bid: positivePriceOrNull(ticker.bid),
-            ask: positivePriceOrNull(ticker.ask),
-            last: positivePriceOrNull(ticker.last ?? ticker.close ?? null),
+            bid: positivePriceOrNull(
+              parseDeriveNumeric(raw.best_bid_price, Number.NaN),
+            ),
+            ask: positivePriceOrNull(
+              parseDeriveNumeric(raw.best_ask_price, Number.NaN),
+            ),
+            last: null,
             mark:
-              positivePriceOrNull(ticker.mark) ??
               positivePriceOrNull(markFromInfo) ??
               positivePriceOrNull(modelMark),
           }
@@ -839,11 +857,13 @@ const tradingClientFor = (
   sessionGuard?: DeriveSessionGuard,
 ): DeriveTradingClient => {
   const key = tradingClientCacheKey(session)
-  if (
-    cachedTradingClient !== null &&
-    cachedTradingClient.key === key &&
-    cachedTradingClient.sessionGuard === sessionGuard
-  ) {
+  if (cachedTradingClient !== null && cachedTradingClient.key === key) {
+    // Keep the hydrated exchange; only attach a batch guard when one is given
+    // so ticker/funding reads do not wipe an in-flight place session check.
+    if (sessionGuard !== undefined) {
+      cachedTradingClient.client.bindSessionGuard(sessionGuard)
+      cachedTradingClient.sessionGuard = sessionGuard
+    }
     return cachedTradingClient.client
   }
   const client = new DeriveTradingClient(session, sessionGuard)

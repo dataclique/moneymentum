@@ -21,10 +21,16 @@ export interface DeriveCcxtExchange {
   markets?: Record<string, DeriveCcxtMarket>
   markets_by_id?: Record<string, DeriveCcxtMarket | DeriveCcxtMarket[]>
   loadMarkets: (reload?: boolean) => Promise<Record<string, DeriveCcxtMarket>>
-  setMarkets: (markets: DeriveCcxtMarket[]) => void
+  setMarkets: (
+    markets: DeriveCcxtMarket[] | Record<string, DeriveCcxtMarket>,
+    currencies?: unknown,
+  ) => Record<string, DeriveCcxtMarket> | undefined
   market: (symbol: string) => DeriveCcxtMarket
   parseMarket: (raw: unknown) => DeriveCcxtMarket
   publicPostGetInstrument: (params: {
+    instrument_name: string
+  }) => Promise<{ result?: unknown }>
+  publicPostGetTicker: (params: {
     instrument_name: string
   }) => Promise<{ result?: unknown }>
   timeout?: number
@@ -197,7 +203,13 @@ const patchBaseAssetSubIdSigning = (exchange: DeriveCcxtExchange): void => {
     patchable.loadMarkets = async (
       reload?: boolean,
     ): Promise<Record<string, DeriveCcxtMarket>> => {
-      const markets = await originalLoadMarkets(reload)
+      // Runtime guard: patched setMarkets used to return void, and a null
+      // catalogue must not reach Object.entries.
+      const loaded: unknown = await originalLoadMarkets(reload)
+      if (typeof loaded !== "object" || loaded === null) {
+        return {}
+      }
+      const markets = loaded as Record<string, DeriveCcxtMarket>
       for (const [symbol, market] of Object.entries(markets)) {
         markets[symbol] = withPreservedSubId(market)
       }
@@ -207,8 +219,15 @@ const patchBaseAssetSubIdSigning = (exchange: DeriveCcxtExchange): void => {
 
   if (typeof patchable.setMarkets === "function") {
     const originalSetMarkets = patchable.setMarkets.bind(patchable)
-    patchable.setMarkets = (markets: DeriveCcxtMarket[]): void => {
-      originalSetMarkets(markets.map(withPreservedSubId))
+    patchable.setMarkets = (
+      markets: DeriveCcxtMarket[] | Record<string, DeriveCcxtMarket>,
+      currencies?: unknown,
+    ): Record<string, DeriveCcxtMarket> | undefined => {
+      const marketList = Array.isArray(markets)
+        ? markets
+        : Object.values(markets)
+      originalSetMarkets(marketList.map(withPreservedSubId), currencies)
+      return patchable.markets
     }
   }
 

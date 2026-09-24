@@ -87,7 +87,8 @@ outcomes, not just submission.
 - [ ] Make the portfolio desk usable by keyboard --
       [#457](https://github.com/dataclique/moneymentum/issues/457).
 - [ ] Derive open-order refresh and rebalance crash on null object conversion --
-      [#508](https://github.com/dataclique/moneymentum/issues/508).
+      [#508](https://github.com/dataclique/moneymentum/issues/508) /
+      [#509](https://github.com/dataclique/moneymentum/pull/509).
 
 #### Shared host delivery
 

@@ -725,6 +725,51 @@ describe("DeriveTradingClient.createOrdersBatch", () => {
     )
   })
 
+  it("sends IOC timeInForce with reduce-only closes (Derive 11024)", async () => {
+    const createOrder = vi.fn().mockResolvedValue({
+      id: "close-1",
+      symbol: "ETH/USD:USDC-260925-1800-P",
+      side: "sell",
+      status: "closed",
+    })
+    const client = new DeriveTradingClient(credentials())
+    const exchange = (
+      client as unknown as {
+        exchange: { createOrder: typeof createOrder }
+      }
+    ).exchange
+    exchange.createOrder = createOrder
+    vi.spyOn(client, "resolveSymbol").mockReturnValue(
+      Effect.succeed("ETH/USD:USDC-260925-1800-P"),
+    )
+
+    await Effect.runPromise(
+      client.createOrdersBatch([
+        {
+          symbol: "ETH-20260925-1800-P",
+          side: "sell",
+          amount: 2,
+          price: 0.0001,
+          reduceOnly: true,
+        },
+      ]),
+    )
+
+    expect(createOrder).toHaveBeenCalledWith(
+      "ETH/USD:USDC-260925-1800-P",
+      "limit",
+      "sell",
+      2,
+      0.0001,
+      {
+        subaccount_id: 144457,
+        max_fee: 0.0001 * 2 * 2,
+        reduceOnly: true,
+        timeInForce: "ioc",
+      },
+    )
+  })
+
   it("rejects trading when subaccount id is missing", async () => {
     const client = new DeriveTradingClient({
       ...credentials(),

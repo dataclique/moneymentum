@@ -565,10 +565,13 @@ export class DeriveTradingClient {
       }
       const maxFee = request.maxFee ?? defaultMaxFee(price, amount)
       const subaccount = yield* this.subaccountParams()
+      // Derive rejects reduce-only with resting GTC (error 11024); IOC/FOK only.
       const params = {
         ...subaccount,
         max_fee: maxFee,
-        ...(request.reduceOnly === true ? { reduceOnly: true } : {}),
+        ...(request.reduceOnly === true
+          ? { reduceOnly: true, timeInForce: "ioc" }
+          : {}),
       }
       const sent: DeriveBatchOrderRequest = {
         ...request,

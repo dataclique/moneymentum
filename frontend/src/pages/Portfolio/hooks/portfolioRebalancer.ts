@@ -525,13 +525,18 @@ export const diffPortfolios = (
       currentPosition &&
       targetPosition.notional <= STAGED_NOTIONAL_EPSILON_USD
     ) {
-      actions.push({
-        kind: "close",
-        symbol,
-        side: currentPosition.side,
-        positionKind: currentPosition.kind,
-        venue: currentPosition.venue,
-      })
+      // Target near zero is only a close when current still has meaningful
+      // size. Dust mirrored on both sides (worthless options, mark noise)
+      // must not auto-appear in staged changes.
+      if (currentPosition.notional > STAGED_NOTIONAL_EPSILON_USD) {
+        actions.push({
+          kind: "close",
+          symbol,
+          side: currentPosition.side,
+          positionKind: currentPosition.kind,
+          venue: currentPosition.venue,
+        })
+      }
       continue
     }
 

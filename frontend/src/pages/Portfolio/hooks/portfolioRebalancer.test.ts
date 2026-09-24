@@ -231,6 +231,43 @@ describe("diffPortfolios precise mode", () => {
     expect(diffPortfolios(current, target, true)).toHaveLength(0)
   })
 
+  it("does not auto-stage a close when current and target are both dust", () => {
+    const instrument = "ETH-20260925-1800-P"
+    const dust = option(instrument, 0)
+    expect(
+      diffPortfolios({ [instrument]: dust }, { [instrument]: dust }, false),
+    ).toHaveLength(0)
+  })
+
+  it("does not auto-stage when target is dust and current is also within epsilon", () => {
+    const instrument = "ETH-20260925-1800-P"
+    expect(
+      diffPortfolios(
+        { [instrument]: option(instrument, 0.05) },
+        { [instrument]: option(instrument, 0) },
+        false,
+      ),
+    ).toHaveLength(0)
+  })
+
+  it("emits close when target is dust but current still has meaningful size", () => {
+    const instrument = "ETH-20260925-1800-P"
+    const actions = diffPortfolios(
+      { [instrument]: option(instrument, 50) },
+      { [instrument]: option(instrument, 0) },
+      false,
+    )
+    expect(actions).toEqual([
+      {
+        kind: "close",
+        symbol: instrument,
+        side: "buy",
+        positionKind: "option",
+        venue: "derive",
+      },
+    ])
+  })
+
   it("emits rebalance with zero notional when only leverage changes", () => {
     const current: Record<string, PortfolioInterface | undefined> = {
       [sym]: { ...buy(100), symbol: sym, leverage: 2 },

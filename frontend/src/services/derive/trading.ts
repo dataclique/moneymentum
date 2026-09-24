@@ -144,6 +144,26 @@ export const isCcxtRequestTimeout = (error: unknown): boolean => {
   )
 }
 
+/** Derive 11009: market/IOC/FOK rejected — no liquidity inside the limit. */
+export const isDeriveZeroLiquidityOrderError = (error: unknown): boolean => {
+  const message =
+    error instanceof Error
+      ? error.message
+      : typeof error === "string"
+        ? error
+        : typeof error === "object" &&
+            error !== null &&
+            "message" in error &&
+            typeof error.message === "string"
+          ? error.message
+          : JSON.stringify(error)
+  return (
+    message.includes('"code":"11009"') ||
+    message.includes('"code": 11009') ||
+    message.includes("Zero liquidity for market or IOC/FOK")
+  )
+}
+
 const amountsMatch = (left: number, right: number): boolean =>
   Math.abs(left - right) <= Math.max(1e-8, Math.abs(right) * 1e-8)
 
@@ -565,13 +585,16 @@ export class DeriveTradingClient {
       }
       const maxFee = request.maxFee ?? defaultMaxFee(price, amount)
       const subaccount = yield* this.subaccountParams()
-      // Derive rejects reduce-only with resting GTC (error 11024); IOC/FOK only.
-      const params = {
+      // Derive rejects reduce-only with resting GTC (11024); IOC/FOK only.
+      // Empty book rejects IOC (11009) — fall back to resting GTC without
+      // reduce_only so dust closes can rest until someone takes them.
+      const reduceOnlyParams =
+        request.reduceOnly === true
+          ? { reduceOnly: true as const, timeInForce: "ioc" as const }
+          : {}
+      const baseParams = {
         ...subaccount,
         max_fee: maxFee,
-        ...(request.reduceOnly === true
-          ? { reduceOnly: true, timeInForce: "ioc" }
-          : {}),
       }
       const sent: DeriveBatchOrderRequest = {
         ...request,
@@ -580,29 +603,48 @@ export class DeriveTradingClient {
         price,
         maxFee,
       }
-      const created = yield* wrapExchange(() =>
-        this.exchange.createOrder(
-          symbol,
-          request.type ?? "limit",
-          request.side,
-          amount,
-          price,
-          params,
-        ),
-      ).pipe(
+      const submitOrder = (orderParams: Record<string, unknown>) =>
+        wrapExchange(() =>
+          this.exchange.createOrder(
+            symbol,
+            request.type ?? "limit",
+            request.side,
+            amount,
+            price,
+            orderParams,
+          ),
+        )
+      const created = yield* submitOrder({
+        ...baseParams,
+        ...reduceOnlyParams,
+      }).pipe(
         Effect.catchAll(error => {
           const cause =
             error instanceof ExchangeRequestError ? error.cause : error
-          if (!isCcxtRequestTimeout(cause)) {
-            return Effect.fail(error)
+          if (isCcxtRequestTimeout(cause)) {
+            return this.recoverTimedOutOrder(
+              symbol,
+              sent,
+              market?.id ?? "",
+            ).pipe(
+              Effect.flatMap(recovered =>
+                recovered === null
+                  ? Effect.fail(error)
+                  : Effect.succeed(recovered),
+              ),
+            )
           }
-          return this.recoverTimedOutOrder(symbol, sent, market?.id ?? "").pipe(
-            Effect.flatMap(recovered =>
-              recovered === null
-                ? Effect.fail(error)
-                : Effect.succeed(recovered),
-            ),
-          )
+          if (
+            request.reduceOnly === true &&
+            isDeriveZeroLiquidityOrderError(cause)
+          ) {
+            console.debug("[derive] reduce-only IOC rejected; resting GTC", {
+              index,
+              total,
+            })
+            return submitOrder(baseParams)
+          }
+          return Effect.fail(error)
         }),
       )
       console.debug("[derive] order accepted", { index, total })

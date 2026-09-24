@@ -682,6 +682,18 @@ const emptyDeriveTicker = (symbol: string): DeriveTickerQuote => ({
 })
 
 /**
+ * IOC/market reduce-only needs a taking quote (sell→bid, buy→ask). Empty book
+ * forces resting GTC without reduce_only (Derive 11009 + 11024).
+ */
+export const hasDeriveTakingLiquidity = (
+  ticker: DeriveTickerQuote,
+  side: OrderSide,
+): boolean => {
+  const taking = side === "buy" ? ticker.ask : ticker.bid
+  return taking !== null && taking > 0
+}
+
+/**
  * Maps Derive portfolio actions to limit order requests. Option closes prefer
  * venue `contracts` so dust premium notionals still flatten. Limit price is
  * aggressive book (ask/bid), then ticker mark/last, then the position's last
@@ -748,7 +760,7 @@ export const deriveActionsToOrderRequests = (
             amount,
             price,
             type: "limit",
-            reduceOnly: true,
+            reduceOnly: hasDeriveTakingLiquidity(ticker, orderSide),
           })
           break
         }
@@ -791,7 +803,9 @@ export const deriveActionsToOrderRequests = (
             amount,
             price,
             type: "limit",
-            reduceOnly: isReduceOnlyOrder(currentPosition, orderSide),
+            reduceOnly:
+              isReduceOnlyOrder(currentPosition, orderSide) &&
+              hasDeriveTakingLiquidity(ticker, orderSide),
           })
           break
         }

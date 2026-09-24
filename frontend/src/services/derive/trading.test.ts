@@ -52,6 +52,7 @@ import {
   mapDeriveOrderForWatch,
   DeriveTradingClient,
   isCcxtRequestTimeout,
+  isDeriveZeroLiquidityOrderError,
   snapToDeriveStep,
   DEFAULT_DERIVE_AMOUNT_STEP,
   type DeriveBatchOrderRequest,
@@ -78,6 +79,19 @@ describe("isCcxtRequestTimeout", () => {
       ),
     ).toBe(true)
     expect(isCcxtRequestTimeout(new Error("insufficient margin"))).toBe(false)
+  })
+})
+
+describe("isDeriveZeroLiquidityOrderError", () => {
+  it("matches Derive 11009 payloads", () => {
+    expect(
+      isDeriveZeroLiquidityOrderError(
+        new Error(
+          'derive {"error":{"code":"11009","message":"Zero liquidity for market or IOC/FOK order"}}',
+        ),
+      ),
+    ).toBe(true)
+    expect(isDeriveZeroLiquidityOrderError(new Error("11024"))).toBe(false)
   })
 })
 
@@ -767,6 +781,73 @@ describe("DeriveTradingClient.createOrdersBatch", () => {
         reduceOnly: true,
         timeInForce: "ioc",
       },
+    )
+  })
+
+  it("retries reduce-only IOC as resting GTC after Derive 11009 zero liquidity", async () => {
+    const zeroLiquidity = new Error(
+      'derive {"id":"x","error":{"code":"11009","message":"Zero liquidity for market or IOC/FOK order"}}',
+    )
+    const createOrder = vi
+      .fn()
+      .mockRejectedValueOnce(zeroLiquidity)
+      .mockResolvedValueOnce({
+        id: "resting",
+        symbol: "ETH/USD:USDC-260925-1800-P",
+        side: "sell",
+        status: "open",
+      })
+    const client = new DeriveTradingClient(credentials())
+    const exchange = (
+      client as unknown as {
+        exchange: { createOrder: typeof createOrder }
+      }
+    ).exchange
+    exchange.createOrder = createOrder
+    vi.spyOn(client, "resolveSymbol").mockReturnValue(
+      Effect.succeed("ETH/USD:USDC-260925-1800-P"),
+    )
+    const debug = vi.spyOn(console, "debug").mockImplementation(() => undefined)
+
+    const orders = await Effect.runPromise(
+      client.createOrdersBatch([
+        {
+          symbol: "ETH-20260925-1800-P",
+          side: "sell",
+          amount: 2,
+          price: 0.0001,
+          reduceOnly: true,
+        },
+      ]),
+    )
+
+    expect(orders).toEqual([
+      expect.objectContaining({ id: "resting", status: "open" }),
+    ])
+    expect(createOrder).toHaveBeenNthCalledWith(
+      1,
+      "ETH/USD:USDC-260925-1800-P",
+      "limit",
+      "sell",
+      2,
+      0.0001,
+      expect.objectContaining({ reduceOnly: true, timeInForce: "ioc" }),
+    )
+    expect(createOrder).toHaveBeenNthCalledWith(
+      2,
+      "ETH/USD:USDC-260925-1800-P",
+      "limit",
+      "sell",
+      2,
+      0.0001,
+      {
+        subaccount_id: 144457,
+        max_fee: 0.0001 * 2 * 2,
+      },
+    )
+    expect(debug).toHaveBeenCalledWith(
+      "[derive] reduce-only IOC rejected; resting GTC",
+      { index: 0, total: 1 },
     )
   })
 

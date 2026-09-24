@@ -1041,6 +1041,50 @@ describe("deriveActionsToOrderRequests", () => {
         amount: 2,
         price: 0.0000993,
         type: "limit",
+        reduceOnly: false,
+      },
+    ])
+  })
+
+  it("keeps reduce-only on close when the taking book side has liquidity", () => {
+    const instrumentName = "ETH-20260925-1800-P"
+    const requests = Effect.runSync(
+      deriveActionsToOrderRequests(
+        [
+          {
+            kind: "close",
+            symbol: instrumentName,
+            side: "buy",
+            positionKind: "option",
+            venue: "derive",
+          },
+        ],
+        {
+          [instrumentName]: {
+            ...option(instrumentName, 100),
+            contracts: 2,
+            markPrice: 50,
+          },
+        },
+        {
+          [instrumentName]: {
+            symbol: instrumentName,
+            bid: 48,
+            ask: 52,
+            last: 50,
+            mark: 50,
+          },
+        },
+      ),
+    )
+
+    expect(requests).toEqual([
+      {
+        symbol: instrumentName,
+        side: "sell",
+        amount: 2,
+        price: 48,
+        type: "limit",
         reduceOnly: true,
       },
     ])

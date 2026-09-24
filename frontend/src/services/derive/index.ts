@@ -61,6 +61,7 @@ export {
   fetchDeriveTickers,
   isCcxtRequestTimeout,
   isDeriveCancelledOrderBatch,
+  isDeriveZeroLiquidityOrderError,
   mapDeriveOrderForWatch,
   placeAndMonitorDeriveOrders,
   snapToDeriveStep,

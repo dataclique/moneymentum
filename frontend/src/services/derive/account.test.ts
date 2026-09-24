@@ -419,12 +419,25 @@ describe("integerForAbiEncode", () => {
 })
 
 describe("ordersFromGetOrdersResult", () => {
-  it("treats null or missing orders as an empty list", () => {
-    expect(ordersFromGetOrdersResult({ orders: null })).toEqual([])
-    expect(ordersFromGetOrdersResult({})).toEqual([])
+  it("fails when orders is null or missing", async () => {
+    const nullOrders = await Effect.runPromise(
+      Effect.either(ordersFromGetOrdersResult({ orders: null })),
+    )
+    expect(nullOrders).toMatchObject({
+      _tag: "Left",
+      left: { _tag: "DeriveRpcError" },
+    })
+
+    const missingOrders = await Effect.runPromise(
+      Effect.either(ordersFromGetOrdersResult({})),
+    )
+    expect(missingOrders).toMatchObject({
+      _tag: "Left",
+      left: { _tag: "DeriveRpcError" },
+    })
   })
 
-  it("returns the wire order list when present", () => {
+  it("returns the wire order list when present", async () => {
     const orders = [
       {
         order_id: "1",
@@ -432,7 +445,9 @@ describe("ordersFromGetOrdersResult", () => {
         direction: "buy",
       },
     ]
-    expect(ordersFromGetOrdersResult({ orders })).toBe(orders)
+    expect(await Effect.runPromise(ordersFromGetOrdersResult({ orders }))).toBe(
+      orders,
+    )
   })
 })
 

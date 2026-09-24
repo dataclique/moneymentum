@@ -1000,7 +1000,7 @@ describe("deriveActionsToOrderRequests", () => {
     ])
   })
 
-  it("closes dust options from venue contracts when the book has no quote", () => {
+  it("fails dust closes when the book has no taking quote", () => {
     const dustInstrument = "ETH-20260925-1800-P"
     const current = {
       [dustInstrument]: {
@@ -1010,40 +1010,39 @@ describe("deriveActionsToOrderRequests", () => {
         entryPrice: 12,
       },
     }
-    const requests = Effect.runSync(
-      deriveActionsToOrderRequests(
-        [
+    const result = Effect.runSync(
+      Effect.either(
+        deriveActionsToOrderRequests(
+          [
+            {
+              kind: "close",
+              symbol: dustInstrument,
+              side: "buy",
+              positionKind: "option",
+              venue: "derive",
+            },
+          ],
+          current,
           {
-            kind: "close",
-            symbol: dustInstrument,
-            side: "buy",
-            positionKind: "option",
-            venue: "derive",
+            [dustInstrument]: {
+              symbol: dustInstrument,
+              bid: null,
+              ask: null,
+              last: null,
+              mark: null,
+            },
           },
-        ],
-        current,
-        {
-          [dustInstrument]: {
-            symbol: dustInstrument,
-            bid: null,
-            ask: null,
-            last: null,
-            mark: null,
-          },
-        },
+        ),
       ),
     )
 
-    expect(requests).toEqual([
-      {
-        symbol: dustInstrument,
-        side: "sell",
-        amount: 2,
-        price: 0.0000993,
-        type: "limit",
-        reduceOnly: false,
+    expect(result).toMatchObject({
+      _tag: "Left",
+      left: {
+        _tag: "DeriveOrderMappingFailed",
+        reason: expect.stringContaining("No liquidity to close"),
       },
-    ])
+    })
   })
 
   it("keeps reduce-only on close when the taking book side has liquidity", () => {

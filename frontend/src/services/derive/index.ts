@@ -57,6 +57,7 @@ export {
   DeriveOrderPriceInvalid,
   DeriveOrderSizeInvalid,
   DeriveTradingClient,
+  DeriveZeroLiquidity,
   fetchDeriveFundingRates,
   fetchDeriveTickers,
   isCcxtRequestTimeout,

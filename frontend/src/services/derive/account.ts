@@ -309,16 +309,31 @@ export interface DeriveApiOrder {
 interface RawOpenOrdersResult {
   readonly subaccount_id?: number
   readonly orders?: DeriveApiOrder[] | null
+  readonly pagination?: {
+    readonly num_pages?: number
+  }
 }
 
-/** Normalize `private/get_orders` result.orders (null/omitted → []). */
+const DERIVE_OPEN_ORDERS_PAGE_SIZE = 500
+const DERIVE_OPEN_ORDERS_MAX_PAGES = 100
+
+/** Validate `private/get_orders` result.orders (required array per Derive). */
 export const ordersFromGetOrdersResult = (
   result: RawOpenOrdersResult,
-): DeriveApiOrder[] => (Array.isArray(result.orders) ? result.orders : [])
+): Effect.Effect<DeriveApiOrder[], DeriveRpcError> =>
+  Array.isArray(result.orders)
+    ? Effect.succeed(result.orders)
+    : Effect.fail(
+        new DeriveRpcError({
+          code: null,
+          message: "Derive get_orders response has an invalid orders list.",
+        }),
+      )
 
 /**
  * Resting orders for the selected subaccount via `private/get_orders`.
  * Same signed REST path as account snapshots -- no CCXT `loadMarkets`.
+ * Walks every page reported by `pagination.num_pages`.
  */
 export const fetchDeriveOpenOrders = (
   credentials: DeriveSessionCredentials | null,
@@ -330,18 +345,33 @@ export const fetchDeriveOpenOrders = (
   Effect.gen(function* () {
     const session = yield* requireDeriveSessionWithSubaccount(credentials)
     const baseUrl = deriveRestBaseUrl(session.networkMode)
-    const result = yield* privateCallWithSession<RawOpenOrdersResult>(
-      baseUrl,
-      "private/get_orders",
-      {
-        subaccount_id: session.subaccountId,
-        status: "open",
-        page_size: 500,
-      },
-      session,
-      signal,
-    )
-    return ordersFromGetOrdersResult(result)
+    let page = 1
+    let orders: DeriveApiOrder[] = []
+
+    while (page <= DERIVE_OPEN_ORDERS_MAX_PAGES) {
+      const result = yield* privateCallWithSession<RawOpenOrdersResult>(
+        baseUrl,
+        "private/get_orders",
+        {
+          subaccount_id: session.subaccountId,
+          status: "open",
+          page,
+          page_size: DERIVE_OPEN_ORDERS_PAGE_SIZE,
+        },
+        session,
+        signal,
+      )
+      const pageOrders = yield* ordersFromGetOrdersResult(result)
+      orders = [...orders, ...pageOrders]
+
+      const numPages = Math.max(1, result.pagination?.num_pages ?? page)
+      if (page >= numPages) {
+        return orders
+      }
+      page += 1
+    }
+
+    return orders
   })
 
 /**

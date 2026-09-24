@@ -44,6 +44,14 @@ export class DeriveOrderPriceInvalid extends Data.TaggedError(
   readonly price: number
 }> {}
 
+/** Reduce-only IOC rejected because the book has no taking liquidity (11009). */
+export class DeriveZeroLiquidity extends Data.TaggedError(
+  "DeriveZeroLiquidity",
+)<{
+  readonly symbol: string
+  readonly side: OrderSide
+}> {}
+
 const DERIVE_ORDER_NONCE_GAP_MS = 2
 /** Derive always requires max_fee; ~2x notional matches the UI default for options. */
 const DEFAULT_MAX_FEE_NOTIONAL_MULTIPLIER = 2
@@ -586,15 +594,14 @@ export class DeriveTradingClient {
       const maxFee = request.maxFee ?? defaultMaxFee(price, amount)
       const subaccount = yield* this.subaccountParams()
       // Derive rejects reduce-only with resting GTC (11024); IOC/FOK only.
-      // Empty book rejects IOC (11009) — fall back to resting GTC without
-      // reduce_only so dust closes can rest until someone takes them.
-      const reduceOnlyParams =
-        request.reduceOnly === true
-          ? { reduceOnly: true as const, timeInForce: "ioc" as const }
-          : {}
-      const baseParams = {
+      // Do not fall back to ordinary GTC on 11009 — that can open reverse
+      // exposure after the position is gone. Fail typed so the close stays staged.
+      const params = {
         ...subaccount,
         max_fee: maxFee,
+        ...(request.reduceOnly === true
+          ? { reduceOnly: true as const, timeInForce: "ioc" as const }
+          : {}),
       }
       const sent: DeriveBatchOrderRequest = {
         ...request,
@@ -603,21 +610,16 @@ export class DeriveTradingClient {
         price,
         maxFee,
       }
-      const submitOrder = (orderParams: Record<string, unknown>) =>
-        wrapExchange(() =>
-          this.exchange.createOrder(
-            symbol,
-            request.type ?? "limit",
-            request.side,
-            amount,
-            price,
-            orderParams,
-          ),
-        )
-      const created = yield* submitOrder({
-        ...baseParams,
-        ...reduceOnlyParams,
-      }).pipe(
+      const created = yield* wrapExchange(() =>
+        this.exchange.createOrder(
+          symbol,
+          request.type ?? "limit",
+          request.side,
+          amount,
+          price,
+          params,
+        ),
+      ).pipe(
         Effect.catchAll(error => {
           const cause =
             error instanceof ExchangeRequestError ? error.cause : error
@@ -638,11 +640,17 @@ export class DeriveTradingClient {
             request.reduceOnly === true &&
             isDeriveZeroLiquidityOrderError(cause)
           ) {
-            console.debug("[derive] reduce-only IOC rejected; resting GTC", {
+            console.debug("[derive] reduce-only IOC rejected; no liquidity", {
               index,
               total,
+              symbol: request.symbol,
             })
-            return submitOrder(baseParams)
+            return Effect.fail(
+              new DeriveZeroLiquidity({
+                symbol: request.symbol,
+                side: request.side,
+              }),
+            )
           }
           return Effect.fail(error)
         }),
@@ -848,6 +856,7 @@ type TradingExchangeFailure =
   | DeriveInstrumentNotFound
   | DeriveOrderSizeInvalid
   | DeriveOrderPriceInvalid
+  | DeriveZeroLiquidity
 
 type TradingBatchFailure = TradingExchangeFailure | DerivePartialBatchFailure
 
@@ -856,7 +865,8 @@ const tradingFailure = (cause: unknown): TradingExchangeFailure =>
   cause instanceof DeriveSubaccountMissing ||
   cause instanceof DeriveInstrumentNotFound ||
   cause instanceof DeriveOrderSizeInvalid ||
-  cause instanceof DeriveOrderPriceInvalid
+  cause instanceof DeriveOrderPriceInvalid ||
+  cause instanceof DeriveZeroLiquidity
     ? cause
     : new ExchangeRequestError({ cause })
 
@@ -984,7 +994,10 @@ export const placeAndMonitorDeriveOrders = (
     "placeOrders",
     requireDeriveSession(credentials).pipe(
       Effect.flatMap(session =>
-        tradingClientFor(session, sessionGuard)
+        tradingClientFor(
+          session,
+          sessionGuard ?? { isSessionCurrent: () => true },
+        )
           .placeAndMonitorOrders(requests)
           .pipe(
             Effect.catchTag("DeriveBatchSessionCancelled", cancelled =>

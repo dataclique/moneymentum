@@ -784,19 +784,11 @@ describe("DeriveTradingClient.createOrdersBatch", () => {
     )
   })
 
-  it("retries reduce-only IOC as resting GTC after Derive 11009 zero liquidity", async () => {
+  it("fails reduce-only IOC with DeriveZeroLiquidity after venue 11009", async () => {
     const zeroLiquidity = new Error(
       'derive {"id":"x","error":{"code":"11009","message":"Zero liquidity for market or IOC/FOK order"}}',
     )
-    const createOrder = vi
-      .fn()
-      .mockRejectedValueOnce(zeroLiquidity)
-      .mockResolvedValueOnce({
-        id: "resting",
-        symbol: "ETH/USD:USDC-260925-1800-P",
-        side: "sell",
-        status: "open",
-      })
+    const createOrder = vi.fn().mockRejectedValue(zeroLiquidity)
     const client = new DeriveTradingClient(credentials())
     const exchange = (
       client as unknown as {
@@ -809,45 +801,32 @@ describe("DeriveTradingClient.createOrdersBatch", () => {
     )
     const debug = vi.spyOn(console, "debug").mockImplementation(() => undefined)
 
-    const orders = await Effect.runPromise(
-      client.createOrdersBatch([
-        {
-          symbol: "ETH-20260925-1800-P",
-          side: "sell",
-          amount: 2,
-          price: 0.0001,
-          reduceOnly: true,
-        },
-      ]),
+    const outcome = await Effect.runPromise(
+      Effect.either(
+        client.createOrdersBatch([
+          {
+            symbol: "ETH-20260925-1800-P",
+            side: "sell",
+            amount: 2,
+            price: 0.0001,
+            reduceOnly: true,
+          },
+        ]),
+      ),
     )
 
-    expect(orders).toEqual([
-      expect.objectContaining({ id: "resting", status: "open" }),
-    ])
-    expect(createOrder).toHaveBeenNthCalledWith(
-      1,
-      "ETH/USD:USDC-260925-1800-P",
-      "limit",
-      "sell",
-      2,
-      0.0001,
-      expect.objectContaining({ reduceOnly: true, timeInForce: "ioc" }),
-    )
-    expect(createOrder).toHaveBeenNthCalledWith(
-      2,
-      "ETH/USD:USDC-260925-1800-P",
-      "limit",
-      "sell",
-      2,
-      0.0001,
-      {
-        subaccount_id: 144457,
-        max_fee: 0.0001 * 2 * 2,
+    expect(outcome).toMatchObject({
+      _tag: "Left",
+      left: {
+        _tag: "DeriveZeroLiquidity",
+        symbol: "ETH-20260925-1800-P",
+        side: "sell",
       },
-    )
+    })
+    expect(createOrder).toHaveBeenCalledTimes(1)
     expect(debug).toHaveBeenCalledWith(
-      "[derive] reduce-only IOC rejected; resting GTC",
-      { index: 0, total: 1 },
+      "[derive] reduce-only IOC rejected; no liquidity",
+      { index: 0, total: 1, symbol: "ETH-20260925-1800-P" },
     )
   })
 

@@ -754,13 +754,20 @@ export const deriveActionsToOrderRequests = (
               }),
             )
           }
+          if (!hasDeriveTakingLiquidity(ticker, orderSide)) {
+            return yield* Effect.fail(
+              new DeriveOrderMappingFailed({
+                reason: `No liquidity to close ${action.symbol} (empty taking book)`,
+              }),
+            )
+          }
           requests.push({
             symbol: action.symbol,
             side: orderSide,
             amount,
             price,
             type: "limit",
-            reduceOnly: hasDeriveTakingLiquidity(ticker, orderSide),
+            reduceOnly: true,
           })
           break
         }
@@ -797,15 +804,21 @@ export const deriveActionsToOrderRequests = (
           if (!(amount > 0)) {
             continue
           }
+          const reduceOnly = isReduceOnlyOrder(currentPosition, orderSide)
+          if (reduceOnly && !hasDeriveTakingLiquidity(ticker, orderSide)) {
+            return yield* Effect.fail(
+              new DeriveOrderMappingFailed({
+                reason: `No liquidity to reduce ${action.symbol} (empty taking book)`,
+              }),
+            )
+          }
           requests.push({
             symbol: action.symbol,
             side: orderSide,
             amount,
             price,
             type: "limit",
-            reduceOnly:
-              isReduceOnlyOrder(currentPosition, orderSide) &&
-              hasDeriveTakingLiquidity(ticker, orderSide),
+            reduceOnly,
           })
           break
         }

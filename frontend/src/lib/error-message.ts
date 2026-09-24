@@ -122,6 +122,8 @@ interface TaggedError {
   readonly detail?: string
   readonly message?: string
   readonly reason?: string
+  readonly side?: string
+  readonly symbol?: string
 }
 
 const hasTag = (value: unknown): value is TaggedError =>
@@ -234,6 +236,8 @@ const messageForTag = (error: TaggedError): string | null => {
       return "Enter a finite, positive order price compatible with the instrument tick size."
     case "DeriveOrderSizeInvalid":
       return "Order size rounded to zero. Increase size or check the instrument step."
+    case "DeriveZeroLiquidity":
+      return `No liquidity to ${error.side ?? "trade"} ${error.symbol ?? "instrument"}. Wait for a quote or close on Derive.`
     case "DeriveOrderMappingFailed":
       return (
         error.reason ?? "Could not map Derive orders from the staged trades."

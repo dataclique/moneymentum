@@ -41,14 +41,25 @@ const ensureOk = (
 ): Effect.Effect<Response, HttpStatusError> =>
   response.ok
     ? Effect.succeed(response)
-    : Effect.promise(() =>
-        response.json().catch(() => undefined as unknown),
-      ).pipe(
-        Effect.flatMap(body =>
+    : Effect.promise(async () => {
+        const text = await response.text().catch(() => "")
+        if (text.length === 0) return undefined
+        try {
+          const parsed: unknown = JSON.parse(text)
+          const fromObject = extractDetail(parsed)
+          if (fromObject !== undefined) return fromObject
+          return typeof parsed === "string" && parsed.length > 0
+            ? parsed
+            : undefined
+        } catch {
+          return text
+        }
+      }).pipe(
+        Effect.flatMap(detail =>
           Effect.fail(
             new HttpStatusError({
               status: response.status,
-              detail: extractDetail(body),
+              detail,
             }),
           ),
         ),

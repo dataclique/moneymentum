@@ -104,26 +104,60 @@ export const equityPriceScaleRange = (
   }
 }
 
-/** Merge venue series onto a shared timeline (sum values at matching second buckets). */
+/** Merge venues with LOCF (last observation carried forward).
+ *
+ * Outer-join all venue timestamps, forward-fill each venue's last known
+ * equity, treat the period before a venue's first sample as 0, then sum.
+ * Matching-second-only sums are wrong: a Derive update must keep the last
+ * Hyperliquid balance, not drop it.
+ */
 export const mergeEquitySeries = (
   seriesList: readonly VenuePerformanceSeries[],
 ): EquityPoint[] => {
-  const bySecond = new Map<number, number>()
-  for (const series of seriesList) {
+  if (seriesList.length === 0) return []
+
+  const observationsByVenue = seriesList.map(series => {
+    const bySecond = new Map<number, number>()
     for (const point of series.equity_points) {
       const value = pointValue(point)
-      if (!isChartableEquity(value)) continue
+      // Keep zeros (pre-deposit); drop only non-finite / negative junk.
+      if (!Number.isFinite(value) || value < 0) continue
       const second = Math.floor(point.timestamp_ms / 1000)
-      const previous = bySecond.get(second) ?? 0
-      bySecond.set(second, previous + value)
+      bySecond.set(second, value)
+    }
+    return bySecond
+  })
+
+  const allSeconds = new Set<number>()
+  for (const bySecond of observationsByVenue) {
+    for (const second of bySecond.keys()) {
+      allSeconds.add(second)
     }
   }
-  return [...bySecond.entries()]
-    .sort((left, right) => left[0] - right[0])
-    .map(([second, value]) => ({
+
+  const sortedSeconds = [...allSeconds].sort(
+    (leftSecond, rightSecond) => leftSecond - rightSecond,
+  )
+
+  // fillna(0): before the first observation each venue contributes nothing.
+  const carriedForward = observationsByVenue.map(() => 0)
+
+  return sortedSeconds.map(second => {
+    const total = observationsByVenue.reduce(
+      (runningTotal, bySecond, venueIndex) => {
+        const observed = bySecond.get(second)
+        if (observed !== undefined) {
+          carriedForward[venueIndex] = observed
+        }
+        return runningTotal + (carriedForward[venueIndex] ?? 0)
+      },
+      0,
+    )
+    return {
       timestamp_ms: second * 1000,
-      value_usd: value.toString(),
-    }))
+      value_usd: total.toString(),
+    }
+  })
 }
 
 type HoverEquityLabel = {

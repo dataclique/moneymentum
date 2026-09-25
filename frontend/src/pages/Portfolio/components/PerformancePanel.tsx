@@ -11,8 +11,11 @@ import * as Effect from "effect/Effect"
 import {
   createChart,
   AreaSeries,
+  LineSeries,
   CrosshairMode,
+  LineStyle,
   type IChartApi,
+  type ISeriesApi,
   type MouseEventParams,
   type Time,
 } from "lightweight-charts"
@@ -22,7 +25,6 @@ import { MetricSelector } from "../../Prototype/components/MetricSelector"
 import {
   fetchWalletPerformance,
   refreshHyperliquidPerformance,
-  type EquityPoint,
   type VenuePerformanceSeries,
 } from "@/services/account-performance"
 import { syncDerivePerformanceToCache } from "@/services/derive/performance"
@@ -30,24 +32,25 @@ import {
   isPerformanceSyncStale,
   writePerformanceSyncedAt,
 } from "@/services/performance-sync-cookie"
+import {
+  dollarSeries,
+  equityPriceScaleRange,
+  forwardFillMergeEquity,
+  prepareVenueEquity,
+  twrPercentSeries,
+  underwaterDrawdownSeries,
+  type ChartScaleMode,
+  type PerformancePeriod,
+  type TimedValue,
+} from "./performanceSeries"
 
-type Period = "1M" | "3M" | "6M" | "1Y" | "All"
+const PERIODS: PerformancePeriod[] = ["24h", "7d", "30d", "all-time"]
 
-const PERIODS: Period[] = ["1M", "3M", "6M", "1Y", "All"]
-const PERIOD_DAYS: Record<Period, number> = {
-  "1M": 30,
-  "3M": 90,
-  "6M": 180,
-  "1Y": 365,
-  "All": Infinity,
-}
-
-/** Minimum visible equity span as a fraction of mid price (avoids mountain noise). */
-const MIN_SCALE_FRACTION = 0.05
-/** Floor for that span in USD so tiny accounts still get a calm axis. */
-const MIN_SCALE_USD = 100
-/** Extra padding around the chosen span. */
-const SCALE_PAD_FRACTION = 0.1
+const VENUE_COLORS = {
+  total: "#22c55e",
+  hyperliquid: "#3b82f6",
+  derive: "#f59e0b",
+} as const
 
 const UNSUPPORTED = "—"
 
@@ -58,112 +61,30 @@ const formatUsd = (value: number): string =>
     maximumFractionDigits: 2,
   })
 
-const pointValue = (point: EquityPoint): number => {
-  const parsed = Number.parseFloat(point.value_usd)
-  return Number.isFinite(parsed) ? parsed : Number.NaN
+const formatPct = (value: number): string => {
+  const sign = value > 0 ? "+" : ""
+  return `${sign}${value.toFixed(2)}%`
 }
 
-const isChartableEquity = (value: number): boolean =>
-  Number.isFinite(value) && value > 0
-
-const filterPointsByPeriod = (
-  points: readonly EquityPoint[],
-  period: Period,
-): EquityPoint[] => {
-  if (period === "All" || points.length === 0) return [...points]
-  const maxTime = Math.max(...points.map(point => point.timestamp_ms))
-  const cutoff = maxTime - PERIOD_DAYS[period] * 24 * 60 * 60 * 1000
-  return points.filter(point => point.timestamp_ms >= cutoff)
-}
-
-/** Drop zero/NaN venue samples that collapse the Y scale to the origin. */
-export const chartableEquityPoints = (
-  points: readonly EquityPoint[],
-): EquityPoint[] => points.filter(point => isChartableEquity(pointValue(point)))
-
-/**
- * Stable price range: expand tiny swings to at least 5% of mid (or $100),
- * so the chart does not flip between a flat line and exaggerated mountains.
- */
-export const equityPriceScaleRange = (
-  values: readonly number[],
-): { minValue: number; maxValue: number } | null => {
-  const usable = values.filter(isChartableEquity)
-  if (usable.length === 0) return null
-
-  const minValue = Math.min(...usable)
-  const maxValue = Math.max(...usable)
-  const mid = (minValue + maxValue) / 2
-  const observed = maxValue - minValue
-  const minSpan = Math.max(mid * MIN_SCALE_FRACTION, MIN_SCALE_USD)
-  const span = Math.max(observed, minSpan)
-  const pad = span * SCALE_PAD_FRACTION
-  return {
-    minValue: mid - span / 2 - pad,
-    maxValue: mid + span / 2 + pad,
-  }
-}
-
-/** Merge venues with LOCF (last observation carried forward).
- *
- * Outer-join all venue timestamps, forward-fill each venue's last known
- * equity, treat the period before a venue's first sample as 0, then sum.
- * Matching-second-only sums are wrong: a Derive update must keep the last
- * Hyperliquid balance, not drop it.
- */
-export const mergeEquitySeries = (
-  seriesList: readonly VenuePerformanceSeries[],
-): EquityPoint[] => {
-  if (seriesList.length === 0) return []
-
-  const observationsByVenue = seriesList.map(series => {
-    const bySecond = new Map<number, number>()
-    for (const point of series.equity_points) {
-      const value = pointValue(point)
-      // Keep zeros (pre-deposit); drop only non-finite / negative junk.
-      if (!Number.isFinite(value) || value < 0) continue
-      const second = Math.floor(point.timestamp_ms / 1000)
-      bySecond.set(second, value)
-    }
-    return bySecond
-  })
-
-  const allSeconds = new Set<number>()
-  for (const bySecond of observationsByVenue) {
-    for (const second of bySecond.keys()) {
-      allSeconds.add(second)
-    }
-  }
-
-  const sortedSeconds = [...allSeconds].sort(
-    (leftSecond, rightSecond) => leftSecond - rightSecond,
-  )
-
-  // fillna(0): before the first observation each venue contributes nothing.
-  const carriedForward = observationsByVenue.map(() => 0)
-
-  return sortedSeconds.map(second => {
-    const total = observationsByVenue.reduce(
-      (runningTotal, bySecond, venueIndex) => {
-        const observed = bySecond.get(second)
-        if (observed !== undefined) {
-          carriedForward[venueIndex] = observed
-        }
-        return runningTotal + (carriedForward[venueIndex] ?? 0)
-      },
-      0,
-    )
-    return {
-      timestamp_ms: second * 1000,
-      value_usd: total.toString(),
-    }
-  })
-}
-
-type HoverEquityLabel = {
+type HoverBreakdown = {
   x: number
   y: number
-  text: string
+  timeLabel: string
+  rows: { label: string; color: string; dollars: string; percent: string }[]
+}
+
+const timedToChartData = (series: readonly TimedValue[]) =>
+  series.map(sample => ({
+    time: Math.floor(sample.timestamp_ms / 1000) as Time,
+    value: sample.value,
+  }))
+
+const lastTimedValue = (series: readonly TimedValue[]): number | null => {
+  let last: TimedValue | undefined
+  for (const sample of series) {
+    last = sample
+  }
+  return last === undefined ? null : last.value
 }
 
 export const PerformancePanel = () => {
@@ -179,12 +100,12 @@ export const PerformancePanel = () => {
   const [selectedMetricIds, setSelectedMetricIds] = createSignal<string[]>([])
   const [selectedWindowId, setSelectedWindowId] = createSignal<string>("1m")
   const [isMetricSelectorOpen, setIsMetricSelectorOpen] = createSignal(false)
-  const [period, setPeriod] = createSignal<Period>("All")
+  const [period, setPeriod] = createSignal<PerformancePeriod>("30d")
+  const [scaleMode, setScaleMode] = createSignal<ChartScaleMode>("percent")
   const [includeHyperliquid, setIncludeHyperliquid] = createSignal(true)
   const [includeDerive, setIncludeDerive] = createSignal(true)
-  const [hoverLabel, setHoverLabel] = createSignal<HoverEquityLabel | null>(
-    null,
-  )
+  const [hoverBreakdown, setHoverBreakdown] =
+    createSignal<HoverBreakdown | null>(null)
 
   let chartHost: HTMLDivElement | undefined
   let chartApi: IChartApi | undefined
@@ -252,90 +173,195 @@ export const PerformancePanel = () => {
     }
   })
 
-  const mergedPoints = createMemo(() =>
-    mergeEquitySeries(performanceQuery.data ?? []),
-  )
-
-  const periodPoints = createMemo(() =>
-    chartableEquityPoints(filterPointsByPeriod(mergedPoints(), period())),
-  )
-
-  const endingEquity = createMemo(() => {
-    const points = periodPoints()
-    let lastPoint: EquityPoint | undefined
-    for (const point of points) {
-      lastPoint = point
-    }
-    if (lastPoint === undefined) return null
-    const value = pointValue(lastPoint)
-    return isChartableEquity(value) ? value : null
+  const prepared = createMemo(() => {
+    const selectedPeriod = period()
+    return (performanceQuery.data ?? []).map(series => {
+      const { equity, events } = prepareVenueEquity(series, selectedPeriod)
+      return {
+        venue: series.venue,
+        equity,
+        events,
+        dollars: dollarSeries(equity),
+        percent: twrPercentSeries(equity, events),
+      }
+    })
   })
 
-  // Imperative lightweight-charts mount: must create/destroy the chart when
-  // series data or host size inputs change (not expressible as createMemo).
+  const totalPrepared = createMemo(() => {
+    const venues = prepared()
+    if (venues.length === 0) {
+      return {
+        equity: [] as ReturnType<typeof forwardFillMergeEquity>,
+        events: [],
+        dollars: [] as TimedValue[],
+        percent: [] as TimedValue[],
+        drawdown: [] as TimedValue[],
+      }
+    }
+    const asSeries: VenuePerformanceSeries[] = venues.map(venue => ({
+      venue: venue.venue,
+      equity_points: venue.equity,
+      events: venue.events,
+      fetched_at: new Date().toISOString(),
+      coverage_start_ms: null,
+      coverage_end_ms: null,
+    }))
+    const equity = forwardFillMergeEquity(asSeries)
+    const events = venues
+      .flatMap(venue => venue.events)
+      .sort((left, right) => left.timestamp_ms - right.timestamp_ms)
+    return {
+      equity,
+      events,
+      dollars: dollarSeries(equity),
+      percent: twrPercentSeries(equity, events),
+      drawdown: underwaterDrawdownSeries(equity, events),
+    }
+  })
+
+  const endingDollars = createMemo(() =>
+    lastTimedValue(totalPrepared().dollars),
+  )
+  const endingPercent = createMemo(() =>
+    lastTimedValue(totalPrepared().percent),
+  )
+
+  // Imperative chart: series and panes must sync to Solid signals via createEffect.
   createEffect(() => {
     const host = chartHost
     if (host === undefined) return
 
-    const points = periodPoints()
     const isLoading = performanceQuery.isLoading
     const error = performanceQuery.error
     const enabled = performanceQuery.isEnabled
+    const mode = scaleMode()
+    const venues = prepared()
+    const total = totalPrepared()
 
     if (chartApi !== undefined) {
       chartApi.remove()
       chartApi = undefined
     }
-    setHoverLabel(null)
+    setHoverBreakdown(null)
 
-    if (!enabled || isLoading || error !== null || points.length === 0) {
+    if (!enabled || isLoading || error !== null) {
       return
     }
 
-    const chartValues = points.map(pointValue).filter(isChartableEquity)
-    const priceRange = equityPriceScaleRange(chartValues)
+    const mainSeries = mode === "percent" ? total.percent : total.dollars
+    if (mainSeries.length === 0) {
+      return
+    }
 
     const chart = createChart(host, {
       width: host.clientWidth,
       height: host.clientHeight,
       layout: { background: { color: "transparent" }, textColor: "#888" },
       grid: { vertLines: { color: "#222" }, horzLines: { color: "#222" } },
-      timeScale: { borderColor: "#333", timeVisible: false },
+      timeScale: { borderColor: "#333", timeVisible: true },
       rightPriceScale: {
         borderColor: "#333",
-        scaleMargins: { top: 0.12, bottom: 0.12 },
+        scaleMargins: { top: 0.08, bottom: 0.35 },
       },
       crosshair: {
         mode: CrosshairMode.Normal,
-        vertLine: {
-          labelVisible: true,
-        },
-        horzLine: {
-          labelVisible: true,
-        },
+        vertLine: { labelVisible: true },
+        horzLine: { labelVisible: true },
       },
     })
     chartApi = chart
 
-    const area = chart.addSeries(AreaSeries, {
-      lineColor: "#22c55e",
-      topColor: "rgba(34, 197, 94, 0.3)",
-      bottomColor: "rgba(34, 197, 94, 0)",
-      lineWidth: 1,
-      autoscaleInfoProvider: () =>
-        priceRange === null
-          ? null
-          : {
-              priceRange,
-            },
-    })
-    area.setData(
-      points.map(point => ({
-        time: Math.floor(point.timestamp_ms / 1000) as Time,
-        value: pointValue(point),
-      })),
+    const priceRange = equityPriceScaleRange(
+      mainSeries.map(sample => sample.value),
     )
+    const totalLine = chart.addSeries(LineSeries, {
+      color: VENUE_COLORS.total,
+      lineWidth: 2,
+      title: "Total",
+      priceLineVisible: mode === "percent",
+      lastValueVisible: true,
+      autoscaleInfoProvider: () =>
+        priceRange === null ? null : { priceRange },
+    })
+    totalLine.setData(timedToChartData(mainSeries))
+
+    if (mode === "percent") {
+      totalLine.createPriceLine({
+        price: 0,
+        color: "#64748b",
+        lineWidth: 1,
+        lineStyle: LineStyle.Dashed,
+        axisLabelVisible: true,
+        title: "0%",
+      })
+    }
+
+    const venueSeriesApis: {
+      venue: string
+      api: ISeriesApi<"Line">
+      dollars: TimedValue[]
+      percent: TimedValue[]
+    }[] = []
+
+    for (const venue of venues) {
+      const color =
+        venue.venue === "hyperliquid"
+          ? VENUE_COLORS.hyperliquid
+          : VENUE_COLORS.derive
+      const data = mode === "percent" ? venue.percent : venue.dollars
+      if (data.length === 0) continue
+      const line = chart.addSeries(LineSeries, {
+        color,
+        lineWidth: 1,
+        title: venue.venue === "hyperliquid" ? "HL" : "Derive",
+        lastValueVisible: true,
+      })
+      line.setData(timedToChartData(data))
+      venueSeriesApis.push({
+        venue: venue.venue,
+        api: line,
+        dollars: venue.dollars,
+        percent: venue.percent,
+      })
+    }
+
+    const drawdownPane = chart.addSeries(AreaSeries, {
+      lineColor: "#ef4444",
+      topColor: "rgba(239, 68, 68, 0.05)",
+      bottomColor: "rgba(239, 68, 68, 0.45)",
+      lineWidth: 1,
+      priceScaleId: "drawdown",
+      title: "Drawdown",
+    })
+    chart.priceScale("drawdown").applyOptions({
+      scaleMargins: { top: 0.72, bottom: 0.02 },
+      borderVisible: false,
+    })
+    drawdownPane.setData(timedToChartData(total.drawdown))
+    drawdownPane.createPriceLine({
+      price: 0,
+      color: "#64748b",
+      lineWidth: 1,
+      lineStyle: LineStyle.Dashed,
+      axisLabelVisible: false,
+    })
+
     chart.timeScale().fitContent()
+
+    const lookupAtTime = (
+      series: readonly TimedValue[],
+      timestampMs: number,
+    ): number | null => {
+      let match: TimedValue | undefined
+      for (const sample of series) {
+        if (sample.timestamp_ms <= timestampMs) {
+          match = sample
+        } else {
+          break
+        }
+      }
+      return match === undefined ? null : match.value
+    }
 
     const onCrosshairMove = (param: MouseEventParams) => {
       if (
@@ -344,23 +370,50 @@ export const PerformancePanel = () => {
         param.point.x < 0 ||
         param.point.y < 0
       ) {
-        setHoverLabel(null)
+        setHoverBreakdown(null)
         return
       }
-      const sample = param.seriesData.get(area)
-      if (
-        sample === undefined ||
-        !("value" in sample) ||
-        typeof sample.value !== "number" ||
-        !isChartableEquity(sample.value)
-      ) {
-        setHoverLabel(null)
+      const timeSeconds =
+        typeof param.time === "number" ? param.time : Number(param.time)
+      if (!Number.isFinite(timeSeconds)) {
+        setHoverBreakdown(null)
         return
       }
-      setHoverLabel({
+      const timestampMs = timeSeconds * 1000
+      const rows: HoverBreakdown["rows"] = []
+      const totalDollars = lookupAtTime(total.dollars, timestampMs)
+      const totalPercent = lookupAtTime(total.percent, timestampMs)
+      if (totalDollars !== null && totalPercent !== null) {
+        rows.push({
+          label: "Total",
+          color: VENUE_COLORS.total,
+          dollars: formatUsd(totalDollars),
+          percent: formatPct(totalPercent),
+        })
+      }
+      for (const venue of venueSeriesApis) {
+        const dollars = lookupAtTime(venue.dollars, timestampMs)
+        const percent = lookupAtTime(venue.percent, timestampMs)
+        if (dollars === null || percent === null) continue
+        rows.push({
+          label: venue.venue === "hyperliquid" ? "HL" : "Derive",
+          color:
+            venue.venue === "hyperliquid"
+              ? VENUE_COLORS.hyperliquid
+              : VENUE_COLORS.derive,
+          dollars: formatUsd(dollars),
+          percent: formatPct(percent),
+        })
+      }
+      if (rows.length === 0) {
+        setHoverBreakdown(null)
+        return
+      }
+      setHoverBreakdown({
         x: param.point.x,
         y: param.point.y,
-        text: formatUsd(sample.value),
+        timeLabel: new Date(timestampMs).toLocaleString(),
+        rows,
       })
     }
     chart.subscribeCrosshairMove(onCrosshairMove)
@@ -382,7 +435,7 @@ export const PerformancePanel = () => {
       if (chartApi === chart) {
         chartApi = undefined
       }
-      setHoverLabel(null)
+      setHoverBreakdown(null)
     })
   })
 
@@ -409,10 +462,12 @@ export const PerformancePanel = () => {
           />
           <div class="flex justify-between pb-2 border-b border-border/30">
             <span class="text-muted-foreground">Total Return</span>
-            <span class="font-mono">
+            <span class="font-mono text-right">
               {(() => {
-                const equity = endingEquity()
-                return equity === null ? UNSUPPORTED : formatUsd(equity)
+                const dollars = endingDollars()
+                const percent = endingPercent()
+                if (dollars === null || percent === null) return UNSUPPORTED
+                return `${formatUsd(dollars)} (${formatPct(percent)})`
               })()}
             </span>
           </div>
@@ -459,27 +514,36 @@ export const PerformancePanel = () => {
         </div>
 
         <div class="flex-1 min-w-0 p-2 flex flex-col gap-1">
-          <div class="flex items-center justify-between shrink-0 px-1">
-            <div class="flex gap-1">
-              <For each={PERIODS}>
-                {chip => (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setPeriod(chip)
-                    }}
-                    class={`px-1.5 py-0.5 text-[9px] rounded transition-colors ${
-                      period() === chip
-                        ? "bg-muted text-foreground"
-                        : "text-muted-foreground hover:bg-muted/50"
-                    }`}
-                  >
-                    {chip}
-                  </button>
-                )}
-              </For>
+          <div class="flex items-center justify-between shrink-0 px-1 gap-2">
+            <div class="flex gap-1 text-[9px]">
+              <button
+                type="button"
+                class={`px-1.5 py-0.5 rounded ${
+                  scaleMode() === "percent"
+                    ? "bg-muted text-foreground"
+                    : "text-muted-foreground hover:bg-muted/50"
+                }`}
+                onClick={() => {
+                  setScaleMode("percent")
+                }}
+              >
+                %
+              </button>
+              <button
+                type="button"
+                class={`px-1.5 py-0.5 rounded ${
+                  scaleMode() === "dollars"
+                    ? "bg-muted text-foreground"
+                    : "text-muted-foreground hover:bg-muted/50"
+                }`}
+                onClick={() => {
+                  setScaleMode("dollars")
+                }}
+              >
+                $
+              </button>
             </div>
-            <div class="flex gap-2 text-[9px] text-muted-foreground">
+            <div class="flex items-center gap-2 text-[9px] text-muted-foreground">
               <label class="flex items-center gap-1 cursor-pointer">
                 <input
                   type="checkbox"
@@ -502,21 +566,44 @@ export const PerformancePanel = () => {
                 />
                 Derive
               </label>
+              <select
+                class="bg-transparent border border-border/40 rounded px-1 py-0.5 text-foreground"
+                value={period()}
+                onChange={event => {
+                  setPeriod(event.currentTarget.value as PerformancePeriod)
+                }}
+              >
+                <For each={PERIODS}>
+                  {option => <option value={option}>{option}</option>}
+                </For>
+              </select>
             </div>
           </div>
 
           <div class="relative flex-1 min-h-0">
             <div ref={chartHost} class="absolute inset-0" />
-            <Show when={hoverLabel()}>
+            <Show when={hoverBreakdown()}>
               {label => (
                 <div
-                  class="pointer-events-none absolute z-10 -translate-x-1/2 -translate-y-full rounded bg-background/90 px-1.5 py-0.5 font-mono text-[10px] text-foreground shadow border border-border/60"
+                  class="pointer-events-none absolute z-10 -translate-x-1/2 -translate-y-full rounded bg-background/95 px-2 py-1 text-[10px] text-foreground shadow border border-border/60 min-w-[140px]"
                   style={{
                     left: `${label().x}px`,
                     top: `${Math.max(label().y - 8, 4)}px`,
                   }}
                 >
-                  {label().text}
+                  <div class="text-muted-foreground mb-0.5">
+                    {label().timeLabel}
+                  </div>
+                  <For each={label().rows}>
+                    {row => (
+                      <div class="flex justify-between gap-2 font-mono">
+                        <span style={{ color: row.color }}>{row.label}</span>
+                        <span>
+                          {row.dollars} ({row.percent})
+                        </span>
+                      </div>
+                    )}
+                  </For>
                 </div>
               )}
             </Show>
@@ -542,7 +629,7 @@ export const PerformancePanel = () => {
                 performanceQuery.isEnabled &&
                 !performanceQuery.isLoading &&
                 !performanceQuery.isError &&
-                periodPoints().length === 0
+                totalPrepared().dollars.length === 0
               }
             >
               <div class="absolute inset-0 flex items-center justify-center text-[10px] text-muted-foreground border border-dashed border-border/50 rounded">
@@ -555,3 +642,10 @@ export const PerformancePanel = () => {
     </div>
   )
 }
+
+// Re-export merge helpers used by older tests / callers.
+export {
+  forwardFillMergeEquity as mergeEquitySeries,
+  chartableEquityPoints,
+  equityPriceScaleRange,
+} from "./performanceSeries"

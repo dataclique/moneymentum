@@ -3,7 +3,7 @@
  * Keyed by public wallet address — never stores private keys.
  */
 
-const COOKIE_PREFIX = "perf_synced_"
+const COOKIE_PREFIX = "perf_synced_v2_"
 export const PERFORMANCE_SYNC_MAX_AGE_MS = 2 * 60 * 60 * 1000
 
 const cookieNameForWallet = (walletAddress: string): string =>

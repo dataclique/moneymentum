@@ -36,6 +36,7 @@ import {
   dollarSeries,
   equityPriceScaleRange,
   forwardFillMergeEquity,
+  computePeriodWindow,
   prepareVenueEquity,
   twrPercentSeries,
   underwaterDrawdownSeries,
@@ -45,6 +46,9 @@ import {
 } from "./performanceSeries"
 
 const PERIODS: PerformancePeriod[] = ["24h", "7d", "30d", "all-time"]
+
+const TOOLTIP_WIDTH_PX = 220
+const TOOLTIP_EDGE_PAD_PX = 8
 
 const VENUE_COLORS = {
   total: "#22c55e",
@@ -130,25 +134,14 @@ export const PerformancePanel = () => {
       ] as const,
       enabled: wantHl || wantDerive,
       queryFn: async ({ signal }: { signal: AbortSignal }) => {
-        if (wantHl && hlAddress !== null && isPerformanceSyncStale(hlAddress)) {
-          await Effect.runPromise(
-            refreshHyperliquidPerformance(hlAddress, network, signal),
-          )
-          writePerformanceSyncedAt(hlAddress)
-        }
-        if (
-          wantDerive &&
-          deriveSession !== null &&
-          isPerformanceSyncStale(deriveSession.deriveWallet)
-        ) {
-          await Effect.runPromise(
-            syncDerivePerformanceToCache(deriveSession, signal),
-          )
-          writePerformanceSyncedAt(deriveSession.deriveWallet)
-        }
-
         const series: VenuePerformanceSeries[] = []
         if (wantHl && hlAddress !== null) {
+          if (isPerformanceSyncStale(hlAddress)) {
+            await Effect.runPromise(
+              refreshHyperliquidPerformance(hlAddress, network, signal),
+            )
+            writePerformanceSyncedAt(hlAddress)
+          }
           const cache = await Effect.runPromise(
             fetchWalletPerformance(hlAddress, signal),
           )
@@ -158,7 +151,13 @@ export const PerformancePanel = () => {
             }
           }
         }
-        if (wantDerive && deriveAddress !== null) {
+        if (wantDerive && deriveAddress !== null && deriveSession !== null) {
+          if (isPerformanceSyncStale(deriveSession.deriveWallet)) {
+            await Effect.runPromise(
+              syncDerivePerformanceToCache(deriveSession, signal),
+            )
+            writePerformanceSyncedAt(deriveSession.deriveWallet)
+          }
           const cache = await Effect.runPromise(
             fetchWalletPerformance(deriveAddress, signal),
           )
@@ -175,8 +174,10 @@ export const PerformancePanel = () => {
 
   const prepared = createMemo(() => {
     const selectedPeriod = period()
-    return (performanceQuery.data ?? []).map(series => {
-      const { equity, events } = prepareVenueEquity(series, selectedPeriod)
+    const rawSeries = performanceQuery.data ?? []
+    const window = computePeriodWindow(selectedPeriod, rawSeries, Date.now())
+    return rawSeries.map(series => {
+      const { equity, events } = prepareVenueEquity(series, window)
       return {
         venue: series.venue,
         equity,
@@ -258,7 +259,12 @@ export const PerformancePanel = () => {
       height: host.clientHeight,
       layout: { background: { color: "transparent" }, textColor: "#888" },
       grid: { vertLines: { color: "#222" }, horzLines: { color: "#222" } },
-      timeScale: { borderColor: "#333", timeVisible: true },
+      timeScale: {
+        borderColor: "#333",
+        timeVisible: true,
+        fixLeftEdge: true,
+        fixRightEdge: true,
+      },
       rightPriceScale: {
         borderColor: "#333",
         scaleMargins: { top: 0.08, bottom: 0.35 },
@@ -268,6 +274,7 @@ export const PerformancePanel = () => {
         vertLine: { labelVisible: true },
         horzLine: { labelVisible: true },
       },
+      handleScroll: { vertTouchDrag: false },
     })
     chartApi = chart
 
@@ -346,7 +353,22 @@ export const PerformancePanel = () => {
       axisLabelVisible: false,
     })
 
+    const barCount = mainSeries.length
+    const maxLogicalSpan = Math.max(barCount - 1, 1)
     chart.timeScale().fitContent()
+    // Keep zoom-out capped to the selected period window (full bar range).
+    const clampVisibleRange = () => {
+      const range = chart.timeScale().getVisibleLogicalRange()
+      if (range === null) return
+      const span = range.to - range.from
+      if (span <= maxLogicalSpan + 0.05) return
+      chart.timeScale().setVisibleLogicalRange({
+        from: 0,
+        to: maxLogicalSpan,
+      })
+    }
+    chart.timeScale().subscribeVisibleLogicalRangeChange(clampVisibleRange)
+    clampVisibleRange()
 
     const lookupAtTime = (
       series: readonly TimedValue[],
@@ -409,8 +431,16 @@ export const PerformancePanel = () => {
         setHoverBreakdown(null)
         return
       }
+      const hostWidth = host.clientWidth
+      const halfWidth = TOOLTIP_WIDTH_PX / 2
+      const minCenter = halfWidth + TOOLTIP_EDGE_PAD_PX
+      const maxCenter = Math.max(
+        minCenter,
+        hostWidth - halfWidth - TOOLTIP_EDGE_PAD_PX,
+      )
+      const clampedX = Math.min(Math.max(param.point.x, minCenter), maxCenter)
       setHoverBreakdown({
-        x: param.point.x,
+        x: clampedX,
         y: param.point.y,
         timeLabel: new Date(timestampMs).toLocaleString(),
         rows,
@@ -424,11 +454,13 @@ export const PerformancePanel = () => {
           width: entry.contentRect.width,
           height: entry.contentRect.height,
         })
+        clampVisibleRange()
       }
     })
     resizeObserver.observe(host)
 
     onCleanup(() => {
+      chart.timeScale().unsubscribeVisibleLogicalRangeChange(clampVisibleRange)
       chart.unsubscribeCrosshairMove(onCrosshairMove)
       resizeObserver.disconnect()
       chart.remove()
@@ -585,10 +617,11 @@ export const PerformancePanel = () => {
             <Show when={hoverBreakdown()}>
               {label => (
                 <div
-                  class="pointer-events-none absolute z-10 -translate-x-1/2 -translate-y-full rounded bg-background/95 px-2 py-1 text-[10px] text-foreground shadow border border-border/60 min-w-[140px]"
+                  class="pointer-events-none absolute z-10 -translate-x-1/2 -translate-y-full rounded bg-background/95 px-2 py-1 text-[10px] text-foreground shadow border border-border/60"
                   style={{
                     left: `${label().x}px`,
                     top: `${Math.max(label().y - 8, 4)}px`,
+                    width: `${TOOLTIP_WIDTH_PX}px`,
                   }}
                 >
                   <div class="text-muted-foreground mb-0.5">

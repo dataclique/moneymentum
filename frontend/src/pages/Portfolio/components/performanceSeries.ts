@@ -17,6 +17,13 @@ export interface TimedValue {
   readonly value: number
 }
 
+export interface PeriodWindow {
+  readonly startMs: number
+  readonly endMs: number
+  readonly bucketMs: number
+  readonly gridTimes: readonly number[]
+}
+
 const HOUR_MS = 60 * 60 * 1000
 const DAY_MS = 24 * HOUR_MS
 
@@ -47,25 +54,120 @@ export const eventSignedFlowUsd = (event: AccountPerformanceEvent): number => {
   return event.kind === "deposit" ? Math.abs(amount) : -Math.abs(amount)
 }
 
-export const filterPointsByPeriod = (
-  points: readonly EquityPoint[],
-  period: PerformancePeriod,
-): EquityPoint[] => {
-  if (period === "all-time" || points.length === 0) return [...points]
-  const maxTime = Math.max(...points.map(point => point.timestamp_ms))
-  const cutoff = maxTime - PERIOD_LOOKBACK_MS[period]
-  return points.filter(point => point.timestamp_ms >= cutoff)
+export const resampleBucketMs = (period: PerformancePeriod): number => {
+  if (period === "24h" || period === "7d") return HOUR_MS
+  return DAY_MS
 }
 
-export const filterEventsByPeriod = (
-  events: readonly AccountPerformanceEvent[],
+/** Bucket close timestamps covering [startMs, endMs]. */
+export const buildPeriodGrid = (
+  startMs: number,
+  endMs: number,
+  bucketMs: number,
+): number[] => {
+  if (!(endMs >= startMs) || bucketMs <= 0) return []
+  const firstBucket = Math.floor(startMs / bucketMs) * bucketMs
+  const lastBucket = Math.floor(endMs / bucketMs) * bucketMs
+  const times: number[] = []
+  for (let bucket = firstBucket; bucket <= lastBucket; bucket += bucketMs) {
+    times.push(bucket + bucketMs - 1)
+  }
+  return times
+}
+
+/**
+ * Shared chart window for the selected period. End is max(now, latest sample)
+ * so a 7d window always ends at "today" even when a venue is sparse.
+ */
+export const computePeriodWindow = (
   period: PerformancePeriod,
-  equityPoints: readonly EquityPoint[],
-): AccountPerformanceEvent[] => {
-  if (period === "all-time" || equityPoints.length === 0) return [...events]
-  const maxTime = Math.max(...equityPoints.map(point => point.timestamp_ms))
-  const cutoff = maxTime - PERIOD_LOOKBACK_MS[period]
-  return events.filter(event => event.timestamp_ms >= cutoff)
+  seriesList: readonly VenuePerformanceSeries[],
+  nowMs: number,
+): PeriodWindow => {
+  const bucketMs = resampleBucketMs(period)
+  let dataStart = Number.POSITIVE_INFINITY
+  let dataEnd = Number.NEGATIVE_INFINITY
+
+  for (const series of seriesList) {
+    for (const point of series.equity_points) {
+      if (!isPositiveEquity(pointValue(point))) continue
+      dataStart = Math.min(dataStart, point.timestamp_ms)
+      dataEnd = Math.max(dataEnd, point.timestamp_ms)
+    }
+  }
+
+  const hasData = Number.isFinite(dataStart) && Number.isFinite(dataEnd)
+  const endMs = hasData ? Math.max(dataEnd, nowMs) : nowMs
+  const startMs =
+    period === "all-time"
+      ? hasData
+        ? dataStart
+        : endMs - DAY_MS
+      : endMs - PERIOD_LOOKBACK_MS[period]
+
+  return {
+    startMs,
+    endMs,
+    bucketMs,
+    gridTimes: buildPeriodGrid(startMs, endMs, bucketMs),
+  }
+}
+
+/**
+ * Carry the last positive equity onto each grid close. Leading buckets before
+ * the first observation stay empty so we do not invent pre-history.
+ */
+export const forwardFillOntoGrid = (
+  points: readonly EquityPoint[],
+  gridTimes: readonly number[],
+): EquityPoint[] => {
+  if (gridTimes.length === 0) return []
+  const sorted = [...points].sort(
+    (left, right) => left.timestamp_ms - right.timestamp_ms,
+  )
+  let index = 0
+  let lastValue: string | undefined
+  const filled: EquityPoint[] = []
+
+  for (const time of gridTimes) {
+    for (const sample of sorted.slice(index)) {
+      if (sample.timestamp_ms > time) break
+      const value = pointValue(sample)
+      if (isPositiveEquity(value)) {
+        lastValue = sample.value_usd
+      }
+      index += 1
+    }
+    if (lastValue !== undefined) {
+      filled.push({ timestamp_ms: time, value_usd: lastValue })
+    }
+  }
+  return filled
+}
+
+/** Last sample in each time bucket (hour or day). */
+export const resampleEquityPoints = (
+  points: readonly EquityPoint[],
+  bucketMs: number,
+): EquityPoint[] => {
+  if (points.length === 0) return []
+  const byBucket = new Map<number, { sourceMs: number; point: EquityPoint }>()
+  for (const point of points) {
+    const bucket = Math.floor(point.timestamp_ms / bucketMs) * bucketMs
+    const existing = byBucket.get(bucket)
+    if (existing === undefined || point.timestamp_ms >= existing.sourceMs) {
+      byBucket.set(bucket, {
+        sourceMs: point.timestamp_ms,
+        point: {
+          timestamp_ms: bucket + bucketMs - 1,
+          value_usd: point.value_usd,
+        },
+      })
+    }
+  }
+  return [...byBucket.entries()]
+    .sort((left, right) => left[0] - right[0])
+    .map(([, entry]) => entry.point)
 }
 
 export const chartableEquityPoints = (
@@ -119,34 +221,38 @@ export const filterEquityOutliers = (
   return kept
 }
 
-export const resampleBucketMs = (period: PerformancePeriod): number => {
-  if (period === "24h" || period === "7d") return HOUR_MS
-  return DAY_MS
-}
-
-/** Last sample in each time bucket (hour or day). */
-export const resampleEquityPoints = (
-  points: readonly EquityPoint[],
-  bucketMs: number,
-): EquityPoint[] => {
-  if (points.length === 0) return []
-  const byBucket = new Map<number, { sourceMs: number; point: EquityPoint }>()
-  for (const point of points) {
-    const bucket = Math.floor(point.timestamp_ms / bucketMs) * bucketMs
-    const existing = byBucket.get(bucket)
-    if (existing === undefined || point.timestamp_ms >= existing.sourceMs) {
-      byBucket.set(bucket, {
-        sourceMs: point.timestamp_ms,
-        point: {
-          timestamp_ms: bucket + bucketMs - 1,
-          value_usd: point.value_usd,
-        },
-      })
-    }
+/**
+ * If venue equity history starts without a recorded deposit, treat the first
+ * positive mark as an external opening deposit so connecting a funded venue
+ * does not look like investment return on Total.
+ */
+export const withImpliedOpeningDeposit = (
+  equityPoints: readonly EquityPoint[],
+  events: readonly AccountPerformanceEvent[],
+): AccountPerformanceEvent[] => {
+  const chartable = chartableEquityPoints(equityPoints)
+  let first: EquityPoint | undefined
+  for (const point of chartable) {
+    first = point
+    break
   }
-  return [...byBucket.entries()]
-    .sort((left, right) => left[0] - right[0])
-    .map(([, entry]) => entry.point)
+  if (first === undefined) return [...events]
+
+  const hasOpeningDeposit = events.some(
+    event =>
+      event.kind === "deposit" && event.timestamp_ms <= first.timestamp_ms,
+  )
+  if (hasOpeningDeposit) return [...events]
+
+  const opening: AccountPerformanceEvent = {
+    kind: "deposit",
+    timestamp_ms: first.timestamp_ms,
+    amount_usd: first.value_usd,
+    source_id: `implied-open:${String(first.timestamp_ms)}`,
+  }
+  return [...events, opening].sort(
+    (left, right) => left.timestamp_ms - right.timestamp_ms,
+  )
 }
 
 /**
@@ -233,9 +339,7 @@ export const twrPercentSeries = (
   const points = chartableEquityPoints(equityPoints)
   if (points.length === 0) return []
 
-  const flows = [...events].sort(
-    (left, right) => left.timestamp_ms - right.timestamp_ms,
-  )
+  const flows = withImpliedOpeningDeposit(points, events)
   let flowIndex = 0
   let units = 0
   let baseNavPerUnit: number | undefined
@@ -308,9 +412,7 @@ export const underwaterDrawdownSeries = (
   const points = chartableEquityPoints(equityPoints)
   if (points.length === 0) return []
 
-  const flows = [...events].sort(
-    (left, right) => left.timestamp_ms - right.timestamp_ms,
-  )
+  const flows = withImpliedOpeningDeposit(points, events)
   let flowIndex = 0
   let units = 0
   let peakNav = Number.NEGATIVE_INFINITY
@@ -366,16 +468,33 @@ export const equityPriceScaleRange = (
   }
 }
 
+const eventsInWindow = (
+  events: readonly AccountPerformanceEvent[],
+  startMs: number,
+  endMs: number,
+): AccountPerformanceEvent[] =>
+  events.filter(
+    event => event.timestamp_ms >= startMs && event.timestamp_ms <= endMs,
+  )
+
+/**
+ * Clean, grid-align, and attach cash-flow events for one venue on a shared
+ * period window so every hour/day in the selected range is hoverable.
+ */
 export const prepareVenueEquity = (
   series: VenuePerformanceSeries,
-  period: PerformancePeriod,
+  window: PeriodWindow,
 ): { equity: EquityPoint[]; events: AccountPerformanceEvent[] } => {
-  const filtered = filterPointsByPeriod(series.equity_points, period)
-  const withoutOutliers = filterEquityOutliers(filtered)
-  const resampled = resampleEquityPoints(
-    withoutOutliers,
-    resampleBucketMs(period),
+  const withoutOutliers = filterEquityOutliers(series.equity_points)
+  // Keep one bucket of pre-window history so the first grid cell can fill.
+  const seedCutoff = window.startMs - window.bucketMs
+  const seeded = withoutOutliers.filter(
+    point => point.timestamp_ms >= seedCutoff,
   )
-  const events = filterEventsByPeriod(series.events, period, resampled)
-  return { equity: resampled, events }
+  const equity = forwardFillOntoGrid(seeded, window.gridTimes)
+  const events = withImpliedOpeningDeposit(
+    equity,
+    eventsInWindow(series.events, window.startMs, window.endMs),
+  )
+  return { equity, events }
 }

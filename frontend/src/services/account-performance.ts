@@ -14,10 +14,24 @@ export interface EquityPoint {
   readonly value_usd: string
 }
 
+export type AccountPerformanceEvent =
+  | {
+      readonly kind: "deposit"
+      readonly timestamp_ms: number
+      readonly amount_usd: string
+      readonly source_id: string
+    }
+  | {
+      readonly kind: "withdraw"
+      readonly timestamp_ms: number
+      readonly amount_usd: string
+      readonly source_id: string
+    }
+
 export interface VenuePerformanceSeries {
   readonly venue: PerformanceVenueId
   readonly equity_points: readonly EquityPoint[]
-  readonly events: readonly unknown[]
+  readonly events: readonly AccountPerformanceEvent[]
   readonly fetched_at: string
   readonly coverage_start_ms: number | null
   readonly coverage_end_ms: number | null
@@ -30,7 +44,7 @@ export interface WalletPerformanceCache {
 
 export interface UpsertVenuePerformanceRequest {
   readonly equity_points: readonly EquityPoint[]
-  readonly events?: readonly unknown[]
+  readonly events: readonly AccountPerformanceEvent[]
   readonly fetched_at: string
   readonly coverage_start_ms: number | null
   readonly coverage_end_ms: number | null

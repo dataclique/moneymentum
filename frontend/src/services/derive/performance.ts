@@ -1,5 +1,5 @@
 /**
- * Derive account value history → server performance cache.
+ * Derive account value history and cash-flow events → server performance cache.
  * Session private key stays in the browser; only public wallet + series are sent.
  */
 
@@ -10,6 +10,7 @@ import { privateKeyToAccount } from "viem/accounts"
 import { postJson } from "@/lib/http"
 import {
   upsertVenuePerformance,
+  type AccountPerformanceEvent,
   type EquityPoint,
 } from "../account-performance"
 import {
@@ -21,6 +22,7 @@ import {
   parseDeriveNumeric,
   requireDeriveSession,
   type DeriveSessionCredentials,
+  type DeriveSessionWithSubaccount,
 } from "./session"
 
 interface DeriveRpcEnvelope<Result> {
@@ -40,8 +42,27 @@ interface DeriveValueHistoryResult {
   readonly subaccount_value_history?: DeriveValueHistoryEntry[] | null
 }
 
+interface DeriveCashFlowHistoryEntry {
+  readonly amount?: string | number
+  readonly asset?: string
+  readonly timestamp?: number
+  readonly transaction_id?: string
+  readonly tx_hash?: string
+  readonly tx_status?: string
+}
+
+interface DeriveCashFlowHistoryResult {
+  readonly events?: DeriveCashFlowHistoryEntry[] | null
+}
+
 export class DeriveValueHistoryInvalid extends Data.TaggedError(
   "DeriveValueHistoryInvalid",
+)<{
+  readonly message: string
+}> {}
+
+export class DeriveCashFlowHistoryInvalid extends Data.TaggedError(
+  "DeriveCashFlowHistoryInvalid",
 )<{
   readonly message: string
 }> {}
@@ -52,6 +73,9 @@ type SyncDerivePerformanceFailure =
   | DeriveSessionSignFailed
   | DeriveRpcError
   | DeriveValueHistoryInvalid
+  | DeriveCashFlowHistoryInvalid
+
+const USD_LIKE_ASSETS = new Set(["USDC", "USDT", "USD", "USDC.E", "USDT.E"])
 
 const toDeriveRpcError = (cause: unknown): DeriveRpcError =>
   new DeriveRpcError({
@@ -98,6 +122,34 @@ const unwrapRpc = <Result>(
   return Effect.succeed(envelope.result)
 }
 
+const signedPrivatePost = <Result>(
+  session: DeriveSessionWithSubaccount,
+  path: string,
+  body: Record<string, unknown>,
+  signal?: AbortSignal,
+): Effect.Effect<Result, DeriveSessionSignFailed | DeriveRpcError> =>
+  Effect.gen(function* () {
+    const baseUrl = deriveRestBaseUrl(session.networkMode)
+    const timestampMs = Date.now().toString()
+    const signature = yield* signTimestamp(
+      session.sessionPrivateKey,
+      timestampMs,
+    )
+    const envelope = yield* postJson<DeriveRpcEnvelope<Result>>(
+      `${baseUrl}${path}`,
+      body,
+      {
+        signal,
+        headers: {
+          "X-LyraWallet": session.deriveWallet,
+          "X-LyraTimestamp": timestampMs,
+          "X-LyraSignature": signature,
+        },
+      },
+    ).pipe(Effect.mapError(toDeriveRpcError))
+    return yield* unwrapRpc(envelope)
+  })
+
 /**
  * Convert Derive value-history samples (unix seconds) into cache equity points.
  */
@@ -138,9 +190,63 @@ export const equityPointsFromDeriveValueHistory = (
   return Effect.succeed(points)
 }
 
+const isSettledCashFlow = (status: string | undefined): boolean =>
+  status === undefined || status === "settled"
+
+const isUsdLikeAsset = (asset: string | undefined): boolean => {
+  if (asset === undefined || asset.trim() === "") return true
+  return USD_LIKE_ASSETS.has(asset.trim().toUpperCase())
+}
+
 /**
- * Fetch hourly (period=3600) value history for the selected subaccount and
- * upsert it into the server cache under the Derive public wallet address.
+ * Map Derive deposit/withdrawal history rows into cache cash-flow events.
+ * Non-USD assets and non-settled rows are skipped in v1.
+ */
+export const cashFlowEventsFromDeriveHistory = (
+  kind: "deposit" | "withdraw",
+  entries: readonly DeriveCashFlowHistoryEntry[],
+): Effect.Effect<AccountPerformanceEvent[], DeriveCashFlowHistoryInvalid> => {
+  const events: AccountPerformanceEvent[] = []
+  for (const entry of entries) {
+    if (!isSettledCashFlow(entry.tx_status)) continue
+    if (!isUsdLikeAsset(entry.asset)) continue
+    if (
+      typeof entry.timestamp !== "number" ||
+      !Number.isFinite(entry.timestamp)
+    ) {
+      return Effect.fail(
+        new DeriveCashFlowHistoryInvalid({
+          message: "Derive cash-flow entry missing timestamp.",
+        }),
+      )
+    }
+    const amount = parseDeriveNumeric(entry.amount, Number.NaN)
+    if (!Number.isFinite(amount) || amount <= 0) {
+      return Effect.fail(
+        new DeriveCashFlowHistoryInvalid({
+          message: "Derive cash-flow entry missing positive amount.",
+        }),
+      )
+    }
+    const timestampMs =
+      entry.timestamp < 1_000_000_000_000
+        ? Math.trunc(entry.timestamp * 1000)
+        : Math.trunc(entry.timestamp)
+    const sourceId =
+      entry.tx_hash ?? entry.transaction_id ?? `${kind}:${String(timestampMs)}`
+    events.push({
+      kind,
+      timestamp_ms: timestampMs,
+      amount_usd: Math.abs(amount).toString(),
+      source_id: sourceId,
+    })
+  }
+  return Effect.succeed(events)
+}
+
+/**
+ * Fetch hourly value history plus deposit/withdrawal events for the selected
+ * subaccount and upsert into the server cache under the Derive public wallet.
  */
 export const syncDerivePerformanceToCache = (
   credentials: DeriveSessionCredentials | null,
@@ -155,38 +261,60 @@ export const syncDerivePerformanceToCache = (
 
     const endSeconds = Math.floor(Date.now() / 1000)
     const startSeconds = endSeconds - 365 * 24 * 3600
-    const baseUrl = deriveRestBaseUrl(session.networkMode)
-    const timestampMs = Date.now().toString()
-    const signature = yield* signTimestamp(
-      session.sessionPrivateKey,
-      timestampMs,
-    )
+    const sessionWithSubaccount: DeriveSessionWithSubaccount = {
+      ...session,
+      subaccountId,
+    }
 
-    const envelope = yield* postJson<
-      DeriveRpcEnvelope<DeriveValueHistoryResult>
-    >(
-      `${baseUrl}/private/get_subaccount_value_history`,
+    const historyResult = yield* signedPrivatePost<DeriveValueHistoryResult>(
+      sessionWithSubaccount,
+      "/private/get_subaccount_value_history",
       {
         subaccount_id: subaccountId,
         start_timestamp: startSeconds,
         end_timestamp: endSeconds,
         period: 3600,
       },
-      {
-        signal,
-        headers: {
-          "X-LyraWallet": session.deriveWallet,
-          "X-LyraTimestamp": timestampMs,
-          "X-LyraSignature": signature,
-        },
-      },
-    ).pipe(Effect.mapError(toDeriveRpcError))
+      signal,
+    )
 
-    const result = yield* unwrapRpc(envelope)
-    const history = Array.isArray(result.subaccount_value_history)
-      ? result.subaccount_value_history
+    const history = Array.isArray(historyResult.subaccount_value_history)
+      ? historyResult.subaccount_value_history
       : []
     const equityPoints = yield* equityPointsFromDeriveValueHistory(history)
+
+    const depositResult = yield* signedPrivatePost<DeriveCashFlowHistoryResult>(
+      sessionWithSubaccount,
+      "/private/get_deposit_history",
+      {
+        subaccount_id: subaccountId,
+        start_timestamp: 0,
+      },
+      signal,
+    )
+    const withdrawResult =
+      yield* signedPrivatePost<DeriveCashFlowHistoryResult>(
+        sessionWithSubaccount,
+        "/private/get_withdrawal_history",
+        {
+          subaccount_id: subaccountId,
+          start_timestamp: 0,
+        },
+        signal,
+      )
+
+    const depositEvents = yield* cashFlowEventsFromDeriveHistory(
+      "deposit",
+      Array.isArray(depositResult.events) ? depositResult.events : [],
+    )
+    const withdrawEvents = yield* cashFlowEventsFromDeriveHistory(
+      "withdraw",
+      Array.isArray(withdrawResult.events) ? withdrawResult.events : [],
+    )
+    const events = [...depositEvents, ...withdrawEvents].sort(
+      (left, right) => left.timestamp_ms - right.timestamp_ms,
+    )
+
     const coverageStartMs =
       equityPoints.length === 0 ? null : (equityPoints[0]?.timestamp_ms ?? null)
     const coverageEndMs =
@@ -199,7 +327,7 @@ export const syncDerivePerformanceToCache = (
       "derive",
       {
         equity_points: equityPoints,
-        events: [],
+        events,
         fetched_at: new Date().toISOString(),
         coverage_start_ms: coverageStartMs,
         coverage_end_ms: coverageEndMs,

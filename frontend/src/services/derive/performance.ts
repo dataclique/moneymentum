@@ -333,7 +333,7 @@ export const syncDerivePerformanceToCache = (
         coverage_end_ms: coverageEndMs,
       },
       signal,
-    ).pipe(Effect.mapError(toDeriveRpcError))
+    )
 
     return equityPoints
   })

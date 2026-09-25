@@ -42,7 +42,8 @@ describe("http", () => {
       mockFetch().mockResolvedValue({
         ok: false,
         status: 422,
-        json: () => Promise.resolve({ detail: "Validation failed" }),
+        text: () =>
+          Promise.resolve(JSON.stringify({ detail: "Validation failed" })),
       })
 
       const exit = await Effect.runPromiseExit(fetchJson("/api/test"))
@@ -60,11 +61,11 @@ describe("http", () => {
       }
     })
 
-    it("returns HttpStatusError without detail when body is unparseable", async () => {
+    it("returns HttpStatusError without detail when body is empty", async () => {
       mockFetch().mockResolvedValue({
         ok: false,
         status: 500,
-        json: () => Promise.reject(new Error("not json")),
+        text: () => Promise.resolve(""),
       })
 
       const exit = await Effect.runPromiseExit(fetchJson("/api/test"))
@@ -80,11 +81,36 @@ describe("http", () => {
       }
     })
 
+    it("returns HttpStatusError with plain-text body as detail", async () => {
+      mockFetch().mockResolvedValue({
+        ok: false,
+        status: 422,
+        text: () =>
+          Promise.resolve(
+            "Failed to deserialize the JSON body into the target type",
+          ),
+      })
+
+      const exit = await Effect.runPromiseExit(fetchJson("/api/test"))
+
+      expect(exit._tag).toBe("Failure")
+      if (exit._tag === "Failure") {
+        const error = exit.cause
+        if (error._tag === "Fail") {
+          expect(error.error).toBeInstanceOf(HttpStatusError)
+          expect((error.error as HttpStatusError).status).toBe(422)
+          expect((error.error as HttpStatusError).detail).toContain(
+            "Failed to deserialize",
+          )
+        }
+      }
+    })
+
     it("returns HttpStatusError without detail when body is non-object JSON", async () => {
       mockFetch().mockResolvedValue({
         ok: false,
         status: 400,
-        json: () => Promise.resolve("just a string"),
+        text: () => Promise.resolve(JSON.stringify("just a string")),
       })
 
       const exit = await Effect.runPromiseExit(fetchJson("/api/test"))
@@ -95,7 +121,7 @@ describe("http", () => {
         if (error._tag === "Fail") {
           expect(error.error).toBeInstanceOf(HttpStatusError)
           expect((error.error as HttpStatusError).status).toBe(400)
-          expect((error.error as HttpStatusError).detail).toBeUndefined()
+          expect((error.error as HttpStatusError).detail).toBe("just a string")
         }
       }
     })
@@ -104,7 +130,7 @@ describe("http", () => {
       mockFetch().mockResolvedValue({
         ok: false,
         status: 400,
-        json: () => Promise.resolve(null),
+        text: () => Promise.resolve("null"),
       })
 
       const exit = await Effect.runPromiseExit(fetchJson("/api/test"))
@@ -213,7 +239,7 @@ describe("http", () => {
       mockFetch().mockResolvedValue({
         ok: false,
         status: 502,
-        json: () => Promise.resolve({ detail: "Bad gateway" }),
+        text: () => Promise.resolve(JSON.stringify({ detail: "Bad gateway" })),
       })
 
       const exit = await Effect.runPromiseExit(
@@ -277,7 +303,8 @@ describe("http", () => {
       mockFetch().mockResolvedValue({
         ok: false,
         status: 503,
-        json: () => Promise.resolve({ detail: "Service unavailable" }),
+        text: () =>
+          Promise.resolve(JSON.stringify({ detail: "Service unavailable" })),
       })
 
       const exit = await Effect.runPromiseExit(postEmpty("/api/stop"))

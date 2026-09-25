@@ -3,6 +3,7 @@
 //! Equity snapshots come from venue mark-to-market history. Deposit and withdraw
 //! events support cash-flow-aware percent returns on the frontend.
 
+use std::collections::BTreeMap;
 use std::str::FromStr;
 
 use chrono::{DateTime, Utc};
@@ -250,19 +251,11 @@ pub(crate) async fn load_wallet_performance(
     })
 }
 
-/// Pick the richest Hyperliquid portfolio window for charting.
-fn prefer_portfolio_window(window_name: &str) -> u8 {
-    match window_name {
-        "allTime" => 5,
-        "perpAllTime" => 4,
-        "month" => 3,
-        "week" => 2,
-        "day" => 1,
-        _ => 0,
-    }
-}
-
 /// Parse Hyperliquid `portfolio` info payload into equity points.
+///
+/// Unions every window (`day`, `week`, `month`, `allTime`, perp variants) so
+/// dense short-horizon samples are kept instead of discarding them for
+/// `allTime` alone.
 pub(crate) fn equity_points_from_hyperliquid_portfolio(
     payload: &serde_json::Value,
 ) -> Result<Vec<EquityPoint>, AccountPerformanceError> {
@@ -270,66 +263,60 @@ pub(crate) fn equity_points_from_hyperliquid_portfolio(
         .as_array()
         .ok_or(AccountPerformanceError::MissingAccountValueHistory)?;
 
-    let mut best_rank = 0_u8;
-    let mut best_history: Option<&Vec<serde_json::Value>> = None;
+    let mut by_timestamp: BTreeMap<i64, Decimal> = BTreeMap::new();
 
     for entry in windows {
         let pair = entry
             .as_array()
             .ok_or(AccountPerformanceError::MissingAccountValueHistory)?;
-        let [window_name_value, history_value] = pair.as_slice() else {
+        let [_, history_value] = pair.as_slice() else {
             return Err(AccountPerformanceError::MissingAccountValueHistory);
         };
-        let window_name = window_name_value
-            .as_str()
-            .ok_or(AccountPerformanceError::MissingAccountValueHistory)?;
-        let rank = prefer_portfolio_window(window_name);
-        if rank < best_rank {
-            continue;
-        }
-        let history = history_value
+        let Some(history) = history_value
             .get("accountValueHistory")
-            .and_then(|value| value.as_array())
-            .ok_or(AccountPerformanceError::MissingAccountValueHistory)?;
-        if rank > best_rank || best_history.is_none() {
-            best_rank = rank;
-            best_history = Some(history);
+            .and_then(serde_json::Value::as_array)
+        else {
+            continue;
+        };
+
+        for sample in history {
+            let pair = sample
+                .as_array()
+                .ok_or(AccountPerformanceError::MissingAccountValueHistory)?;
+            let [timestamp_value, equity_value] = pair.as_slice() else {
+                return Err(AccountPerformanceError::MissingAccountValueHistory);
+            };
+            let timestamp_ms = timestamp_value
+                .as_i64()
+                .ok_or(AccountPerformanceError::MissingAccountValueHistory)?;
+            let value_raw = match equity_value {
+                serde_json::Value::String(text) => text.clone(),
+                serde_json::Value::Number(number) => number.to_string(),
+                _ => {
+                    return Err(AccountPerformanceError::MissingAccountValueHistory);
+                }
+            };
+            let value_usd = Decimal::from_str(&value_raw).map_err(|_| {
+                AccountPerformanceError::InvalidEquityValue {
+                    timestamp_ms,
+                    value: value_raw,
+                }
+            })?;
+            by_timestamp.insert(timestamp_ms, value_usd);
         }
     }
 
-    let history = best_history.ok_or(AccountPerformanceError::MissingAccountValueHistory)?;
-    let mut points = Vec::with_capacity(history.len());
-    for sample in history {
-        let pair = sample
-            .as_array()
-            .ok_or(AccountPerformanceError::MissingAccountValueHistory)?;
-        let [timestamp_value, equity_value] = pair.as_slice() else {
-            return Err(AccountPerformanceError::MissingAccountValueHistory);
-        };
-        let timestamp_ms = timestamp_value
-            .as_i64()
-            .ok_or(AccountPerformanceError::MissingAccountValueHistory)?;
-        let value_raw = match equity_value {
-            serde_json::Value::String(text) => text.clone(),
-            serde_json::Value::Number(number) => number.to_string(),
-            _ => {
-                return Err(AccountPerformanceError::MissingAccountValueHistory);
-            }
-        };
-        let value_usd = Decimal::from_str(&value_raw).map_err(|_| {
-            AccountPerformanceError::InvalidEquityValue {
-                timestamp_ms,
-                value: value_raw,
-            }
-        })?;
-        points.push(EquityPoint {
+    if by_timestamp.is_empty() {
+        return Err(AccountPerformanceError::MissingAccountValueHistory);
+    }
+
+    Ok(by_timestamp
+        .into_iter()
+        .map(|(timestamp_ms, value_usd)| EquityPoint {
             timestamp_ms,
             value_usd,
-        });
-    }
-
-    points.sort_by_key(|point| point.timestamp_ms);
-    Ok(points)
+        })
+        .collect())
 }
 
 fn decimal_from_json_value(
@@ -540,16 +527,21 @@ mod tests {
     }
 
     #[test]
-    fn equity_points_prefer_all_time_window() {
+    fn equity_points_union_all_portfolio_windows() {
         let payload = serde_json::json!([
             ["day", {"accountValueHistory": [[10, "1.0"]]}],
             ["allTime", {"accountValueHistory": [[1, "2.5"], [2, "3.0"]]}],
             ["week", {"accountValueHistory": [[5, "9.0"]]}]
         ]);
         let points = equity_points_from_hyperliquid_portfolio(&payload).unwrap();
-        assert_eq!(points.len(), 2);
+        assert_eq!(points.len(), 4);
         assert_eq!(points[0].timestamp_ms, 1);
         assert_eq!(points[0].value_usd, Decimal::from_str("2.5").unwrap());
+        assert_eq!(points[1].timestamp_ms, 2);
+        assert_eq!(points[2].timestamp_ms, 5);
+        assert_eq!(points[2].value_usd, Decimal::from_str("9.0").unwrap());
+        assert_eq!(points[3].timestamp_ms, 10);
+        assert_eq!(points[3].value_usd, Decimal::from_str("1.0").unwrap());
     }
 
     #[test]

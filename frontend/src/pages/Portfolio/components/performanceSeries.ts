@@ -349,7 +349,9 @@ export const twrPercentSeries = (
   const points = chartableEquityPoints(equityPoints)
   if (points.length === 0) return []
 
-  const flows = withImpliedOpeningDeposit(points, events)
+  const flows = withImpliedOpeningDeposit(points, events).sort(
+    (left, right) => left.timestamp_ms - right.timestamp_ms,
+  )
   let flowIndex = 0
   let units = 0
   let baseNavPerUnit: number | undefined
@@ -422,7 +424,9 @@ export const underwaterDrawdownSeries = (
   const points = chartableEquityPoints(equityPoints)
   if (points.length === 0) return []
 
-  const flows = withImpliedOpeningDeposit(points, events)
+  const flows = withImpliedOpeningDeposit(points, events).sort(
+    (left, right) => left.timestamp_ms - right.timestamp_ms,
+  )
   let flowIndex = 0
   let units = 0
   let peakNav = Number.NEGATIVE_INFINITY

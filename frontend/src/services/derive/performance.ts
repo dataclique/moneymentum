@@ -12,6 +12,7 @@ import {
   upsertVenuePerformance,
   type AccountPerformanceEvent,
   type EquityPoint,
+  type PerformanceCacheWriteFailure,
 } from "../account-performance"
 import {
   DeriveRpcError,
@@ -74,6 +75,7 @@ type SyncDerivePerformanceFailure =
   | DeriveRpcError
   | DeriveValueHistoryInvalid
   | DeriveCashFlowHistoryInvalid
+  | PerformanceCacheWriteFailure
 
 const USD_LIKE_ASSETS = new Set(["USDC", "USDT", "USD", "USDC.E", "USDT.E"])
 

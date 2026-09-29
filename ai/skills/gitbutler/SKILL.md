@@ -6,9 +6,10 @@ description: "Commit, branch, push, stack PRs, and manage version control with t
 # GitButler CLI (`but`) Skill
 
 Use the GitButler CLI (`but`) as the default version-control interface in this
-repository. `but` is packaged via Nix (see `pkgs/gitbutler/default.nix`) and
-provided on `PATH` by the dev shell, so `direnv allow` / entering the shell is
-all that is needed. Verify with `but --version` (expect `but 0.20.0` or newer).
+repository. The dev shell provides `but` through the shared
+`but.packages.${system}.gitbutler-cli` package (see `flake.nix`). Run
+`direnv allow` / enter the shell, then verify with `but --version`. The commands
+below target the pinned GitButler 0.22.0 CLI.
 
 GitButler works on **virtual branches** inside a `gitbutler/workspace`
 integration branch: many branches can be applied at once, either side by side
@@ -29,9 +30,9 @@ you want for stacked PRs.
    short stack IDs (`at`) in commands you write down. The one reserved ID is
    `zz`: the built-in unassigned/unstaged area (the workspace root), not a user
    branch -- rubbing or moving anything onto `zz` unstages/unstacks it.
-4. There is **no `--status-after` flag** (it existed in older releases and was
-   removed). Mutations print the resulting state themselves; run `but status`
-   again only if you need fresh IDs.
+4. Use `--status-after` on supported mutations when the next step needs fresh
+   IDs. Otherwise, inspect `but status` when needed; IDs can change after a
+   mutation.
 5. Prefer `but commit` over amend. `but commit` runs the repo's pre-commit hooks
    (prek: nixfmt, eslint, rustfmt, ...); amend (`but amend` / `but rub`) skips
    them. Default to new commits; clean up history later with squash/reword.
@@ -50,16 +51,16 @@ but status                       # inspect state, gather CLI IDs
 but branch new <name>            # only if new work needs its own branch
 # ... edit files with Edit/Write ...
 but status                       # refresh IDs if files changed
-but commit <branch> -m "<msg>"   # commit the changes to a branch
+but commit -b <branch> -m "<msg>" <id>...  # commit selected files or hunks
 ```
 
 ## Common Tasks
 
 - View history: `git log` / `git log --oneline` (read-only git is fine) or
   `but show <branch>`.
-- Work on a different branch: there is no checkout -- if the branch is applied,
-  just edit and commit to it; if not, `but apply <branch>` first (and
-  `but unapply <branch>` to stash one away).
+- Work on a different workspace branch: if the branch is applied, edit and
+  commit to it; if not, use `but apply <branch>` first (and
+  `but unapply <branch>` to remove a stack from the workspace).
 - Fetch upstream changes: covered by `but pull --check` / `but pull`; no
   separate fetch step is needed.
 
@@ -74,22 +75,17 @@ but commit <branch> -m "<msg>"   # commit the changes to a branch
 
 ## Committing
 
-- Commit all uncommitted + branch-staged changes:
-  `but commit <branch> -m "<message>"`
-- Create the branch while committing: `but commit <branch> -c -m "<message>"`
-- Commit only specific files/hunks (precise commits):
-  `but commit <branch> -m "<message>" --changes <id>,<id>` (`--changes`/`-p`
-  takes comma-separated values (`--changes id1,id2`) or repeated flags
-  (`--changes id1 --changes id2`); space-separated ids after one flag are wrong.
-  `but commit -a` is a no-op compat flag -- GitButler already includes
-  uncommitted changes by default.)
-- Stage a file/hunk to a branch first (optional, for review):
-  `but stage <file-or-hunk-id> <branch>`, then `but commit <branch> --only`.
-- AI-generated message: `but commit <branch> -i` generates the message from the
-  diff. To steer it, pass instructions with an equals sign (required):
-  `but commit feat/x -i="explain the retry rationale"`.
-- Insert a placeholder: `but commit empty --after <commit>` (amend into it
-  later).
+- Commit only selected files/hunks:
+  `but commit -b <branch> -m "<message>" <id1> <id2>`. Change IDs are
+  positional; the branch is selected with `-b` / `--branch`.
+- Commit all uncommitted changes: `but commit -b <branch> -m "<message>"`. Omit
+  change IDs only when every uncommitted change belongs in that commit.
+- Create a new unstacked branch while committing:
+  `but commit -b <new-branch> -m "<message>" <id>...`.
+- Interactive change selection: `but commit -b <branch> -i`. In 0.22, `-i` opens
+  the selection TUI; it does not generate a commit message.
+- Insert an empty commit above an applied commit:
+  `but commit --above <commit> --empty -m "<message>"`.
 
 ## Stacking Branches (stacked PRs)
 
@@ -97,7 +93,7 @@ This is the headline workflow. To stack a new branch on top of an existing one:
 
 ```bash
 but branch new <child> --anchor <parent-branch-or-commit>
-but commit <child> -m "<message>"
+but commit -b <child> -m "<message>" <id>...
 ```
 
 `--anchor` is what makes it stacked rather than parallel. To re-stack existing
@@ -197,17 +193,17 @@ GitButler snapshots everything, including uncommitted changes:
 
 ## Git-to-But Map
 
-| git                      | but                                      |
-| ------------------------ | ---------------------------------------- |
-| `git status`             | `but status`                             |
-| `git add` + `git commit` | `but commit <branch> -m "..."`           |
-| `git checkout -b <name>` | `but branch new <name>`                  |
-| `git push`               | `but push`                               |
-| `git rebase -i`          | `but move` / `but squash` / `but reword` |
-| `git rebase --onto`      | `but move <branch> <new-base>`           |
-| `git stash`              | `but unapply <branch>`                   |
-| `git cherry-pick`        | `but pick <commit>`                      |
-| open a PR                | `but pr new`                             |
+| git                      | but                                       |
+| ------------------------ | ----------------------------------------- |
+| `git status`             | `but status`                              |
+| `git add` + `git commit` | `but commit -b <branch> -m "..." <id>...` |
+| `git checkout -b <name>` | `but branch new <name>`                   |
+| `git push`               | `but push`                                |
+| `git rebase -i`          | `but move` / `but squash` / `but reword`  |
+| `git rebase --onto`      | `but move <branch> <new-base>`            |
+| `git stash`              | `but unapply <branch>`                    |
+| `git cherry-pick`        | `but pick <commit>`                       |
+| open a PR                | `but pr new`                              |
 
 ## This Repository
 

@@ -71,6 +71,170 @@ afterEach(() => {
 
 describe("Derive open-order response validation", () => {
   it.each([
+    { label: "missing pagination", pagination: undefined },
+    { label: "null pagination", pagination: null },
+    { label: "array pagination", pagination: [] },
+    { label: "string pagination", pagination: "unexpected" },
+    { label: "missing page count", pagination: {} },
+    { label: "null page count", pagination: { num_pages: null } },
+    { label: "string page count", pagination: { num_pages: "1" } },
+    { label: "boolean page count", pagination: { num_pages: false } },
+    { label: "object page count", pagination: { num_pages: {} } },
+    { label: "fractional page count", pagination: { num_pages: 1.5 } },
+    { label: "negative page count", pagination: { num_pages: -1 } },
+    { label: "zero pages with an order", pagination: { num_pages: 0 } },
+    {
+      label: "unsafe page count",
+      pagination: { num_pages: Number.MAX_SAFE_INTEGER + 1 },
+    },
+  ])(
+    "rejects $label instead of reporting a complete snapshot",
+    async ({ pagination }) => {
+      const consoleSpies = (
+        ["debug", "info", "warn", "error", "log", "trace"] as const
+      ).map(level => vi.spyOn(console, level).mockImplementation(() => {}))
+      const fetch = vi.fn().mockResolvedValue(
+        Response.json({
+          result: { orders: [validOrder], pagination },
+        }),
+      )
+      vi.stubGlobal("fetch", fetch)
+      const snapshot = await Effect.runPromise(
+        Effect.either(fetchDeriveOpenOrders(session)),
+      )
+      expect(snapshot).toMatchObject({
+        _tag: "Left",
+        left: {
+          _tag: "DeriveRpcError",
+          code: null,
+          message: expect.stringContaining("pagination"),
+        },
+      })
+      expect(fetch).toHaveBeenCalledTimes(1)
+      consoleSpies.forEach(consoleSpy => {
+        expect(consoleSpy).not.toHaveBeenCalled()
+      })
+    },
+  )
+
+  it.each([
+    { label: "missing", pagination: undefined },
+    { label: "shrinking", pagination: { num_pages: 1 } },
+    { label: "zero", pagination: { num_pages: 0 } },
+  ])(
+    "rejects $label later-page metadata without returning the valid prefix",
+    async ({ pagination }) => {
+      const consoleSpies = (
+        ["debug", "info", "warn", "error", "log", "trace"] as const
+      ).map(level => vi.spyOn(console, level).mockImplementation(() => {}))
+      const firstPageOrders = Array.from({ length: 500 }, (_unused, index) => ({
+        ...validOrder,
+        order_id: `first-page-${index}`,
+      }))
+      const fetch = vi
+        .fn()
+        .mockResolvedValueOnce(
+          Response.json({
+            result: {
+              orders: firstPageOrders,
+              pagination: { num_pages: 2, count: 501 },
+            },
+          }),
+        )
+        .mockResolvedValueOnce(
+          Response.json({ result: { orders: [validOrder], pagination } }),
+        )
+      vi.stubGlobal("fetch", fetch)
+      const snapshot = await Effect.runPromise(
+        Effect.either(fetchDeriveOpenOrders(session)),
+      )
+      expect(snapshot).toMatchObject({
+        _tag: "Left",
+        left: {
+          _tag: "DeriveRpcError",
+          code: null,
+          message: expect.stringContaining("pagination"),
+        },
+      })
+      expect(fetch).toHaveBeenCalledTimes(2)
+      consoleSpies.forEach(consoleSpy => {
+        expect(consoleSpy).not.toHaveBeenCalled()
+      })
+    },
+  )
+
+  it("rejects an overflowing page count decoded from JSON", async () => {
+    const consoleSpies = (
+      ["debug", "info", "warn", "error", "log", "trace"] as const
+    ).map(level => vi.spyOn(console, level).mockImplementation(() => {}))
+    const fetch = vi
+      .fn()
+      .mockResolvedValue(
+        new Response(
+          '{"result":{"orders":[],"pagination":{"num_pages":1e999}}}',
+          { headers: { "content-type": "application/json" } },
+        ),
+      )
+    vi.stubGlobal("fetch", fetch)
+    const snapshot = await Effect.runPromise(
+      Effect.either(fetchDeriveOpenOrders(session)),
+    )
+    expect(snapshot).toMatchObject({
+      _tag: "Left",
+      left: {
+        _tag: "DeriveRpcError",
+        code: null,
+        message: expect.stringContaining("pagination"),
+      },
+    })
+    expect(fetch).toHaveBeenCalledTimes(1)
+    consoleSpies.forEach(consoleSpy => {
+      expect(consoleSpy).not.toHaveBeenCalled()
+    })
+  })
+
+  it.each([
+    {
+      label: "missing pagination",
+      orderPage: { orders: [] },
+      expectedTag: "Left",
+    },
+    {
+      label: "explicit zero pages",
+      orderPage: { orders: [], pagination: { num_pages: 0, count: 0 } },
+      expectedTag: "Right",
+    },
+  ])(
+    "distinguishes $label on an empty first page",
+    async ({ orderPage, expectedTag }) => {
+      const consoleSpies = (
+        ["debug", "info", "warn", "error", "log", "trace"] as const
+      ).map(level => vi.spyOn(console, level).mockImplementation(() => {}))
+      const fetch = vi
+        .fn()
+        .mockResolvedValue(Response.json({ result: orderPage }))
+      vi.stubGlobal("fetch", fetch)
+      const snapshot = await Effect.runPromise(
+        Effect.either(fetchDeriveOpenOrders(session)),
+      )
+      expect(snapshot._tag).toBe(expectedTag)
+      if (snapshot._tag === "Right") {
+        expect(snapshot.right).toEqual([])
+      } else {
+        expect(snapshot.left).toMatchObject({
+          _tag: "DeriveRpcError",
+          code: null,
+          message: expect.stringContaining("pagination"),
+        })
+      }
+      expect(fetch).toHaveBeenCalledTimes(1)
+      consoleSpies.forEach(consoleSpy => {
+        expect(consoleSpy).not.toHaveBeenCalled()
+      })
+    },
+  )
+
+  it.each([
     { label: "null root", envelope: null },
     { label: "numeric root", envelope: 42 },
     { label: "string root", envelope: "unexpected" },
@@ -218,6 +382,49 @@ describe("Derive open-order response validation", () => {
       expect(consoleSpy).not.toHaveBeenCalled()
     })
   })
+
+  it.each([
+    { initialPages: 3, laterPages: 2 },
+    { initialPages: 2, laterPages: 3 },
+  ])(
+    "rejects a page-count change from $initialPages to $laterPages during collection",
+    async ({ initialPages, laterPages }) => {
+      const consoleSpies = (
+        ["debug", "info", "warn", "error", "log", "trace"] as const
+      ).map(level => vi.spyOn(console, level).mockImplementation(() => {}))
+      const pageResponse = (page: number, pageCount: number) =>
+        Response.json({
+          result: {
+            orders: Array.from({ length: 500 }, (_unused, orderIndex) => ({
+              ...validOrder,
+              order_id: `order-${page}-${orderIndex}`,
+            })),
+            pagination: { num_pages: pageCount, count: pageCount * 500 },
+          },
+        })
+      const fetch = vi
+        .fn()
+        .mockResolvedValueOnce(pageResponse(1, initialPages))
+        .mockResolvedValueOnce(pageResponse(2, laterPages))
+        .mockResolvedValueOnce(pageResponse(3, laterPages))
+      vi.stubGlobal("fetch", fetch)
+      const snapshot = await Effect.runPromise(
+        Effect.either(fetchDeriveOpenOrders(session)),
+      )
+      expect(snapshot).toMatchObject({
+        _tag: "Left",
+        left: {
+          _tag: "DeriveRpcError",
+          code: null,
+          message: expect.stringContaining("pagination"),
+        },
+      })
+      expect(fetch).toHaveBeenCalledTimes(2)
+      consoleSpies.forEach(consoleSpy => {
+        expect(consoleSpy).not.toHaveBeenCalled()
+      })
+    },
+  )
 
   it.each([100, 101])(
     "never exposes an incomplete %i-page snapshot at the page limit",

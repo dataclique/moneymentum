@@ -339,14 +339,6 @@ export interface DeriveApiOrder {
   readonly order_type?: string
 }
 
-interface RawOpenOrdersResult {
-  readonly subaccount_id?: number
-  readonly orders?: DeriveApiOrder[] | null
-  readonly pagination?: {
-    readonly num_pages?: number
-  }
-}
-
 const DERIVE_OPEN_ORDERS_PAGE_SIZE = 500
 const DERIVE_OPEN_ORDERS_MAX_PAGES = 100
 
@@ -372,6 +364,36 @@ const isOrderPayloadObject = (
   payload: unknown,
 ): payload is Record<string, unknown> =>
   typeof payload === "object" && payload !== null && !Array.isArray(payload)
+
+const pageCountFromGetOrdersResult = (
+  orderPage: unknown,
+  requestedPage: number,
+  pageOrders: readonly DeriveApiOrder[],
+  expectedPageCount: number | undefined,
+): Effect.Effect<number, DeriveRpcError> => {
+  const pagination = isOrderPayloadObject(orderPage)
+    ? orderPage.pagination
+    : undefined
+  const pageCount = isOrderPayloadObject(pagination)
+    ? pagination.num_pages
+    : undefined
+  const isEmptyFirstPage =
+    requestedPage === 1 && pageCount === 0 && pageOrders.length === 0
+
+  return typeof pageCount === "number" &&
+    Number.isSafeInteger(pageCount) &&
+    pageCount >= 0 &&
+    (pageCount >= requestedPage || isEmptyFirstPage) &&
+    (expectedPageCount === undefined || pageCount === expectedPageCount)
+    ? Effect.succeed(pageCount)
+    : Effect.fail(
+        new DeriveRpcError({
+          code: null,
+          message:
+            "Derive get_orders response has invalid pagination; the order list is incomplete.",
+        }),
+      )
+}
 
 const isDeriveApiOrder = (order: unknown): order is DeriveApiOrder => {
   if (
@@ -406,7 +428,8 @@ const isDeriveApiOrder = (order: unknown): order is DeriveApiOrder => {
 /**
  * Resting orders for the selected subaccount via `private/get_orders`.
  * Same signed REST path as account snapshots -- no CCXT `loadMarkets`.
- * Walks reported pages; exceeding the safety budget fails without partial data.
+ * Requires stable, valid page counts; invalid metadata or an exceeded safety budget
+ * fails without exposing partial data.
  */
 export const fetchDeriveOpenOrders = (
   credentials: DeriveSessionCredentials | null,
@@ -419,10 +442,11 @@ export const fetchDeriveOpenOrders = (
     const session = yield* requireDeriveSessionWithSubaccount(credentials)
     const baseUrl = deriveRestBaseUrl(session.networkMode)
     let page = 1
+    let expectedPageCount: number | undefined
     let orders: DeriveApiOrder[] = []
 
     while (page <= DERIVE_OPEN_ORDERS_MAX_PAGES) {
-      const result = yield* privateCallWithSession<RawOpenOrdersResult>(
+      const result = yield* privateCallWithSession<unknown>(
         baseUrl,
         "private/get_orders",
         {
@@ -435,9 +459,15 @@ export const fetchDeriveOpenOrders = (
         signal,
       )
       const pageOrders = yield* ordersFromGetOrdersResult(result)
+      const numPages = yield* pageCountFromGetOrdersResult(
+        result,
+        page,
+        pageOrders,
+        expectedPageCount,
+      )
+      expectedPageCount = numPages
       orders = [...orders, ...pageOrders]
 
-      const numPages = Math.max(1, result.pagination?.num_pages ?? page)
       if (page >= numPages) {
         return orders
       }

@@ -92,6 +92,11 @@ pre-commit run -a
 All dependencies are managed through Nix. Do not use `bun install` or similar
 directly.
 
+GitButler comes from the pinned
+[`dataclique/but.nix`](https://github.com/dataclique/but.nix) flake input, not a
+local package copy. Update it with `nix flake update but`. The same input
+supplies the `pr-stack-footer` package required by the contribution workflow.
+
 ### Running AI coding agents
 
 Use any coding agent with direnv enabled in its command environment. Confirm

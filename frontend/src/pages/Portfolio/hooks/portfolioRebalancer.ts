@@ -682,8 +682,8 @@ const emptyDeriveTicker = (symbol: string): DeriveTickerQuote => ({
 })
 
 /**
- * IOC/market reduce-only needs a taking quote (sell→bid, buy→ask). Empty book
- * forces resting GTC without reduce_only (Derive 11009 + 11024).
+ * IOC/market reduce-only needs a taking quote (sell: bid, buy: ask).
+ * An empty taking book must refuse the reduction, not remove reduce-only.
  */
 export const hasDeriveTakingLiquidity = (
   ticker: DeriveTickerQuote,
@@ -696,9 +696,9 @@ export const hasDeriveTakingLiquidity = (
 /**
  * Maps Derive portfolio actions to limit order requests. Option closes prefer
  * venue `contracts` so dust premium notionals still flatten. Limit price is
- * aggressive book (ask/bid), then ticker mark/last, then the position's last
- * mark/entry. Dust with neither size nor price is skipped; open/rebalance
- * still fails loud when a price is missing.
+ * aggressive book (ask/bid), then ticker mark/last. Position mark/entry is
+ * a fallback only for closes and reductions, never for increasing exposure.
+ * Unpriceable dust is skipped; meaningful closes with unknown size fail.
  */
 export const deriveActionsToOrderRequests = (
   actions: DeriveRebalanceAction[],
@@ -743,8 +743,14 @@ export const deriveActionsToOrderRequests = (
                   sizingPrice,
                 )
               : 0)
-          // Dust / unpriceable flatten: skip instead of failing the whole batch.
           if (!(amount > 0)) {
+            if (currentPosition.notional > STAGED_NOTIONAL_EPSILON_USD) {
+              return yield* Effect.fail(
+                new DeriveOrderMappingFailed({
+                  reason: `Cannot determine Derive contract amount for close of ${action.symbol}`,
+                }),
+              )
+            }
             continue
           }
           if (price === null) {
@@ -779,9 +785,12 @@ export const deriveActionsToOrderRequests = (
             action.symbol,
             "rebalance",
           )
+          const reduceOnly = isReduceOnlyOrder(currentPosition, orderSide)
           const currentOption = currentPosition
           const positionFallbacks =
-            currentOption !== undefined && isOptionPosition(currentOption)
+            reduceOnly &&
+            currentOption !== undefined &&
+            isOptionPosition(currentOption)
               ? [currentOption.markPrice, currentOption.entryPrice]
               : []
           const price = deriveLimitPriceForSide(
@@ -804,7 +813,6 @@ export const deriveActionsToOrderRequests = (
           if (!(amount > 0)) {
             continue
           }
-          const reduceOnly = isReduceOnlyOrder(currentPosition, orderSide)
           if (reduceOnly && !hasDeriveTakingLiquidity(ticker, orderSide)) {
             return yield* Effect.fail(
               new DeriveOrderMappingFailed({

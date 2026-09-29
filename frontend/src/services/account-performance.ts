@@ -4,8 +4,25 @@
  */
 
 import * as Effect from "effect/Effect"
-import { fetchJson, postJson, putJson } from "@/lib/http"
+import {
+  fetchJson,
+  postJson,
+  putJson,
+  type HttpStatusError,
+  type JsonParseError,
+  type JsonSerializeError,
+  type NetworkError,
+} from "@/lib/http"
 import type { NetworkMode } from "@/contexts/wallet-context"
+
+export type PerformanceCacheReadFailure =
+  | NetworkError
+  | HttpStatusError
+  | JsonParseError
+
+export type PerformanceCacheWriteFailure =
+  | PerformanceCacheReadFailure
+  | JsonSerializeError
 
 export type PerformanceVenueId = "hyperliquid" | "derive"
 
@@ -39,7 +56,7 @@ export interface UpsertVenuePerformanceRequest {
 export const fetchWalletPerformance = (
   walletAddress: string,
   signal?: AbortSignal,
-): Effect.Effect<WalletPerformanceCache, unknown> =>
+): Effect.Effect<WalletPerformanceCache, PerformanceCacheReadFailure> =>
   fetchJson<WalletPerformanceCache>(
     `/api/performance/${encodeURIComponent(walletAddress)}`,
     { signal },
@@ -50,7 +67,7 @@ export const upsertVenuePerformance = (
   venue: PerformanceVenueId,
   body: UpsertVenuePerformanceRequest,
   signal?: AbortSignal,
-): Effect.Effect<VenuePerformanceSeries, unknown> =>
+): Effect.Effect<VenuePerformanceSeries, PerformanceCacheWriteFailure> =>
   putJson<VenuePerformanceSeries>(
     `/api/performance/${encodeURIComponent(walletAddress)}/${venue}`,
     body,
@@ -61,7 +78,7 @@ export const refreshHyperliquidPerformance = (
   walletAddress: string,
   networkMode: NetworkMode,
   signal?: AbortSignal,
-): Effect.Effect<VenuePerformanceSeries, unknown> =>
+): Effect.Effect<VenuePerformanceSeries, PerformanceCacheWriteFailure> =>
   postJson<VenuePerformanceSeries>(
     `/api/performance/${encodeURIComponent(walletAddress)}/hyperliquid/refresh?network=${networkMode}`,
     {},

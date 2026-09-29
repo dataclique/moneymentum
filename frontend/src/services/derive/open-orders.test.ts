@@ -70,6 +70,100 @@ afterEach(() => {
 })
 
 describe("Derive open-order response validation", () => {
+  it.each([
+    { label: "null root", envelope: null },
+    { label: "numeric root", envelope: 42 },
+    { label: "string root", envelope: "unexpected" },
+    { label: "boolean root", envelope: false },
+    { label: "array root", envelope: [] },
+    { label: "primitive error", envelope: { error: "unexpected" } },
+    { label: "array error", envelope: { error: [] } },
+    { label: "object error code", envelope: { error: { code: {} } } },
+    { label: "array error code", envelope: { error: { code: [] } } },
+    { label: "boolean error code", envelope: { error: { code: true } } },
+    { label: "object error message", envelope: { error: { message: {} } } },
+    { label: "array error message", envelope: { error: { message: [] } } },
+    { label: "numeric error message", envelope: { error: { message: 42 } } },
+  ])(
+    "rejects $label without defects or malformed domain errors",
+    async ({ envelope }) => {
+      const consoleSpies = (
+        ["debug", "info", "warn", "error", "log", "trace"] as const
+      ).map(level => vi.spyOn(console, level).mockImplementation(() => {}))
+      const fetch = vi.fn().mockResolvedValue(Response.json(envelope))
+      vi.stubGlobal("fetch", fetch)
+
+      const failure = await Effect.runPromise(
+        Effect.flip(fetchDeriveOpenOrders(session)),
+      )
+
+      expect(failure).toMatchObject({
+        _tag: "DeriveRpcError",
+        code: null,
+        message: expect.any(String),
+      })
+      expect(fetch).toHaveBeenCalledTimes(1)
+      consoleSpies.forEach(consoleSpy => {
+        expect(consoleSpy).not.toHaveBeenCalled()
+      })
+    },
+  )
+
+  it("rejects an overflowing error code parsed from a JSON response", async () => {
+    const consoleSpies = (
+      ["debug", "info", "warn", "error", "log", "trace"] as const
+    ).map(level => vi.spyOn(console, level).mockImplementation(() => {}))
+    const fetch = vi.fn().mockResolvedValue(
+      new Response('{"error":{"code":1e999,"message":"venue failure"}}', {
+        headers: { "content-type": "application/json" },
+      }),
+    )
+    vi.stubGlobal("fetch", fetch)
+
+    const failure = await Effect.runPromise(
+      Effect.flip(fetchDeriveOpenOrders(session)),
+    )
+
+    expect(failure).toMatchObject({
+      _tag: "DeriveRpcError",
+      code: null,
+      message: expect.any(String),
+    })
+    expect(fetch).toHaveBeenCalledTimes(1)
+    consoleSpies.forEach(consoleSpy => {
+      expect(consoleSpy).not.toHaveBeenCalled()
+    })
+  })
+
+  it.each([11009, "11009", null, undefined])(
+    "preserves a valid venue error with code %j",
+    async code => {
+      const consoleSpies = (
+        ["debug", "info", "warn", "error", "log", "trace"] as const
+      ).map(level => vi.spyOn(console, level).mockImplementation(() => {}))
+      const fetch = vi
+        .fn()
+        .mockResolvedValue(
+          Response.json({ error: { code, message: "venue failure" } }),
+        )
+      vi.stubGlobal("fetch", fetch)
+
+      const failure = await Effect.runPromise(
+        Effect.flip(fetchDeriveOpenOrders(session)),
+      )
+
+      expect(failure).toMatchObject({
+        _tag: "DeriveRpcError",
+        code: code ?? null,
+        message: "venue failure",
+      })
+      expect(fetch).toHaveBeenCalledTimes(1)
+      consoleSpies.forEach(consoleSpy => {
+        expect(consoleSpy).not.toHaveBeenCalled()
+      })
+    },
+  )
+
   it.each(malformedResults)(
     "rejects $label through the typed RPC failure channel",
     async ({ result }) => {

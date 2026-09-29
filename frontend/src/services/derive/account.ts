@@ -78,8 +78,8 @@ interface DeriveRpcEnvelope<Result> {
   readonly id?: string | number
   readonly result?: Result
   readonly error?: {
-    readonly code?: number | string
-    readonly message?: string
+    readonly code?: number | string | null
+    readonly message?: string | null
     readonly data?: unknown
   } | null
 }
@@ -134,15 +134,48 @@ const authHeadersFromSignature = (
 })
 
 const unwrapRpcResult = <Result>(
-  envelope: DeriveRpcEnvelope<Result>,
+  envelope: DeriveRpcEnvelope<Result> | null,
 ): Effect.Effect<Result, DeriveRpcError> => {
-  if (envelope.error !== undefined && envelope.error !== null) {
+  if (
+    typeof envelope !== "object" ||
+    envelope === null ||
+    Array.isArray(envelope)
+  ) {
     return Effect.fail(
       new DeriveRpcError({
-        code: envelope.error.code ?? null,
+        code: null,
+        message: "Derive RPC response must be an object.",
+      }),
+    )
+  }
+
+  const rpcError = envelope.error
+  if (rpcError !== undefined && rpcError !== null) {
+    if (
+      typeof rpcError !== "object" ||
+      Array.isArray(rpcError) ||
+      (rpcError.code !== undefined &&
+        rpcError.code !== null &&
+        typeof rpcError.code !== "string" &&
+        (typeof rpcError.code !== "number" ||
+          !Number.isFinite(rpcError.code))) ||
+      (rpcError.message !== undefined &&
+        rpcError.message !== null &&
+        typeof rpcError.message !== "string")
+    ) {
+      return Effect.fail(
+        new DeriveRpcError({
+          code: null,
+          message: "Derive RPC error has an invalid shape.",
+        }),
+      )
+    }
+
+    return Effect.fail(
+      new DeriveRpcError({
+        code: rpcError.code ?? null,
         message:
-          envelope.error.message ??
-          "Derive returned an error without a message.",
+          rpcError.message ?? "Derive returned an error without a message.",
       }),
     )
   }
@@ -166,7 +199,7 @@ const postPrivate = <Result>(
   headers: Record<string, string>,
   signal?: AbortSignal,
 ): Effect.Effect<Result, RpcPostFailure> =>
-  postJson<DeriveRpcEnvelope<Result>>(`${baseUrl}/${methodPath}`, body, {
+  postJson<DeriveRpcEnvelope<Result> | null>(`${baseUrl}/${methodPath}`, body, {
     headers,
     signal,
   }).pipe(Effect.flatMap(unwrapRpcResult))

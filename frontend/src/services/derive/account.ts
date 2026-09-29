@@ -373,7 +373,7 @@ const isDeriveApiOrder = (order: unknown): order is DeriveApiOrder => {
 /**
  * Resting orders for the selected subaccount via `private/get_orders`.
  * Same signed REST path as account snapshots -- no CCXT `loadMarkets`.
- * Walks every page reported by `pagination.num_pages`.
+ * Walks reported pages; exceeding the safety budget fails without partial data.
  */
 export const fetchDeriveOpenOrders = (
   credentials: DeriveSessionCredentials | null,
@@ -411,7 +411,13 @@ export const fetchDeriveOpenOrders = (
       page += 1
     }
 
-    return orders
+    return yield* Effect.fail(
+      new DeriveRpcError({
+        code: null,
+        message:
+          "Derive get_orders exceeded the page limit; the order list is incomplete.",
+      }),
+    )
   })
 
 /**

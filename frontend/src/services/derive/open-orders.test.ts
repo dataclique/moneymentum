@@ -125,6 +125,55 @@ describe("Derive open-order response validation", () => {
     })
   })
 
+  it.each([100, 101])(
+    "never exposes an incomplete %i-page snapshot at the page limit",
+    async reportedPages => {
+      const consoleSpies = (
+        ["debug", "info", "warn", "error", "log", "trace"] as const
+      ).map(level => vi.spyOn(console, level).mockImplementation(() => {}))
+      let responsePage = 0
+      const fetch = vi.fn(() => {
+        responsePage += 1
+        const orders = Array.from({ length: 500 }, (_unused, orderIndex) => ({
+          ...validOrder,
+          order_id: `order-${responsePage}-${orderIndex}`,
+        }))
+        return Promise.resolve(
+          Response.json({
+            result: {
+              orders,
+              pagination: {
+                num_pages: reportedPages,
+                count: reportedPages * 500,
+              },
+            },
+          }),
+        )
+      })
+      vi.stubGlobal("fetch", fetch)
+
+      const snapshot = await Effect.runPromise(
+        Effect.either(fetchDeriveOpenOrders(session)),
+      )
+
+      expect(snapshot._tag).toBe(reportedPages === 100 ? "Right" : "Left")
+      if (snapshot._tag === "Right") {
+        expect(snapshot.right).toHaveLength(50_000)
+        expect(snapshot.right[49_999]?.order_id).toBe("order-100-499")
+      } else {
+        expect(snapshot.left).toMatchObject({
+          _tag: "DeriveRpcError",
+          code: null,
+          message: expect.stringContaining("page limit"),
+        })
+      }
+      expect(fetch).toHaveBeenCalledTimes(100)
+      consoleSpies.forEach(consoleSpy => {
+        expect(consoleSpy).not.toHaveBeenCalled()
+      })
+    },
+  )
+
   it.each([
     { label: "empty", orders: [] },
     {

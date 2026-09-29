@@ -152,25 +152,38 @@ export const isCcxtRequestTimeout = (error: unknown): boolean => {
   )
 }
 
-/** Derive 11009: market/IOC/FOK rejected — no liquidity inside the limit. */
+/** Derive 11009: market/IOC/FOK rejected - no liquidity inside the limit. */
 export const isDeriveZeroLiquidityOrderError = (error: unknown): boolean => {
-  const message =
-    error instanceof Error
-      ? error.message
-      : typeof error === "string"
-        ? error
-        : typeof error === "object" &&
-            error !== null &&
-            "message" in error &&
-            typeof error.message === "string"
-          ? error.message
-          : JSON.stringify(error)
+  if (typeof error === "string") {
+    return isDeriveZeroLiquidityMessage(error)
+  }
+  if (hasDeriveZeroLiquidityMetadata(error)) {
+    return true
+  }
   return (
-    message.includes('"code":"11009"') ||
-    message.includes('"code": 11009') ||
-    message.includes("Zero liquidity for market or IOC/FOK")
+    typeof error === "object" &&
+    error !== null &&
+    "error" in error &&
+    hasDeriveZeroLiquidityMetadata(error.error)
   )
 }
+
+const hasDeriveZeroLiquidityMetadata = (rejection: unknown): boolean => {
+  if (typeof rejection !== "object" || rejection === null) {
+    return false
+  }
+  return (
+    ("code" in rejection && rejection.code === "11009") ||
+    ("message" in rejection &&
+      typeof rejection.message === "string" &&
+      isDeriveZeroLiquidityMessage(rejection.message))
+  )
+}
+
+const isDeriveZeroLiquidityMessage = (message: string): boolean =>
+  message.includes('"code":"11009"') ||
+  message.includes('"code": 11009') ||
+  message.includes("Zero liquidity for market or IOC/FOK")
 
 const amountsMatch = (left: number, right: number): boolean =>
   Math.abs(left - right) <= Math.max(1e-8, Math.abs(right) * 1e-8)

@@ -317,18 +317,58 @@ interface RawOpenOrdersResult {
 const DERIVE_OPEN_ORDERS_PAGE_SIZE = 500
 const DERIVE_OPEN_ORDERS_MAX_PAGES = 100
 
-/** Validate `private/get_orders` result.orders (required array per Derive). */
+/** Validate the order list and each wire order before exposing a snapshot. */
 export const ordersFromGetOrdersResult = (
-  result: RawOpenOrdersResult,
-): Effect.Effect<DeriveApiOrder[], DeriveRpcError> =>
-  Array.isArray(result.orders)
-    ? Effect.succeed(result.orders)
-    : Effect.fail(
-        new DeriveRpcError({
-          code: null,
-          message: "Derive get_orders response has an invalid orders list.",
-        }),
+  result: unknown,
+): Effect.Effect<DeriveApiOrder[], DeriveRpcError> => {
+  if (isOrderPayloadObject(result) && Array.isArray(result.orders)) {
+    const orders: unknown[] = result.orders
+    if (orders.every(isDeriveApiOrder)) {
+      return Effect.succeed(orders)
+    }
+  }
+  return Effect.fail(
+    new DeriveRpcError({
+      code: null,
+      message: "Derive get_orders response has an invalid orders list.",
+    }),
+  )
+}
+
+const isOrderPayloadObject = (
+  payload: unknown,
+): payload is Record<string, unknown> =>
+  typeof payload === "object" && payload !== null && !Array.isArray(payload)
+
+const isDeriveApiOrder = (order: unknown): order is DeriveApiOrder => {
+  if (
+    !isOrderPayloadObject(order) ||
+    typeof order.order_id !== "string" ||
+    order.order_id.trim().length === 0 ||
+    typeof order.instrument_name !== "string" ||
+    order.instrument_name.trim().length === 0
+  ) {
+    return false
+  }
+  return (
+    (["direction", "order_status", "order_type"] as const).every(
+      field => !(field in order) || typeof order[field] === "string",
+    ) &&
+    (
+      ["amount", "filled_amount", "limit_price", "average_price"] as const
+    ).every(field => {
+      if (!(field in order)) return true
+      const numericField = order[field]
+      return (
+        (typeof numericField === "string" &&
+          numericField.trim() === numericField &&
+          /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(numericField) &&
+          Number.isFinite(Number(numericField))) ||
+        (typeof numericField === "number" && Number.isFinite(numericField))
       )
+    })
+  )
+}
 
 /**
  * Resting orders for the selected subaccount via `private/get_orders`.

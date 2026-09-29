@@ -376,7 +376,8 @@ export const PerformancePanel = () => {
     ): number | null => {
       let match: TimedValue | undefined
       for (const sample of series) {
-        if (sample.timestamp_ms <= timestampMs) {
+        const chartTimestampMs = Math.floor(sample.timestamp_ms / 1000) * 1000
+        if (chartTimestampMs <= timestampMs) {
           match = sample
         } else {
           break

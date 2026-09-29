@@ -395,7 +395,7 @@ export class DeriveTradingClient {
     this.bindSessionGuard(sessionGuard)
   }
 
-  /** Replace the mid-batch session check without recreating the exchange. */
+  /** Bind the guard for future batch programs without recreating the exchange. */
   bindSessionGuard(sessionGuard?: DeriveSessionGuard): void {
     this.isSessionCurrent = sessionGuard?.isSessionCurrent ?? (() => true)
   }
@@ -694,6 +694,8 @@ export class DeriveTradingClient {
     Array<{ request: DeriveBatchOrderRequest; order: DeriveCcxtOrder }>,
     TradingBatchFailure | DeriveBatchSessionCancelled
   > {
+    const isSessionCurrent = this.isSessionCurrent.bind(this)
+
     return Effect.gen(this, function* () {
       if (requests.length === 0) {
         return []
@@ -710,9 +712,7 @@ export class DeriveTradingClient {
           Effect.gen(this, function* () {
             const index = responses.length
             if (index > 0) {
-              const sessionCurrent = yield* Effect.sync(() =>
-                this.isSessionCurrent(),
-              )
+              const sessionCurrent = yield* Effect.sync(isSessionCurrent)
               if (!sessionCurrent && EffectArray.isNonEmptyArray(responses)) {
                 const unattemptedRequests = requests.slice(index)
                 yield* Effect.sync(() => {
@@ -926,8 +926,7 @@ const tradingClientFor = (
 ): DeriveTradingClient => {
   const key = tradingClientCacheKey(session)
   if (cachedTradingClient !== null && cachedTradingClient.key === key) {
-    // Keep the hydrated exchange; only attach a batch guard when one is given
-    // so ticker/funding reads do not wipe an in-flight place session check.
+    // Keep the hydrated exchange while selecting the guard for the next batch.
     if (sessionGuard !== undefined) {
       cachedTradingClient.client.bindSessionGuard(sessionGuard)
       cachedTradingClient.sessionGuard = sessionGuard

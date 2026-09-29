@@ -207,12 +207,22 @@ const applyFlowsAtEquity = (
 ): { units: number; flowIndex: number } => {
   let nextUnits = units
   let nextFlowIndex = flowIndex
+  const netFlowsByTimestamp = new Map<number, number>()
   for (const flow of flows.slice(nextFlowIndex)) {
     if (flow.timestamp_ms > timestampMs) break
     nextFlowIndex += 1
+    const signedFlowUsd = eventSignedFlowUsd(flow)
+    const precedingFlowUsd = netFlowsByTimestamp.get(flow.timestamp_ms)
+    netFlowsByTimestamp.set(
+      flow.timestamp_ms,
+      precedingFlowUsd === undefined
+        ? signedFlowUsd
+        : precedingFlowUsd + signedFlowUsd,
+    )
+  }
+  for (const signedFlowUsd of netFlowsByTimestamp.values()) {
     if (nextUnits <= 0) continue
-    const signed = eventSignedFlowUsd(flow)
-    const equityBeforeFlow = equity - signed
+    const equityBeforeFlow = equity - signedFlowUsd
     if (!isPositiveEquity(equityBeforeFlow)) continue
     nextUnits = (nextUnits * equity) / equityBeforeFlow
     if (nextUnits < 0) nextUnits = 0

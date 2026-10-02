@@ -889,6 +889,9 @@ export const usePortfolioState = () => {
           symbol,
           side,
           notional,
+          contracts: 0,
+          markPrice: 0,
+          entryPrice: 0,
         })
       })
       return
@@ -903,6 +906,9 @@ export const usePortfolioState = () => {
         symbol,
         side,
         notional,
+        contracts: 0,
+        markPrice: 0,
+        entryPrice: 0,
       })
 
       setTargetTotalNotional(prev => prev + notional)

@@ -43,12 +43,16 @@ const option = (
   symbol: string,
   notional: number,
   side: "buy" | "sell" = "buy",
+  contracts = 0,
 ): OptionPortfolioPosition => ({
   kind: "option",
   venue: "derive",
   symbol,
   side,
   notional,
+  contracts,
+  markPrice: 0,
+  entryPrice: 0,
 })
 
 describe("preciseRebalanceLegs", () => {
@@ -227,6 +231,43 @@ describe("diffPortfolios precise mode", () => {
     expect(diffPortfolios(current, target, true)).toHaveLength(0)
   })
 
+  it("does not auto-stage a close when current and target are both dust", () => {
+    const instrument = "ETH-20260925-1800-P"
+    const dust = option(instrument, 0)
+    expect(
+      diffPortfolios({ [instrument]: dust }, { [instrument]: dust }, false),
+    ).toHaveLength(0)
+  })
+
+  it("does not auto-stage when target is dust and current is also within epsilon", () => {
+    const instrument = "ETH-20260925-1800-P"
+    expect(
+      diffPortfolios(
+        { [instrument]: option(instrument, 0.05) },
+        { [instrument]: option(instrument, 0) },
+        false,
+      ),
+    ).toHaveLength(0)
+  })
+
+  it("emits close when target is dust but current still has meaningful size", () => {
+    const instrument = "ETH-20260925-1800-P"
+    const actions = diffPortfolios(
+      { [instrument]: option(instrument, 50) },
+      { [instrument]: option(instrument, 0) },
+      false,
+    )
+    expect(actions).toEqual([
+      {
+        kind: "close",
+        symbol: instrument,
+        side: "buy",
+        positionKind: "option",
+        venue: "derive",
+      },
+    ])
+  })
+
   it("emits rebalance with zero notional when only leverage changes", () => {
     const current: Record<string, PortfolioInterface | undefined> = {
       [sym]: { ...buy(100), symbol: sym, leverage: 2 },
@@ -326,6 +367,8 @@ describe("portfolioMapFromDerivePositions", () => {
         entryPrice: 100,
         unrealizedPnl: 20,
         leverage: 1,
+        contracts: 1.2,
+        markPrice: 100,
         positionKind: "option",
       },
       {
@@ -335,6 +378,8 @@ describe("portfolioMapFromDerivePositions", () => {
         entryPrice: 2000,
         unrealizedPnl: -10,
         leverage: 1,
+        contracts: 0.25,
+        markPrice: 2000,
         positionKind: "perp",
       },
     ])
@@ -344,6 +389,9 @@ describe("portfolioMapFromDerivePositions", () => {
       kind: "option",
       venue: "derive",
       notional: 120,
+      contracts: 1.2,
+      markPrice: 100,
+      entryPrice: 100,
     })
     expect(snapshot.map["ETH-PERP"]).toMatchObject({
       kind: "perp",
@@ -373,6 +421,8 @@ describe("mergePortfolioMaps", () => {
         entryPrice: 100,
         unrealizedPnl: 0,
         leverage: 1,
+        contracts: 1.2,
+        markPrice: 100,
         positionKind: "option",
       },
     ])
@@ -948,6 +998,124 @@ describe("deriveActionsToOrderRequests", () => {
         reduceOnly: false,
       },
     ])
+  })
+
+  it("fails dust closes when the book has no taking quote", () => {
+    const dustInstrument = "ETH-20260925-1800-P"
+    const current = {
+      [dustInstrument]: {
+        ...option(dustInstrument, 0),
+        contracts: 2,
+        markPrice: 0.0000993,
+        entryPrice: 12,
+      },
+    }
+    const result = Effect.runSync(
+      Effect.either(
+        deriveActionsToOrderRequests(
+          [
+            {
+              kind: "close",
+              symbol: dustInstrument,
+              side: "buy",
+              positionKind: "option",
+              venue: "derive",
+            },
+          ],
+          current,
+          {
+            [dustInstrument]: {
+              symbol: dustInstrument,
+              bid: null,
+              ask: null,
+              last: null,
+              mark: null,
+            },
+          },
+        ),
+      ),
+    )
+
+    expect(result).toMatchObject({
+      _tag: "Left",
+      left: {
+        _tag: "DeriveOrderMappingFailed",
+        reason: expect.stringContaining("No liquidity to close"),
+      },
+    })
+  })
+
+  it("keeps reduce-only on close when the taking book side has liquidity", () => {
+    const instrumentName = "ETH-20260925-1800-P"
+    const requests = Effect.runSync(
+      deriveActionsToOrderRequests(
+        [
+          {
+            kind: "close",
+            symbol: instrumentName,
+            side: "buy",
+            positionKind: "option",
+            venue: "derive",
+          },
+        ],
+        {
+          [instrumentName]: {
+            ...option(instrumentName, 100),
+            contracts: 2,
+            markPrice: 50,
+          },
+        },
+        {
+          [instrumentName]: {
+            symbol: instrumentName,
+            bid: 48,
+            ask: 52,
+            last: 50,
+            mark: 50,
+          },
+        },
+      ),
+    )
+
+    expect(requests).toEqual([
+      {
+        symbol: instrumentName,
+        side: "sell",
+        amount: 2,
+        price: 48,
+        type: "limit",
+        reduceOnly: true,
+      },
+    ])
+  })
+
+  it("skips a close when size and price are both missing instead of failing", () => {
+    const dustInstrument = "ETH-20260925-1800-P"
+    const requests = Effect.runSync(
+      deriveActionsToOrderRequests(
+        [
+          {
+            kind: "close",
+            symbol: dustInstrument,
+            side: "buy",
+            positionKind: "option",
+            venue: "derive",
+          },
+        ],
+        { [dustInstrument]: option(dustInstrument, 0) },
+        {
+          [dustInstrument]: {
+            symbol: dustInstrument,
+            bid: null,
+            ask: null,
+            last: null,
+            mark: null,
+          },
+        },
+      ),
+    )
+
+    expect(requests).toEqual([])
   })
 
   it("deriveLimitPriceForSide prefers book then mark", () => {

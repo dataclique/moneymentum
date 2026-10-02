@@ -18,6 +18,15 @@ performance and missing history shown explicitly.
 
 - [ ] Replace performance placeholders with historical metrics and a chart --
       [#152](https://github.com/dataclique/moneymentum/issues/152).
+- [ ] Persist venue equity snapshots by public wallet for the performance panel
+      -- [#510](https://github.com/dataclique/moneymentum/issues/510) /
+      [#513](https://github.com/dataclique/moneymentum/pull/513).
+- [ ] Sync Derive equity history into the performance cache from the browser --
+      [#511](https://github.com/dataclique/moneymentum/issues/511) /
+      [#514](https://github.com/dataclique/moneymentum/pull/514).
+- [ ] Chart cached Hyperliquid and Derive equity in PerformancePanel --
+      [#512](https://github.com/dataclique/moneymentum/issues/512) /
+      [#515](https://github.com/dataclique/moneymentum/pull/515).
 - [ ] Resolve startup and ingestion failures that obstruct reliable data
       collection -- [#462](https://github.com/dataclique/moneymentum/issues/462)
       and [#452](https://github.com/dataclique/moneymentum/issues/452).

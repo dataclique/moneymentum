@@ -28,9 +28,10 @@ const request = (
   })
 
 const extractDetail = (body: unknown): string | undefined => {
-  if (typeof body === "object" && body !== null && "detail" in body) {
-    const raw = (body as Record<string, unknown>).detail
-    return typeof raw === "string" ? raw : undefined
+  if (typeof body === "object" && body !== null) {
+    const record = body as Record<string, unknown>
+    if (typeof record.detail === "string") return record.detail
+    if (typeof record.error === "string") return record.error
   }
   return undefined
 }
@@ -88,6 +89,33 @@ export const postJson = <A>(
       fetchJson<A>(url, {
         ...init,
         method: "POST",
+        headers,
+        body: serialized,
+      }),
+    ),
+  )
+}
+
+export const putJson = <A>(
+  url: string,
+  body: unknown,
+  init?: RequestInit,
+): Effect.Effect<
+  A,
+  NetworkError | HttpStatusError | JsonParseError | JsonSerializeError
+> => {
+  const merged = new Headers(init?.headers)
+  merged.set("Content-Type", "application/json")
+  const headers = Object.fromEntries(merged.entries())
+
+  return Effect.try({
+    try: () => JSON.stringify(body),
+    catch: cause => new JsonSerializeError({ cause }),
+  }).pipe(
+    Effect.flatMap(serialized =>
+      fetchJson<A>(url, {
+        ...init,
+        method: "PUT",
         headers,
         body: serialized,
       }),

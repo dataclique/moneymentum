@@ -75,4 +75,47 @@ describe.each([
       })
     },
   )
+
+  it("orders cash flows even when an opening deposit is already recorded", () => {
+    const consoleSpies = (
+      ["debug", "info", "warn", "error", "log", "trace"] as const
+    ).map(level => vi.spyOn(console, level).mockImplementation(() => {}))
+    const series = buildSeries(
+      [
+        { timestamp_ms: 1_000, value_usd: "100" },
+        { timestamp_ms: 2_000, value_usd: "150" },
+        { timestamp_ms: 3_000, value_usd: "180" },
+      ],
+      [
+        {
+          kind: "deposit",
+          timestamp_ms: 1_000,
+          amount_usd: "100",
+          source_id: "opening",
+        },
+        {
+          kind: "deposit",
+          timestamp_ms: 3_000,
+          amount_usd: "30",
+          source_id: "later",
+        },
+        {
+          kind: "deposit",
+          timestamp_ms: 2_000,
+          amount_usd: "50",
+          source_id: "earlier",
+        },
+      ],
+    )
+
+    expect(series.map(point => point.timestamp_ms)).toEqual([
+      1_000, 2_000, 3_000,
+    ])
+    series.forEach(point => {
+      expect(point.value).toBeCloseTo(0, 10)
+    })
+    consoleSpies.forEach(consoleSpy => {
+      expect(consoleSpy).not.toHaveBeenCalled()
+    })
+  })
 })

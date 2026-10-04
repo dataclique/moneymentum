@@ -1,6 +1,6 @@
 use sqlx::SqlitePool;
 use thiserror::Error;
-use tracing::warn;
+use tracing::{debug, warn};
 
 const CQRS_EVENT_STORE_MIGRATION_VERSION: i64 = 20_260_208_011_202;
 const EVENT_SORCERY_BRANCH_MIGRATION: &str =
@@ -175,7 +175,7 @@ async fn indexes_match(
     // schema drift the reconciled checksum would otherwise silently bless.
     let named_indexes: Vec<String> = sqlx::query_scalar(
         "SELECT name FROM pragma_index_list('events') \
-         WHERE \"unique\" = 0 AND origin = 'c' ORDER BY name",
+         WHERE origin = 'c' ORDER BY name",
     )
     .fetch_all(pool)
     .await?;
@@ -185,6 +185,7 @@ async fn indexes_match(
         .collect();
     expected_names.sort_unstable();
     if named_indexes != expected_names {
+        debug!("migration reconciliation rejected custom index drift");
         return Ok(false);
     }
 
@@ -407,6 +408,38 @@ mod tests {
             Err(sqlx::migrate::MigrateError::VersionMismatch(
                 CQRS_EVENT_STORE_MIGRATION_VERSION
             ))
+        ));
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn leaves_known_schema_with_extra_unique_index_untouched_for_sqlx_to_reject() {
+        let pool = event_sorcery_branch_database().await;
+        sqlx::query("CREATE UNIQUE INDEX idx_events_event_type ON events(event_type)")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let outcome = reconcile_known_migration_history(&pool).await.unwrap();
+        let migration_result = sqlx::migrate!("./migrations").run(&pool).await;
+        let retained_checksum: Vec<u8> =
+            sqlx::query_scalar("SELECT checksum FROM _sqlx_migrations WHERE version = ?1")
+                .bind(CQRS_EVENT_STORE_MIGRATION_VERSION)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+
+        assert_eq!(outcome, MigrationHistoryOutcome::Unchanged);
+        assert_eq!(retained_checksum, event_sorcery_branch_checksum());
+        assert!(matches!(
+            migration_result,
+            Err(sqlx::migrate::MigrateError::VersionMismatch(
+                CQRS_EVENT_STORE_MIGRATION_VERSION
+            ))
+        ));
+        assert!(logs_contain_at(
+            Level::DEBUG,
+            &["migration reconciliation rejected custom index drift"]
         ));
     }
 

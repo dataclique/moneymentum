@@ -21,6 +21,8 @@ performance and missing history shown explicitly.
 - [ ] Resolve startup and ingestion failures that obstruct reliable data
       collection -- [#462](https://github.com/dataclique/moneymentum/issues/462)
       and [#452](https://github.com/dataclique/moneymentum/issues/452).
+- [ ] Point the event-sorcery git dependency at dataclique after the ST0X remote
+      404s -- [#523](https://github.com/dataclique/moneymentum/issues/523).
 - [x] Hyperliquid k-prefixed candle exports contain inconsistent casing,
       duplicates and conflicts --
       [#498](https://github.com/dataclique/moneymentum/issues/498) /

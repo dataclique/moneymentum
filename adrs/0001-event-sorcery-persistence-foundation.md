@@ -30,8 +30,8 @@ Consequences of that history that shape this decision:
   `/portfolio/simulate`, `/portfolio/exposure` are stateless analytics.
 
 **The goal (from the maintainer):** make
-[`event-sorcery`](https://github.com/ST0X-Technology/event-sorcery) (v0.2.0-rc2)
-the persistence foundation, with **portfolio management as the centerpiece** --
+[`event-sorcery`](https://github.com/dataclique/event-sorcery) (v0.2.0-rc2) the
+persistence foundation, with **portfolio management as the centerpiece** --
 persisted target portfolios (needed later for auto-rebalancing), historic
 performance, performance predictions, enabled/disabled markets, and ingestion
 lifecycle -- and the model must be **extensible to multiple instruments and
@@ -190,7 +190,7 @@ needs from `sqlite-es`/`cqrs-es`); keep all event-sourcing surface behind its
 API.
 
 ```toml
-event-sorcery = { git = "https://github.com/ST0X-Technology/event-sorcery", tag = "0.2.0-rc2" }
+event-sorcery = { git = "https://github.com/dataclique/event-sorcery", tag = "0.2.0-rc2" }
 ```
 
 **Forced upgrades** (event-sorcery pins these; they are semver-incompatible with

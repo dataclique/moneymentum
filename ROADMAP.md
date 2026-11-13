@@ -27,6 +27,15 @@ performance and missing history shown explicitly.
 - [ ] Chart cached Hyperliquid and Derive equity in PerformancePanel --
       [#512](https://github.com/dataclique/moneymentum/issues/512) /
       [#515](https://github.com/dataclique/moneymentum/pull/515).
+- [ ] Cache Hyperliquid and Derive deposit and withdrawal events for returns --
+      [#516](https://github.com/dataclique/moneymentum/issues/516) /
+      [#519](https://github.com/dataclique/moneymentum/pull/519).
+- [ ] Isolate cash flows and clean equity samples for performance series --
+      [#517](https://github.com/dataclique/moneymentum/issues/517) /
+      [#520](https://github.com/dataclique/moneymentum/pull/520).
+- [ ] Show period percent returns with venue compare and drawdown --
+      [#518](https://github.com/dataclique/moneymentum/issues/518) /
+      [#521](https://github.com/dataclique/moneymentum/pull/521).
 - [ ] Resolve startup and ingestion failures that obstruct reliable data
       collection -- [#462](https://github.com/dataclique/moneymentum/issues/462)
       and [#452](https://github.com/dataclique/moneymentum/issues/452).

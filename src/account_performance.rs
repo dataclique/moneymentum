@@ -1,8 +1,9 @@
-//! Cached account equity series and (later) ledger events per public wallet.
+//! Cached account equity series and external cash-flow events per public wallet.
 //!
-//! Phase 1 stores venue-provided account-value snapshots. Events stay an empty
-//! list so later cash-flow work can extend the same rows without a new table.
+//! Equity snapshots come from venue mark-to-market history. Deposit and withdraw
+//! events support cash-flow-aware percent returns on the frontend.
 
+use std::collections::BTreeMap;
 use std::str::FromStr;
 
 use chrono::{DateTime, Utc};
@@ -56,12 +57,22 @@ pub(crate) struct EquityPoint {
     pub(crate) value_usd: Decimal,
 }
 
-/// Placeholder for future ledger events; phase 1 always stores `[]`.
+/// External cash-flow event used for time-weighted return segments.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub(crate) enum AccountPerformanceEvent {
-    /// Reserved so serde stays forward-compatible; unused in phase 1.
-    Placeholder { note: String },
+    Deposit {
+        timestamp_ms: i64,
+        #[serde(with = "rust_decimal::serde::str")]
+        amount_usd: Decimal,
+        source_id: String,
+    },
+    Withdraw {
+        timestamp_ms: i64,
+        #[serde(with = "rust_decimal::serde::str")]
+        amount_usd: Decimal,
+        source_id: String,
+    },
 }
 
 /// One venue's cached series for a wallet.
@@ -109,8 +120,12 @@ pub(crate) enum AccountPerformanceError {
     Url(#[from] url::ParseError),
     #[error("hyperliquid portfolio response missing account value history")]
     MissingAccountValueHistory,
+    #[error("hyperliquid ledger response was not an array")]
+    InvalidLedgerResponse,
     #[error("invalid equity value at timestamp {timestamp_ms}: {value}")]
     InvalidEquityValue { timestamp_ms: i64, value: String },
+    #[error("invalid cash-flow amount at timestamp {timestamp_ms}: {value}")]
+    InvalidCashFlowAmount { timestamp_ms: i64, value: String },
     #[error("invalid fetched_at in cache: {0}")]
     InvalidFetchedAt(String),
 }
@@ -236,19 +251,11 @@ pub(crate) async fn load_wallet_performance(
     })
 }
 
-/// Pick the richest Hyperliquid portfolio window for charting.
-fn prefer_portfolio_window(window_name: &str) -> u8 {
-    match window_name {
-        "allTime" => 5,
-        "perpAllTime" => 4,
-        "month" => 3,
-        "week" => 2,
-        "day" => 1,
-        _ => 0,
-    }
-}
-
 /// Parse Hyperliquid `portfolio` info payload into equity points.
+///
+/// Unions every window (`day`, `week`, `month`, `allTime`, perp variants) so
+/// dense short-horizon samples are kept instead of discarding them for
+/// `allTime` alone.
 pub(crate) fn equity_points_from_hyperliquid_portfolio(
     payload: &serde_json::Value,
 ) -> Result<Vec<EquityPoint>, AccountPerformanceError> {
@@ -256,66 +263,150 @@ pub(crate) fn equity_points_from_hyperliquid_portfolio(
         .as_array()
         .ok_or(AccountPerformanceError::MissingAccountValueHistory)?;
 
-    let mut best_rank = 0_u8;
-    let mut best_history: Option<&Vec<serde_json::Value>> = None;
+    let mut by_timestamp: BTreeMap<i64, Decimal> = BTreeMap::new();
 
     for entry in windows {
         let pair = entry
             .as_array()
             .ok_or(AccountPerformanceError::MissingAccountValueHistory)?;
-        let [window_name_value, history_value] = pair.as_slice() else {
+        let [_, history_value] = pair.as_slice() else {
             return Err(AccountPerformanceError::MissingAccountValueHistory);
         };
-        let window_name = window_name_value
-            .as_str()
-            .ok_or(AccountPerformanceError::MissingAccountValueHistory)?;
-        let rank = prefer_portfolio_window(window_name);
-        if rank < best_rank {
-            continue;
-        }
-        let history = history_value
+        let Some(history) = history_value
             .get("accountValueHistory")
-            .and_then(|value| value.as_array())
-            .ok_or(AccountPerformanceError::MissingAccountValueHistory)?;
-        if rank > best_rank || best_history.is_none() {
-            best_rank = rank;
-            best_history = Some(history);
+            .and_then(serde_json::Value::as_array)
+        else {
+            continue;
+        };
+
+        for sample in history {
+            let pair = sample
+                .as_array()
+                .ok_or(AccountPerformanceError::MissingAccountValueHistory)?;
+            let [timestamp_value, equity_value] = pair.as_slice() else {
+                return Err(AccountPerformanceError::MissingAccountValueHistory);
+            };
+            let timestamp_ms = timestamp_value
+                .as_i64()
+                .ok_or(AccountPerformanceError::MissingAccountValueHistory)?;
+            let value_raw = match equity_value {
+                serde_json::Value::String(text) => text.clone(),
+                serde_json::Value::Number(number) => number.to_string(),
+                _ => {
+                    return Err(AccountPerformanceError::MissingAccountValueHistory);
+                }
+            };
+            let value_usd = Decimal::from_str(&value_raw).map_err(|_| {
+                AccountPerformanceError::InvalidEquityValue {
+                    timestamp_ms,
+                    value: value_raw,
+                }
+            })?;
+            by_timestamp.insert(timestamp_ms, value_usd);
         }
     }
 
-    let history = best_history.ok_or(AccountPerformanceError::MissingAccountValueHistory)?;
-    let mut points = Vec::with_capacity(history.len());
-    for sample in history {
-        let pair = sample
-            .as_array()
-            .ok_or(AccountPerformanceError::MissingAccountValueHistory)?;
-        let [timestamp_value, equity_value] = pair.as_slice() else {
-            return Err(AccountPerformanceError::MissingAccountValueHistory);
-        };
-        let timestamp_ms = timestamp_value
-            .as_i64()
-            .ok_or(AccountPerformanceError::MissingAccountValueHistory)?;
-        let value_raw = match equity_value {
-            serde_json::Value::String(text) => text.clone(),
-            serde_json::Value::Number(number) => number.to_string(),
-            _ => {
-                return Err(AccountPerformanceError::MissingAccountValueHistory);
-            }
-        };
-        let value_usd = Decimal::from_str(&value_raw).map_err(|_| {
-            AccountPerformanceError::InvalidEquityValue {
-                timestamp_ms,
-                value: value_raw,
-            }
-        })?;
-        points.push(EquityPoint {
+    if by_timestamp.is_empty() {
+        return Err(AccountPerformanceError::MissingAccountValueHistory);
+    }
+
+    Ok(by_timestamp
+        .into_iter()
+        .map(|(timestamp_ms, value_usd)| EquityPoint {
             timestamp_ms,
             value_usd,
-        });
+        })
+        .collect())
+}
+
+fn decimal_from_json_value(
+    value: &serde_json::Value,
+    timestamp_ms: i64,
+) -> Result<Decimal, AccountPerformanceError> {
+    let value_raw = match value {
+        serde_json::Value::String(text) => text.clone(),
+        serde_json::Value::Number(number) => number.to_string(),
+        _ => {
+            return Err(AccountPerformanceError::InvalidCashFlowAmount {
+                timestamp_ms,
+                value: value.to_string(),
+            });
+        }
+    };
+    Decimal::from_str(&value_raw).map_err(|_| AccountPerformanceError::InvalidCashFlowAmount {
+        timestamp_ms,
+        value: value_raw,
+    })
+}
+
+/// Parse Hyperliquid `userNonFundingLedgerUpdates` into deposit/withdraw events.
+///
+/// v1 keeps only `deposit` and `withdraw` deltas; vault and internal transfer
+/// types are ignored so cross-venue moves can be classified later.
+pub(crate) fn cash_flow_events_from_hyperliquid_ledger(
+    payload: &serde_json::Value,
+) -> Result<Vec<AccountPerformanceEvent>, AccountPerformanceError> {
+    let entries = payload
+        .as_array()
+        .ok_or(AccountPerformanceError::InvalidLedgerResponse)?;
+
+    let mut events = Vec::new();
+    for entry in entries {
+        let timestamp_ms = entry
+            .get("time")
+            .and_then(serde_json::Value::as_i64)
+            .ok_or(AccountPerformanceError::InvalidLedgerResponse)?;
+        let hash = entry
+            .get("hash")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("");
+        let delta = entry
+            .get("delta")
+            .ok_or(AccountPerformanceError::InvalidLedgerResponse)?;
+        let delta_type = delta
+            .get("type")
+            .and_then(serde_json::Value::as_str)
+            .ok_or(AccountPerformanceError::InvalidLedgerResponse)?;
+
+        let amount_field = delta.get("usdc").or_else(|| delta.get("usdcValue"));
+        let Some(amount_value) = amount_field else {
+            continue;
+        };
+        let amount_usd = decimal_from_json_value(amount_value, timestamp_ms)?.abs();
+        if amount_usd.is_zero() {
+            continue;
+        }
+
+        let source_id = if hash.is_empty() {
+            format!("{delta_type}:{timestamp_ms}")
+        } else {
+            hash.to_string()
+        };
+
+        match delta_type {
+            "deposit" => {
+                events.push(AccountPerformanceEvent::Deposit {
+                    timestamp_ms,
+                    amount_usd,
+                    source_id,
+                });
+            }
+            "withdraw" => {
+                events.push(AccountPerformanceEvent::Withdraw {
+                    timestamp_ms,
+                    amount_usd,
+                    source_id,
+                });
+            }
+            _ => {}
+        }
     }
 
-    points.sort_by_key(|point| point.timestamp_ms);
-    Ok(points)
+    events.sort_by_key(|event| match event {
+        AccountPerformanceEvent::Deposit { timestamp_ms, .. }
+        | AccountPerformanceEvent::Withdraw { timestamp_ms, .. } => *timestamp_ms,
+    });
+    Ok(events)
 }
 
 fn resolve_hyperliquid_info_endpoint(
@@ -331,7 +422,7 @@ fn resolve_hyperliquid_info_endpoint(
     Ok(base.join("info")?)
 }
 
-/// Fetch Hyperliquid `portfolio` for `wallet` and upsert into the cache.
+/// Fetch Hyperliquid `portfolio` equity and non-funding ledger cash flows, then upsert.
 #[instrument(skip(pool, http_client, hyperliquid_base_url), fields(wallet = %wallet_address))]
 pub(crate) async fn refresh_hyperliquid_performance(
     pool: &SqlitePool,
@@ -341,8 +432,9 @@ pub(crate) async fn refresh_hyperliquid_performance(
 ) -> Result<VenuePerformanceSeries, AccountPerformanceError> {
     let wallet = parse_wallet_address(wallet_address)?;
     let endpoint = resolve_hyperliquid_info_endpoint(hyperliquid_base_url)?;
-    let response = http_client
-        .post(endpoint)
+
+    let portfolio_response = http_client
+        .post(endpoint.clone())
         .json(&serde_json::json!({
             "type": "portfolio",
             "user": wallet,
@@ -353,13 +445,29 @@ pub(crate) async fn refresh_hyperliquid_performance(
         .json::<serde_json::Value>()
         .await?;
 
-    let equity_points = equity_points_from_hyperliquid_portfolio(&response)?;
+    let equity_points = equity_points_from_hyperliquid_portfolio(&portfolio_response)?;
+
+    let ledger_response = http_client
+        .post(endpoint)
+        .json(&serde_json::json!({
+            "type": "userNonFundingLedgerUpdates",
+            "user": wallet,
+            "startTime": 0,
+        }))
+        .send()
+        .await?
+        .error_for_status()?
+        .json::<serde_json::Value>()
+        .await?;
+
+    let events = cash_flow_events_from_hyperliquid_ledger(&ledger_response)?;
     let fetched_at = Utc::now();
     let (coverage_start_ms, coverage_end_ms) = coverage_from_points(&equity_points);
 
     info!(
         points = equity_points.len(),
-        "fetched hyperliquid portfolio equity series"
+        events = events.len(),
+        "fetched hyperliquid portfolio equity and cash-flow events"
     );
 
     upsert_venue_series(
@@ -368,7 +476,7 @@ pub(crate) async fn refresh_hyperliquid_performance(
         PerformanceVenue::Hyperliquid,
         UpsertVenuePerformanceRequest {
             equity_points,
-            events: Vec::new(),
+            events,
             fetched_at,
             coverage_start_ms,
             coverage_end_ms,
@@ -419,16 +527,58 @@ mod tests {
     }
 
     #[test]
-    fn equity_points_prefer_all_time_window() {
+    fn equity_points_union_all_portfolio_windows() {
         let payload = serde_json::json!([
             ["day", {"accountValueHistory": [[10, "1.0"]]}],
             ["allTime", {"accountValueHistory": [[1, "2.5"], [2, "3.0"]]}],
             ["week", {"accountValueHistory": [[5, "9.0"]]}]
         ]);
         let points = equity_points_from_hyperliquid_portfolio(&payload).unwrap();
-        assert_eq!(points.len(), 2);
+        assert_eq!(points.len(), 4);
         assert_eq!(points[0].timestamp_ms, 1);
         assert_eq!(points[0].value_usd, Decimal::from_str("2.5").unwrap());
+        assert_eq!(points[1].timestamp_ms, 2);
+        assert_eq!(points[2].timestamp_ms, 5);
+        assert_eq!(points[2].value_usd, Decimal::from_str("9.0").unwrap());
+        assert_eq!(points[3].timestamp_ms, 10);
+        assert_eq!(points[3].value_usd, Decimal::from_str("1.0").unwrap());
+    }
+
+    #[test]
+    fn ledger_keeps_deposit_and_withdraw_only() {
+        let payload = serde_json::json!([
+            {
+                "time": 1_000,
+                "hash": "0xaaa",
+                "delta": { "type": "deposit", "usdc": "50.5" }
+            },
+            {
+                "time": 2_000,
+                "hash": "0xbbb",
+                "delta": { "type": "vaultDeposit", "usdc": "99" }
+            },
+            {
+                "time": 3_000,
+                "hash": "0xccc",
+                "delta": { "type": "withdraw", "usdc": "10", "fee": "1" }
+            }
+        ]);
+        let events = cash_flow_events_from_hyperliquid_ledger(&payload).unwrap();
+        assert_eq!(
+            events,
+            vec![
+                AccountPerformanceEvent::Deposit {
+                    timestamp_ms: 1_000,
+                    amount_usd: Decimal::from_str("50.5").unwrap(),
+                    source_id: "0xaaa".to_string(),
+                },
+                AccountPerformanceEvent::Withdraw {
+                    timestamp_ms: 3_000,
+                    amount_usd: Decimal::from_str("10").unwrap(),
+                    source_id: "0xccc".to_string(),
+                },
+            ]
+        );
     }
 
     #[traced_test]
@@ -436,13 +586,18 @@ mod tests {
     async fn upsert_and_load_round_trip_logs() {
         let pool = test_pool().await;
         let wallet = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let events = vec![AccountPerformanceEvent::Deposit {
+            timestamp_ms: 1_500,
+            amount_usd: Decimal::from_str("25").unwrap(),
+            source_id: "tx-1".to_string(),
+        }];
         let series = upsert_venue_series(
             &pool,
             wallet,
             PerformanceVenue::Derive,
             UpsertVenuePerformanceRequest {
                 equity_points: sample_points(),
-                events: Vec::new(),
+                events: events.clone(),
                 fetched_at: Utc::now(),
                 coverage_start_ms: None,
                 coverage_end_ms: None,
@@ -452,6 +607,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(series.equity_points.len(), 2);
+        assert_eq!(series.events, events);
         assert_eq!(series.coverage_start_ms, Some(1_000));
         assert_eq!(series.coverage_end_ms, Some(2_000));
         assert!(logs_contain_at(
@@ -463,6 +619,7 @@ mod tests {
         assert_eq!(loaded.venues.len(), 1);
         assert_eq!(loaded.venues[0].venue, PerformanceVenue::Derive);
         assert_eq!(loaded.venues[0].equity_points, sample_points());
+        assert_eq!(loaded.venues[0].events, events);
         assert!(logs_contain_at(
             Level::DEBUG,
             &["loaded account performance cache"]

@@ -433,6 +433,9 @@ describe("PositionsPanel", () => {
           symbol,
           side: "buy",
           notional: 500,
+          contracts: 0,
+          markPrice: 0,
+          entryPrice: 0,
         },
       },
     })

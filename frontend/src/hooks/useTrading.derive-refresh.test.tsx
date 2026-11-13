@@ -19,12 +19,13 @@ import type {
 } from "@/contexts/wallet-context"
 import type {
   DeriveAccountSnapshot,
+  DeriveApiOrder,
   DeriveBalanceSummary,
-  DeriveCcxtOrder,
   fetchDeriveAccountSnapshot,
   fetchDeriveBalance,
   fetchDeriveOpenOrders,
 } from "@/services/derive/index"
+import { DeriveRpcError } from "@/services/derive/index"
 import { HttpStatusError } from "@/lib/http"
 import { ExchangeRequestError } from "@/services/hyperliquid"
 
@@ -68,11 +69,11 @@ const credentials: DeriveWalletCredentials = {
   subaccountId: 7,
   networkMode: "testnet",
 }
-const openOrder: DeriveCcxtOrder = {
-  id: "order-1",
-  symbol: "ETH-PERP",
-  status: "open",
-  filled: 0,
+const openOrder: DeriveApiOrder = {
+  order_id: "order-1",
+  instrument_name: "ETH-PERP",
+  order_status: "open",
+  filled_amount: "0",
 }
 const balance = (accountValue: number): DeriveBalanceSummary => ({
   accountValue,
@@ -107,7 +108,7 @@ beforeEach(() => {
   venue.account.mockReturnValue(Effect.succeed(account("0")))
 })
 
-const setup = async (initialOrders: DeriveCcxtOrder[]) => {
+const setup = async (initialOrders: DeriveApiOrder[]) => {
   const [session, setSession] = createSignal<DeriveWalletCredentials | null>(
     credentials,
   )
@@ -160,7 +161,7 @@ describe("Derive order-driven account refresh", () => {
     {
       label: "a partial fill changes",
       initial: [openOrder],
-      next: [{ ...openOrder, filled: 0.25 }],
+      next: [{ ...openOrder, filled_amount: "0.25" }],
     },
     { label: "the final order disappears", initial: [openOrder], next: [] },
   ])("refreshes both projections when $label", async ({ initial, next }) => {
@@ -217,7 +218,12 @@ describe("Derive order-driven account refresh", () => {
     const balanceCalls = venue.balance.mock.calls.length
     const accountCalls = venue.account.mock.calls.length
     venue.orders.mockReturnValue(
-      Effect.fail(new ExchangeRequestError({ cause: "venue unavailable" })),
+      Effect.fail(
+        new DeriveRpcError({
+          code: null,
+          message: "venue unavailable",
+        }),
+      ),
     )
 
     await result.orders.refetch()
@@ -260,7 +266,7 @@ describe("Derive order-driven account refresh", () => {
 
   it("does not refresh account queries after the initiating session is gone", async () => {
     const { result, queryClient, setSession } = await setup([openOrder])
-    const response = Effect.runSync(Deferred.make<DeriveCcxtOrder[]>())
+    const response = Effect.runSync(Deferred.make<DeriveApiOrder[]>())
     venue.orders.mockReturnValueOnce(Deferred.await(response))
     const orderCalls = venue.orders.mock.calls.length
     const pending = result.orders.refetch()

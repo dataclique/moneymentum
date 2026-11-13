@@ -293,6 +293,8 @@ describe("usePortfolioState", () => {
                 entryPrice: 100,
                 unrealizedPnl: 20,
                 leverage: 1,
+                contracts: 1.2,
+                markPrice: 100,
                 positionKind: "option" as const,
               },
               {
@@ -302,6 +304,8 @@ describe("usePortfolioState", () => {
                 entryPrice: 2000,
                 unrealizedPnl: -10,
                 leverage: 1,
+                contracts: 0.25,
+                markPrice: 2000,
                 positionKind: "perp" as const,
               },
             ],
@@ -374,6 +378,8 @@ describe("usePortfolioState", () => {
                 entryPrice: 100,
                 unrealizedPnl: 20,
                 leverage: 1,
+                contracts: 1.2,
+                markPrice: 100,
                 positionKind: "option" as const,
               },
             ],
@@ -494,6 +500,8 @@ describe("usePortfolioState", () => {
                 entryPrice: 100,
                 unrealizedPnl: 20,
                 leverage: 1,
+                contracts: 1.2,
+                markPrice: 100,
                 positionKind: "option" as const,
               },
             ],
@@ -596,6 +604,9 @@ describe("usePortfolioState", () => {
       symbol: instrument,
       side: "sell",
       notional: 250,
+      contracts: 0,
+      markPrice: 0,
+      entryPrice: 0,
     })
 
     await waitFor(() => {

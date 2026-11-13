@@ -16,11 +16,13 @@ import {
   deriveRestBaseUrl,
   parseDeriveNumeric,
   requireDeriveSession,
+  requireDeriveSessionWithSubaccount,
   type DeriveBaseUrl,
   type DeriveSessionCredentials,
   DeriveRpcError,
   DeriveSessionMissing,
   DeriveSessionSignFailed,
+  DeriveSubaccountMissing,
 } from "./session"
 
 export type { CurrentPosition }
@@ -28,6 +30,10 @@ export type { CurrentPosition }
 /** Open Derive position with kind so portfolio can distinguish options vs perps. */
 export type DeriveMappedPosition = CurrentPosition & {
   positionKind: "option" | "perp"
+  /** Absolute contract size (`|amount|` from the venue). */
+  contracts: number
+  /** Last mark premium from the venue snapshot (0 when missing). */
+  markPrice: number
 }
 
 /**
@@ -72,8 +78,8 @@ interface DeriveRpcEnvelope<Result> {
   readonly id?: string | number
   readonly result?: Result
   readonly error?: {
-    readonly code?: number | string
-    readonly message?: string
+    readonly code?: number | string | null
+    readonly message?: string | null
     readonly data?: unknown
   } | null
 }
@@ -128,15 +134,48 @@ const authHeadersFromSignature = (
 })
 
 const unwrapRpcResult = <Result>(
-  envelope: DeriveRpcEnvelope<Result>,
+  envelope: DeriveRpcEnvelope<Result> | null,
 ): Effect.Effect<Result, DeriveRpcError> => {
-  if (envelope.error !== undefined && envelope.error !== null) {
+  if (
+    typeof envelope !== "object" ||
+    envelope === null ||
+    Array.isArray(envelope)
+  ) {
     return Effect.fail(
       new DeriveRpcError({
-        code: envelope.error.code ?? null,
+        code: null,
+        message: "Derive RPC response must be an object.",
+      }),
+    )
+  }
+
+  const rpcError = envelope.error
+  if (rpcError !== undefined && rpcError !== null) {
+    if (
+      typeof rpcError !== "object" ||
+      Array.isArray(rpcError) ||
+      (rpcError.code !== undefined &&
+        rpcError.code !== null &&
+        typeof rpcError.code !== "string" &&
+        (typeof rpcError.code !== "number" ||
+          !Number.isFinite(rpcError.code))) ||
+      (rpcError.message !== undefined &&
+        rpcError.message !== null &&
+        typeof rpcError.message !== "string")
+    ) {
+      return Effect.fail(
+        new DeriveRpcError({
+          code: null,
+          message: "Derive RPC error has an invalid shape.",
+        }),
+      )
+    }
+
+    return Effect.fail(
+      new DeriveRpcError({
+        code: rpcError.code ?? null,
         message:
-          envelope.error.message ??
-          "Derive returned an error without a message.",
+          rpcError.message ?? "Derive returned an error without a message.",
       }),
     )
   }
@@ -160,7 +199,7 @@ const postPrivate = <Result>(
   headers: Record<string, string>,
   signal?: AbortSignal,
 ): Effect.Effect<Result, RpcPostFailure> =>
-  postJson<DeriveRpcEnvelope<Result>>(`${baseUrl}/${methodPath}`, body, {
+  postJson<DeriveRpcEnvelope<Result> | null>(`${baseUrl}/${methodPath}`, body, {
     headers,
     signal,
   }).pipe(Effect.flatMap(unwrapRpcResult))
@@ -233,6 +272,8 @@ export const mapDerivePosition = (
     entryPrice: averagePrice,
     unrealizedPnl: parseDeriveNumeric(position.unrealized_pnl, 0),
     leverage: 1,
+    contracts: Math.abs(signedAmount),
+    markPrice: markPrice > 0 ? markPrice : 0,
     positionKind: classifyDeriveInstrument(
       instrumentName,
       position.instrument_type,
@@ -282,6 +323,163 @@ const privateCallWithSession = <Result>(
         signature,
       ),
       signal,
+    )
+  })
+
+/** Wire shape of one resting order from `private/get_orders`. */
+export interface DeriveApiOrder {
+  readonly order_id: string
+  readonly instrument_name: string
+  readonly direction?: string
+  readonly amount?: string | number
+  readonly filled_amount?: string | number
+  readonly limit_price?: string | number
+  readonly average_price?: string | number
+  readonly order_status?: string
+  readonly order_type?: string
+}
+
+const DERIVE_OPEN_ORDERS_PAGE_SIZE = 500
+const DERIVE_OPEN_ORDERS_MAX_PAGES = 100
+
+/** Validate the order list and each wire order before exposing a snapshot. */
+export const ordersFromGetOrdersResult = (
+  result: unknown,
+): Effect.Effect<DeriveApiOrder[], DeriveRpcError> => {
+  if (isOrderPayloadObject(result) && Array.isArray(result.orders)) {
+    const orders: unknown[] = result.orders
+    if (orders.every(isDeriveApiOrder)) {
+      return Effect.succeed(orders)
+    }
+  }
+  return Effect.fail(
+    new DeriveRpcError({
+      code: null,
+      message: "Derive get_orders response has an invalid orders list.",
+    }),
+  )
+}
+
+const isOrderPayloadObject = (
+  payload: unknown,
+): payload is Record<string, unknown> =>
+  typeof payload === "object" && payload !== null && !Array.isArray(payload)
+
+const pageCountFromGetOrdersResult = (
+  orderPage: unknown,
+  requestedPage: number,
+  pageOrders: readonly DeriveApiOrder[],
+  expectedPageCount: number | undefined,
+): Effect.Effect<number, DeriveRpcError> => {
+  const pagination = isOrderPayloadObject(orderPage)
+    ? orderPage.pagination
+    : undefined
+  const pageCount = isOrderPayloadObject(pagination)
+    ? pagination.num_pages
+    : undefined
+  const isEmptyFirstPage =
+    requestedPage === 1 && pageCount === 0 && pageOrders.length === 0
+
+  return typeof pageCount === "number" &&
+    Number.isSafeInteger(pageCount) &&
+    pageCount >= 0 &&
+    (pageCount >= requestedPage || isEmptyFirstPage) &&
+    (expectedPageCount === undefined || pageCount === expectedPageCount)
+    ? Effect.succeed(pageCount)
+    : Effect.fail(
+        new DeriveRpcError({
+          code: null,
+          message:
+            "Derive get_orders response has invalid pagination; the order list is incomplete.",
+        }),
+      )
+}
+
+const isDeriveApiOrder = (order: unknown): order is DeriveApiOrder => {
+  if (
+    !isOrderPayloadObject(order) ||
+    typeof order.order_id !== "string" ||
+    order.order_id.trim().length === 0 ||
+    typeof order.instrument_name !== "string" ||
+    order.instrument_name.trim().length === 0
+  ) {
+    return false
+  }
+  return (
+    (["direction", "order_status", "order_type"] as const).every(
+      field => !(field in order) || typeof order[field] === "string",
+    ) &&
+    (
+      ["amount", "filled_amount", "limit_price", "average_price"] as const
+    ).every(field => {
+      if (!(field in order)) return true
+      const numericField = order[field]
+      return (
+        (typeof numericField === "string" &&
+          numericField.trim() === numericField &&
+          /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(numericField) &&
+          Number.isFinite(Number(numericField))) ||
+        (typeof numericField === "number" && Number.isFinite(numericField))
+      )
+    })
+  )
+}
+
+/**
+ * Resting orders for the selected subaccount via `private/get_orders`.
+ * Same signed REST path as account snapshots -- no CCXT `loadMarkets`.
+ * Requires stable, valid page counts; invalid metadata or an exceeded safety budget
+ * fails without exposing partial data.
+ */
+export const fetchDeriveOpenOrders = (
+  credentials: DeriveSessionCredentials | null,
+  signal?: AbortSignal,
+): Effect.Effect<
+  DeriveApiOrder[],
+  SessionPrivateCallFailure | DeriveSessionMissing | DeriveSubaccountMissing
+> =>
+  Effect.gen(function* () {
+    const session = yield* requireDeriveSessionWithSubaccount(credentials)
+    const baseUrl = deriveRestBaseUrl(session.networkMode)
+    let page = 1
+    let expectedPageCount: number | undefined
+    let orders: DeriveApiOrder[] = []
+
+    while (page <= DERIVE_OPEN_ORDERS_MAX_PAGES) {
+      const result = yield* privateCallWithSession<unknown>(
+        baseUrl,
+        "private/get_orders",
+        {
+          subaccount_id: session.subaccountId,
+          status: "open",
+          page,
+          page_size: DERIVE_OPEN_ORDERS_PAGE_SIZE,
+        },
+        session,
+        signal,
+      )
+      const pageOrders = yield* ordersFromGetOrdersResult(result)
+      const numPages = yield* pageCountFromGetOrdersResult(
+        result,
+        page,
+        pageOrders,
+        expectedPageCount,
+      )
+      expectedPageCount = numPages
+      orders = [...orders, ...pageOrders]
+
+      if (page >= numPages) {
+        return orders
+      }
+      page += 1
+    }
+
+    return yield* Effect.fail(
+      new DeriveRpcError({
+        code: null,
+        message:
+          "Derive get_orders exceeded the page limit; the order list is incomplete.",
+      }),
     )
   })
 

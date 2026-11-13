@@ -5,7 +5,10 @@ import { getErrorMessage, getExchangeErrorDetail } from "./error-message"
 import { HttpStatusError, NetworkError } from "./http"
 import { ApiMessageError, MissingTickerError } from "@/hooks/useApi"
 import { ExchangeRequestError } from "@/services/hyperliquid"
-import { DerivePartialBatchFailure } from "@/services/derive/trading"
+import {
+  DerivePartialBatchFailure,
+  DeriveZeroLiquidity,
+} from "@/services/derive/trading"
 import {
   ClipboardWriteFailed,
   WalletAddressMissing,
@@ -374,5 +377,14 @@ describe("getErrorMessage", () => {
       }),
     )
     expect(getErrorMessage(failure)).toContain("rounded to zero")
+  })
+
+  it("maps DeriveZeroLiquidity to a no-liquidity message", async () => {
+    const failure = await asFiberFailure(
+      new DeriveZeroLiquidity({ symbol: "ETH-20260925-1800-P", side: "sell" }),
+    )
+    expect(getErrorMessage(failure)).toBe(
+      "No liquidity to sell ETH-20260925-1800-P. Wait for a quote or close on Derive.",
+    )
   })
 })

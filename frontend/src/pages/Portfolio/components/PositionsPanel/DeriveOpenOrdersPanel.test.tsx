@@ -20,12 +20,13 @@ vi.mock("@/hooks/useTrading", () => ({
   useDeriveOpenOrders: () => ({
     data: [
       {
-        id: "order-1",
-        symbol: "BTC/USD:USDC",
-        side: orderFixture.side,
-        amount: 1234.5,
-        price: 2,
-        status: "open",
+        order_id: "order-1",
+        instrument_name: "BTC-PERP",
+        direction: orderFixture.side,
+        amount: "1234.5",
+        filled_amount: "0",
+        limit_price: "2",
+        order_status: "open",
       },
     ],
     isLoading: false,

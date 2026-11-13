@@ -54,6 +54,9 @@ describe("PositionsPanelRow", () => {
         symbol,
         side: side(),
         notional: 500,
+        contracts: 0,
+        markPrice: 0,
+        entryPrice: 0,
       })
       render(() => (
         <table>

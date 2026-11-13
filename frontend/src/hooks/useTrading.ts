@@ -21,8 +21,8 @@ import {
   fetchDeriveOpenOrders,
   placeAndMonitorDeriveOrders,
   requireDeriveSessionWithSubaccount,
+  type DeriveApiOrder,
   type DeriveBatchOrderRequest,
-  type DeriveCcxtOrder,
   type DerivePlaceOrdersResult,
   type DeriveSessionCredentials,
 } from "@/services/derive/index"
@@ -481,7 +481,7 @@ export const useDeriveOpenOrders = () => {
           ),
         )
         const previousOrders =
-          queryClient.getQueryData<DeriveCcxtOrder[]>(queryKey)
+          queryClient.getQueryData<DeriveApiOrder[]>(queryKey)
         const hadOpenOrders =
           previousOrders !== undefined && previousOrders.length > 0
 

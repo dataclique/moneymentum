@@ -1,6 +1,6 @@
 import {
   parseDeriveNumeric,
-  type DeriveCcxtOrder,
+  type DeriveApiOrder,
 } from "@/services/derive/index"
 
 const MONTH_ABBREVIATIONS = [
@@ -31,14 +31,6 @@ export interface DeriveOpenOrderRow {
   notional: number | null
   status: string
   orderType: string
-}
-
-const readInfoString = (
-  info: Record<string, unknown> | undefined,
-  key: string,
-): string | null => {
-  const value = info?.[key]
-  return typeof value === "string" && value.length > 0 ? value : null
 }
 
 const parseFiniteNumber = (value: unknown): number | null => {
@@ -85,96 +77,72 @@ export const formatDeriveInstrumentLabel = (raw: string): string => {
   return `${underlyingRaw.toUpperCase()} ${strikeLabel} ${optionLabel} ${dateLabel}`
 }
 
-const readInfoNumber = (
-  info: Record<string, unknown> | undefined,
-  key: string,
-): number | null => parseFiniteNumber(info?.[key])
-
 /**
- * Resting size in contracts: prefer CCXT remaining, else amount - filled from
- * either CCXT or Derive `info` (CCXT often leaves amount/remaining undefined
- * and cost at 0 for open options).
+ * Resting size in contracts: amount minus filled_amount from Derive wire.
  */
-const readRestingAmount = (order: DeriveCcxtOrder): number | null => {
-  const remaining = parseFiniteNumber(order.remaining)
-  if (remaining !== null) {
-    return remaining
-  }
-
-  const total =
-    parseFiniteNumber(order.amount) ?? readInfoNumber(order.info, "amount")
+const readRestingAmount = (order: DeriveApiOrder): number | null => {
+  const total = parseFiniteNumber(order.amount)
   if (total === null) {
     return null
   }
 
-  const filled =
-    parseFiniteNumber(order.filled) ??
-    readInfoNumber(order.info, "filled_amount") ??
-    0
-
+  const filled = parseFiniteNumber(order.filled_amount) ?? 0
   return Math.max(total - filled, 0)
 }
 
-const readLimitPrice = (order: DeriveCcxtOrder): number | null =>
-  parseFiniteNumber(order.price) ??
-  readInfoNumber(order.info, "limit_price") ??
-  readInfoNumber(order.info, "average_price")
+const readLimitPrice = (order: DeriveApiOrder): number | null =>
+  parseFiniteNumber(order.limit_price) ?? parseFiniteNumber(order.average_price)
 
 /** USD notional for a resting order: |size * limit price|. */
 const readNotional = (
   amount: number | null,
   price: number | null,
-  cost: number | null,
 ): number | null => {
   if (amount !== null && price !== null) {
     return Math.abs(amount * price)
-  }
-  if (cost !== null && cost > 0) {
-    return cost
   }
   return null
 }
 
 export const mapDeriveOpenOrderRow = (
-  order: DeriveCcxtOrder,
+  order: DeriveApiOrder,
 ): DeriveOpenOrderRow | null => {
   const id =
-    (typeof order.id === "string" && order.id.length > 0 ? order.id : null) ??
-    readInfoString(order.info, "order_id") ??
-    readInfoString(order.info, "orderId")
+    typeof order.order_id === "string" && order.order_id.length > 0
+      ? order.order_id
+      : null
   const symbol =
-    (typeof order.symbol === "string" && order.symbol.length > 0
-      ? order.symbol
-      : null) ?? readInfoString(order.info, "instrument_name")
+    typeof order.instrument_name === "string" &&
+    order.instrument_name.length > 0
+      ? order.instrument_name
+      : null
 
   if (id === null || symbol === null) {
     return null
   }
 
-  const instrumentName = readInfoString(order.info, "instrument_name") ?? symbol
-  const sideRaw = (order.side ?? "").toLowerCase()
+  const sideRaw = (order.direction ?? "").toLowerCase()
   const side: DeriveOpenOrderRow["side"] =
     sideRaw === "buy" || sideRaw === "sell" ? sideRaw : null
 
   const amount = readRestingAmount(order)
   const price = readLimitPrice(order)
-  const notional = readNotional(amount, price, parseFiniteNumber(order.cost))
+  const notional = readNotional(amount, price)
 
   const status =
-    readInfoString(order.info, "order_status") ??
-    (typeof order.status === "string" && order.status.length > 0
-      ? order.status
-      : "open")
+    typeof order.order_status === "string" && order.order_status.length > 0
+      ? order.order_status
+      : "open"
 
   const orderType =
-    readInfoString(order.info, "order_type") ??
-    readInfoString(order.info, "type") ??
-    "limit"
+    typeof order.order_type === "string" && order.order_type.length > 0
+      ? order.order_type
+      : "limit"
 
   return {
     id,
     symbol,
-    label: formatDeriveInstrumentLabel(instrumentName),
+    label: formatDeriveInstrumentLabel(symbol),
     side,
     amount,
     price,
@@ -185,7 +153,7 @@ export const mapDeriveOpenOrderRow = (
 }
 
 export const mapDeriveOpenOrderRows = (
-  orders: DeriveCcxtOrder[],
+  orders: DeriveApiOrder[],
 ): DeriveOpenOrderRow[] =>
   orders.flatMap(order => {
     const row = mapDeriveOpenOrderRow(order)
